@@ -31,6 +31,7 @@
 #include "core/reward/SurvivalReward.h"
 #include "core/reward/CombatReward.h"
 #include "core/reward/CoopReward.h"
+#include "core/reward/NoveltyReward.h"
 #include "core/capability/AttackCapability.h"
 #include "core/capability/HebbianLearning.h"
 #include "core/capability/EmitSignalCapability.h"
@@ -148,6 +149,10 @@ struct RuntimeParams {
     float heavy_collect_radius;
     double coop_weight;
     double coop_proximity_bonus;
+    bool novelty_enabled;
+    double novelty_weight;
+    std::size_t novelty_k_neighbors;
+    float novelty_threshold;
 };
 
 struct GenerationStats {
@@ -290,6 +295,10 @@ RuntimeParams loadParams(const config::Config& config) {
     params.heavy_collect_radius = config.getOr<float>("world.coop.collect_radius", 5.0f);
     params.coop_weight = config.getOr<double>("reward.coop_weight", 3.0);
     params.coop_proximity_bonus = config.getOr<double>("reward.coop_proximity_bonus", 0.5);
+    params.novelty_enabled = config.getOr<bool>("reward.novelty_enabled", false);
+    params.novelty_weight = config.getOr<double>("reward.novelty_weight", 5.0);
+    params.novelty_k_neighbors = config.getOr<std::size_t>("reward.novelty_k_neighbors", 15);
+    params.novelty_threshold = config.getOr<float>("reward.novelty_threshold", 0.3f);
     return params;
 }
 
@@ -434,6 +443,12 @@ std::vector<std::unique_ptr<IRewardComponent>> createRewards(const RuntimeParams
         rewards.push_back(std::make_unique<CoopReward>(
             params.coop_weight,
             params.coop_proximity_bonus));
+    }
+    if (params.novelty_enabled) {
+        auto archive = std::make_shared<NoveltyArchive>(
+            params.novelty_k_neighbors, params.novelty_threshold);
+        rewards.push_back(std::make_unique<NoveltyReward>(
+            params.novelty_weight, archive));
     }
     return rewards;
 }
