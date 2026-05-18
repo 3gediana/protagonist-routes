@@ -36,11 +36,11 @@
 |---|---|---|---|---|
 | [F-COMM](F-COMM_communication.md) | 信号场通信，进化原始语言 | 🔴 高 | M5 | 📋 |
 | [F-COOP](F-COOP_cooperation.md) | 合作机制，共同任务奖励 | 🔴 高 | F-COMM | 📋 |
-| [F-FIGHT](F-FIGHT_combat.md) | 对抗机制，攻击防御能量转移 | 🟡 中 | M5 | 📋 |
+| [F-FIGHT](F-FIGHT_combat.md) | 对抗机制，攻击防御能量转移 | 🟡 中 | M5 | ✅⛳⛳ |
 | [F-PRED](F-PRED_predator_prey.md) | 捕食者-猎物多物种共进化 | 🟡 中 | F-FIGHT | 📋 |
 | [F-TOOL](F-TOOL_tools.md) | 工具与可移动物体，涌现"建筑" | 🔴 高 | M5 | 📋 |
 | [F-LEARN](F-LEARN_lifetime_learning.md) | 终身学习 + 拉马克开关 | 🟡 中 | M3 | 📋 |
-| [F-NEUROMOD](F-NEUROMOD_neuromodulation.md) | 神经调节情绪 | 🟡 中 | M3 | 📋 |
+| [F-NEUROMOD](F-NEUROMOD_neuromodulation.md) | 神经调节情绪 | 🟡 中 | M3 | ✅⛳⛳ |
 
 ### 🌍 环境类
 
@@ -126,6 +126,6 @@
 ## 当前阶段状态
 
 ```
-baseline:   M0 ✅ / M1 ✅⛳⛳ / M2 ⏸ / M3-M5 ⬜
-modules:    全部 📋 待开发
+baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / others 📋
 ```
