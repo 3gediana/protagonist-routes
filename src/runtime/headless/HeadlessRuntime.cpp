@@ -227,7 +227,7 @@ RuntimeParams loadParams(const config::Config& config) {
         params.output_dim += 3;
     }
     params.lifetime_learning_enabled = config.getOr<bool>("learning.enabled", false);
-    params.hebbian_learning_rate = config.getOr<float>("learning.hebbian_rate", 0.01f);
+    params.hebbian_learning_rate = config.getOr<float>("learning.hebbian_rate", 0.002f);
     params.lamarck_mode = config.getOr<bool>("learning.lamarck_mode", false);
     params.day_night_enabled = config.getOr<bool>("world.day_night.enabled", false);
     params.day_length_ticks = config.getOr<float>("world.day_night.day_length_ticks", 600.0f);

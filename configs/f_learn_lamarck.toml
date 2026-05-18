@@ -60,7 +60,7 @@ tau_max = 5.0
 
 [learning]
 enabled = true
-hebbian_rate = 0.01
+hebbian_rate = 0.002
 lamarck_mode = true
 
 [reward]
