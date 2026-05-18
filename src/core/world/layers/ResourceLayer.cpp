@@ -13,10 +13,14 @@ namespace neuro {
 ResourceLayer::ResourceLayer(std::size_t resource_count,
                              float resource_amount,
                              std::size_t respawn_ticks,
-                             std::uint32_t seed)
+                             std::uint32_t seed,
+                             bool dynamic,
+                             float regen_rate)
     : resource_count_(resource_count),
       resource_amount_(resource_amount),
       respawn_ticks_(respawn_ticks),
+      dynamic_(dynamic),
+      regen_rate_(regen_rate),
       rng_(seed == 0 ? std::random_device{}() : seed),
       world_size_(0.0f, 0.0f) {}
 
@@ -29,8 +33,8 @@ void ResourceLayer::onAttach(IWorld& world) {
     resources_.clear();
     resources_.reserve(resource_count_);
     for (std::size_t i = 0; i < resource_count_; ++i) {
-        Resource resource{randomPosition(world_size_), resource_amount_, true, 0};
-        resource.amount = terrainAdjustedAmount(resource.position, world);
+        const float adj = terrainAdjustedAmount(randomPosition(world_size_), world);
+        Resource resource{randomPosition(world_size_), adj, adj, regen_rate_, true, 0};
         resources_.push_back(resource);
         world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                                events::ResourceSpawned{resource.position, resource.amount},
@@ -38,8 +42,11 @@ void ResourceLayer::onAttach(IWorld& world) {
     }
 }
 
-void ResourceLayer::tick(IWorld& world, float) {
+void ResourceLayer::tick(IWorld& world, float dt) {
     for (auto& resource : resources_) {
+        if (dynamic_ && resource.available && resource.amount < resource.max_amount) {
+            resource.amount = std::min(resource.amount + resource.regen_rate * dt, resource.max_amount);
+        }
         if (resource.available || resource.respawn_ticks_remaining == 0) {
             continue;
         }
@@ -93,6 +100,16 @@ float ResourceLayer::tryConsume(Vec2 position, float radius, IWorld& world) {
     }
 
     auto& resource = resources_[best_index];
+    if (dynamic_) {
+        const float consumed = resource.amount;
+        resource.amount = 0.0f;
+        resource.available = false;
+        resource.respawn_ticks_remaining = respawn_ticks_;
+        world.eventBus().publish(events::Event{events::EventType::ResourceConsumed,
+                                               events::ResourceConsumed{resource.position},
+                                               world.currentTick()});
+        return consumed;
+    }
     resource.available = false;
     resource.respawn_ticks_remaining = respawn_ticks_;
     world.eventBus().publish(events::Event{events::EventType::ResourceConsumed,
@@ -113,7 +130,10 @@ Vec2 ResourceLayer::randomPosition(Vec2 world_size) {
 
 void ResourceLayer::respawnResource(Resource& resource, IWorld& world) {
     resource.position = randomPosition(world_size_);
-    resource.amount = terrainAdjustedAmount(resource.position, world);
+    const float adj = terrainAdjustedAmount(resource.position, world);
+    resource.amount = adj;
+    resource.max_amount = adj;
+    resource.regen_rate = regen_rate_;
     resource.available = true;
     world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                            events::ResourceSpawned{resource.position, resource.amount},

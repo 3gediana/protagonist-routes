@@ -126,6 +126,8 @@ struct RuntimeParams {
     float death_prob;
     float initial_infection_rate;
     float infection_perception_radius;
+    bool dynamic_resources;
+    float resource_regen_rate;
 };
 
 struct GenerationStats {
@@ -247,6 +249,8 @@ RuntimeParams loadParams(const config::Config& config) {
     if (params.disease_enabled) {
         params.input_dim += InfectionPerception::kDim;
     }
+    params.dynamic_resources = config.getOr<bool>("world.resources.dynamic", false);
+    params.resource_regen_rate = config.getOr<float>("world.resources.regen_rate", 0.1f);
     return params;
 }
 
@@ -396,7 +400,9 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
         params.resource_count,
         params.resource_amount,
         params.resource_respawn_ticks,
-        params.random_seed + generation + 1));
+        params.random_seed + generation + 1,
+        params.dynamic_resources,
+        params.resource_regen_rate));
     world->addLayer(std::make_unique<AgentLayer>(params.death_threshold, params.base_metabolism));
     if (params.terrain_enabled) {
         auto terrain_params = params.terrain_params;

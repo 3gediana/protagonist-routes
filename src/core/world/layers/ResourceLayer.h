@@ -17,6 +17,8 @@ public:
     struct Resource {
         Vec2 position;
         float amount;
+        float max_amount;
+        float regen_rate;
         bool available;
         std::size_t respawn_ticks_remaining;
     };
@@ -31,7 +33,9 @@ public:
     ResourceLayer(std::size_t resource_count,
                   float resource_amount,
                   std::size_t respawn_ticks,
-                  std::uint32_t seed);
+                  std::uint32_t seed,
+                  bool dynamic = false,
+                  float regen_rate = 0.0f);
 
     const char* layerName() const override;
     void onAttach(IWorld& world) override;
@@ -50,6 +54,8 @@ private:
     std::size_t resource_count_;
     float resource_amount_;
     std::size_t respawn_ticks_;
+    bool dynamic_;
+    float regen_rate_;
     std::mt19937 rng_;
     Vec2 world_size_;
     std::vector<Resource> resources_;
