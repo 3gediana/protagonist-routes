@@ -21,6 +21,10 @@ public:
     void reset() override;
     std::size_t parameterCount() const override;
 
+    void hebbianUpdate(float learning_rate);
+    std::vector<float> currentWeights() const;
+    void setWeights(const std::vector<float>& weights);
+
 private:
     struct NodeEval {
         bool is_input{false};

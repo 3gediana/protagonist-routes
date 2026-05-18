@@ -49,6 +49,7 @@ public:
 
     float decisionInterval() const;
     void setDecisionInterval(float interval);
+    void setWeights(const std::vector<float>& weights);
 
     static std::unique_ptr<NeatGenome> minimal(GenomeId id,
                                                std::size_t input_dim,

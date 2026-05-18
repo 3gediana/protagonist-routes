@@ -146,6 +146,15 @@ void NeatGenome::setDecisionInterval(float interval) {
     decision_interval_ = interval;
 }
 
+void NeatGenome::setWeights(const std::vector<float>& weights) {
+    std::size_t wi = 0;
+    for (auto& connection : connections_) {
+        if (connection.enabled && wi < weights.size()) {
+            connection.weight = weights[wi++];
+        }
+    }
+}
+
 std::unique_ptr<NeatGenome> NeatGenome::minimal(GenomeId id,
                                                 std::size_t input_dim,
                                                 std::size_t output_dim,

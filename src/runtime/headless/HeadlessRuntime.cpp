@@ -27,6 +27,7 @@
 #include "core/reward/SurvivalReward.h"
 #include "core/reward/CombatReward.h"
 #include "core/capability/AttackCapability.h"
+#include "core/capability/HebbianLearning.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -105,6 +106,9 @@ struct RuntimeParams {
     float combat_attack_reward;
     float combat_kill_bonus;
     float combat_death_penalty;
+    bool lifetime_learning_enabled;
+    float hebbian_learning_rate;
+    bool lamarck_mode;
 };
 
 struct GenerationStats {
@@ -203,6 +207,9 @@ RuntimeParams loadParams(const config::Config& config) {
     if (params.combat_enabled) {
         params.output_dim += 3;
     }
+    params.lifetime_learning_enabled = config.getOr<bool>("learning.enabled", false);
+    params.hebbian_learning_rate = config.getOr<float>("learning.hebbian_rate", 0.01f);
+    params.lamarck_mode = config.getOr<bool>("learning.lamarck_mode", false);
     return params;
 }
 
@@ -421,6 +428,10 @@ void populateWorld(World2D& world,
                 params.attack_cost,
                 params.attack_threshold));
         }
+        if (params.lifetime_learning_enabled) {
+            agent->addCapability(std::make_unique<HebbianLearning>(
+                params.hebbian_learning_rate));
+        }
         agent_layer->addAgent(std::move(agent), world);
     }
 }
@@ -607,6 +618,27 @@ int HeadlessRuntime::run() {
             perf_observer.markEvaluationEnd();
 
             const auto evaluated = collectEvaluated(*world, population);
+
+            if (params.lifetime_learning_enabled && params.lamarck_mode) {
+                auto* agent_layer_lam = world->getLayer<AgentLayer>();
+                if (agent_layer_lam != nullptr) {
+                    for (auto* agent : agent_layer_lam->agents()) {
+                        auto* neat_brain = dynamic_cast<NeatBrain*>(&agent->brain());
+                        if (neat_brain == nullptr) continue;
+                        const auto learned_weights = neat_brain->currentWeights();
+                        for (auto& genome : population) {
+                            if (genome->id() == agent->genomeId()) {
+                                auto* neat_genome = dynamic_cast<NeatGenome*>(genome.get());
+                                if (neat_genome != nullptr) {
+                                    neat_genome->setWeights(learned_weights);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             const auto stats = computeStats(evaluated);
             const auto* agent_layer = world->getLayer<AgentLayer>();
             evolution_metrics << generation << ','

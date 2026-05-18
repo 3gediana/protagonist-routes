@@ -137,4 +137,43 @@ std::size_t NeatBrain::parameterCount() const {
     return node_evals_.size() + connection_count_;
 }
 
+void NeatBrain::hebbianUpdate(float learning_rate) {
+    const auto& current = values_[active_buffer_index_];
+
+    for (std::size_t index = 0; index < node_evals_.size(); ++index) {
+        auto& node = node_evals_[index];
+        if (node.is_input) continue;
+
+        const float post = current[index];
+        for (auto& [source_index, weight] : node.incoming) {
+            const float pre = current[source_index];
+            weight += learning_rate * pre * post;
+            weight = std::clamp(weight, -5.0f, 5.0f);
+        }
+    }
+}
+
+std::vector<float> NeatBrain::currentWeights() const {
+    std::vector<float> weights;
+    for (const auto& node : node_evals_) {
+        if (node.is_input) continue;
+        for (const auto& [_, weight] : node.incoming) {
+            weights.push_back(weight);
+        }
+    }
+    return weights;
+}
+
+void NeatBrain::setWeights(const std::vector<float>& weights) {
+    std::size_t wi = 0;
+    for (auto& node : node_evals_) {
+        if (node.is_input) continue;
+        for (auto& [_, weight] : node.incoming) {
+            if (wi < weights.size()) {
+                weight = weights[wi++];
+            }
+        }
+    }
+}
+
 }  // namespace neuro
