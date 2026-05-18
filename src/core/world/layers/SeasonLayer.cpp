@@ -46,4 +46,8 @@ float SeasonLayer::seasonProgress() const {
     return static_cast<float>(tick_count_ % ticks_per_season_) / static_cast<float>(ticks_per_season_);
 }
 
+std::size_t SeasonLayer::seasonIndex() const {
+    return (tick_count_ / ticks_per_season_) % 4;
+}
+
 }  // namespace neuro

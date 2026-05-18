@@ -23,6 +23,7 @@ public:
     float resourceFactor() const;
     float metabolismFactor() const;
     float seasonProgress() const;
+    std::size_t seasonIndex() const;
 
     std::size_t ticksPerSeason() const { return ticks_per_season_; }
 

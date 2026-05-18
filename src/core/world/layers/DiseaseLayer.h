@@ -24,6 +24,7 @@ public:
     void tick(IWorld& world, float dt) override;
 
     float infectionRadius() const { return infection_radius_; }
+    std::size_t infectionDeathCount() const { return infection_deaths_; }
 
 private:
     float infection_radius_;
@@ -32,6 +33,7 @@ private:
     float death_prob_;
     float initial_infection_rate_;
     std::mt19937 rng_;
+    std::size_t infection_deaths_ = 0;
 };
 
 }  // namespace neuro

@@ -117,4 +117,14 @@ std::size_t SignalLayer::gridIndex(float x, float y) const {
     return gy * grid_res_ + gx;
 }
 
+double SignalLayer::totalEnergy() const {
+    double sum = 0.0;
+    for (const auto& cell : field_) {
+        for (const auto v : cell) {
+            sum += static_cast<double>(v) * static_cast<double>(v);
+        }
+    }
+    return sum;
+}
+
 }  // namespace neuro

@@ -17,7 +17,7 @@ std::size_t PredatorHuntCapability::consumedOutputs() const {
 }
 
 void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) {
-    if (outputs.empty() || outputs[0] < 0.5f) return;
+    if (outputs.empty() || outputs[0] < 0.3f) return;
 
     auto* concrete = dynamic_cast<Agent*>(&agent);
     if (concrete == nullptr) return;

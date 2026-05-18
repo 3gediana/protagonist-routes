@@ -18,6 +18,7 @@
 #include "core/observer/FitnessRecorder.h"
 #include "core/observer/SpeciesObserver.h"
 #include "core/observer/PerformanceObserver.h"
+#include "core/observer/ModuleMetricsObserver.h"
 #include "runtime/headless/EvaluationPool.h"
 #include "core/perception/NearestFoodPerception.h"
 #include "core/perception/SelfPerception.h"
@@ -641,7 +642,8 @@ void populateWorld(World2D& world,
 void evaluatePopulation(World2D& world,
                         const std::vector<std::unique_ptr<IRewardComponent>>& rewards,
                         const RuntimeParams& params,
-                        const std::atomic<bool>& stop_requested) {
+                        const std::atomic<bool>& stop_requested,
+                        ModuleMetricsObserver& module_observer) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) {
         throw std::runtime_error("AgentLayer missing from world");
@@ -653,6 +655,7 @@ void evaluatePopulation(World2D& world,
         }
 
         world.tick(params.tick_dt);
+        module_observer.onTick(world);
 
         for (Agent* agent : agent_layer->agents()) {
             if (!agent->alive()) {
@@ -779,6 +782,7 @@ int HeadlessRuntime::run() {
             species_observer = std::make_unique<SpeciesObserver>(run_dir_ / "species_log.jsonl");
         }
         PerformanceObserver perf_observer(run_dir_ / "perf.csv");
+        ModuleMetricsObserver module_observer(run_dir_ / "module_metrics.csv");
         std::ofstream evolution_metrics(run_dir_ / "evolution.csv", std::ios::out | std::ios::trunc);
         if (!evolution_metrics.is_open()) {
             throw std::runtime_error("Failed to open evolution metrics output file");
@@ -800,6 +804,7 @@ int HeadlessRuntime::run() {
             auto world = createWorld(params, static_cast<Generation>(generation));
             recorder.onAttach(*world);
             perf_observer.onAttach(*world);
+            module_observer.onAttach(*world);
             if (species_observer) {
                 species_observer->onAttach(*world);
             }
@@ -816,7 +821,7 @@ int HeadlessRuntime::run() {
                           next_agent_id,
                           static_cast<Generation>(generation));
             perf_observer.markEvaluationStart();
-            evaluatePopulation(*world, rewards, params, stop_requested_);
+            evaluatePopulation(*world, rewards, params, stop_requested_, module_observer);
             perf_observer.markEvaluationEnd();
 
             const auto evaluated = collectEvaluated(*world, population);
@@ -865,6 +870,7 @@ int HeadlessRuntime::run() {
             }
             recorder.onDetach(*world);
             perf_observer.onDetach(*world);
+            module_observer.onDetach(*world);
 
             LOG_INFO(
                 "Generation {} complete: min={:.3f} avg={:.3f} best={:.3f} species={} complexity={:.2f} alive={}/{}",

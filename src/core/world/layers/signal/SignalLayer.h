@@ -28,6 +28,7 @@ public:
 
     std::size_t channels() const { return channels_; }
     float decayRate() const { return decay_rate_; }
+    double totalEnergy() const;
 
 private:
     void applyDecay(float dt);

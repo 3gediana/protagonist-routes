@@ -22,20 +22,21 @@ DiseaseLayer::DiseaseLayer(float infection_radius,
       rng_(seed == 0 ? std::random_device{}() : seed) {}
 
 void DiseaseLayer::onAttach(IWorld& world) {
-    auto* agent_layer = world.getLayer<AgentLayer>();
-    if (agent_layer == nullptr) return;
-
-    std::bernoulli_distribution infect(initial_infection_rate_);
-    for (auto* agent : agent_layer->agents()) {
-        if (infect(rng_)) {
-            agent->setInfected(true);
-        }
-    }
+    (void)world;
 }
 
 void DiseaseLayer::tick(IWorld& world, float dt) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) return;
+
+    if (infection_deaths_ == 0 && agent_layer->size() > 0) {
+        std::bernoulli_distribution infect(initial_infection_rate_);
+        for (auto* agent : agent_layer->agents()) {
+            if (infect(rng_)) {
+                agent->setInfected(true);
+            }
+        }
+    }
 
     const auto& agents = agent_layer->agents();
 
@@ -48,6 +49,7 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
             std::bernoulli_distribution dies(death_prob_);
             if (dies(rng_)) {
                 agent->kill("disease");
+                ++infection_deaths_;
             } else {
                 agent->setInfected(false);
             }
