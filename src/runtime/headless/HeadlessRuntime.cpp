@@ -160,6 +160,10 @@ struct RuntimeParams {
     float pred_damage;
     float pred_energy_gain;
     float pred_hunt_cost;
+    bool curriculum_enabled;
+    std::size_t curriculum_stage1_gen;
+    std::size_t curriculum_stage2_gen;
+    std::size_t curriculum_stage3_gen;
 };
 
 struct GenerationStats {
@@ -315,6 +319,10 @@ RuntimeParams loadParams(const config::Config& config) {
     if (params.pred_enabled) {
         params.output_dim += 1;
     }
+    params.curriculum_enabled = config.getOr<bool>("evolution.curriculum.enabled", false);
+    params.curriculum_stage1_gen = config.getOr<std::size_t>("evolution.curriculum.stage1_gen", 30);
+    params.curriculum_stage2_gen = config.getOr<std::size_t>("evolution.curriculum.stage2_gen", 80);
+    params.curriculum_stage3_gen = config.getOr<std::size_t>("evolution.curriculum.stage3_gen", 150);
     return params;
 }
 
@@ -471,12 +479,23 @@ std::vector<std::unique_ptr<IRewardComponent>> createRewards(const RuntimeParams
 
 std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation generation) {
     auto world = std::make_unique<World2D>(WorldId{static_cast<std::uint64_t>(generation) + 1}, params.world_size);
+
+    const auto gen = static_cast<std::size_t>(generation);
+    const bool curriculum = params.curriculum_enabled;
+    const bool stage0 = !curriculum || gen < params.curriculum_stage1_gen;
+    const bool stage1 = !curriculum || gen >= params.curriculum_stage1_gen;
+    const bool stage2 = !curriculum || gen >= params.curriculum_stage2_gen;
+    const bool stage3 = !curriculum || gen >= params.curriculum_stage3_gen;
+
+    const std::size_t resource_count = stage0 ? params.resource_count * 2 : params.resource_count;
+    const float resource_amount = stage0 ? params.resource_amount * 1.5f : params.resource_amount;
+
     world->addLayer(std::make_unique<ResourceLayer>(
-        params.resource_count,
-        params.resource_amount,
+        resource_count,
+        resource_amount,
         params.resource_respawn_ticks,
         params.random_seed + generation + 1,
-        params.dynamic_resources,
+        params.dynamic_resources && stage1,
         params.resource_regen_rate));
     world->addLayer(std::make_unique<AgentLayer>(params.death_threshold, params.base_metabolism));
     if (params.terrain_enabled) {
@@ -516,6 +535,11 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
             params.heavy_collect_radius,
             params.random_seed + 200));
     }
+    if (params.curriculum_enabled) {
+        const char* stage_name = stage0 ? "greenhouse" : stage1 ? "survival" : stage2 ? "competition" : "ecology";
+        LOG_INFO("Curriculum stage: {} (gen={})", stage_name, gen);
+    }
+
     return world;
 }
 
