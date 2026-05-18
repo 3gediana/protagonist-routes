@@ -28,7 +28,9 @@ public:
                   double c3_weight,
                   float tau_min,
                   float tau_max,
-                  std::uint32_t seed);
+                  std::uint32_t seed,
+                  float decision_interval_min = 1.0f,
+                  float decision_interval_max = 30.0f);
 
     std::vector<std::unique_ptr<IGenome>> reproduce(
         const std::vector<EvaluatedIndividual>& evaluated,
@@ -64,6 +66,7 @@ private:
     void addConnectionMutation(NeatGenome& genome);
     void addNodeMutation(NeatGenome& genome);
     void toggleConnectionMutation(NeatGenome& genome);
+    void mutateDecisionInterval(NeatGenome& genome);
 
     double elite_ratio_;
     std::size_t tournament_size_;
@@ -78,6 +81,8 @@ private:
     std::size_t target_species_min_;
     std::size_t target_species_max_;
     double compatibility_adjustment_step_;
+    float decision_interval_min_;
+    float decision_interval_max_;
     std::mt19937 rng_;
     InnovationTracker innovation_tracker_;
     Speciation speciation_;

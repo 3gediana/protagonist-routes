@@ -57,7 +57,9 @@ NeatEvolution::NeatEvolution(double elite_ratio,
                              double c3_weight,
                              float tau_min,
                              float tau_max,
-                             std::uint32_t seed)
+                             std::uint32_t seed,
+                             float decision_interval_min,
+                             float decision_interval_max)
     : elite_ratio_(elite_ratio),
       tournament_size_(tournament_size == 0 ? 1 : tournament_size),
       weight_perturb_rate_(weight_perturb_rate),
@@ -71,6 +73,8 @@ NeatEvolution::NeatEvolution(double elite_ratio,
       target_species_min_(3),
       target_species_max_(10),
       compatibility_adjustment_step_(0.25),
+      decision_interval_min_(decision_interval_min),
+      decision_interval_max_(decision_interval_max),
       rng_(seed == 0 ? std::random_device{}() : seed),
       innovation_tracker_(1, 1),
       speciation_(CompatibilityDistance(c1_excess, c2_disjoint, c3_weight), compatibility_threshold) {}
@@ -456,12 +460,15 @@ NeatGenome NeatEvolution::crossover(const NeatGenome& a,
         return lhs.id < rhs.id;
     });
 
-    return NeatGenome(child_id, primary->inputDim(), primary->outputDim(), std::move(child_nodes), std::move(child_connections));
+    const float child_interval = pick_half(rng_) ? primary->decisionInterval() : secondary->decisionInterval();
+
+    return NeatGenome(child_id, primary->inputDim(), primary->outputDim(), std::move(child_nodes), std::move(child_connections), child_interval);
 }
 
 void NeatEvolution::mutate(NeatGenome& genome) {
     mutateWeights(genome);
     mutateNodeParameters(genome);
+    mutateDecisionInterval(genome);
 
     std::bernoulli_distribution add_connection(add_connection_rate_);
     std::bernoulli_distribution add_node(add_node_rate_);
@@ -600,6 +607,19 @@ void NeatEvolution::toggleConnectionMutation(NeatGenome& genome) {
     std::uniform_int_distribution<std::size_t> index_dist(0, genome.connections().size() - 1);
     auto& connection = genome.connections()[index_dist(rng_)];
     connection.enabled = !connection.enabled;
+}
+
+void NeatEvolution::mutateDecisionInterval(NeatGenome& genome) {
+    std::bernoulli_distribution perturb(weight_perturb_rate_);
+    std::normal_distribution<float> perturb_dist(0.0f, 2.0f);
+    std::uniform_real_distribution<float> reset_dist(decision_interval_min_, decision_interval_max_);
+
+    if (reset_dist(rng_) < weight_reset_rate_) {
+        genome.setDecisionInterval(reset_dist(rng_));
+    } else if (perturb(rng_)) {
+        const float new_interval = genome.decisionInterval() + perturb_dist(rng_);
+        genome.setDecisionInterval(std::clamp(new_interval, decision_interval_min_, decision_interval_max_));
+    }
 }
 
 }  // namespace neuro

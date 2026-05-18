@@ -25,12 +25,14 @@ NeatGenome::NeatGenome(GenomeId id,
                        std::size_t input_dim,
                        std::size_t output_dim,
                        std::vector<NodeGene> nodes,
-                       std::vector<ConnectionGene> connections)
+                       std::vector<ConnectionGene> connections,
+                       float decision_interval)
     : id_(id),
       input_dim_(input_dim),
       output_dim_(output_dim),
       nodes_(std::move(nodes)),
-      connections_(std::move(connections)) {
+      connections_(std::move(connections)),
+      decision_interval_(decision_interval) {
     if (input_dim_ == 0 || output_dim_ == 0) {
         throw std::invalid_argument("NeatGenome input/output dims must be > 0");
     }
@@ -136,13 +138,23 @@ std::vector<NodeId> NeatGenome::outputNodeIds() const {
     return ids;
 }
 
+float NeatGenome::decisionInterval() const {
+    return decision_interval_;
+}
+
+void NeatGenome::setDecisionInterval(float interval) {
+    decision_interval_ = interval;
+}
+
 std::unique_ptr<NeatGenome> NeatGenome::minimal(GenomeId id,
                                                 std::size_t input_dim,
                                                 std::size_t output_dim,
                                                 InnovationTracker& tracker,
                                                 std::mt19937& rng,
                                                 float time_constant_min,
-                                                float time_constant_max) {
+                                                float time_constant_max,
+                                                float decision_interval_min,
+                                                float decision_interval_max) {
     if (input_dim == 0 || output_dim == 0) {
         throw std::invalid_argument("NeatGenome::minimal requires input/output dims > 0");
     }
@@ -187,7 +199,10 @@ std::unique_ptr<NeatGenome> NeatGenome::minimal(GenomeId id,
         }
     }
 
-    return std::make_unique<NeatGenome>(id, input_dim, output_dim, std::move(nodes), std::move(connections));
+    std::uniform_real_distribution<float> interval_dist(decision_interval_min, decision_interval_max);
+    const float decision_interval = interval_dist(rng);
+
+    return std::make_unique<NeatGenome>(id, input_dim, output_dim, std::move(nodes), std::move(connections), decision_interval);
 }
 
 }  // namespace neuro

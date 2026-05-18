@@ -14,7 +14,8 @@ Agent::Agent(AgentId id,
              std::unique_ptr<IBrain> brain,
              Vec2 position,
              float energy,
-             std::size_t exploration_grid_size)
+             std::size_t exploration_grid_size,
+             float decision_interval)
     : id_(id),
       genome_id_(genome_id),
       species_id_(kInvalidSpeciesId),
@@ -25,6 +26,8 @@ Agent::Agent(AgentId id,
       age_(0),
       alive_(true),
       fitness_(0.0),
+      decision_interval_(decision_interval),
+      next_decision_tick_(0),
       food_eaten_this_tick_(0.0f),
       discovered_new_cell_this_tick_(false),
       exploration_grid_size_(exploration_grid_size) {}
@@ -52,6 +55,13 @@ void Agent::kill(const char*) {
     alive_ = false;
 }
 
+float Agent::decisionInterval() const { return decision_interval_; }
+Tick Agent::nextDecisionTick() const { return next_decision_tick_; }
+void Agent::setNextDecisionTick(Tick tick) { next_decision_tick_ = tick; }
+bool Agent::shouldDecide(Tick current_tick) const {
+    return current_tick >= next_decision_tick_;
+}
+
 void Agent::setSpeciesId(SpeciesId species_id) {
     species_id_ = species_id;
 }
@@ -72,34 +82,40 @@ void Agent::beginTick() {
 void Agent::step(IWorld& world, float dt) {
     if (!alive_) return;
 
-    std::size_t input_dim = 0;
-    for (const auto& perception : perceptions_) {
-        input_dim += perception->dim();
-    }
-
-    std::vector<float> inputs(input_dim, 0.0f);
-    std::size_t offset = 0;
-    for (const auto& perception : perceptions_) {
-        auto view = std::span<float>(inputs.data() + offset, perception->dim());
-        perception->sense(*this, world, view);
-        offset += perception->dim();
-    }
-
-    auto outputs = brain_->forward(inputs, dt);
-
-    std::size_t output_offset = 0;
-    for (auto& capability : capabilities_) {
-        const auto consumed = capability->consumedOutputs();
-        if (output_offset + consumed > outputs.size()) {
-            throw std::runtime_error("Agent capability output slice overflow");
+    if (shouldDecide(world.currentTick())) {
+        std::size_t input_dim = 0;
+        for (const auto& perception : perceptions_) {
+            input_dim += perception->dim();
         }
-        std::span<const float> slice(outputs.data() + output_offset, consumed);
-        capability->apply(*this, world, slice, dt);
-        output_offset += consumed;
+
+        std::vector<float> inputs(input_dim, 0.0f);
+        std::size_t offset = 0;
+        for (const auto& perception : perceptions_) {
+            auto view = std::span<float>(inputs.data() + offset, perception->dim());
+            perception->sense(*this, world, view);
+            offset += perception->dim();
+        }
+
+        auto output_span = brain_->forward(inputs, dt);
+        last_outputs_.assign(output_span.begin(), output_span.end());
+        next_decision_tick_ = world.currentTick() + static_cast<Tick>(decision_interval_);
     }
 
-    if (output_offset != outputs.size()) {
-        throw std::runtime_error("Agent capability outputs do not fully consume brain outputs");
+    if (!last_outputs_.empty()) {
+        std::size_t output_offset = 0;
+        for (auto& capability : capabilities_) {
+            const auto consumed = capability->consumedOutputs();
+            if (output_offset + consumed > last_outputs_.size()) {
+                throw std::runtime_error("Agent capability output slice overflow");
+            }
+            std::span<const float> slice(last_outputs_.data() + output_offset, consumed);
+            capability->apply(*this, world, slice, dt);
+            output_offset += consumed;
+        }
+
+        if (output_offset != last_outputs_.size()) {
+            throw std::runtime_error("Agent capability outputs do not fully consume brain outputs");
+        }
     }
 }
 

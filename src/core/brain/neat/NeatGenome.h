@@ -20,7 +20,8 @@ public:
                std::size_t input_dim,
                std::size_t output_dim,
                std::vector<NodeGene> nodes,
-               std::vector<ConnectionGene> connections);
+               std::vector<ConnectionGene> connections,
+               float decision_interval = 1.0f);
 
     GenomeId id() const override;
     std::unique_ptr<IGenome> clone() const override;
@@ -46,13 +47,18 @@ public:
     std::vector<NodeId> inputNodeIds() const;
     std::vector<NodeId> outputNodeIds() const;
 
+    float decisionInterval() const;
+    void setDecisionInterval(float interval);
+
     static std::unique_ptr<NeatGenome> minimal(GenomeId id,
                                                std::size_t input_dim,
                                                std::size_t output_dim,
                                                InnovationTracker& tracker,
                                                std::mt19937& rng,
                                                float time_constant_min = 0.1f,
-                                               float time_constant_max = 5.0f);
+                                               float time_constant_max = 5.0f,
+                                               float decision_interval_min = 1.0f,
+                                               float decision_interval_max = 30.0f);
 
 private:
     GenomeId id_;
@@ -60,6 +66,7 @@ private:
     std::size_t output_dim_;
     std::vector<NodeGene> nodes_;
     std::vector<ConnectionGene> connections_;
+    float decision_interval_;
 };
 
 }  // namespace neuro

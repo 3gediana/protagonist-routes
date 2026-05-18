@@ -20,7 +20,8 @@ public:
           std::unique_ptr<IBrain> brain,
           Vec2 position,
           float energy,
-          std::size_t exploration_grid_size = 20);
+          std::size_t exploration_grid_size = 20,
+          float decision_interval = 1.0f);
     ~Agent() override;
 
     AgentId id() const override;
@@ -40,6 +41,11 @@ public:
     double fitness() const override;
     void addFitness(double delta) override;
     void resetFitness() override;
+
+    float decisionInterval() const;
+    Tick nextDecisionTick() const;
+    void setNextDecisionTick(Tick tick);
+    bool shouldDecide(Tick current_tick) const;
 
     void setSpeciesId(SpeciesId species_id);
     void addPerception(std::unique_ptr<IPerception> perception);
@@ -65,6 +71,9 @@ private:
     Tick age_;
     bool alive_;
     double fitness_;
+    float decision_interval_;
+    Tick next_decision_tick_;
+    std::vector<float> last_outputs_;
     float food_eaten_this_tick_;
     bool discovered_new_cell_this_tick_;
     std::size_t exploration_grid_size_;
