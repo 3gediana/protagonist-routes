@@ -21,12 +21,14 @@
 #include "runtime/headless/EvaluationPool.h"
 #include "core/perception/NearestFoodPerception.h"
 #include "core/perception/SelfPerception.h"
+#include "core/perception/TerrainPerception.h"
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
+#include "core/world/layers/terrain/TerrainLayer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -89,6 +91,8 @@ struct RuntimeParams {
     float decision_interval_min;
     float decision_interval_max;
     std::size_t eval_threads;
+    bool terrain_enabled;
+    TerrainParams terrain_params;
 };
 
 struct GenerationStats {
@@ -161,6 +165,19 @@ RuntimeParams loadParams(const config::Config& config) {
     params.decision_interval_min = config.getOr<float>("brain.decision_interval_min", 1.0f);
     params.decision_interval_max = config.getOr<float>("brain.decision_interval_max", 30.0f);
     params.eval_threads = config.getOr<std::size_t>("runtime.eval_threads", 0);
+    params.terrain_enabled = config.getOr<bool>("world.terrain.enabled", false);
+    params.terrain_params.height_scale = config.getOr<float>("world.terrain.height_scale", 30.0f);
+    params.terrain_params.slope_resistance = config.getOr<float>("world.terrain.slope_resistance", 0.6f);
+    params.terrain_params.cave_density = config.getOr<float>("world.terrain.cave_density", 0.05f);
+    params.terrain_params.cave_shelter_factor = config.getOr<float>("world.terrain.cave_shelter_factor", 0.5f);
+    params.terrain_params.seed = static_cast<std::uint32_t>(config.getOr<int>("world.terrain.seed", 42));
+    params.terrain_params.grid_resolution = config.getOr<std::size_t>("world.terrain.grid_resolution", 64);
+    params.terrain_params.perlin_frequency = config.getOr<float>("world.terrain.perlin_frequency", 4.0f);
+    params.terrain_params.perlin_persistence = config.getOr<float>("world.terrain.perlin_persistence", 0.5f);
+    params.terrain_params.perlin_octaves = config.getOr<int>("world.terrain.perlin_octaves", 4);
+    if (params.terrain_enabled) {
+        params.input_dim += TerrainPerception::kDim;
+    }
     return params;
 }
 
@@ -304,6 +321,11 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
         params.resource_respawn_ticks,
         params.random_seed + generation + 1));
     world->addLayer(std::make_unique<AgentLayer>(params.death_threshold, params.base_metabolism));
+    if (params.terrain_enabled) {
+        auto terrain_params = params.terrain_params;
+        terrain_params.seed = params.terrain_params.seed + static_cast<std::uint32_t>(generation);
+        world->addLayer(std::make_unique<TerrainLayer>(params.world_size, terrain_params));
+    }
     return world;
 }
 
@@ -349,6 +371,9 @@ void populateWorld(World2D& world,
         }
         agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
         agent->addPerception(std::make_unique<NearestFoodPerception>());
+        if (params.terrain_enabled) {
+            agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
+        }
         agent->addCapability(std::make_unique<MoveCapability>(
             params.max_speed,
             params.decision_cost,

@@ -9,10 +9,10 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-19 |
-| **当前阶段** | 🟦 M3 已基本收尾（headless-first）；NEAT 主干、multi-seed 验证与 SpeciesObserver 已就位，下一步进入 M4 调研与实现准备 |
-| **整体进度** | ▰▰▰▰▰▰▱▱▱▱ 约 56% |
-| **最近会话摘要** | 已完成 M3 主干与收尾：NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入；新增 `evolution.csv`、`species_log.jsonl`、`run_m3_acceptance.py`；完成 `5 seed × 100/200 代` 验证；修复 `addNodeMutation()` 的悬空引用 bug 并补回归测试 |
-| **下一步建议** | 按既定流程开始 M4：先读 `docs/baseline/M4_async.md` 与相关资料，确定多线程评估 / 异步决策 / perf observer 的最小落地方案，再开始实现 |
+| **当前阶段** | � M4 MVP 完成，进入 M5 地形实现 |
+| **整体进度** | ▰▰▰▰▰▰▰▱▱▱ 约 67% |
+| **最近会话摘要** | M4 完成：EvaluationPool 线程池 + PerformanceObserver (perf.csv) + 异步决策间隔 (decision_interval 可进化基因 [1,30] tick)。51 测试全通过。Git 初始化 + 首次提交 + 里程碑 tag 完成。下一步 M5 地形 |
+| **下一步建议** | 读 `docs/baseline/M5_terrain.md`，研究 Perlin noise / heightmap，实现 TerrainLayer + TerrainPerception + physics coupling |
 
 ---
 

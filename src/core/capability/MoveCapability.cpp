@@ -5,6 +5,7 @@
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
+#include "core/world/layers/terrain/TerrainLayer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -38,7 +39,28 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
 
     const Vec2 previous_position = agent.position();
     const float previous_energy = agent.energy();
-    const Vec2 velocity = direction * max_speed_;
+
+    Vec2 velocity = direction * max_speed_;
+
+    auto* terrain = world.getLayer<TerrainLayer>();
+    float terrain_cost_factor = 1.0f;
+    if (terrain != nullptr) {
+        const Vec2 slope = terrain->slopeAt(previous_position.x, previous_position.y);
+        const float slope_mag = std::sqrt(slope.x * slope.x + slope.y * slope.y);
+        const float terrain_factor = std::max(terrain->minVelocityFactor(),
+                                              1.0f / (1.0f + slope_mag * terrain->slopeResistance()));
+        velocity = velocity * terrain_factor;
+
+        const float uphill = velocity.x * slope.x + velocity.y * slope.y;
+        if (uphill > 0.0f) {
+            terrain_cost_factor += std::abs(uphill) * terrain->slopeResistance();
+        }
+
+        if (terrain->inCave(previous_position.x, previous_position.y)) {
+            terrain_cost_factor *= terrain->caveShelterFactor();
+        }
+    }
+
     Vec2 next_position = previous_position + velocity * dt;
     const Vec2 world_size = world.size();
     next_position.x = std::clamp(next_position.x, 0.0f, world_size.x);
@@ -47,7 +69,7 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     agent.setVelocity(velocity);
     agent.setPosition(next_position);
 
-    const float move_cost = decision_cost_ + movement_cost_factor_ * velocity.length();
+    const float move_cost = (decision_cost_ + movement_cost_factor_ * velocity.length()) * terrain_cost_factor;
     agent.setEnergy(previous_energy - move_cost);
 
     world.eventBus().publish(events::Event{events::EventType::AgentMoved,
