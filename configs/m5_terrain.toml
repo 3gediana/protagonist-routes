@@ -29,7 +29,7 @@ input_dim = 5
 output_dim = 2
 
 [evolution]
-generations = 10
+generations = 100
 episode_ticks = 80
 
 [evolution.selection]

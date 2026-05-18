@@ -45,6 +45,7 @@ public:
 private:
     Vec2 randomPosition(Vec2 world_size);
     void respawnResource(Resource& resource, IWorld& world);
+    float terrainAdjustedAmount(Vec2 position, IWorld& world) const;
 
     std::size_t resource_count_;
     float resource_amount_;

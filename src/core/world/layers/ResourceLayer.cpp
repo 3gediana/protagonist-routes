@@ -3,6 +3,7 @@
 #include "core/events/EventBus.h"
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IWorld.h"
+#include "core/world/layers/terrain/TerrainLayer.h"
 
 #include <cmath>
 #include <limits>
@@ -29,6 +30,7 @@ void ResourceLayer::onAttach(IWorld& world) {
     resources_.reserve(resource_count_);
     for (std::size_t i = 0; i < resource_count_; ++i) {
         Resource resource{randomPosition(world_size_), resource_amount_, true, 0};
+        resource.amount = terrainAdjustedAmount(resource.position, world);
         resources_.push_back(resource);
         world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                                events::ResourceSpawned{resource.position, resource.amount},
@@ -111,11 +113,30 @@ Vec2 ResourceLayer::randomPosition(Vec2 world_size) {
 
 void ResourceLayer::respawnResource(Resource& resource, IWorld& world) {
     resource.position = randomPosition(world_size_);
-    resource.amount = resource_amount_;
+    resource.amount = terrainAdjustedAmount(resource.position, world);
     resource.available = true;
     world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                            events::ResourceSpawned{resource.position, resource.amount},
                                            world.currentTick()});
+}
+
+float ResourceLayer::terrainAdjustedAmount(Vec2 position, IWorld& world) const {
+    float amount = resource_amount_;
+    const auto* terrain = world.findLayer(TerrainLayer::kName);
+    if (terrain != nullptr) {
+        const auto* tl = dynamic_cast<const TerrainLayer*>(terrain);
+        if (tl != nullptr) {
+            const float h = tl->heightAt(position.x, position.y);
+            const float h_ratio = h / tl->heightScale();
+            if (h_ratio > 0.7f) {
+                amount *= 2.0f;
+            }
+            if (tl->inCave(position.x, position.y)) {
+                amount *= 3.0f;
+            }
+        }
+    }
+    return amount;
 }
 
 }  // namespace neuro
