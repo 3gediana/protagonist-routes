@@ -23,6 +23,7 @@
 #include "core/perception/SelfPerception.h"
 #include "core/perception/TerrainPerception.h"
 #include "core/perception/TimeOfDayPerception.h"
+#include "core/perception/SeasonPerception.h"
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
@@ -34,6 +35,7 @@
 #include "core/world/layers/ResourceLayer.h"
 #include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/world/layers/TimeOfDayLayer.h"
+#include "core/world/layers/SeasonLayer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -113,6 +115,8 @@ struct RuntimeParams {
     bool lamarck_mode;
     bool day_night_enabled;
     float day_length_ticks;
+    bool season_enabled;
+    std::size_t ticks_per_season;
 };
 
 struct GenerationStats {
@@ -218,6 +222,11 @@ RuntimeParams loadParams(const config::Config& config) {
     params.day_length_ticks = config.getOr<float>("world.day_night.day_length_ticks", 600.0f);
     if (params.day_night_enabled) {
         params.input_dim += TimeOfDayPerception::kDim;
+    }
+    params.season_enabled = config.getOr<bool>("world.season.enabled", false);
+    params.ticks_per_season = config.getOr<std::size_t>("world.season.ticks_per_season", 150);
+    if (params.season_enabled) {
+        params.input_dim += SeasonPerception::kDim;
     }
     return params;
 }
@@ -378,6 +387,9 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
     if (params.day_night_enabled) {
         world->addLayer(std::make_unique<TimeOfDayLayer>(params.day_length_ticks));
     }
+    if (params.season_enabled) {
+        world->addLayer(std::make_unique<SeasonLayer>(params.ticks_per_season));
+    }
     return world;
 }
 
@@ -428,6 +440,9 @@ void populateWorld(World2D& world,
         }
         if (params.day_night_enabled) {
             agent->addPerception(std::make_unique<TimeOfDayPerception>());
+        }
+        if (params.season_enabled) {
+            agent->addPerception(std::make_unique<SeasonPerception>());
         }
         agent->addCapability(std::make_unique<MoveCapability>(
             params.max_speed,
