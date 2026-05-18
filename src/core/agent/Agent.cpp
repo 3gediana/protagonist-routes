@@ -30,7 +30,9 @@ Agent::Agent(AgentId id,
       next_decision_tick_(0),
       food_eaten_this_tick_(0.0f),
       discovered_new_cell_this_tick_(false),
-      exploration_grid_size_(exploration_grid_size) {}
+      exploration_grid_size_(exploration_grid_size),
+      damage_dealt_(0.0f),
+      kills_(0) {}
 
 Agent::~Agent() = default;
 
@@ -143,6 +145,22 @@ bool Agent::discoveredNewCellThisTick() const {
 
 std::size_t Agent::visitedCellCount() const {
     return visited_cells_.size();
+}
+
+void Agent::noteDamageDealt(float amount) {
+    damage_dealt_ += amount;
+}
+
+void Agent::noteKill() {
+    kills_++;
+}
+
+float Agent::damageDealt() const {
+    return damage_dealt_;
+}
+
+std::size_t Agent::kills() const {
+    return kills_;
 }
 
 }  // namespace neuro

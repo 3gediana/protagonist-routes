@@ -56,9 +56,13 @@ public:
 
     void noteFoodEaten(float amount);
     void noteExplorationCell(std::size_t cell_index);
+    void noteDamageDealt(float amount);
+    void noteKill();
     float foodEatenThisTick() const;
     bool discoveredNewCellThisTick() const;
     std::size_t visitedCellCount() const;
+    float damageDealt() const;
+    std::size_t kills() const;
 
 private:
     AgentId id_;
@@ -78,6 +82,8 @@ private:
     bool discovered_new_cell_this_tick_;
     std::size_t exploration_grid_size_;
     std::unordered_set<std::size_t> visited_cells_;
+    float damage_dealt_;
+    std::size_t kills_;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };

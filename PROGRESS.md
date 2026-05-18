@@ -9,10 +9,10 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-19 |
-| **当前阶段** | � M4 MVP 完成，进入 M5 地形实现 |
-| **整体进度** | ▰▰▰▰▰▰▰▱▱▱ 约 67% |
-| **最近会话摘要** | M4 完成：EvaluationPool 线程池 + PerformanceObserver (perf.csv) + 异步决策间隔 (decision_interval 可进化基因 [1,30] tick)。51 测试全通过。Git 初始化 + 首次提交 + 里程碑 tag 完成。下一步 M5 地形 |
-| **下一步建议** | 读 `docs/baseline/M5_terrain.md`，研究 Perlin noise / heightmap，实现 TerrainLayer + TerrainPerception + physics coupling |
+| **当前阶段** | 🟩 Baseline 完成！M0-M5 全部通过。进入 Modules 阶段 |
+| **整体进度** | ▰▰▰▰▰▰▰▰▱▱ 约 80% |
+| **最近会话摘要** | Baseline 全部完成：M0 脚手架 + M1 固定拓扑 + M3 NEAT/CTRNN + M4 异步决策/线程池 + M5 地形/感知/物理耦合。59 测试全通过。Git tags: baseline-M0-done ~ baseline-complete |
+| **下一步建议** | 读 `docs/modules/README.md`，按推荐路径选择第一个模块实现（推荐 Stage A: F-COMM 通信或 F-FIGHT 对抗） |
 
 ---
 

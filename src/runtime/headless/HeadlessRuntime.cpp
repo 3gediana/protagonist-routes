@@ -25,6 +25,8 @@
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
+#include "core/reward/CombatReward.h"
+#include "core/capability/AttackCapability.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -93,6 +95,15 @@ struct RuntimeParams {
     std::size_t eval_threads;
     bool terrain_enabled;
     TerrainParams terrain_params;
+    bool combat_enabled;
+    float attack_range;
+    float damage_factor;
+    float energy_transfer_rate;
+    float attack_cost;
+    float attack_threshold;
+    float combat_attack_reward;
+    float combat_kill_bonus;
+    float combat_death_penalty;
 };
 
 struct GenerationStats {
@@ -177,6 +188,18 @@ RuntimeParams loadParams(const config::Config& config) {
     params.terrain_params.perlin_octaves = config.getOr<int>("world.terrain.perlin_octaves", 4);
     if (params.terrain_enabled) {
         params.input_dim += TerrainPerception::kDim;
+    }
+    params.combat_enabled = config.getOr<bool>("combat.enabled", false);
+    params.attack_range = config.getOr<float>("combat.attack_range", 5.0f);
+    params.damage_factor = config.getOr<float>("combat.damage_factor", 2.0f);
+    params.energy_transfer_rate = config.getOr<float>("combat.energy_transfer_rate", 0.5f);
+    params.attack_cost = config.getOr<float>("combat.attack_cost", 0.05f);
+    params.attack_threshold = config.getOr<float>("combat.attack_threshold", 0.5f);
+    params.combat_attack_reward = config.getOr<float>("combat.attack_reward", 2.0f);
+    params.combat_kill_bonus = config.getOr<float>("combat.kill_bonus", 10.0f);
+    params.combat_death_penalty = config.getOr<float>("combat.death_penalty", 5.0f);
+    if (params.combat_enabled) {
+        params.output_dim += 3;
     }
     return params;
 }
@@ -310,6 +333,13 @@ std::vector<std::unique_ptr<IRewardComponent>> createRewards(const RuntimeParams
     rewards.push_back(std::make_unique<SurvivalReward>(params.survival_weight));
     rewards.push_back(std::make_unique<FoodReward>(params.food_weight));
     rewards.push_back(std::make_unique<IntrinsicReward>(params.intrinsic_weight));
+    if (params.combat_enabled) {
+        rewards.push_back(std::make_unique<CombatReward>(
+            1.0,
+            params.combat_attack_reward,
+            params.combat_kill_bonus,
+            params.combat_death_penalty));
+    }
     return rewards;
 }
 
@@ -380,6 +410,14 @@ void populateWorld(World2D& world,
             params.movement_cost_factor,
             params.exploration_grid_size));
         agent->addCapability(std::make_unique<EatCapability>(params.eat_radius));
+        if (params.combat_enabled) {
+            agent->addCapability(std::make_unique<AttackCapability>(
+                params.attack_range,
+                params.damage_factor,
+                params.energy_transfer_rate,
+                params.attack_cost,
+                params.attack_threshold));
+        }
         agent_layer->addAgent(std::move(agent), world);
     }
 }
@@ -456,9 +494,10 @@ GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) 
     double complexity_sum = 0.0;
     std::unordered_set<SpeciesId> species_ids;
     for (const auto& item : evaluated) {
-        min_fitness = std::min(min_fitness, item.fitness);
-        best_fitness = std::max(best_fitness, item.fitness);
-        fitness_sum += item.fitness;
+        const double f = std::isfinite(item.fitness) ? item.fitness : 0.0;
+        min_fitness = std::min(min_fitness, f);
+        best_fitness = std::max(best_fitness, f);
+        fitness_sum += f;
         complexity_sum += static_cast<double>(item.complexity);
         if (item.species_id != kInvalidSpeciesId) {
             species_ids.insert(item.species_id);
