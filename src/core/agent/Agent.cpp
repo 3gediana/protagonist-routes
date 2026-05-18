@@ -35,6 +35,7 @@ Agent::Agent(AgentId id,
       kills_(0),
       infected_(false),
       infection_progress_(0.0f),
+      is_predator_(false),
       perceptions_(),
       capabilities_() {
 }
@@ -185,6 +186,14 @@ float Agent::infectionProgress() const {
 
 void Agent::advanceInfection(float dt) {
     infection_progress_ += dt;
+}
+
+bool Agent::isPredator() const {
+    return is_predator_;
+}
+
+void Agent::setPredator(bool v) {
+    is_predator_ = v;
 }
 
 }  // namespace neuro

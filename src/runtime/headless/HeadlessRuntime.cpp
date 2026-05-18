@@ -35,6 +35,7 @@
 #include "core/capability/AttackCapability.h"
 #include "core/capability/HebbianLearning.h"
 #include "core/capability/EmitSignalCapability.h"
+#include "core/capability/PredatorHuntCapability.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -153,6 +154,12 @@ struct RuntimeParams {
     double novelty_weight;
     std::size_t novelty_k_neighbors;
     float novelty_threshold;
+    bool pred_enabled;
+    float pred_ratio;
+    float pred_hunt_radius;
+    float pred_damage;
+    float pred_energy_gain;
+    float pred_hunt_cost;
 };
 
 struct GenerationStats {
@@ -299,6 +306,15 @@ RuntimeParams loadParams(const config::Config& config) {
     params.novelty_weight = config.getOr<double>("reward.novelty_weight", 5.0);
     params.novelty_k_neighbors = config.getOr<std::size_t>("reward.novelty_k_neighbors", 15);
     params.novelty_threshold = config.getOr<float>("reward.novelty_threshold", 0.3f);
+    params.pred_enabled = config.getOr<bool>("world.predator.enabled", false);
+    params.pred_ratio = config.getOr<float>("world.predator.ratio", 0.25f);
+    params.pred_hunt_radius = config.getOr<float>("world.predator.hunt_radius", 5.0f);
+    params.pred_damage = config.getOr<float>("world.predator.damage", 0.5f);
+    params.pred_energy_gain = config.getOr<float>("world.predator.energy_gain", 0.3f);
+    params.pred_hunt_cost = config.getOr<float>("world.predator.hunt_cost", 0.02f);
+    if (params.pred_enabled) {
+        params.output_dim += 1;
+    }
     return params;
 }
 
@@ -518,6 +534,7 @@ void populateWorld(World2D& world,
         ? std::random_device{}()
         : params.random_seed + 1000 + generation);
 
+    std::size_t agent_index = 0;
     for (const auto& genome_ptr : population) {
         auto brain = createBrainForGenome(*genome_ptr, params);
         if (brain->inputDim() != params.input_dim || brain->outputDim() != params.output_dim) {
@@ -582,7 +599,18 @@ void populateWorld(World2D& world,
             agent->addCapability(std::make_unique<EmitSignalCapability>(
                 params.signal_channels, params.signal_emit_cost));
         }
+        if (params.pred_enabled) {
+            const bool is_pred = (agent_index < static_cast<std::size_t>(
+                static_cast<float>(params.population_size) * params.pred_ratio));
+            agent->setPredator(is_pred);
+            agent->addCapability(std::make_unique<PredatorHuntCapability>(
+                params.pred_hunt_radius,
+                params.pred_damage,
+                params.pred_energy_gain,
+                params.pred_hunt_cost));
+        }
         agent_layer->addAgent(std::move(agent), world);
+        ++agent_index;
     }
 }
 

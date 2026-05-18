@@ -69,6 +69,9 @@ public:
     float infectionProgress() const;
     void advanceInfection(float dt);
 
+    bool isPredator() const;
+    void setPredator(bool v);
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -91,6 +94,7 @@ private:
     std::size_t kills_;
     bool infected_;
     float infection_progress_;
+    bool is_predator_;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };
