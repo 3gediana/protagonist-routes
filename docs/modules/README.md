@@ -46,10 +46,10 @@
 
 | 模块 | 作用 | 难度 | 依赖 | 状态 |
 |---|---|---|---|---|
-| [F-DAY](F-DAY_day_night.md) | 昼夜循环 | 🟢 低 | M5 | 📋 |
-| [F-SEASON](F-SEASON_seasons.md) | 季节变化 | 🟢 低 | M5 | 📋 |
-| [F-DISEASE](F-DISEASE_disease.md) | 疾病传播 | 🟡 中 | M5 | 📋 |
-| [F-RESOURCE](F-RESOURCE_dynamic_resource.md) | 资源衰竭与再生 | 🟢 低 | M1 | 📋 |
+| [F-DAY](F-DAY_day_night.md) | 昼夜循环 | 🟢 低 | M5 | ✅⛳⛳ |
+| [F-SEASON](F-SEASON_seasons.md) | 季节变化 | 🟢 低 | M5 | ✅⛳⛳ |
+| [F-DISEASE](F-DISEASE_disease.md) | 疾病传播 | 🟡 中 | M5 | ✅⛳⛳ |
+| [F-RESOURCE](F-RESOURCE_dynamic_resource.md) | 资源衰竭与再生 | 🟢 低 | M1 | ✅⛳⛳ |
 | [F-CAVE](F-CAVE_cave_system.md) | 进阶洞穴系统 | 🟡 中 | M5 | 📋 |
 
 ### 🔬 观测类
@@ -127,5 +127,5 @@
 
 ```
 baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
-modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / others 📋
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / others 📋
 ```
