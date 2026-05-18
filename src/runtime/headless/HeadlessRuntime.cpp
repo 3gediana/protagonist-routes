@@ -30,6 +30,7 @@
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
 #include "core/reward/CombatReward.h"
+#include "core/reward/CoopReward.h"
 #include "core/capability/AttackCapability.h"
 #include "core/capability/HebbianLearning.h"
 #include "core/capability/EmitSignalCapability.h"
@@ -41,6 +42,7 @@
 #include "core/world/layers/SeasonLayer.h"
 #include "core/world/layers/DiseaseLayer.h"
 #include "core/world/layers/signal/SignalLayer.h"
+#include "core/world/layers/HeavyResourceLayer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -138,6 +140,14 @@ struct RuntimeParams {
     std::size_t signal_grid_resolution;
     float signal_perception_radius;
     float signal_emit_cost;
+    bool coop_enabled;
+    std::size_t heavy_resource_count;
+    float heavy_resource_amount;
+    std::size_t heavy_required_workers;
+    std::size_t heavy_required_ticks;
+    float heavy_collect_radius;
+    double coop_weight;
+    double coop_proximity_bonus;
 };
 
 struct GenerationStats {
@@ -272,6 +282,14 @@ RuntimeParams loadParams(const config::Config& config) {
         params.input_dim += params.signal_channels;
         params.output_dim += params.signal_channels;
     }
+    params.coop_enabled = config.getOr<bool>("world.coop.enabled", false);
+    params.heavy_resource_count = config.getOr<std::size_t>("world.coop.heavy_count", 3);
+    params.heavy_resource_amount = config.getOr<float>("world.coop.heavy_amount", 30.0f);
+    params.heavy_required_workers = config.getOr<std::size_t>("world.coop.required_workers", 3);
+    params.heavy_required_ticks = config.getOr<std::size_t>("world.coop.required_ticks", 5);
+    params.heavy_collect_radius = config.getOr<float>("world.coop.collect_radius", 5.0f);
+    params.coop_weight = config.getOr<double>("reward.coop_weight", 3.0);
+    params.coop_proximity_bonus = config.getOr<double>("reward.coop_proximity_bonus", 0.5);
     return params;
 }
 
@@ -412,6 +430,11 @@ std::vector<std::unique_ptr<IRewardComponent>> createRewards(const RuntimeParams
             params.combat_kill_bonus,
             params.combat_death_penalty));
     }
+    if (params.coop_enabled) {
+        rewards.push_back(std::make_unique<CoopReward>(
+            params.coop_weight,
+            params.coop_proximity_bonus));
+    }
     return rewards;
 }
 
@@ -452,6 +475,15 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
             params.signal_channels,
             params.signal_decay_rate,
             params.signal_diffusion_rate));
+    }
+    if (params.coop_enabled) {
+        world->addLayer(std::make_unique<HeavyResourceLayer>(
+            params.heavy_resource_count,
+            params.heavy_resource_amount,
+            params.heavy_required_workers,
+            params.heavy_required_ticks,
+            params.heavy_collect_radius,
+            params.random_seed + 200));
     }
     return world;
 }
