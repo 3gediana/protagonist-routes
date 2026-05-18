@@ -24,6 +24,7 @@
 #include "core/perception/TerrainPerception.h"
 #include "core/perception/TimeOfDayPerception.h"
 #include "core/perception/SeasonPerception.h"
+#include "core/perception/InfectionPerception.h"
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
@@ -36,6 +37,7 @@
 #include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/world/layers/TimeOfDayLayer.h"
 #include "core/world/layers/SeasonLayer.h"
+#include "core/world/layers/DiseaseLayer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -117,6 +119,13 @@ struct RuntimeParams {
     float day_length_ticks;
     bool season_enabled;
     std::size_t ticks_per_season;
+    bool disease_enabled;
+    float infection_radius;
+    float infection_prob;
+    float infection_duration;
+    float death_prob;
+    float initial_infection_rate;
+    float infection_perception_radius;
 };
 
 struct GenerationStats {
@@ -227,6 +236,16 @@ RuntimeParams loadParams(const config::Config& config) {
     params.ticks_per_season = config.getOr<std::size_t>("world.season.ticks_per_season", 150);
     if (params.season_enabled) {
         params.input_dim += SeasonPerception::kDim;
+    }
+    params.disease_enabled = config.getOr<bool>("world.disease.enabled", false);
+    params.infection_radius = config.getOr<float>("world.disease.infection_radius", 5.0f);
+    params.infection_prob = config.getOr<float>("world.disease.infection_prob", 0.1f);
+    params.infection_duration = config.getOr<float>("world.disease.infection_duration", 30.0f);
+    params.death_prob = config.getOr<float>("world.disease.death_prob", 0.3f);
+    params.initial_infection_rate = config.getOr<float>("world.disease.initial_infection_rate", 0.1f);
+    params.infection_perception_radius = config.getOr<float>("world.disease.perception_radius", 10.0f);
+    if (params.disease_enabled) {
+        params.input_dim += InfectionPerception::kDim;
     }
     return params;
 }
@@ -390,6 +409,15 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
     if (params.season_enabled) {
         world->addLayer(std::make_unique<SeasonLayer>(params.ticks_per_season));
     }
+    if (params.disease_enabled) {
+        world->addLayer(std::make_unique<DiseaseLayer>(
+            params.infection_radius,
+            params.infection_prob,
+            params.infection_duration,
+            params.death_prob,
+            params.initial_infection_rate,
+            params.random_seed + 100));
+    }
     return world;
 }
 
@@ -443,6 +471,9 @@ void populateWorld(World2D& world,
         }
         if (params.season_enabled) {
             agent->addPerception(std::make_unique<SeasonPerception>());
+        }
+        if (params.disease_enabled) {
+            agent->addPerception(std::make_unique<InfectionPerception>(params.infection_perception_radius));
         }
         agent->addCapability(std::make_unique<MoveCapability>(
             params.max_speed,

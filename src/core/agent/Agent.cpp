@@ -32,7 +32,12 @@ Agent::Agent(AgentId id,
       discovered_new_cell_this_tick_(false),
       exploration_grid_size_(exploration_grid_size),
       damage_dealt_(0.0f),
-      kills_(0) {}
+      kills_(0),
+      infected_(false),
+      infection_progress_(0.0f),
+      perceptions_(),
+      capabilities_() {
+}
 
 Agent::~Agent() = default;
 
@@ -161,6 +166,25 @@ float Agent::damageDealt() const {
 
 std::size_t Agent::kills() const {
     return kills_;
+}
+
+bool Agent::infected() const {
+    return infected_;
+}
+
+void Agent::setInfected(bool v) {
+    infected_ = v;
+    if (!v) {
+        infection_progress_ = 0.0f;
+    }
+}
+
+float Agent::infectionProgress() const {
+    return infection_progress_;
+}
+
+void Agent::advanceInfection(float dt) {
+    infection_progress_ += dt;
 }
 
 }  // namespace neuro

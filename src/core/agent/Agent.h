@@ -64,6 +64,11 @@ public:
     float damageDealt() const;
     std::size_t kills() const;
 
+    bool infected() const;
+    void setInfected(bool v);
+    float infectionProgress() const;
+    void advanceInfection(float dt);
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -84,6 +89,8 @@ private:
     std::unordered_set<std::size_t> visited_cells_;
     float damage_dealt_;
     std::size_t kills_;
+    bool infected_;
+    float infection_progress_;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };
