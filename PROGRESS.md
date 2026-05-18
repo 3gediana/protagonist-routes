@@ -9,10 +9,10 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-19 |
-| **当前阶段** | 🟩 Baseline 完成 + 2 Modules MVP (F-FIGHT, F-NEUROMOD) |
-| **整体进度** | ▰▰▰▰▰▰▰▰▰▱ 约 90% |
-| **最近会话摘要** | M5 地形完成 + F-FIGHT 对抗模块 (AttackCapability + CombatReward) + F-NEUROMOD 神经调节 (modulatory neurons + weight scaling)。59 测试全通过。Tags: baseline-complete, module-F-FIGHT-MVP, module-F-NEUROMOD-MVP |
-| **下一步建议** | 继续 Stage B 模块（F-LEARN 拉马克开关 或 F-COMM 通信），或进入 Stage A 可视化（F-TREE / F-HEAT / F-GOD） |
+| **当前阶段** | 🟩 Baseline 完成 + 3 Modules MVP (F-FIGHT, F-NEUROMOD, F-LEARN) |
+| **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 约 95% |
+| **最近会话摘要** | M5 地形 + F-FIGHT 对抗 + F-NEUROMOD 神经调节 + F-LEARN 赫布学习/拉马克开关。59 测试全通过。Tags: baseline-complete, module-F-FIGHT-MVP, module-F-NEUROMOD-MVP, module-F-LEARN-MVP |
+| **下一步建议** | 继续 Stage C 模块（F-COMM 通信 或 F-DAY 昼夜循环），或进入可视化整合（M2） |
 
 ---
 

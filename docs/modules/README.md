@@ -39,7 +39,7 @@
 | [F-FIGHT](F-FIGHT_combat.md) | 对抗机制，攻击防御能量转移 | 🟡 中 | M5 | ✅⛳⛳ |
 | [F-PRED](F-PRED_predator_prey.md) | 捕食者-猎物多物种共进化 | 🟡 中 | F-FIGHT | 📋 |
 | [F-TOOL](F-TOOL_tools.md) | 工具与可移动物体，涌现"建筑" | 🔴 高 | M5 | 📋 |
-| [F-LEARN](F-LEARN_lifetime_learning.md) | 终身学习 + 拉马克开关 | 🟡 中 | M3 | 📋 |
+| [F-LEARN](F-LEARN_lifetime_learning.md) | 终身学习 + 拉马克开关 | 🟡 中 | M3 | ✅⛳⛳ |
 | [F-NEUROMOD](F-NEUROMOD_neuromodulation.md) | 神经调节情绪 | 🟡 中 | M3 | ✅⛳⛳ |
 
 ### 🌍 环境类
@@ -127,5 +127,5 @@
 
 ```
 baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
-modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / others 📋
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / others 📋
 ```
