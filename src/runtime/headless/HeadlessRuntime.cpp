@@ -22,6 +22,7 @@
 #include "core/perception/NearestFoodPerception.h"
 #include "core/perception/SelfPerception.h"
 #include "core/perception/TerrainPerception.h"
+#include "core/perception/TimeOfDayPerception.h"
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
@@ -32,6 +33,7 @@
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
 #include "core/world/layers/terrain/TerrainLayer.h"
+#include "core/world/layers/TimeOfDayLayer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -109,6 +111,8 @@ struct RuntimeParams {
     bool lifetime_learning_enabled;
     float hebbian_learning_rate;
     bool lamarck_mode;
+    bool day_night_enabled;
+    float day_length_ticks;
 };
 
 struct GenerationStats {
@@ -210,6 +214,11 @@ RuntimeParams loadParams(const config::Config& config) {
     params.lifetime_learning_enabled = config.getOr<bool>("learning.enabled", false);
     params.hebbian_learning_rate = config.getOr<float>("learning.hebbian_rate", 0.01f);
     params.lamarck_mode = config.getOr<bool>("learning.lamarck_mode", false);
+    params.day_night_enabled = config.getOr<bool>("world.day_night.enabled", false);
+    params.day_length_ticks = config.getOr<float>("world.day_night.day_length_ticks", 600.0f);
+    if (params.day_night_enabled) {
+        params.input_dim += TimeOfDayPerception::kDim;
+    }
     return params;
 }
 
@@ -366,6 +375,9 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
         terrain_params.seed = params.terrain_params.seed + static_cast<std::uint32_t>(generation);
         world->addLayer(std::make_unique<TerrainLayer>(params.world_size, terrain_params));
     }
+    if (params.day_night_enabled) {
+        world->addLayer(std::make_unique<TimeOfDayLayer>(params.day_length_ticks));
+    }
     return world;
 }
 
@@ -413,6 +425,9 @@ void populateWorld(World2D& world,
         agent->addPerception(std::make_unique<NearestFoodPerception>());
         if (params.terrain_enabled) {
             agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
+        }
+        if (params.day_night_enabled) {
+            agent->addPerception(std::make_unique<TimeOfDayPerception>());
         }
         agent->addCapability(std::make_unique<MoveCapability>(
             params.max_speed,
