@@ -9,10 +9,10 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-19 |
-| **当前阶段** | 🟩 Baseline 完成 + 10 Modules MVP |
-| **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 约 98% |
-| **最近会话摘要** | 10 modules MVP：FIGHT/NEUROMOD/LEARN/DAY/SEASON/DISEASE/RESOURCE/COMM/COOP/NOVELTY。59测试通过。Hebbian rate 0.01→0.002修复。 |
-| **下一步建议** | F-PRED捕食者-猎物 / F-NSGA多目标 / F-CURRICULUM课程学习 / 或进入可视化整合 |
+| **当前阶段** | 🟩 Baseline 完成 + 12 Modules MVP |
+| **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 约 99% |
+| **最近会话摘要** | 12 modules MVP：FIGHT/NEUROMOD/LEARN/DAY/SEASON/DISEASE/RESOURCE/COMM/COOP/NOVELTY/PRED/CURRICULUM。Hebbian rate修复。59测试通过。 |
+| **下一步建议** | F-NSGA多目标 / F-COEVO协同进化 / 或进入可视化整合(M2) |
 
 ---
 

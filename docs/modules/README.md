@@ -37,7 +37,7 @@
 | [F-COMM](F-COMM_communication.md) | 信号场通信，进化原始语言 | 🔴 高 | M5 | ✅⛳⛳ |
 | [F-COOP](F-COOP_cooperation.md) | 合作机制，共同任务奖励 | 🔴 高 | F-COMM | ✅⛳⛳ |
 | [F-FIGHT](F-FIGHT_combat.md) | 对抗机制，攻击防御能量转移 | 🟡 中 | M5 | ✅⛳⛳ |
-| [F-PRED](F-PRED_predator_prey.md) | 捕食者-猎物多物种共进化 | 🟡 中 | F-FIGHT | 📋 |
+| [F-PRED](F-PRED_predator_prey.md) | 捕食者-猎物多物种共进化 | 🟡 中 | F-FIGHT | ✅⛳⛳ |
 | [F-TOOL](F-TOOL_tools.md) | 工具与可移动物体，涌现"建筑" | 🔴 高 | M5 | 📋 |
 | [F-LEARN](F-LEARN_lifetime_learning.md) | 终身学习 + 拉马克开关 | 🟡 中 | M3 | ✅⛳⛳ |
 | [F-NEUROMOD](F-NEUROMOD_neuromodulation.md) | 神经调节情绪 | 🟡 中 | M3 | ✅⛳⛳ |
@@ -57,9 +57,9 @@
 | 模块 | 作用 | 难度 | 依赖 | 状态 |
 |---|---|---|---|---|
 | [F-NOVELTY](F-NOVELTY_novelty_search.md) | 新颖性搜索 | 🟡 中 | M3 | ✅⛳⛳ |
-| [F-COEVO](F-COEVO_coevolution.md) | 多种群共进化 | � 中 | M5 | 📋 |
+| [F-COEVO](F-COEVO_coevolution.md) | 多种群共进化 | 🟡 中 | M5 | 📋 |
 | [F-NSGA](F-NSGA_multi_objective.md) | 多目标进化 NSGA-II | 🟡 中 | M3 | 📋 |
-| [F-CURRICULUM](F-CURRICULUM_curriculum.md) | 课程学习 | � 低 | M3 | 📋 |
+| [F-CURRICULUM](F-CURRICULUM_curriculum.md) | 课程学习逐级解锁难度 | 🟢 低 | M3 | ✅⛳⛳ |
 
 ### 🎬 演示类
 
@@ -69,15 +69,6 @@
 | [F-LLM](F-LLM_narrator.md) | LLM 实时解说员 | 🟡 中 | M5 | 📋 |
 | [F-REPLAY](F-REPLAY_replay.md) | 录制 / 回放系统 | 🟡 中 | M3 | 📋 |
 | [F-COMPARE](F-COMPARE_side_by_side.md) | 对照实验左右分屏 | 🔴 高 | F-FORK | 📋 |
-| [F-CURRICULUM](F-CURRICULUM_curriculum.md) | 课程学习逐级解锁难度 | 🟡 中 | M3 | 📋 |
-
-### ⚙️ 算法类
-
-| 模块 | 作用 | 难度 | 依赖 | 状态 |
-|---|---|---|---|---|
-| [F-NOVELTY](F-NOVELTY_novelty_search.md) | 新颖性搜索 | 🟡 中 | M3 | 📋 |
-| [F-COEVO](F-COEVO_coevolution.md) | 协同进化 | 🔴 高 | F-PRED | 📋 |
-| [F-NSGA](F-NSGA_multi_objective.md) | 多目标进化 NSGA-II | 🔴 高 | M3 | 📋 |
 
 ---
 
@@ -127,5 +118,5 @@
 
 ```
 baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
-modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / others 📋
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / F-PRED ✅⛳⛳ / F-CURRICULUM ✅⛳⛳ / others 📋
 ```
