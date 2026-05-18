@@ -52,14 +52,14 @@
 | [F-RESOURCE](F-RESOURCE_dynamic_resource.md) | 资源衰竭与再生 | 🟢 低 | M1 | ✅⛳⛳ |
 | [F-CAVE](F-CAVE_cave_system.md) | 进阶洞穴系统 | 🟡 中 | M5 | 📋 |
 
-### 🔬 观测类
+### 🔬 进化算法类
 
 | 模块 | 作用 | 难度 | 依赖 | 状态 |
 |---|---|---|---|---|
-| [F-TREE](F-TREE_phylogenetic.md) | 物种谱系树可视化 | 🟡 中 | M3 | 📋 |
-| [F-HEAT](F-HEAT_heatmap.md) | 行为热力图 | 🟢 低 | M2 | 📋 |
-| [F-FORK](F-FORK_parallel_universe.md) | 平行宇宙存档分支 | 🟡 中 | M3 | 📋 |
-| [F-STAT](F-STAT_advanced_stats.md) | 高级统计指标 | 🟡 中 | M3 | 📋 |
+| [F-NOVELTY](F-NOVELTY_novelty_search.md) | 新颖性搜索 | 🟡 中 | M3 | ✅⛳⛳ |
+| [F-COEVO](F-COEVO_coevolution.md) | 多种群共进化 | � 中 | M5 | 📋 |
+| [F-NSGA](F-NSGA_multi_objective.md) | 多目标进化 NSGA-II | 🟡 中 | M3 | 📋 |
+| [F-CURRICULUM](F-CURRICULUM_curriculum.md) | 课程学习 | � 低 | M3 | 📋 |
 
 ### 🎬 演示类
 
@@ -127,5 +127,5 @@
 
 ```
 baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
-modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / others 📋
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / others 📋
 ```
