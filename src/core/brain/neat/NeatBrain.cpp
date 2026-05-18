@@ -30,9 +30,11 @@ NeatBrain::NeatBrain(const NeatGenome& genome)
         node_evals_.push_back(NodeEval{
             node.type == NodeGeneType::Input,
             node.type == NodeGeneType::Output,
+            node.type == NodeGeneType::Modulatory,
             node.bias,
             node.response,
             std::max(node.time_constant, 1.0e-3f),
+            {},
             {},
         });
     }
@@ -48,7 +50,14 @@ NeatBrain::NeatBrain(const NeatGenome& genome)
             throw std::runtime_error("NeatBrain connection references missing node");
         }
 
-        node_evals_[target_it->second].incoming.emplace_back(source_it->second, connection.weight);
+        const std::size_t source_idx = source_it->second;
+        const std::size_t target_idx = target_it->second;
+
+        if (node_evals_[source_idx].is_modulatory) {
+            node_evals_[target_idx].modulatory_incoming.emplace_back(source_idx, connection.weight);
+        } else {
+            node_evals_[target_idx].incoming.emplace_back(source_idx, connection.weight);
+        }
     }
 
     values_[0].assign(node_evals_.size(), 0.0f);
@@ -88,9 +97,15 @@ std::span<const float> NeatBrain::forward(std::span<const float> inputs, float d
             continue;
         }
 
+        float modulation = 0.0f;
+        for (const auto& [source_index, weight] : node.modulatory_incoming) {
+            modulation += current[source_index] * weight;
+        }
+        const float mod_factor = 1.0f + std::tanh(modulation);
+
         float sum = 0.0f;
         for (const auto& [source_index, weight] : node.incoming) {
-            sum += current[source_index] * weight;
+            sum += current[source_index] * weight * mod_factor;
         }
 
         const float activated = activate(node.bias + node.response * sum);

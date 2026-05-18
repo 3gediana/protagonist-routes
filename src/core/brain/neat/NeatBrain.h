@@ -25,10 +25,12 @@ private:
     struct NodeEval {
         bool is_input{false};
         bool is_output{false};
+        bool is_modulatory{false};
         float bias{0.0f};
         float response{1.0f};
         float time_constant{1.0f};
         std::vector<std::pair<std::size_t, float>> incoming;
+        std::vector<std::pair<std::size_t, float>> modulatory_incoming;
     };
 
     std::size_t input_dim_;

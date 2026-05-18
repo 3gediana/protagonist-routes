@@ -83,6 +83,7 @@ struct RuntimeParams {
     double add_node_rate;
     double add_connection_rate;
     double toggle_connection_rate;
+    double add_modulatory_rate;
     double weight_perturb_sigma;
     double compatibility_threshold;
     double c1_excess;
@@ -166,6 +167,7 @@ RuntimeParams loadParams(const config::Config& config) {
     params.add_node_rate = config.getOr<double>("evolution.mutation.add_node_rate", 0.03);
     params.add_connection_rate = config.getOr<double>("evolution.mutation.add_connection_rate", 0.05);
     params.toggle_connection_rate = config.getOr<double>("evolution.mutation.toggle_connection_rate", 0.01);
+    params.add_modulatory_rate = config.getOr<double>("evolution.mutation.add_modulatory_rate", 0.01);
     params.weight_perturb_sigma = config.getOr<double>("evolution.mutation.weight_perturb_sigma", 0.5);
     params.compatibility_threshold = config.getOr<double>("evolution.speciation.compatibility_threshold", 3.0);
     params.c1_excess = config.getOr<double>("evolution.speciation.c1_excess", 1.0);
@@ -230,6 +232,7 @@ std::unique_ptr<IEvolutionStrategy> createEvolutionStrategy(const RuntimeParams&
             params.add_node_rate,
             params.add_connection_rate,
             params.toggle_connection_rate,
+            params.add_modulatory_rate,
             params.weight_perturb_sigma,
             params.compatibility_threshold,
             params.c1_excess,

@@ -50,6 +50,7 @@ NeatEvolution::NeatEvolution(double elite_ratio,
                              double add_node_rate,
                              double add_connection_rate,
                              double toggle_connection_rate,
+                             double add_modulatory_rate,
                              double weight_perturb_sigma,
                              double compatibility_threshold,
                              double c1_excess,
@@ -67,6 +68,7 @@ NeatEvolution::NeatEvolution(double elite_ratio,
       add_node_rate_(add_node_rate),
       add_connection_rate_(add_connection_rate),
       toggle_connection_rate_(toggle_connection_rate),
+      add_modulatory_rate_(add_modulatory_rate),
       weight_perturb_sigma_(weight_perturb_sigma),
       tau_min_(tau_min),
       tau_max_(tau_max),
@@ -473,12 +475,16 @@ void NeatEvolution::mutate(NeatGenome& genome) {
     std::bernoulli_distribution add_connection(add_connection_rate_);
     std::bernoulli_distribution add_node(add_node_rate_);
     std::bernoulli_distribution toggle(toggle_connection_rate_);
+    std::bernoulli_distribution add_modulatory(add_modulatory_rate_);
 
     if (add_connection(rng_)) {
         addConnectionMutation(genome);
     }
     if (add_node(rng_)) {
         addNodeMutation(genome);
+    }
+    if (add_modulatory(rng_)) {
+        addModulatoryNodeMutation(genome);
     }
     if (toggle(rng_)) {
         toggleConnectionMutation(genome);
@@ -607,6 +613,56 @@ void NeatEvolution::toggleConnectionMutation(NeatGenome& genome) {
     std::uniform_int_distribution<std::size_t> index_dist(0, genome.connections().size() - 1);
     auto& connection = genome.connections()[index_dist(rng_)];
     connection.enabled = !connection.enabled;
+}
+
+void NeatEvolution::addModulatoryNodeMutation(NeatGenome& genome) {
+    if (genome.nodes().size() < 2) {
+        return;
+    }
+
+    const NodeId new_node_id = innovation_tracker_.nextNodeId();
+    std::normal_distribution<float> bias_dist(0.0f, 1.0f);
+    std::uniform_real_distribution<float> tau_dist(tau_min_, tau_max_);
+
+    genome.nodes().push_back(NodeGene{
+        new_node_id,
+        NodeGeneType::Modulatory,
+        bias_dist(rng_),
+        1.0f,
+        tau_dist(rng_),
+    });
+
+    std::uniform_int_distribution<std::size_t> source_dist(0, genome.nodes().size() - 2);
+    const auto& source = genome.nodes()[source_dist(rng_)];
+    if (source.type != NodeGeneType::Output && source.type != NodeGeneType::Modulatory) {
+        genome.connections().push_back(ConnectionGene{
+            source.id,
+            new_node_id,
+            1.0f,
+            true,
+            innovation_tracker_.nextConnectionInnovation(source.id, new_node_id),
+        });
+    }
+
+    std::vector<std::size_t> target_candidates;
+    for (std::size_t i = 0; i < genome.nodes().size() - 1; ++i) {
+        const auto& n = genome.nodes()[i];
+        if (n.type == NodeGeneType::Hidden || n.type == NodeGeneType::Output) {
+            target_candidates.push_back(i);
+        }
+    }
+    if (!target_candidates.empty()) {
+        std::uniform_int_distribution<std::size_t> target_dist(0, target_candidates.size() - 1);
+        const auto& target = genome.nodes()[target_candidates[target_dist(rng_)]];
+        std::normal_distribution<float> weight_dist(0.0f, 1.0f);
+        genome.connections().push_back(ConnectionGene{
+            new_node_id,
+            target.id,
+            weight_dist(rng_),
+            true,
+            innovation_tracker_.nextConnectionInnovation(new_node_id, target.id),
+        });
+    }
 }
 
 void NeatEvolution::mutateDecisionInterval(NeatGenome& genome) {

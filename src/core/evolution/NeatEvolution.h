@@ -21,6 +21,7 @@ public:
                   double add_node_rate,
                   double add_connection_rate,
                   double toggle_connection_rate,
+                  double add_modulatory_rate,
                   double weight_perturb_sigma,
                   double compatibility_threshold,
                   double c1_excess,
@@ -66,6 +67,7 @@ private:
     void addConnectionMutation(NeatGenome& genome);
     void addNodeMutation(NeatGenome& genome);
     void toggleConnectionMutation(NeatGenome& genome);
+    void addModulatoryNodeMutation(NeatGenome& genome);
     void mutateDecisionInterval(NeatGenome& genome);
 
     double elite_ratio_;
@@ -75,6 +77,7 @@ private:
     double add_node_rate_;
     double add_connection_rate_;
     double toggle_connection_rate_;
+    double add_modulatory_rate_;
     double weight_perturb_sigma_;
     float tau_min_;
     float tau_max_;
