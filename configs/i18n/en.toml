@@ -1,0 +1,108 @@
+# Neural Eco - English (en) UI strings
+# Keep keys synced with zh.toml. See ADR-0003.
+
+[app]
+title = "Neural Eco"
+subtitle = "A Neuroevolution Ecosystem"
+
+[lang]
+switch = "中"
+
+# ----------------------------------------------------------------------------
+# HUD
+# ----------------------------------------------------------------------------
+[hud]
+generation = "Gen {gen}"
+population = "Pop {n}"
+species = "{n} species"
+fps = "{fps} FPS"
+speed = "{x}× speed"
+tick = "Tick {t}"
+
+# ----------------------------------------------------------------------------
+# Control panel
+# ----------------------------------------------------------------------------
+[panel.control]
+title = "Control"
+start = "Start"
+pause = "Pause"
+resume = "Resume"
+step = "Step"
+reset = "Reset"
+screenshot = "Screenshot"
+speed_label = "Speed"
+
+# ----------------------------------------------------------------------------
+# Stats panel
+# ----------------------------------------------------------------------------
+[panel.stats]
+title = "Statistics"
+avg_fitness = "Avg Fitness"
+best_fitness = "Best Fitness"
+worst_fitness = "Worst Fitness"
+diversity = "Population Diversity"
+avg_complexity = "Avg Topology Complexity"
+species_count = "Species Count"
+
+# ----------------------------------------------------------------------------
+# Phylogenetic tree
+# ----------------------------------------------------------------------------
+[panel.tree]
+title = "Phylogenetic Tree"
+hover_id = "Species #{id}"
+hover_born = "Born at gen {gen}"
+hover_died = "Extinct at gen {gen}"
+hover_alive = "Currently alive"
+hover_size = "{n} members"
+hover_best = "Peak fitness: {value}"
+
+# ----------------------------------------------------------------------------
+# God panel
+# ----------------------------------------------------------------------------
+[panel.god]
+title = "Intervention Panel"
+
+[intervention]
+clear_food = "Clear Food"
+food_flood = "Food Flood"
+spawn_predator = "Spawn Predator"
+earthquake = "Earthquake"
+cull_population = "Cull 50%"
+mutation_boost = "Boost Mutation"
+build_wall = "Build Wall"
+fast_forward = "Next Generation"
+undo = "Undo"
+random_event = "Surprise Me"
+
+# ----------------------------------------------------------------------------
+# Narrator
+# ----------------------------------------------------------------------------
+[narrator]
+title = "Narrator"
+species_extinct = "Species #{id} went extinct."
+species_born = "New species #{id} branched from #{parent}."
+agent_died = "Agent #{id} died."
+intervention_triggered = "Intervention triggered: {name}"
+
+# ----------------------------------------------------------------------------
+# Modes
+# ----------------------------------------------------------------------------
+[mode]
+training = "Training"
+demo = "Demo"
+paused = "Paused"
+loading = "Loading"
+
+# ----------------------------------------------------------------------------
+# Generic UI
+# ----------------------------------------------------------------------------
+[generic]
+ok = "OK"
+cancel = "Cancel"
+yes = "Yes"
+no = "No"
+loading = "Loading..."
+saving = "Saving..."
+error = "Error"
+warning = "Warning"
+info = "Info"

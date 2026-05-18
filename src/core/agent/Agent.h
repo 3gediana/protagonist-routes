@@ -1,0 +1,76 @@
+#pragma once
+
+#include "core/interfaces/IAgent.h"
+
+#include <memory>
+#include <span>
+#include <unordered_set>
+#include <vector>
+
+namespace neuro {
+
+class IPerception;
+class IAgentCapability;
+class IWorld;
+
+class Agent final : public IAgent {
+public:
+    Agent(AgentId id,
+          GenomeId genome_id,
+          std::unique_ptr<IBrain> brain,
+          Vec2 position,
+          float energy,
+          std::size_t exploration_grid_size = 20);
+    ~Agent() override;
+
+    AgentId id() const override;
+    GenomeId genomeId() const override;
+    SpeciesId speciesId() const override;
+    Vec2 position() const override;
+    Vec2 velocity() const override;
+    void setPosition(Vec2 p) override;
+    void setVelocity(Vec2 v) override;
+    float energy() const override;
+    void setEnergy(float e) override;
+    Tick age() const override;
+    bool alive() const override;
+    void kill(const char* cause) override;
+    IBrain& brain() override;
+    const IBrain& brain() const override;
+    double fitness() const override;
+    void addFitness(double delta) override;
+    void resetFitness() override;
+
+    void setSpeciesId(SpeciesId species_id);
+    void addPerception(std::unique_ptr<IPerception> perception);
+    void addCapability(std::unique_ptr<IAgentCapability> capability);
+    void beginTick();
+    void step(IWorld& world, float dt);
+    void incrementAge();
+
+    void noteFoodEaten(float amount);
+    void noteExplorationCell(std::size_t cell_index);
+    float foodEatenThisTick() const;
+    bool discoveredNewCellThisTick() const;
+    std::size_t visitedCellCount() const;
+
+private:
+    AgentId id_;
+    GenomeId genome_id_;
+    SpeciesId species_id_;
+    std::unique_ptr<IBrain> brain_;
+    Vec2 position_;
+    Vec2 velocity_;
+    float energy_;
+    Tick age_;
+    bool alive_;
+    double fitness_;
+    float food_eaten_this_tick_;
+    bool discovered_new_cell_this_tick_;
+    std::size_t exploration_grid_size_;
+    std::unordered_set<std::size_t> visited_cells_;
+    std::vector<std::unique_ptr<IPerception>> perceptions_;
+    std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
+};
+
+}  // namespace neuro

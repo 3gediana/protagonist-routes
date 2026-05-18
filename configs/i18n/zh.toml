@@ -1,0 +1,112 @@
+# Neural Eco - Chinese (zh) UI strings
+#
+# All UI strings live here. Source code calls I18n::t("key") and never
+# embeds raw strings. See ADR-0003.
+#
+# Add new strings as features land. Keep keys synced with en.toml.
+
+[app]
+title = "神经进化生态箱"
+subtitle = "Neural Eco · 数字生命模拟器"
+
+[lang]
+switch = "EN"
+
+# ----------------------------------------------------------------------------
+# HUD (top bar)
+# ----------------------------------------------------------------------------
+[hud]
+generation = "第 {gen} 代"
+population = "种群 {n}"
+species = "物种 {n}"
+fps = "{fps} FPS"
+speed = "{x}× 速度"
+tick = "Tick {t}"
+
+# ----------------------------------------------------------------------------
+# Control panel (left side)
+# ----------------------------------------------------------------------------
+[panel.control]
+title = "控制台"
+start = "开始"
+pause = "暂停"
+resume = "继续"
+step = "单步"
+reset = "重置"
+screenshot = "截图"
+speed_label = "倍速"
+
+# ----------------------------------------------------------------------------
+# Stats panel (right side)
+# ----------------------------------------------------------------------------
+[panel.stats]
+title = "统计"
+avg_fitness = "平均适应度"
+best_fitness = "最优适应度"
+worst_fitness = "最低适应度"
+diversity = "种群多样性"
+avg_complexity = "平均拓扑复杂度"
+species_count = "物种数量"
+
+# ----------------------------------------------------------------------------
+# Phylogenetic tree (F-TREE)
+# ----------------------------------------------------------------------------
+[panel.tree]
+title = "物种谱系"
+hover_id = "物种 #{id}"
+hover_born = "诞生于第 {gen} 代"
+hover_died = "灭绝于第 {gen} 代"
+hover_alive = "目前存活"
+hover_size = "成员 {n}"
+hover_best = "巅峰适应度 {value}"
+
+# ----------------------------------------------------------------------------
+# God panel (F-GOD)
+# ----------------------------------------------------------------------------
+[panel.god]
+title = "干预面板"
+
+[intervention]
+clear_food = "清空食物"
+food_flood = "食物雨"
+spawn_predator = "投放捕食者"
+earthquake = "地震"
+cull_population = "随机抽走 50%"
+mutation_boost = "提高变异率"
+build_wall = "立一堵墙"
+fast_forward = "跳到下一代"
+undo = "撤销"
+random_event = "随机事件"
+
+# ----------------------------------------------------------------------------
+# Narrator (F-LLM)
+# ----------------------------------------------------------------------------
+[narrator]
+title = "解说"
+species_extinct = "物种 #{id} 灭绝了。"
+species_born = "新物种 #{id} 从 #{parent} 分化出来。"
+agent_died = "Agent #{id} 死亡。"
+intervention_triggered = "刚才有人触发了：{name}"
+
+# ----------------------------------------------------------------------------
+# Modes
+# ----------------------------------------------------------------------------
+[mode]
+training = "训练中"
+demo = "演示中"
+paused = "已暂停"
+loading = "加载中"
+
+# ----------------------------------------------------------------------------
+# Generic UI
+# ----------------------------------------------------------------------------
+[generic]
+ok = "确定"
+cancel = "取消"
+yes = "是"
+no = "否"
+loading = "加载中..."
+saving = "保存中..."
+error = "错误"
+warning = "警告"
+info = "信息"

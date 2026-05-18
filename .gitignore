@@ -1,0 +1,59 @@
+# Build output
+build/
+out/
+cmake-build-*/
+bin/
+lib/
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.exp
+*.pdb
+*.ilk
+*.idb
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+CMakeUserPresets.json
+.cache/
+compile_commands.json
+
+# vcpkg
+extern/vcpkg/
+vcpkg_installed/
+
+# Runtime data
+data/runs/
+data/snapshots/
+data/replays/
+data/screenshots/
+data/fonts/*
+!data/fonts/.gitkeep
+!data/fonts/README.md
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python (analysis scripts)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Misc
+*.tmp
+*.bak
+*~

@@ -1,0 +1,147 @@
+# Neural Eco - Default Configuration
+#
+# This file is loaded by the runtime at startup. All tunable parameters
+# live here, never hardcoded in source.
+#
+# Most sections are placeholders for now and will be filled in as the
+# corresponding baseline phase or module is implemented.
+
+# ============================================================================
+# Runtime
+# ============================================================================
+[runtime]
+mode = "interactive"            # "interactive" | "headless"
+random_seed = 42                # 0 means use std::random_device
+log_level = "info"              # debug | info | warn | error
+log_file = "data/runs/{timestamp}/log.txt"
+
+# ============================================================================
+# World - filled out in M1, expanded in M5
+# ============================================================================
+[world]
+size = [200.0, 200.0]           # continuous floating-point world (M1)
+boundary = "wall"               # wall | wrap | open
+
+[world.resources]
+count = 40
+amount = 20.0
+respawn_ticks = 300
+
+# Terrain (M5)
+[world.terrain]
+enabled = false                 # M5 will set true
+generator = "perlin"            # perlin | voronoi | handcrafted
+seed = 42
+height_scale = 30.0
+slope_resistance = 0.6
+cave_density = 0.05
+
+# ============================================================================
+# Population - filled out in M1
+# ============================================================================
+[population]
+size = 100
+input_dim = 5                   # M1 baseline; M5 adds terrain inputs
+output_dim = 2                  # (vx, vy)
+
+# ============================================================================
+# Evolution - filled out in M1, expanded in M3
+# ============================================================================
+[evolution]
+generations = 200
+episode_ticks = 3600            # how long each evaluation episode runs
+
+[evolution.selection]
+elite_ratio = 0.10
+tournament_size = 5
+
+[evolution.mutation]
+weight_perturb_rate = 0.80
+weight_reset_rate = 0.05
+add_node_rate = 0.03            # M3 NEAT
+add_connection_rate = 0.05      # M3 NEAT
+toggle_connection_rate = 0.01   # M3 NEAT
+weight_perturb_sigma = 0.5
+
+[evolution.speciation]           # M3 NEAT
+enabled = false                  # set true at M3
+compatibility_threshold = 3.0
+c1_excess = 1.0
+c2_disjoint = 1.0
+c3_weight = 0.4
+
+# ============================================================================
+# Brain - M1: fixed topology / M3: NEAT + CTRNN
+# ============================================================================
+[brain]
+type = "fixed"                  # "fixed" (M1) | "neat" (M3)
+hidden_layer_size = 10          # only used for fixed topology
+
+[brain.ctrnn]                    # M3
+enabled = false
+tau_min = 0.1
+tau_max = 5.0
+dt = 0.1
+
+# ============================================================================
+# Reward - filled out in M1
+# ============================================================================
+[reward]
+survival_weight = 1.0
+food_weight = 10.0
+intrinsic_weight = 5.0           # exploration / curiosity bonus
+
+# ============================================================================
+# Energy - M4
+# ============================================================================
+[energy]
+initial = 100.0
+base_metabolism = 0.001
+decision_cost = 0.005
+movement_cost_factor = 0.001
+death_threshold = 0.0
+
+[agent]
+max_speed = 2.0
+eat_radius = 4.0
+exploration_grid_size = 20
+
+# ============================================================================
+# Async / threading - M4
+# ============================================================================
+[async]
+parallel_worlds = 0              # 0 means use hardware_concurrency - 1
+async_decision = false           # M4 enables this
+decision_interval_min = 1
+decision_interval_max = 30
+
+# ============================================================================
+# Visualization - filled out in M2
+# ============================================================================
+[viz]
+window_width = 1280
+window_height = 720
+fps_target = 60
+language = "zh"                  # initial UI language: "zh" | "en"
+font_path = "data/fonts/SourceHanSans-Regular.ttf"
+font_size = 16
+
+# ============================================================================
+# Modules - enabled F-* modules
+# ============================================================================
+[modules]
+enabled = []
+# Example after baseline complete:
+# enabled = ["F-TREE", "F-HEAT", "F-GOD"]
+
+# Per-module config blocks live below, named [F-XXX].
+# Each module's card under docs/modules/F-XXX.md describes its config keys.
+
+# ============================================================================
+# Output paths
+# ============================================================================
+[output]
+runs_dir = "data/runs"
+snapshots_dir = "data/snapshots"
+replays_dir = "data/replays"
+screenshots_dir = "data/screenshots"

@@ -1,0 +1,100 @@
+[runtime]
+mode = "headless"
+random_seed = 42
+log_level = "info"
+log_file = "data/runs/{timestamp}/log.txt"
+
+[world]
+size = [80.0, 80.0]
+boundary = "wall"
+
+[world.resources]
+count = 16
+amount = 12.0
+respawn_ticks = 20
+
+[world.terrain]
+enabled = false
+generator = "perlin"
+seed = 42
+height_scale = 30.0
+slope_resistance = 0.6
+cave_density = 0.05
+
+[population]
+size = 24
+input_dim = 5
+output_dim = 2
+
+[evolution]
+generations = 200
+episode_ticks = 80
+
+[evolution.selection]
+elite_ratio = 0.25
+tournament_size = 2
+
+[evolution.mutation]
+weight_perturb_rate = 0.80
+weight_reset_rate = 0.05
+add_node_rate = 0.03
+add_connection_rate = 0.05
+toggle_connection_rate = 0.01
+weight_perturb_sigma = 0.5
+
+[evolution.speciation]
+enabled = true
+compatibility_threshold = 3.0
+c1_excess = 1.0
+c2_disjoint = 1.0
+c3_weight = 0.4
+
+[brain]
+type = "neat"
+hidden_layer_size = 8
+
+[brain.ctrnn]
+enabled = true
+tau_min = 0.1
+tau_max = 5.0
+dt = 0.1
+
+[reward]
+survival_weight = 1.0
+food_weight = 10.0
+intrinsic_weight = 1.5
+
+[energy]
+initial = 40.0
+base_metabolism = 0.01
+decision_cost = 0.01
+movement_cost_factor = 0.01
+death_threshold = 0.0
+
+[agent]
+max_speed = 1.5
+eat_radius = 3.0
+exploration_grid_size = 10
+
+[async]
+parallel_worlds = 0
+async_decision = false
+decision_interval_min = 1
+decision_interval_max = 30
+
+[viz]
+window_width = 1280
+window_height = 720
+fps_target = 60
+language = "zh"
+font_path = "data/fonts/SourceHanSans-Regular.ttf"
+font_size = 16
+
+[modules]
+enabled = []
+
+[output]
+runs_dir = "data/runs/m3_acceptance"
+snapshots_dir = "data/snapshots"
+replays_dir = "data/replays"
+screenshots_dir = "data/screenshots"

@@ -1,0 +1,75 @@
+#include "core/capability/MoveCapability.h"
+
+#include "core/agent/Agent.h"
+#include "core/events/EventBus.h"
+#include "core/events/EventPayloads.h"
+#include "core/interfaces/IAgent.h"
+#include "core/interfaces/IWorld.h"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
+namespace neuro {
+
+MoveCapability::MoveCapability(float max_speed,
+                               float decision_cost,
+                               float movement_cost_factor,
+                               std::size_t exploration_grid_size)
+    : max_speed_(max_speed),
+      decision_cost_(decision_cost),
+      movement_cost_factor_(movement_cost_factor),
+      exploration_grid_size_(exploration_grid_size) {}
+
+std::size_t MoveCapability::consumedOutputs() const {
+    return 2;
+}
+
+void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) {
+    if (outputs.size() != 2) {
+        throw std::invalid_argument("MoveCapability expects 2 outputs");
+    }
+
+    Vec2 direction{outputs[0], outputs[1]};
+    const float norm = direction.length();
+    if (norm > 1.0f) {
+        direction /= norm;
+    }
+
+    const Vec2 previous_position = agent.position();
+    const float previous_energy = agent.energy();
+    const Vec2 velocity = direction * max_speed_;
+    Vec2 next_position = previous_position + velocity * dt;
+    const Vec2 world_size = world.size();
+    next_position.x = std::clamp(next_position.x, 0.0f, world_size.x);
+    next_position.y = std::clamp(next_position.y, 0.0f, world_size.y);
+
+    agent.setVelocity(velocity);
+    agent.setPosition(next_position);
+
+    const float move_cost = decision_cost_ + movement_cost_factor_ * velocity.length();
+    agent.setEnergy(previous_energy - move_cost);
+
+    world.eventBus().publish(events::Event{events::EventType::AgentMoved,
+                                           events::AgentMoved{agent.id(), previous_position, next_position},
+                                           world.currentTick()});
+    world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
+                                           events::AgentEnergyChanged{agent.id(), previous_energy, agent.energy()},
+                                           world.currentTick()});
+
+    if (auto* concrete = dynamic_cast<Agent*>(&agent)) {
+        const float cell_width = world_size.x / static_cast<float>(exploration_grid_size_);
+        const float cell_height = world_size.y / static_cast<float>(exploration_grid_size_);
+        const std::size_t cell_x = std::min(exploration_grid_size_ - 1,
+                                            static_cast<std::size_t>(next_position.x / (cell_width > 0.0f ? cell_width : 1.0f)));
+        const std::size_t cell_y = std::min(exploration_grid_size_ - 1,
+                                            static_cast<std::size_t>(next_position.y / (cell_height > 0.0f ? cell_height : 1.0f)));
+        concrete->noteExplorationCell(cell_y * exploration_grid_size_ + cell_x);
+    }
+}
+
+const char* MoveCapability::name() const {
+    return "move";
+}
+
+}  // namespace neuro

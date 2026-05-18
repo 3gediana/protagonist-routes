@@ -1,0 +1,57 @@
+#pragma once
+
+#include "core/interfaces/IWorldLayer.h"
+#include "core/types/Vec2.h"
+
+#include <cstddef>
+#include <optional>
+#include <random>
+#include <vector>
+
+namespace neuro {
+
+class ResourceLayer final : public IWorldLayer {
+public:
+    static constexpr const char* kName = "resource";
+
+    struct Resource {
+        Vec2 position;
+        float amount;
+        bool available;
+        std::size_t respawn_ticks_remaining;
+    };
+
+    struct NearestResource {
+        std::size_t index;
+        Vec2 position;
+        float amount;
+        float distance;
+    };
+
+    ResourceLayer(std::size_t resource_count,
+                  float resource_amount,
+                  std::size_t respawn_ticks,
+                  std::uint32_t seed);
+
+    const char* layerName() const override;
+    void onAttach(IWorld& world) override;
+    void tick(IWorld& world, float dt) override;
+    int tickOrder() const override;
+
+    std::optional<NearestResource> nearestAvailable(Vec2 position) const;
+    float tryConsume(Vec2 position, float radius, IWorld& world);
+    const std::vector<Resource>& resources() const;
+
+private:
+    Vec2 randomPosition(Vec2 world_size);
+    void respawnResource(Resource& resource, IWorld& world);
+
+    std::size_t resource_count_;
+    float resource_amount_;
+    std::size_t respawn_ticks_;
+    std::mt19937 rng_;
+    Vec2 world_size_;
+    std::vector<Resource> resources_;
+};
+
+}  // namespace neuro
