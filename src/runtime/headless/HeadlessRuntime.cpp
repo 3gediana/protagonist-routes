@@ -25,12 +25,14 @@
 #include "core/perception/TimeOfDayPerception.h"
 #include "core/perception/SeasonPerception.h"
 #include "core/perception/InfectionPerception.h"
+#include "core/perception/SignalPerception.h"
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
 #include "core/reward/CombatReward.h"
 #include "core/capability/AttackCapability.h"
 #include "core/capability/HebbianLearning.h"
+#include "core/capability/EmitSignalCapability.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -38,6 +40,7 @@
 #include "core/world/layers/TimeOfDayLayer.h"
 #include "core/world/layers/SeasonLayer.h"
 #include "core/world/layers/DiseaseLayer.h"
+#include "core/world/layers/signal/SignalLayer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -128,6 +131,13 @@ struct RuntimeParams {
     float infection_perception_radius;
     bool dynamic_resources;
     float resource_regen_rate;
+    bool signal_enabled;
+    std::size_t signal_channels;
+    float signal_decay_rate;
+    float signal_diffusion_rate;
+    std::size_t signal_grid_resolution;
+    float signal_perception_radius;
+    float signal_emit_cost;
 };
 
 struct GenerationStats {
@@ -251,6 +261,17 @@ RuntimeParams loadParams(const config::Config& config) {
     }
     params.dynamic_resources = config.getOr<bool>("world.resources.dynamic", false);
     params.resource_regen_rate = config.getOr<float>("world.resources.regen_rate", 0.1f);
+    params.signal_enabled = config.getOr<bool>("world.signal.enabled", false);
+    params.signal_channels = config.getOr<std::size_t>("world.signal.channels", 4);
+    params.signal_decay_rate = config.getOr<float>("world.signal.decay_rate", 0.1f);
+    params.signal_diffusion_rate = config.getOr<float>("world.signal.diffusion_rate", 0.05f);
+    params.signal_grid_resolution = config.getOr<std::size_t>("world.signal.grid_resolution", 32);
+    params.signal_perception_radius = config.getOr<float>("world.signal.perception_radius", 15.0f);
+    params.signal_emit_cost = config.getOr<float>("world.signal.emit_cost", 0.05f);
+    if (params.signal_enabled) {
+        params.input_dim += params.signal_channels;
+        params.output_dim += params.signal_channels;
+    }
     return params;
 }
 
@@ -424,6 +445,14 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
             params.initial_infection_rate,
             params.random_seed + 100));
     }
+    if (params.signal_enabled) {
+        world->addLayer(std::make_unique<SignalLayer>(
+            params.world_size,
+            params.signal_grid_resolution,
+            params.signal_channels,
+            params.signal_decay_rate,
+            params.signal_diffusion_rate));
+    }
     return world;
 }
 
@@ -481,6 +510,9 @@ void populateWorld(World2D& world,
         if (params.disease_enabled) {
             agent->addPerception(std::make_unique<InfectionPerception>(params.infection_perception_radius));
         }
+        if (params.signal_enabled) {
+            agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius));
+        }
         agent->addCapability(std::make_unique<MoveCapability>(
             params.max_speed,
             params.decision_cost,
@@ -498,6 +530,10 @@ void populateWorld(World2D& world,
         if (params.lifetime_learning_enabled) {
             agent->addCapability(std::make_unique<HebbianLearning>(
                 params.hebbian_learning_rate));
+        }
+        if (params.signal_enabled) {
+            agent->addCapability(std::make_unique<EmitSignalCapability>(
+                params.signal_channels, params.signal_emit_cost));
         }
         agent_layer->addAgent(std::move(agent), world);
     }
