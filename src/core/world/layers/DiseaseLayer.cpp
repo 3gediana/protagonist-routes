@@ -100,6 +100,8 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
         }
 
         // Spread to nearby agents that aren't immune to this strain
+        // Selection pressure: pathogens that transmitted more get a spread boost
+        const float fitness_boost = 1.0f + 0.1f * std::min(pathogen->genome().transmissionCount(), std::size_t(10));
         for (auto* other : agents) {
             if (other == agent || other->infected() || !other->alive()) continue;
 
@@ -112,9 +114,9 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
                 if (terrain && terrain->inCave(other->position().x, other->position().y)) {
                     shelter_factor = 0.3f;
                 }
-                // Pathogen controls spread rate
+                // Pathogen controls spread rate, boosted by transmission fitness
                 const float effective_prob = infection_prob_ * pathogen->spreadRate()
-                                           * season_factor * shelter_factor * dt;
+                                           * fitness_boost * season_factor * shelter_factor * dt;
                 std::bernoulli_distribution transmits(std::clamp(effective_prob, 0.0f, 1.0f));
                 if (transmits(rng_)) {
                     // Pathogen reproduces: create mutated offspring (antigenic drift)

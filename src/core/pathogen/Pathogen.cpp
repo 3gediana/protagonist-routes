@@ -50,7 +50,7 @@ void Pathogen::forward(const float inputs[PathogenGenome::kInputDim]) {
 }
 
 Pathogen Pathogen::offspring(std::uint32_t seed) const {
-    auto child_genome = genome_.mutate(0.8f, 0.3f, 0.05f, seed);
+    auto child_genome = genome_.mutate(0.8f, 0.15f, 0.03f, seed);
     return Pathogen(std::move(child_genome));
 }
 
