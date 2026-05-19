@@ -9,9 +9,9 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-19 |
-| **当前阶段** | 🟩 Baseline M0-M5 全部完成 + 12 Modules MVP 证据验证 |
-| **整体进度** | ▰▰▰▰▰▰▰▰▰░ 约 90% |
-| **最近会话摘要** | Baseline 机制全完成（M0-M5）；12 模块 MVP 通过并带量化证据验证（F-FIGHT/F-PRED/F-DISEASE/F-COMM/F-COOP/F-RESOURCE/F-DAY/F-SEASON/F-NEUROMOD/F-LEARN/F-NOVELTY/F-CURRICULUM）；M2 可视化仍延后 |
+| **当前阶段** | 🟩 Baseline M0-M5 全部完成 + 12 Modules MVP + 病原体进化 + 抗原漂移 |
+| **整体进度** | ▰▰▰▰▰▰▰▰▰░ 约 92% |
+| **最近会话摘要** | 实现病原体-宿主军备竞赛：PathogenGenome（31 权重 NN）+ Pathogen 实体（infection_speed / spread_rate / immune_evasion）+ DiseaseLayer 重写 + 抗原漂移（strain-based immunity 取代永久免疫）+ 病原体跨物种传播（捕食者吃感染猎物）+ pathogen evolution metrics（CSV 4 列新增）；宿主 immunity_gain_rate 进化 +33%，免疫人口持续增长，40% 代中免疫人口下降（新毒株突破旧免疫） |
 | **下一步建议** | 进入 M2 可视化整合（raylib + i18n + HUD + FitnessChart）或补 F-TREE / F-HEAT / F-FORK 等观测模块 |
 
 ---
@@ -261,7 +261,7 @@
 |---|---|---|
 | **F-FIGHT** 对抗机制 | `AttackCapability` / `CombatReward` | total_damage_dealt 15~625 |
 | **F-PRED** 捕食者-猎物 | `PredatorHuntCapability` | total_kills 0~7 |
-| **F-DISEASE** 疾病传播 | `DiseaseLayer` / `InfectionPerception` | max_infected 16~23 |
+| **F-DISEASE** 疾病传播 | `DiseaseLayer` / `InfectionPerception` / `PathogenGenome` / `Pathogen` | max_infected 16~23；宿主 immunity_gain_rate +33%；抗原漂移：40% 代免疫人口下降 |
 | **F-COMM** 通信信号场 | `SignalLayer` / `SignalPerception` / `EmitSignalCapability` | signal_field_energy 95~785 |
 | **F-COOP** 合作机制 | `HeavyResourceLayer` / `CoopReward` | heavy_resources_available 0~3 |
 | **F-RESOURCE** 动态资源 | `ResourceLayer` dynamic 模式 | resource_available 24~32 |
@@ -324,6 +324,7 @@ _目前无_
 | 2026-05-18 | 第 5 次会话：确认延后可视化并改路线 | ADR-0005；ROADMAP/PROGRESS 同步为"先机制、后可视化整合"；下一阶段确定为 M3 headless-first | 待开始 M3 NEAT 基础数据结构 |
 | 2026-05-19 | 第 6 次会话：完成 M3 实现、验收与回归保护 | `NodeGene/ConnectionGene/InnovationTracker/NeatGenome/NeatBrain/Speciation/NeatEvolution`；`brain.type = neat` headless 接入；`evolution.csv` + `species_log.jsonl`；`run_m3_acceptance.py`；`5 seed × 100/200 代` 验证；修复 `addNodeMutation()` 悬空引用 bug 并补 regression test | 准备进入 M4 调研与实现 |
 | 2026-05-19 | 第 7 次会话：完成 M4/M5 + 12 模块实现与全证据验证 | M4: EvaluationPool 线程池 + PerformanceObserver + 异步决策周期 + 能量系统；M5: TerrainLayer/HeightField/CaveMask/TerrainPerception/TerrainGenerator + 地形物理 hook；12 模块（F-FIGHT/F-PRED/F-DISEASE/F-COMM/F-COOP/F-RESOURCE/F-DAY/F-SEASON/F-NEUROMOD/F-LEARN/F-NOVELTY/F-CURRICULUM）全部 MVP 通过；100 代 full_validation 量化证据；Lamarck vs Darwin A/B 对比；ModuleMetricsObserver tick 级追踪 | Baseline 机制全部完成，待进入 M2 可视化整合 |
+| 2026-05-19 | 第 8 次会话：免疫进化 + 病原体 NN + 抗原漂移 | 宿主 immunity_gain_rate 可进化 trait（NeatGenome + NeatEvolution crossover/mutation + evolution.csv 追踪）；PathogenGenome（31 权重 3→4→3 NN）+ Pathogen 实体（think → infection_speed/spread_rate/immune_evasion）；DiseaseLayer 重写为 pathogen-driven；病原体传播时复制+变异；捕食者跨物种感染；抗原漂移：4 维 strain signature + immune memory + strain distance check 取代永久 immune()；InfectionPerception output[4] 改为免疫记忆丰富度；SurvivalReward 改为按 strain 计数；module_metrics.csv 新增 4 列 pathogen 指标 | 继续完善疾病系统或进入 M2 可视化 |
 
 ---
 

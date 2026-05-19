@@ -54,7 +54,7 @@
 #### 🌍 环境类（让世界更有"故事性"）
 - `F-DAY` 昼夜循环
 - `F-SEASON` 季节
-- `F-DISEASE` 疾病传播 — 邻接传染 debuff，逼出社交距离基因
+- `F-DISEASE` 疾病传播 — 病原体带 NN 可进化感染策略 + 抗原漂移（strain-based immunity）
 - `F-RESOURCE` 资源衰竭再生 — 逼出可持续 vs 短视策略分化
 - `F-CAVE` 洞穴系统 — 山洞作为庇护所/陷阱
 

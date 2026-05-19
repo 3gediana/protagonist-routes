@@ -51,6 +51,7 @@ World
 ├── TerrainLayer      静态地形：高度图 H(x,y) + 山洞标记 Cave(x,y)
 ├── ResourceLayer     食物点（位置 + 种类 + 再生规则）
 ├── SignalLayer       信息素地图（衰减场，N 个通道）—— F-COMM 模块加入
+├── DiseaseLayer      病原体传播（pathogen-driven，非固定参数）—— F-DISEASE 模块加入
 ├── ObjectLayer       可移动物体（石头/工具）—— F-TOOL 模块加入
 ├── AgentLayer        所有活着的个体
 └── ...               未来任何"世界的一部分"都是新加一层
@@ -62,10 +63,12 @@ World
 
 ```
 Agent
-├── Genome              所有可遗传信息（网络拓扑/权重 + 元参数）
+├── Genome              所有可遗传信息（网络拓扑/权重 + 元参数 + immunity_gain_rate）
 ├── Brain               推理器（NEAT 网络的前向传播实例）
-├── State               生命周期内的可变状态（位置/速度/能量/年龄）
-├── Perception[]        感知组件列表（视觉/听觉/地形/信号）
+├── State               生命周期内的可变状态（位置/速度/能量/年龄/感染进度/免疫进度）
+├── Pathogen            当前感染的病原体（null 如未感染）—— 有自己的 NN 和可进化行为
+├── ImmuneMemory        恢复过的毒株签名列表 —— 抗原漂移机制
+├── Perception[]        感知组件列表（视觉/听觉/地形/信号/感染）
 └── Capabilities[]      能力组件列表（移动/吃/攻击/发信号/拾取）
 ```
 

@@ -6,7 +6,7 @@
 > 本文档基于大规模学术文献调研编写，涵盖：Miikkulainen Lab NEAT 研究、Sakana AI、Avida 数字进化平台、OpenAI Hide & Seek、JaxLife、POET、PMC/IEEE/Nature/eLife/AAAI/ICLR 论文等。
 > 重点关注**最大条件**——当环境、奖励、感知、网络容量都足够丰富时，能涌现到什么程度。
 >
-> **最后更新**：2026-05-19（代码实时进度：Pathogen 系统已实现，待集成到 DiseaseLayer/HeadlessRuntime）
+> **最后更新**：2026-05-19（代码实时进度：Pathogen NN + 抗原漂移已实现并验证）
 
 ---
 
@@ -93,6 +93,12 @@
 | Avida (Dolson & Ofria, 2021) | 数字演化平台用于生态学研究，包括寄生虫-宿主协同进化。寄生虫通过消耗宿主资源繁殖，宿主通过进化抗性响应 |
 | PMC (2022) | 疾病回避是进化上高度保守的机制，回避机制倾向于过度泛化 |
 | Penley et al. (C. elegans) | 回避行为在没有可测量的适应度代价的情况下演化出来，且在寄生虫消失后仍长期维持 |
+
+**当前实现状态**：✅ 完整实现
+- **病原体 NN**：PathogenGenome（31 权重 3→4→3）+ Pathogen 实体，每个 tick 根据宿主状态"思考"，输出 infection_speed [0.3,1.2] / spread_rate [0.5,1.5] / immune_evasion [0,0.3]
+- **抗原漂移**：4 维 strain signature + immune memory + strain distance check 取代永久 immune()；传播时 σ=0.1 扰动突变
+- **宿主-病原体军备竞赛**：宿主 immunity_gain_rate 可进化（0.06→0.11，+33%）；免疫人口持续增长；40% 代中免疫人口下降（新毒株突破旧免疫）
+- **跨物种传播**：捕食者吃感染猎物时，病原体跨物种传播（带变异）
 
 ### F-COMM（通信信号场）
 

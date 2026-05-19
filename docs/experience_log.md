@@ -382,3 +382,53 @@ Darwin 模式 avg_fitness 略高且 modulatory 更多，可能因为不回传学
 | 环境 | min_season~max_season | 0~2 | ✅ 季节变化 |
 | 合作 | heavy_workers_avg | 0~1 | ✅ |
 | 通信 | signal_energy | 64~610 | ✅ |
+
+---
+
+## 2026-05-19 · 病原体-宿主军备竞赛调参
+
+### 目的
+实现病原体作为带 NN 的智能体，与宿主形成红皇后军备竞赛。验证抗原漂移机制。
+
+### 关键调参历程
+
+| 问题 | 原因 | 修复 |
+|---|---|---|
+| 0 recoveries（宿主完全无法恢复） | Pathogen NN 输出映射范围太大：infection_speed [0.5,2.0]，immune_evasion [0,0.8] | 收紧到 infection_speed [0.3,1.2]，evasion [0,0.3] |
+| 仍然 0 recoveries | PathogenGenome 初始权重用 uniform(-1,1)，tanh 输出极端值 | 改为 normal(0,0.3)，初始行为温和 |
+| 仍然 ~1 recovery | infection_duration=20 太短，immunity_gain_rate=0.03 太慢 | 增大 duration→30，默认 rate→0.05，进化范围 [0.03,0.12]→[0.03,0.20] |
+| 恢复后永久免疫，无再感染 | immune() 是永久布尔值 | 改为 strain-based immune memory + 抗原漂移 |
+
+### 最终参数
+
+| 参数 | 值 | 说明 |
+|---|---|---|
+| PathogenGenome 权重初始化 | normal(0, 0.3) | 初始行为温和 |
+| infection_speed 范围 | [0.3, 1.2] | 1.0 = 基准速度 |
+| spread_rate 范围 | [0.5, 1.5] | 1.0 = 基准传播 |
+| immune_evasion 范围 | [0, 0.3] | 限制逃逸上限 |
+| strain signature 维度 | 4 floats in [0,1]⁴ | 抗原空间 |
+| strain mutation σ | 0.1 | 抗原漂移速度 |
+| immunity distance threshold | 0.5 (Euclidean) | 免疫识别阈值 |
+| infection_duration | 30 ticks | 给宿主足够恢复窗口 |
+| immunity_gain_rate 默认 | 0.05 | 30 ticks 可恢复 |
+| immunity_gain_rate 进化范围 | [0.01, 0.20] | 可进化 trait |
+
+### 验证结果（100 代 full_validation）
+
+| 指标 | 值 | 说明 |
+|---|---|---|
+| Recoveries | 854 | 有效恢复 |
+| Recovery/Death | 0.02 | 仍然很低但存在 |
+| 宿主 immunity_gain_rate Q1→Q4 | 0.0785→0.1040 | +33% 进化提升 |
+| 免疫人口 Q1→Q4 | 3.4→5.4 | 持续增长 |
+| 代中免疫人口下降比例 | 40% | 新毒株突破旧免疫 |
+| Pathogen avg infection_speed | 0.735 | 低于 1.0，病原体倾向温和 |
+| Pathogen avg immune_evasion | 0.144 | 中等逃逸 |
+
+### 关键发现
+
+1. **病原体 NN 初始输出映射范围是生死线**：太宽→宿主灭绝，太窄→无进化压力
+2. **抗原漂移是红皇后假说的核心**：没有它，免疫是永久的，疾病变成一次性事件
+3. **strain distance threshold = 0.5** 在 4D [0,1]⁴ 空间中意味着约 6% 的体积被覆盖，需要约 17 个不同毒株免疫才能覆盖整个空间
+4. **病原体倾向温和演化**：infection_speed < 1.0 说明杀死宿主太快不利于传播（毒力-传播权衡）

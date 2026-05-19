@@ -80,12 +80,12 @@
 **最后更新**：2026-05-19
 
 ```
-阶段：🟩 Baseline M0-M5 全部完成 + 12 Modules MVP 证据验证，下一步进入 M2 可视化整合
+阶段：🟩 Baseline M0-M5 全部完成 + 12 Modules MVP + 病原体进化 + 抗原漂移，下一步进入 M2 可视化整合
 进度：baseline M0 ✅ / M1 ✅⛳⛳ / M2 ⏸ / M3 ✅✅⛳ / M4 ✅✅⛳ / M5 ✅✅⛳
-      modules  12 个 MVP ✅⛳⛳ / 其余 📋
+      modules  12 个 MVP ✅⛳⛳ / F-DISEASE 升级为病原体-宿主军备竞赛 ✅✅ / 其余 📋
 ```
 
-**已完成**：所有顶层文档 + ADR + baseline 阶段卡 + 全部 module 卡；M0 脚手架；M1 核心系统（固定拓扑 brain、世界层、GA、reward、CSV 记录、headless 代际循环）；M3 核心与收尾（NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入 / `evolution.csv` / `species_log.jsonl` / `run_m3_acceptance.py` / 5 seed × 100/200 代验证）；M4 多线程（EvaluationPool 线程池 / PerformanceObserver / 异步决策周期 / 能量系统）；M5 地形（TerrainLayer / HeightField / CaveMask / TerrainPerception / 地形物理 hook）；12 模块 MVP（F-FIGHT / F-PRED / F-DISEASE / F-COMM / F-COOP / F-RESOURCE / F-DAY / F-SEASON / F-NEUROMOD / F-LEARN / F-NOVELTY / F-CURRICULUM）
+**已完成**：所有顶层文档 + ADR + baseline 阶段卡 + 全部 module 卡；M0 脚手架；M1 核心系统（固定拓扑 brain、世界层、GA、reward、CSV 记录、headless 代际循环）；M3 核心与收尾（NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入 / `evolution.csv` / `species_log.jsonl` / `run_m3_acceptance.py` / 5 seed × 100/200 代验证）；M4 多线程（EvaluationPool 线程池 / PerformanceObserver / 异步决策周期 / 能量系统）；M5 地形（TerrainLayer / HeightField / CaveMask / TerrainPerception / 地形物理 hook）；12 模块 MVP（F-FIGHT / F-PRED / F-DISEASE / F-COMM / F-COOP / F-RESOURCE / F-DAY / F-SEASON / F-NEUROMOD / F-LEARN / F-NOVELTY / F-CURRICULUM）；F-DISEASE 深度升级（PathogenGenome 31 权重 NN / Pathogen 实体 / 抗原漂移 strain-based immunity / 宿主 immunity_gain_rate 可进化 / 跨物种传播 / pathogen evolution metrics）
 
 **下一步**：进入 M2 可视化整合：先读 `docs/baseline/M2_visualization.md`，实现 raylib 接入 + i18n 系统 + CJK 字体加载 + WorldRenderer / AgentRenderer + HUD / ControlPanel / StatsPanel / LangSwitcher + FitnessChart 实时折线图。
 
