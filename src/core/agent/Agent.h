@@ -2,6 +2,7 @@
 
 #include "core/interfaces/IAgent.h"
 
+#include "core/pathogen/Pathogen.h"
 #include <memory>
 #include <span>
 #include <unordered_set>
@@ -75,6 +76,10 @@ public:
     float immunityGainRate() const;
     void setImmunityGainRate(float rate);
 
+    // Pathogen attached to this agent (null if not infected)
+    Pathogen* pathogen() const;
+    void attachPathogen(std::unique_ptr<Pathogen> p);
+
     bool isPredator() const;
     void setPredator(bool v);
 
@@ -103,6 +108,7 @@ private:
     float immunity_progress_;
     bool immune_;
     float immunity_gain_rate_;
+    std::unique_ptr<Pathogen> pathogen_;
     bool is_predator_;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;

@@ -37,7 +37,7 @@ Agent::Agent(AgentId id,
       infection_progress_(0.0f),
       immunity_progress_(0.0f),
       immune_(false),
-      immunity_gain_rate_(0.03f),
+      immunity_gain_rate_(0.05f),
       is_predator_(false),
       perceptions_(),
       capabilities_() {
@@ -184,6 +184,7 @@ void Agent::setInfected(bool v) {
     if (!v) {
         infection_progress_ = 0.0f;
         immunity_progress_ = 0.0f;
+        pathogen_.reset();
     }
 }
 
@@ -218,6 +219,14 @@ float Agent::immunityGainRate() const {
 
 void Agent::setImmunityGainRate(float rate) {
     immunity_gain_rate_ = std::max(rate, 0.0f);
+}
+
+Pathogen* Agent::pathogen() const {
+    return pathogen_.get();
+}
+
+void Agent::attachPathogen(std::unique_ptr<Pathogen> p) {
+    pathogen_ = std::move(p);
 }
 
 bool Agent::isPredator() const {

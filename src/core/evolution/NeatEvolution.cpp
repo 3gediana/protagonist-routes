@@ -684,8 +684,8 @@ void NeatEvolution::mutateDecisionInterval(NeatGenome& genome) {
 
 void NeatEvolution::mutateImmunityGainRate(NeatGenome& genome) {
     std::bernoulli_distribution perturb(weight_perturb_rate_);
-    std::normal_distribution<float> perturb_dist(0.0f, 0.01f);
-    std::uniform_real_distribution<float> reset_dist(0.03f, 0.10f);
+    std::normal_distribution<float> perturb_dist(0.0f, 0.015f);
+    std::uniform_real_distribution<float> reset_dist(0.03f, 0.12f);
 
     if (std::bernoulli_distribution(weight_reset_rate_)(rng_)) {
         genome.setImmunityGainRate(reset_dist(rng_));

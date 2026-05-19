@@ -3,8 +3,10 @@
 #include "core/world/layers/SeasonLayer.h"
 #include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/agent/Agent.h"
+#include "core/pathogen/Pathogen.h"
 #include "core/interfaces/IWorld.h"
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 
@@ -31,11 +33,12 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) return;
 
+    // Initial infection: seed some pathogens
     if (infection_deaths_ == 0 && recoveries_ == 0 && agent_layer->size() > 0) {
         std::bernoulli_distribution infect(initial_infection_rate_);
         for (auto* agent : agent_layer->agents()) {
             if (infect(rng_)) {
-                agent->setInfected(true);
+                infectAgent(agent);
             }
         }
     }
@@ -58,11 +61,27 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
     for (auto* agent : agents) {
         if (!agent->infected()) continue;
 
-        // Immunity race: both infection and immunity progress simultaneously
-        // Well-fed agents gain immunity faster (energy > 50 = bonus)
-        agent->advanceInfection(dt);
+        auto* pathogen = agent->pathogen();
+        if (pathogen == nullptr) {
+            // Legacy: infected without pathogen, create one
+            infectAgent(agent);
+            pathogen = agent->pathogen();
+            if (pathogen == nullptr) continue;
+        }
+
+        // Pathogen "thinks" based on host state
+        const float energy_norm = std::clamp(agent->energy() / 100.0f, 0.0f, 1.0f);
+        const float infection_norm = std::clamp(agent->infectionProgress() / infection_duration_, 0.0f, 1.0f);
+        const float immunity_norm = std::clamp(agent->immunityProgress(), 0.0f, 1.0f);
+        pathogen->think(energy_norm, immunity_norm, infection_norm);
+
+        // Infection advances at pathogen-determined speed
+        agent->advanceInfection(dt * pathogen->infectionSpeed());
+
+        // Immunity advances, reduced by pathogen's immune evasion
+        const float effective_immunity_rate = agent->immunityGainRate() * (1.0f - pathogen->immuneEvasion());
         const float energy_factor = 1.0f + std::max(0.0f, agent->energy() - 50.0f) / 100.0f;
-        agent->advanceImmunity(dt * energy_factor);
+        agent->advanceImmunity(dt * effective_immunity_rate * energy_factor);
 
         // Immunity wins → recover + gain immune status
         if (agent->immunityProgress() >= 1.0f) {
@@ -93,14 +112,26 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
                 if (terrain && terrain->inCave(other->position().x, other->position().y)) {
                     shelter_factor = 0.3f;
                 }
-                const float effective_prob = infection_prob_ * season_factor * shelter_factor * dt;
-                std::bernoulli_distribution transmits(effective_prob);
+                // Pathogen controls spread rate
+                const float effective_prob = infection_prob_ * pathogen->spreadRate()
+                                           * season_factor * shelter_factor * dt;
+                std::bernoulli_distribution transmits(std::clamp(effective_prob, 0.0f, 1.0f));
                 if (transmits(rng_)) {
+                    // Pathogen reproduces: create mutated offspring
+                    auto child = pathogen->offspring(static_cast<std::uint32_t>(rng_()));
+                    pathogen->noteTransmission();
                     other->setInfected(true);
+                    other->attachPathogen(std::make_unique<Pathogen>(std::move(child)));
                 }
             }
         }
     }
+}
+
+void DiseaseLayer::infectAgent(Agent* agent) {
+    agent->setInfected(true);
+    PathogenGenome genome(static_cast<std::uint32_t>(rng_()));
+    agent->attachPathogen(std::make_unique<Pathogen>(std::move(genome)));
 }
 
 }  // namespace neuro

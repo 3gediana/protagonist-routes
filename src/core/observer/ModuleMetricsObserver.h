@@ -40,6 +40,13 @@ private:
     double healthy_infected_dist_sum_{0.0};
     std::size_t healthy_dist_ticks_{0};
     std::size_t tick_count_{0};
+
+    // Pathogen behavioral accumulators
+    double pathogen_speed_sum_{0.0};
+    double pathogen_spread_sum_{0.0};
+    double pathogen_evasion_sum_{0.0};
+    std::size_t pathogen_ticks_{0};
+    std::size_t pathogen_generation_sum_{0};
 };
 
 }  // namespace neuro

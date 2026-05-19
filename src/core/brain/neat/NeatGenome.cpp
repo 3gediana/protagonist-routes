@@ -151,7 +151,7 @@ float NeatGenome::immunityGainRate() const {
 }
 
 void NeatGenome::setImmunityGainRate(float rate) {
-    immunity_gain_rate_ = std::clamp(rate, 0.01f, 0.15f);
+    immunity_gain_rate_ = std::clamp(rate, 0.01f, 0.20f);
 }
 
 void NeatGenome::setWeights(const std::vector<float>& weights) {

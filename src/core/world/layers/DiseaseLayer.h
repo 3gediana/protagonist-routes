@@ -8,6 +8,8 @@
 
 namespace neuro {
 
+class Agent;
+
 class DiseaseLayer final : public IWorldLayer {
 public:
     static constexpr const char* kName = "disease";
@@ -26,6 +28,7 @@ public:
     float infectionRadius() const { return infection_radius_; }
     std::size_t infectionDeathCount() const { return infection_deaths_; }
     std::size_t recoveryCount() const { return recoveries_; }
+    void infectAgent(Agent* agent);
 
 private:
     float infection_radius_;

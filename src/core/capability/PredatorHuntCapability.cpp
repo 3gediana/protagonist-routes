@@ -1,6 +1,6 @@
 #include "core/capability/PredatorHuntCapability.h"
-
 #include "core/agent/Agent.h"
+#include "core/pathogen/Pathogen.h"
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
@@ -54,7 +54,15 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
                 thread_local std::mt19937 pred_rng(std::random_device{}());
                 std::bernoulli_distribution catch_disease(0.3f);
                 if (catch_disease(pred_rng)) {
-                    concrete->setInfected(true);
+                    // Pathogen transmits from prey to predator with mutation
+                    const auto* prey_pathogen = other_concrete->pathogen();
+                    if (prey_pathogen) {
+                        auto child = prey_pathogen->offspring(static_cast<std::uint32_t>(pred_rng()));
+                        concrete->setInfected(true);
+                        concrete->attachPathogen(std::make_unique<Pathogen>(std::move(child)));
+                    } else {
+                        concrete->setInfected(true);
+                    }
                 }
             }
 

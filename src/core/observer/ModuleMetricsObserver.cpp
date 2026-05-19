@@ -24,7 +24,8 @@ ModuleMetricsObserver::ModuleMetricsObserver(const std::filesystem::path& csv_pa
          << "avg_food_eaten,resource_available_count,avg_resource_amount,"
          << "min_light,max_light,min_season,max_season,current_season,"
          << "signal_field_energy,heavy_resources_available,heavy_workers_avg,"
-         << "avg_complexity\n";
+         << "avg_complexity,"
+         << "pathogen_avg_speed,pathogen_avg_spread,pathogen_avg_evasion,pathogen_avg_gen\n";
 }
 
 void ModuleMetricsObserver::onAttach(IWorld& world) {
@@ -44,6 +45,11 @@ void ModuleMetricsObserver::resetAccumulators() {
     healthy_infected_dist_sum_ = 0.0;
     healthy_dist_ticks_ = 0;
     tick_count_ = 0;
+    pathogen_speed_sum_ = 0.0;
+    pathogen_spread_sum_ = 0.0;
+    pathogen_evasion_sum_ = 0.0;
+    pathogen_ticks_ = 0;
+    pathogen_generation_sum_ = 0;
 }
 
 void ModuleMetricsObserver::onTick(IWorld& world) {
@@ -89,6 +95,14 @@ void ModuleMetricsObserver::onTick(IWorld& world) {
             ++infected_now;
             infected_speed_sum_ += speed;
             ++infected_speed_ticks_;
+            // Pathogen metrics
+            if (concrete && concrete->pathogen()) {
+                pathogen_speed_sum_ += concrete->pathogen()->infectionSpeed();
+                pathogen_spread_sum_ += concrete->pathogen()->spreadRate();
+                pathogen_evasion_sum_ += concrete->pathogen()->immuneEvasion();
+                pathogen_generation_sum_ += concrete->pathogen()->genome().generation();
+                ++pathogen_ticks_;
+            }
         }
 
         infos.push_back({agent->position(), is_inf, is_pred});
@@ -244,7 +258,11 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
          << safe(signal_energy) << ','
          << heavy_available << ','
          << safe(heavy_workers_avg) << ','
-         << 0.0 << '\n';
+         << 0.0 << ','
+         << safe(pathogen_ticks_ > 0 ? pathogen_speed_sum_ / pathogen_ticks_ : 0.0) << ','
+         << safe(pathogen_ticks_ > 0 ? pathogen_spread_sum_ / pathogen_ticks_ : 0.0) << ','
+         << safe(pathogen_ticks_ > 0 ? pathogen_evasion_sum_ / pathogen_ticks_ : 0.0) << ','
+         << (pathogen_ticks_ > 0 ? pathogen_generation_sum_ / pathogen_ticks_ : 0.0) << '\n';
     csv_.flush();
 
     ++generation_;
