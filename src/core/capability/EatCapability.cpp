@@ -6,6 +6,7 @@
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/ResourceLayer.h"
+#include "core/world/layers/signal/SignalLayer.h"
 
 namespace neuro {
 
@@ -38,6 +39,15 @@ void EatCapability::apply(IAgent& agent, IWorld& world, std::span<const float>, 
 
     if (auto* concrete = dynamic_cast<Agent*>(&agent)) {
         concrete->noteFoodEaten(gained);
+    }
+
+    // Auto-emit signal at food location: signal field becomes a food map
+    // This creates the communication closed loop: food → signal → other agents follow → food → reward
+    auto* signal_layer = world.getLayer<SignalLayer>();
+    if (signal_layer != nullptr) {
+        std::vector<float> food_signal(signal_layer->channels(), 0.0f);
+        food_signal[0] = 1.0f;  // channel 0 = "food here"
+        signal_layer->emit(agent.position(), food_signal);
     }
 }
 

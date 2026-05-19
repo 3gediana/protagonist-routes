@@ -4,6 +4,7 @@
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/TimeOfDayLayer.h"
 
 #include <cmath>
 
@@ -29,11 +30,19 @@ void InfectionPerception::sense(const IAgent& agent, const IWorld& world, std::s
     const auto* concrete = dynamic_cast<const Agent*>(&agent);
     const bool self_infected = concrete ? concrete->infected() : false;
 
+    // Day/night: darkness reduces perception radius (night = 0.5x range)
+    float effective_radius = perception_radius_;
+    const auto* tod = world.getLayer<TimeOfDayLayer>();
+    if (tod != nullptr) {
+        const float light = tod->lightLevel();
+        effective_radius *= (0.5f + 0.5f * light);
+    }
+
     std::size_t infected_nearby = 0;
     std::size_t total_nearby = 0;
     float nearest_dx = 0.0f;
     float nearest_dy = 0.0f;
-    float min_dist = perception_radius_ + 1.0f;
+    float min_dist = effective_radius + 1.0f;
 
     for (const auto* other : agent_layer->agents()) {
         if (other == &agent || !other->alive()) continue;
@@ -42,7 +51,7 @@ void InfectionPerception::sense(const IAgent& agent, const IWorld& world, std::s
         const float dy = other->position().y - agent.position().y;
         const float dist = std::sqrt(dx * dx + dy * dy);
 
-        if (dist < perception_radius_) {
+        if (dist < effective_radius) {
             total_nearby++;
             const auto* other_concrete = dynamic_cast<const Agent*>(other);
             if (other_concrete && other_concrete->infected()) {
@@ -58,8 +67,8 @@ void InfectionPerception::sense(const IAgent& agent, const IWorld& world, std::s
 
     output[0] = self_infected ? 1.0f : 0.0f;
     output[1] = total_nearby > 0 ? static_cast<float>(infected_nearby) / static_cast<float>(total_nearby) : 0.0f;
-    output[2] = infected_nearby > 0 ? nearest_dx / perception_radius_ : 0.0f;
-    output[3] = infected_nearby > 0 ? nearest_dy / perception_radius_ : 0.0f;
+    output[2] = infected_nearby > 0 ? nearest_dx / effective_radius : 0.0f;
+    output[3] = infected_nearby > 0 ? nearest_dy / effective_radius : 0.0f;
     // Immune memory richness: how many strains recovered from (capped at 5)
     output[4] = concrete ? std::min(static_cast<float>(concrete->immuneMemory().size()), 5.0f) / 5.0f : 0.0f;
 }

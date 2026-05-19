@@ -37,6 +37,7 @@
 #include "core/capability/HebbianLearning.h"
 #include "core/capability/EmitSignalCapability.h"
 #include "core/capability/PredatorHuntCapability.h"
+#include "core/capability/FleeCapability.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -161,6 +162,9 @@ struct RuntimeParams {
     float pred_damage;
     float pred_energy_gain;
     float pred_hunt_cost;
+    float pred_flee_radius;
+    float pred_flee_boost;
+    float pred_flee_cost;
     bool curriculum_enabled;
     std::size_t curriculum_stage1_gen;
     std::size_t curriculum_stage2_gen;
@@ -298,6 +302,8 @@ RuntimeParams loadParams(const config::Config& config) {
     params.signal_perception_radius = config.getOr<float>("world.signal.perception_radius", 15.0f);
     params.signal_emit_cost = config.getOr<float>("world.signal.emit_cost", 0.05f);
     if (params.signal_enabled) {
+        // Replace NearestFoodPerception (3 dims) with SignalPerception (signal_channels dims)
+        params.input_dim -= 3;  // remove NearestFoodPerception
         params.input_dim += params.signal_channels;
         params.output_dim += params.signal_channels;
     }
@@ -319,8 +325,12 @@ RuntimeParams loadParams(const config::Config& config) {
     params.pred_damage = config.getOr<float>("world.predator.damage", 0.5f);
     params.pred_energy_gain = config.getOr<float>("world.predator.energy_gain", 0.3f);
     params.pred_hunt_cost = config.getOr<float>("world.predator.hunt_cost", 0.02f);
+    params.pred_flee_radius = config.getOr<float>("world.predator.flee_radius", 15.0f);
+    params.pred_flee_boost = config.getOr<float>("world.predator.flee_boost", 3.0f);
+    params.pred_flee_cost = config.getOr<float>("world.predator.flee_cost", 0.03f);
     if (params.pred_enabled) {
-        params.output_dim += 1;
+        params.output_dim += 1;  // hunt output for predators
+        params.output_dim += 1;  // flee output for prey
     }
     params.curriculum_enabled = config.getOr<bool>("evolution.curriculum.enabled", false);
     params.curriculum_stage1_gen = config.getOr<std::size_t>("evolution.curriculum.stage1_gen", 30);
@@ -588,7 +598,11 @@ void populateWorld(World2D& world,
             agent->setSpeciesId(it->second);
         }
         agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
-        agent->addPerception(std::make_unique<NearestFoodPerception>());
+        // When signal is enabled, remove direct food perception to force communication
+        // Literature: "if individuals can directly perceive targets, communication won't evolve" (Rawal & Miikkulainen 2014)
+        if (!params.signal_enabled) {
+            agent->addPerception(std::make_unique<NearestFoodPerception>());
+        }
         if (params.terrain_enabled) {
             agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
         }
@@ -630,11 +644,17 @@ void populateWorld(World2D& world,
             const bool is_pred = (agent_index < static_cast<std::size_t>(
                 static_cast<float>(params.population_size) * params.pred_ratio));
             agent->setPredator(is_pred);
+            // Both capabilities added to all agents so brain outputs are fully consumed
+            // PredatorHuntCapability only affects non-predators; FleeCapability only affects non-predators
             agent->addCapability(std::make_unique<PredatorHuntCapability>(
                 params.pred_hunt_radius,
                 params.pred_damage,
                 params.pred_energy_gain,
                 params.pred_hunt_cost));
+            agent->addCapability(std::make_unique<FleeCapability>(
+                params.pred_flee_radius,
+                params.pred_flee_boost,
+                params.pred_flee_cost));
         }
         if (params.disease_enabled) {
             // Inherit immunity gain rate from genome (evolvable trait)

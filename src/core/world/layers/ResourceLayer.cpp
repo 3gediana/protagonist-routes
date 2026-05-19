@@ -4,6 +4,7 @@
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/terrain/TerrainLayer.h"
+#include "core/world/layers/SeasonLayer.h"
 
 #include <cmath>
 #include <limits>
@@ -43,9 +44,16 @@ void ResourceLayer::onAttach(IWorld& world) {
 }
 
 void ResourceLayer::tick(IWorld& world, float dt) {
+    // Season affects resource regeneration rate
+    float season_regen = 1.0f;
+    const auto* season = world.getLayer<SeasonLayer>();
+    if (season) {
+        season_regen = season->resourceFactor();
+    }
+
     for (auto& resource : resources_) {
         if (dynamic_ && resource.available && resource.amount < resource.max_amount) {
-            resource.amount = std::min(resource.amount + resource.regen_rate * dt, resource.max_amount);
+            resource.amount = std::min(resource.amount + resource.regen_rate * season_regen * dt, resource.max_amount);
         }
         if (resource.available || resource.respawn_ticks_remaining == 0) {
             continue;

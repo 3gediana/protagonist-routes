@@ -6,6 +6,8 @@
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/terrain/TerrainLayer.h"
+#include "core/world/layers/TimeOfDayLayer.h"
+#include "core/world/layers/SeasonLayer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -52,6 +54,16 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
 
     auto* terrain = world.getLayer<TerrainLayer>();
     float terrain_cost_factor = 1.0f;
+
+    // Day/night: darkness reduces movement speed (night = 0.6x)
+    const auto* tod = world.getLayer<TimeOfDayLayer>();
+    if (tod != nullptr) {
+        const float light = tod->lightLevel();
+        // light ranges [0,1]; at light=0 (darkest) speed is 0.6x, at light=1 speed is 1.0x
+        const float light_factor = 0.6f + 0.4f * light;
+        velocity = velocity * light_factor;
+    }
+
     if (terrain != nullptr) {
         const Vec2 slope = terrain->slopeAt(previous_position.x, previous_position.y);
         const float slope_mag = std::sqrt(slope.x * slope.x + slope.y * slope.y);
@@ -78,7 +90,15 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     agent.setPosition(next_position);
 
     const float move_cost = (decision_cost_ + movement_cost_factor_ * velocity.length()) * terrain_cost_factor;
-    agent.setEnergy(previous_energy - move_cost);
+
+    // Season affects metabolism: winter = 1.5x energy cost, summer = 0.9x
+    const auto* season = world.getLayer<SeasonLayer>();
+    float season_cost = 1.0f;
+    if (season) {
+        season_cost = season->metabolismFactor();
+    }
+
+    agent.setEnergy(previous_energy - move_cost * season_cost);
 
     world.eventBus().publish(events::Event{events::EventType::AgentMoved,
                                            events::AgentMoved{agent.id(), previous_position, next_position},
