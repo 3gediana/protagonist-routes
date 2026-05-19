@@ -159,7 +159,7 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
             damage_sum += concrete->damageDealt();
             kill_sum += concrete->kills();
             food_eaten_sum += concrete->foodEatenThisTick();
-            if (concrete->immune()) ++immune_count;
+            if (!concrete->immuneMemory().empty()) ++immune_count;
         }
     }
 

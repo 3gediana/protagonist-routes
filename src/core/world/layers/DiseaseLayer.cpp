@@ -83,10 +83,11 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
         const float energy_factor = 1.0f + std::max(0.0f, agent->energy() - 50.0f) / 100.0f;
         agent->advanceImmunity(dt * effective_immunity_rate * energy_factor);
 
-        // Immunity wins → recover + gain immune status
+        // Immunity wins → recover + add strain to immune memory
         if (agent->immunityProgress() >= 1.0f) {
+            const auto strain = pathogen->genome().strain();
             agent->setInfected(false);
-            agent->setImmune(true);
+            agent->addImmuneMemory(strain);
             ++recoveries_;
             continue;
         }
@@ -98,10 +99,9 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
             continue;
         }
 
-        // Spread to nearby healthy non-immune agents
+        // Spread to nearby agents that aren't immune to this strain
         for (auto* other : agents) {
             if (other == agent || other->infected() || !other->alive()) continue;
-            if (other->immune()) continue;
 
             const float dx = agent->position().x - other->position().x;
             const float dy = agent->position().y - other->position().y;
@@ -117,9 +117,17 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
                                            * season_factor * shelter_factor * dt;
                 std::bernoulli_distribution transmits(std::clamp(effective_prob, 0.0f, 1.0f));
                 if (transmits(rng_)) {
-                    // Pathogen reproduces: create mutated offspring
+                    // Pathogen reproduces: create mutated offspring (antigenic drift)
                     auto child = pathogen->offspring(static_cast<std::uint32_t>(rng_()));
                     pathogen->noteTransmission();
+
+                    // Check if target has immunity to this specific strain
+                    const auto* other_concrete = dynamic_cast<const Agent*>(other);
+                    if (other_concrete && other_concrete->hasImmunityToStrain(child.genome().strain())) {
+                        // Host immune to this strain — infection blocked
+                        continue;
+                    }
+
                     other->setInfected(true);
                     other->attachPathogen(std::make_unique<Pathogen>(std::move(child)));
                 }

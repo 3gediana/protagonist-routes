@@ -229,6 +229,30 @@ void Agent::attachPathogen(std::unique_ptr<Pathogen> p) {
     pathogen_ = std::move(p);
 }
 
+const std::vector<PathogenGenome::StrainSignature>& Agent::immuneMemory() const {
+    return immune_memory_;
+}
+
+void Agent::addImmuneMemory(const PathogenGenome::StrainSignature& strain) {
+    immune_memory_.push_back(strain);
+}
+
+bool Agent::hasImmunityToStrain(const PathogenGenome::StrainSignature& strain, float threshold) const {
+    // Check Euclidean distance between strain and all immune memories
+    // If any memory is close enough, host has immunity
+    for (const auto& mem : immune_memory_) {
+        float dist_sq = 0.0f;
+        for (std::size_t i = 0; i < PathogenGenome::kStrainDim; ++i) {
+            const float d = strain[i] - mem[i];
+            dist_sq += d * d;
+        }
+        // Max possible distance in 4D unit hypercube is 2.0 (sqrt(4))
+        // threshold=0.5 means distance < 0.5 → immune
+        if (dist_sq < threshold * threshold) return true;
+    }
+    return false;
+}
+
 bool Agent::isPredator() const {
     return is_predator_;
 }

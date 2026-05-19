@@ -12,6 +12,11 @@ PathogenGenome::PathogenGenome(std::uint32_t seed)
     for (auto& w : weights_) {
         w = dist(rng);
     }
+    // Random initial strain signature
+    std::uniform_real_distribution<float> strain_dist(0.0f, 1.0f);
+    for (auto& s : strain_) {
+        s = strain_dist(rng);
+    }
 }
 
 PathogenGenome::PathogenGenome(std::vector<float> weights)
@@ -43,6 +48,13 @@ PathogenGenome PathogenGenome::mutate(float perturb_rate,
 
     PathogenGenome child(std::move(child_weights));
     child.generation_ = generation_ + 1;
+
+    // Antigenic drift: strain signature mutates with small perturbations
+    std::normal_distribution<float> strain_perturb(0.0f, 0.1f);
+    for (std::size_t i = 0; i < kStrainDim; ++i) {
+        child.strain_[i] = std::clamp(strain_[i] + strain_perturb(rng), 0.0f, 1.0f);
+    }
+
     return child;
 }
 

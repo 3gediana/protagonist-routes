@@ -49,19 +49,21 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
             concrete->setEnergy(concrete->energy() + actual_gain * dt);
             concrete->noteDamageDealt(actual_damage * dt);
 
-            // Predator can catch disease from infected prey (unless immune)
-            if (prey_infected && !concrete->immune()) {
-                thread_local std::mt19937 pred_rng(std::random_device{}());
-                std::bernoulli_distribution catch_disease(0.3f);
-                if (catch_disease(pred_rng)) {
-                    // Pathogen transmits from prey to predator with mutation
-                    const auto* prey_pathogen = other_concrete->pathogen();
-                    if (prey_pathogen) {
-                        auto child = prey_pathogen->offspring(static_cast<std::uint32_t>(pred_rng()));
-                        concrete->setInfected(true);
-                        concrete->attachPathogen(std::make_unique<Pathogen>(std::move(child)));
+            // Predator can catch disease from infected prey (unless immune to that strain)
+            if (prey_infected) {
+                const auto* prey_pathogen = other_concrete->pathogen();
+                if (prey_pathogen) {
+                    // Check strain-based immunity
+                    if (concrete->hasImmunityToStrain(prey_pathogen->genome().strain())) {
+                        // Already immune to this strain
                     } else {
-                        concrete->setInfected(true);
+                        thread_local std::mt19937 pred_rng(std::random_device{}());
+                        std::bernoulli_distribution catch_disease(0.3f);
+                        if (catch_disease(pred_rng)) {
+                            auto child = prey_pathogen->offspring(static_cast<std::uint32_t>(pred_rng()));
+                            concrete->setInfected(true);
+                            concrete->attachPathogen(std::make_unique<Pathogen>(std::move(child)));
+                        }
                     }
                 }
             }

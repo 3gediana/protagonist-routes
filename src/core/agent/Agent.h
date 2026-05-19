@@ -80,6 +80,12 @@ public:
     Pathogen* pathogen() const;
     void attachPathogen(std::unique_ptr<Pathogen> p);
 
+    // Immune memory: strain signatures of recovered infections
+    // A new pathogen can infect if its strain is sufficiently different
+    const std::vector<PathogenGenome::StrainSignature>& immuneMemory() const;
+    void addImmuneMemory(const PathogenGenome::StrainSignature& strain);
+    bool hasImmunityToStrain(const PathogenGenome::StrainSignature& strain, float threshold = 0.5f) const;
+
     bool isPredator() const;
     void setPredator(bool v);
 
@@ -109,6 +115,7 @@ private:
     bool immune_;
     float immunity_gain_rate_;
     std::unique_ptr<Pathogen> pathogen_;
+    std::vector<PathogenGenome::StrainSignature> immune_memory_;
     bool is_predator_;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;

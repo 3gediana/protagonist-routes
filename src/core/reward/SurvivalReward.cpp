@@ -9,9 +9,10 @@ SurvivalReward::SurvivalReward(double weight)
 double SurvivalReward::evaluate(const IAgent& agent, const IWorld&, float) const {
     const auto* concrete = dynamic_cast<const Agent*>(&agent);
     double reward = 0.01;
-    // Immune agents get a survival bonus (recovered from disease)
-    if (concrete && concrete->immune()) {
-        reward += 0.02;
+    // Agents with richer immune memory get survival bonus (recovered from more strains)
+    if (concrete) {
+        const auto strain_bonus = std::min(concrete->immuneMemory().size(), std::size_t(5));
+        reward += 0.01 * static_cast<double>(strain_bonus);
     }
     return reward;
 }

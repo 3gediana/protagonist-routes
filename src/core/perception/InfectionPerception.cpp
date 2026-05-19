@@ -28,7 +28,6 @@ void InfectionPerception::sense(const IAgent& agent, const IWorld& world, std::s
 
     const auto* concrete = dynamic_cast<const Agent*>(&agent);
     const bool self_infected = concrete ? concrete->infected() : false;
-    const bool self_immune = concrete ? concrete->immune() : false;
 
     std::size_t infected_nearby = 0;
     std::size_t total_nearby = 0;
@@ -61,7 +60,8 @@ void InfectionPerception::sense(const IAgent& agent, const IWorld& world, std::s
     output[1] = total_nearby > 0 ? static_cast<float>(infected_nearby) / static_cast<float>(total_nearby) : 0.0f;
     output[2] = infected_nearby > 0 ? nearest_dx / perception_radius_ : 0.0f;
     output[3] = infected_nearby > 0 ? nearest_dy / perception_radius_ : 0.0f;
-    output[4] = self_immune ? 1.0f : 0.0f;
+    // Immune memory richness: how many strains recovered from (capped at 5)
+    output[4] = concrete ? std::min(static_cast<float>(concrete->immuneMemory().size()), 5.0f) / 5.0f : 0.0f;
 }
 
 }  // namespace neuro
