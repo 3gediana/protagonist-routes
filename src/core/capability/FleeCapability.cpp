@@ -3,6 +3,7 @@
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/TimeOfDayLayer.h"
 
 #include <cmath>
 
@@ -50,12 +51,20 @@ void FleeCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
 
     if (!threat_found) return;
 
+    // Day/night: prey flee more effectively during day (1.0x), worse at night (0.6x)
+    float time_mult = 1.0f;
+    const auto* tod = world.getLayer<TimeOfDayLayer>();
+    if (tod != nullptr) {
+        const float light = tod->lightLevel();
+        time_mult = 0.6f + 0.4f * light;
+    }
+
     // Flee direction: away from predator
     const float len = std::sqrt(nearest_dx * nearest_dx + nearest_dy * nearest_dy);
     if (len < 0.001f) return;
 
     const float flee_intensity = outputs[0];
-    const float boost = flee_speed_boost_ * flee_intensity;
+    const float boost = flee_speed_boost_ * flee_intensity * time_mult;
     Vec2 flee_dir{nearest_dx / len, nearest_dy / len};
 
     // Apply flee velocity boost on top of normal movement

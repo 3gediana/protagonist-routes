@@ -4,6 +4,7 @@
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/TimeOfDayLayer.h"
 
 #include <cmath>
 #include <random>
@@ -28,6 +29,16 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
 
     concrete->setEnergy(concrete->energy() - cost_ * dt);
 
+    // Crepuscular hunting bonus: predators are most effective at dawn/dusk
+    const auto* tod = world.getLayer<TimeOfDayLayer>();
+    float time_damage_mult = 1.0f;
+    if (tod != nullptr) {
+        const float light = tod->lightLevel();
+        // Dawn/dusk: light in [0.3, 0.7] → 1.5x damage; full day/night → 1.0x
+        const float crepuscular = 1.0f - std::abs(light - 0.5f) * 2.0f;  // 0 at extremes, 1 at 0.5
+        time_damage_mult = 1.0f + 0.5f * crepuscular;
+    }
+
     for (auto* other : agent_layer->agents()) {
         if (other == &agent || !other->alive()) continue;
 
@@ -42,12 +53,14 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
 
         if (dist < hunt_radius_) {
             const bool prey_infected = other_concrete->infected();
-            const float actual_damage = prey_infected ? damage_ * 0.5f : damage_;
-            const float actual_gain = prey_infected ? energy_gain_ * 0.3f : energy_gain_;
+            const float base_damage = prey_infected ? damage_ * 0.5f : damage_;
+            const float base_gain = prey_infected ? energy_gain_ * 0.3f : energy_gain_;
+            const float actual_damage = base_damage * time_damage_mult * dt;
+            const float actual_gain = base_gain * time_damage_mult * dt;
 
-            other->setEnergy(other->energy() - actual_damage * dt);
-            concrete->setEnergy(concrete->energy() + actual_gain * dt);
-            concrete->noteDamageDealt(actual_damage * dt);
+            other->setEnergy(other->energy() - actual_damage);
+            concrete->setEnergy(concrete->energy() + actual_gain);
+            concrete->noteDamageDealt(actual_damage);
 
             // Predator can catch disease from infected prey (unless immune to that strain)
             if (prey_infected) {

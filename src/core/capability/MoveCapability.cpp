@@ -55,12 +55,15 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     auto* terrain = world.getLayer<TerrainLayer>();
     float terrain_cost_factor = 1.0f;
 
-    // Day/night: darkness reduces movement speed (night = 0.6x)
+    // Day/night: darkness reduces movement speed — species-dependent
+    // Predators: nocturnal (night speed 0.85x), Prey: diurnal (night speed 0.45x)
     const auto* tod = world.getLayer<TimeOfDayLayer>();
     if (tod != nullptr) {
         const float light = tod->lightLevel();
-        // light ranges [0,1]; at light=0 (darkest) speed is 0.6x, at light=1 speed is 1.0x
-        const float light_factor = 0.6f + 0.4f * light;
+        const bool is_predator = concrete_agent && concrete_agent->isPredator();
+        // Predators: min speed 0.85x at darkest; Prey: min speed 0.45x at darkest
+        const float min_factor = is_predator ? 0.85f : 0.45f;
+        const float light_factor = min_factor + (1.0f - min_factor) * light;
         velocity = velocity * light_factor;
     }
 
@@ -77,7 +80,12 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
         }
 
         if (terrain->inCave(previous_position.x, previous_position.y)) {
-            terrain_cost_factor *= terrain->caveShelterFactor();
+            float shelter = terrain->caveShelterFactor();
+            // Night shelter bonus: caves are more valuable at night (0.3x cost vs 0.5x)
+            if (tod && tod->isNight()) {
+                shelter *= 0.6f;
+            }
+            terrain_cost_factor *= shelter;
         }
     }
 
