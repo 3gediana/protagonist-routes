@@ -68,6 +68,12 @@ public:
     void setInfected(bool v);
     float infectionProgress() const;
     void advanceInfection(float dt);
+    float immunityProgress() const;
+    void advanceImmunity(float dt);
+    bool immune() const;
+    void setImmune(bool v);
+    float immunityGainRate() const;
+    void setImmunityGainRate(float rate);
 
     bool isPredator() const;
     void setPredator(bool v);
@@ -94,6 +100,9 @@ private:
     std::size_t kills_;
     bool infected_;
     float infection_progress_;
+    float immunity_progress_;
+    bool immune_;
+    float immunity_gain_rate_;
     bool is_predator_;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;

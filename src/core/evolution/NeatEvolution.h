@@ -69,6 +69,7 @@ private:
     void toggleConnectionMutation(NeatGenome& genome);
     void addModulatoryNodeMutation(NeatGenome& genome);
     void mutateDecisionInterval(NeatGenome& genome);
+    void mutateImmunityGainRate(NeatGenome& genome);
 
     double elite_ratio_;
     std::size_t tournament_size_;

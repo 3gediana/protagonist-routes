@@ -463,14 +463,18 @@ NeatGenome NeatEvolution::crossover(const NeatGenome& a,
     });
 
     const float child_interval = pick_half(rng_) ? primary->decisionInterval() : secondary->decisionInterval();
+    const float child_immunity = pick_half(rng_) ? primary->immunityGainRate() : secondary->immunityGainRate();
 
-    return NeatGenome(child_id, primary->inputDim(), primary->outputDim(), std::move(child_nodes), std::move(child_connections), child_interval);
+    auto child = NeatGenome(child_id, primary->inputDim(), primary->outputDim(), std::move(child_nodes), std::move(child_connections), child_interval);
+    child.setImmunityGainRate(child_immunity);
+    return child;
 }
 
 void NeatEvolution::mutate(NeatGenome& genome) {
     mutateWeights(genome);
     mutateNodeParameters(genome);
     mutateDecisionInterval(genome);
+    mutateImmunityGainRate(genome);
 
     std::bernoulli_distribution add_connection(add_connection_rate_);
     std::bernoulli_distribution add_node(add_node_rate_);
@@ -675,6 +679,19 @@ void NeatEvolution::mutateDecisionInterval(NeatGenome& genome) {
     } else if (perturb(rng_)) {
         const float new_interval = genome.decisionInterval() + perturb_dist(rng_);
         genome.setDecisionInterval(std::clamp(new_interval, decision_interval_min_, decision_interval_max_));
+    }
+}
+
+void NeatEvolution::mutateImmunityGainRate(NeatGenome& genome) {
+    std::bernoulli_distribution perturb(weight_perturb_rate_);
+    std::normal_distribution<float> perturb_dist(0.0f, 0.01f);
+    std::uniform_real_distribution<float> reset_dist(0.03f, 0.10f);
+
+    if (std::bernoulli_distribution(weight_reset_rate_)(rng_)) {
+        genome.setImmunityGainRate(reset_dist(rng_));
+    } else if (perturb(rng_)) {
+        const float new_rate = genome.immunityGainRate() + perturb_dist(rng_);
+        genome.setImmunityGainRate(new_rate);
     }
 }
 

@@ -6,7 +6,7 @@ namespace neuro {
 
 class InfectionPerception final : public IPerception {
 public:
-    static constexpr std::size_t kDim = 4;
+    static constexpr std::size_t kDim = 5;
 
     InfectionPerception(float perception_radius);
 

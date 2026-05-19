@@ -32,6 +32,7 @@ struct EvaluatedIndividual {
     SpeciesId species_id;        // kInvalidSpeciesId pre-M3
     std::size_t complexity;      // genome complexity (for stats)
     std::size_t modulatory_nodes; // count of modulatory nodes in genome
+    float     immunity_gain_rate; // evolvable disease resistance trait
 };
 
 class IEvolutionStrategy {

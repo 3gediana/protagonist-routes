@@ -31,7 +31,7 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) return;
 
-    if (infection_deaths_ == 0 && agent_layer->size() > 0) {
+    if (infection_deaths_ == 0 && recoveries_ == 0 && agent_layer->size() > 0) {
         std::bernoulli_distribution infect(initial_infection_rate_);
         for (auto* agent : agent_layer->agents()) {
             if (infect(rng_)) {
@@ -42,7 +42,6 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
 
     const auto& agents = agent_layer->agents();
 
-    // Season affects disease spread: winter increases, summer decreases
     float season_factor = 1.0f;
     const auto* season = world.getLayer<SeasonLayer>();
     if (season) {
@@ -59,28 +58,37 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
     for (auto* agent : agents) {
         if (!agent->infected()) continue;
 
+        // Immunity race: both infection and immunity progress simultaneously
+        // Well-fed agents gain immunity faster (energy > 50 = bonus)
         agent->advanceInfection(dt);
+        const float energy_factor = 1.0f + std::max(0.0f, agent->energy() - 50.0f) / 100.0f;
+        agent->advanceImmunity(dt * energy_factor);
 
-        if (agent->infectionProgress() >= infection_duration_) {
-            std::bernoulli_distribution dies(death_prob_);
-            if (dies(rng_)) {
-                agent->kill("disease");
-                ++infection_deaths_;
-            } else {
-                agent->setInfected(false);
-            }
+        // Immunity wins → recover + gain immune status
+        if (agent->immunityProgress() >= 1.0f) {
+            agent->setInfected(false);
+            agent->setImmune(true);
+            ++recoveries_;
             continue;
         }
 
+        // Infection wins → die
+        if (agent->infectionProgress() >= infection_duration_) {
+            agent->kill("disease");
+            ++infection_deaths_;
+            continue;
+        }
+
+        // Spread to nearby healthy non-immune agents
         for (auto* other : agents) {
             if (other == agent || other->infected() || !other->alive()) continue;
+            if (other->immune()) continue;
 
             const float dx = agent->position().x - other->position().x;
             const float dy = agent->position().y - other->position().y;
             const float dist = std::sqrt(dx * dx + dy * dy);
 
             if (dist < infection_radius_) {
-                // Terrain cave provides shelter from disease
                 float shelter_factor = 1.0f;
                 if (terrain && terrain->inCave(other->position().x, other->position().y)) {
                     shelter_factor = 0.3f;

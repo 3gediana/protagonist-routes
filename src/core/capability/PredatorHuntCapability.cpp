@@ -49,8 +49,8 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
             concrete->setEnergy(concrete->energy() + actual_gain * dt);
             concrete->noteDamageDealt(actual_damage * dt);
 
-            // Predator can catch disease from infected prey
-            if (prey_infected) {
+            // Predator can catch disease from infected prey (unless immune)
+            if (prey_infected && !concrete->immune()) {
                 thread_local std::mt19937 pred_rng(std::random_device{}());
                 std::bernoulli_distribution catch_disease(0.3f);
                 if (catch_disease(pred_rng)) {

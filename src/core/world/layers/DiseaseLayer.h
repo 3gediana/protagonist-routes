@@ -25,6 +25,7 @@ public:
 
     float infectionRadius() const { return infection_radius_; }
     std::size_t infectionDeathCount() const { return infection_deaths_; }
+    std::size_t recoveryCount() const { return recoveries_; }
 
 private:
     float infection_radius_;
@@ -34,6 +35,7 @@ private:
     float initial_infection_rate_;
     std::mt19937 rng_;
     std::size_t infection_deaths_ = 0;
+    std::size_t recoveries_ = 0;
 };
 
 }  // namespace neuro

@@ -20,7 +20,7 @@ ModuleMetricsObserver::ModuleMetricsObserver(const std::filesystem::path& csv_pa
     csv_ << "generation,alive_count,predator_count,prey_count,"
          << "avg_energy,avg_speed,avg_infected_speed,"
          << "total_damage_dealt,total_kills,predator_kills,"
-         << "max_infected,infection_deaths,healthy_infected_dist,"
+         << "max_infected,infection_deaths,recoveries,immune_count,healthy_infected_dist,"
          << "avg_food_eaten,resource_available_count,avg_resource_amount,"
          << "min_light,max_light,min_season,max_season,current_season,"
          << "signal_field_energy,heavy_resources_available,heavy_workers_avg,"
@@ -122,6 +122,7 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
     std::size_t alive = 0;
     std::size_t predator_count = 0;
     std::size_t prey_count = 0;
+    std::size_t immune_count = 0;
     double energy_sum = 0.0;
     double damage_sum = 0.0;
     std::size_t kill_sum = 0;
@@ -144,6 +145,7 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
             damage_sum += concrete->damageDealt();
             kill_sum += concrete->kills();
             food_eaten_sum += concrete->foodEatenThisTick();
+            if (concrete->immune()) ++immune_count;
         }
     }
 
@@ -164,11 +166,13 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
     // Sanitize NaN
     auto safe = [](double v) { return std::isfinite(v) ? v : 0.0; };
 
-    // Disease deaths
+    // Disease deaths and recoveries
     std::size_t infection_deaths = 0;
+    std::size_t recoveries = 0;
     const auto* disease = world.getLayer<DiseaseLayer>();
     if (disease) {
         infection_deaths = disease->infectionDeathCount();
+        recoveries = disease->recoveryCount();
     }
 
     // Resource metrics
@@ -226,6 +230,8 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
          << predator_kill_sum << ','
          << max_infected_ << ','
          << infection_deaths << ','
+         << recoveries << ','
+         << immune_count << ','
          << safe(avg_healthy_infected_dist) << ','
          << safe(avg_food) << ','
          << resource_available << ','

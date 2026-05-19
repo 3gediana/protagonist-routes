@@ -174,6 +174,7 @@ struct GenerationStats {
     std::size_t species_count;
     double avg_complexity;
     double avg_modulatory_nodes;
+    double avg_immunity_gain_rate;
 };
 
 std::string makeTimestamp() {
@@ -635,6 +636,13 @@ void populateWorld(World2D& world,
                 params.pred_energy_gain,
                 params.pred_hunt_cost));
         }
+        if (params.disease_enabled) {
+            // Inherit immunity gain rate from genome (evolvable trait)
+            const auto* neat_genome = dynamic_cast<const NeatGenome*>(genome_ptr.get());
+            if (neat_genome) {
+                agent->setImmunityGainRate(neat_genome->immunityGainRate());
+            }
+        }
         agent_layer->addAgent(std::move(agent), world);
         ++agent_index;
     }
@@ -687,6 +695,7 @@ std::vector<EvaluatedIndividual> collectEvaluated(
     for (Agent* agent : agent_layer->agents()) {
         std::size_t complexity = 0;
         std::size_t modulatory = 0;
+        float immunity_rate = 0.05f;
         for (const auto& genome : population) {
             if (genome->id() == agent->genomeId()) {
                 complexity = genome->complexity();
@@ -695,6 +704,7 @@ std::vector<EvaluatedIndividual> collectEvaluated(
                     for (const auto& node : neat_genome->nodes()) {
                         if (node.type == NodeGeneType::Modulatory) ++modulatory;
                     }
+                    immunity_rate = neat_genome->immunityGainRate();
                 }
                 break;
             }
@@ -706,6 +716,7 @@ std::vector<EvaluatedIndividual> collectEvaluated(
             agent->speciesId(),
             complexity,
             modulatory,
+            immunity_rate,
         });
     }
     return evaluated;
@@ -713,7 +724,7 @@ std::vector<EvaluatedIndividual> collectEvaluated(
 
 GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) {
     if (evaluated.empty()) {
-        return {0.0, 0.0, 0.0, 0, 0.0, 0.0};
+        return {0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0};
     }
 
     double min_fitness = std::numeric_limits<double>::max();
@@ -722,6 +733,7 @@ GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) 
     double complexity_sum = 0.0;
     std::unordered_set<SpeciesId> species_ids;
     double modulatory_sum = 0.0;
+    double immunity_rate_sum = 0.0;
     for (const auto& item : evaluated) {
         const double f = std::isfinite(item.fitness) ? item.fitness : 0.0;
         min_fitness = std::min(min_fitness, f);
@@ -729,6 +741,7 @@ GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) 
         fitness_sum += f;
         complexity_sum += static_cast<double>(item.complexity);
         modulatory_sum += static_cast<double>(item.modulatory_nodes);
+        immunity_rate_sum += static_cast<double>(item.immunity_gain_rate);
         if (item.species_id != kInvalidSpeciesId) {
             species_ids.insert(item.species_id);
         }
@@ -741,6 +754,7 @@ GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) 
         species_ids.size(),
         complexity_sum / static_cast<double>(evaluated.size()),
         modulatory_sum / static_cast<double>(evaluated.size()),
+        immunity_rate_sum / static_cast<double>(evaluated.size()),
     };
 }
 
@@ -799,7 +813,7 @@ int HeadlessRuntime::run() {
         if (!evolution_metrics.is_open()) {
             throw std::runtime_error("Failed to open evolution metrics output file");
         }
-        evolution_metrics << "generation,min_fitness,avg_fitness,best_fitness,species_count,avg_complexity,avg_modulatory\n";
+        evolution_metrics << "generation,min_fitness,avg_fitness,best_fitness,species_count,avg_complexity,avg_modulatory,avg_immunity_gain_rate\n";
         LOG_INFO("HeadlessRuntime: using evolution strategy '{}' with brain.type='{}'",
                  evolution_strategy->name(),
                  params.brain_type);
@@ -866,7 +880,8 @@ int HeadlessRuntime::run() {
                               << stats.best_fitness << ','
                               << stats.species_count << ','
                               << stats.avg_complexity << ','
-                              << stats.avg_modulatory_nodes << '\n';
+                              << stats.avg_modulatory_nodes << ','
+                              << stats.avg_immunity_gain_rate << '\n';
             evolution_metrics.flush();
             world->eventBus().publish(events::Event{
                 events::EventType::GenerationEnded,

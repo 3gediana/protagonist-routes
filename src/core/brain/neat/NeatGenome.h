@@ -51,6 +51,9 @@ public:
     void setDecisionInterval(float interval);
     void setWeights(const std::vector<float>& weights);
 
+    float immunityGainRate() const;
+    void setImmunityGainRate(float rate);
+
     static std::unique_ptr<NeatGenome> minimal(GenomeId id,
                                                std::size_t input_dim,
                                                std::size_t output_dim,
@@ -68,6 +71,7 @@ private:
     std::vector<NodeGene> nodes_;
     std::vector<ConnectionGene> connections_;
     float decision_interval_;
+    float immunity_gain_rate_ = 0.05f;
 };
 
 }  // namespace neuro

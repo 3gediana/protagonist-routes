@@ -146,6 +146,14 @@ void NeatGenome::setDecisionInterval(float interval) {
     decision_interval_ = interval;
 }
 
+float NeatGenome::immunityGainRate() const {
+    return immunity_gain_rate_;
+}
+
+void NeatGenome::setImmunityGainRate(float rate) {
+    immunity_gain_rate_ = std::clamp(rate, 0.01f, 0.15f);
+}
+
 void NeatGenome::setWeights(const std::vector<float>& weights) {
     std::size_t wi = 0;
     for (auto& connection : connections_) {
