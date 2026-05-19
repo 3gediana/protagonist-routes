@@ -20,6 +20,8 @@
 #include "core/observer/SpeciesObserver.h"
 #include "core/observer/PerformanceObserver.h"
 #include "core/observer/ModuleMetricsObserver.h"
+#include "core/observer/HeatmapObserver.h"
+#include "core/observer/AdvancedStatsObserver.h"
 #include "runtime/headless/EvaluationPool.h"
 #include "core/perception/NearestFoodPerception.h"
 #include "core/perception/SelfPerception.h"
@@ -907,6 +909,8 @@ int runCoevolution(const RuntimeParams& params,
     SpeciesObserver prey_species(run_dir / "species_log_prey.jsonl");
     PerformanceObserver perf_observer(run_dir / "perf.csv");
     ModuleMetricsObserver module_observer(run_dir / "module_metrics.csv");
+    HeatmapObserver heatmap_observer(64, 5, run_dir / "heatmaps");
+    AdvancedStatsObserver advanced_stats(run_dir / "advanced_stats.csv");
 
     std::ofstream evo_csv(run_dir / "evolution.csv", std::ios::out | std::ios::trunc);
     if (!evo_csv.is_open()) return 1;
@@ -932,6 +936,14 @@ int runCoevolution(const RuntimeParams& params,
         module_observer.onAttach(*world);
         pred_species.onAttach(*world);
         prey_species.onAttach(*world);
+        heatmap_observer.onAttach(*world);
+        advanced_stats.onAttach(*world);
+
+        world->eventBus().publish(events::Event{
+            events::EventType::GenerationStarted,
+            events::GenerationStarted{static_cast<Generation>(generation)},
+            world->currentTick()});
+        world->eventBus().flush();
 
         // Populate world with both populations
         auto* agent_layer = world->getLayer<AgentLayer>();
@@ -1063,11 +1075,23 @@ int runCoevolution(const RuntimeParams& params,
                 << prey_stats.avg_immunity_gain_rate << '\n';
         evo_csv.flush();
 
+        world->eventBus().publish(events::Event{
+            events::EventType::GenerationEnded,
+            events::GenerationEnded{
+                static_cast<Generation>(generation),
+                pred_stats.best_fitness,
+                pred_stats.avg_fitness,
+                pred_stats.avg_fitness},
+            world->currentTick()});
+        world->eventBus().flush();
+
         pred_species.onDetach(*world);
         prey_species.onDetach(*world);
         recorder.onDetach(*world);
         perf_observer.onDetach(*world);
         module_observer.onDetach(*world);
+        heatmap_observer.onDetach(*world);
+        advanced_stats.onDetach(*world);
 
         LOG_INFO("Gen {} coevo: pred avg={:.1f} best={:.1f} sp={} | prey avg={:.1f} best={:.1f} sp={} alive={}/{}",
                  generation, pred_stats.avg_fitness, pred_stats.best_fitness, pred_stats.species_count,
@@ -1143,6 +1167,8 @@ int HeadlessRuntime::run() {
         }
         PerformanceObserver perf_observer(run_dir_ / "perf.csv");
         ModuleMetricsObserver module_observer(run_dir_ / "module_metrics.csv");
+        HeatmapObserver heatmap_observer(64, 5, run_dir_ / "heatmaps");
+        AdvancedStatsObserver advanced_stats(run_dir_ / "advanced_stats.csv");
         std::ofstream evolution_metrics(run_dir_ / "evolution.csv", std::ios::out | std::ios::trunc);
         if (!evolution_metrics.is_open()) {
             throw std::runtime_error("Failed to open evolution metrics output file");
@@ -1165,6 +1191,8 @@ int HeadlessRuntime::run() {
             recorder.onAttach(*world);
             perf_observer.onAttach(*world);
             module_observer.onAttach(*world);
+            heatmap_observer.onAttach(*world);
+            advanced_stats.onAttach(*world);
             if (species_observer) {
                 species_observer->onAttach(*world);
             }
@@ -1233,6 +1261,8 @@ int HeadlessRuntime::run() {
             recorder.onDetach(*world);
             perf_observer.onDetach(*world);
             module_observer.onDetach(*world);
+            heatmap_observer.onDetach(*world);
+            advanced_stats.onDetach(*world);
 
             LOG_INFO(
                 "Generation {} complete: min={:.3f} avg={:.3f} best={:.3f} species={} complexity={:.2f} alive={}/{}",
