@@ -27,6 +27,7 @@
 #include "core/perception/SeasonPerception.h"
 #include "core/perception/InfectionPerception.h"
 #include "core/perception/SignalPerception.h"
+#include "core/perception/FoodScentPerception.h"
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
@@ -302,9 +303,11 @@ RuntimeParams loadParams(const config::Config& config) {
     params.signal_perception_radius = config.getOr<float>("world.signal.perception_radius", 15.0f);
     params.signal_emit_cost = config.getOr<float>("world.signal.emit_cost", 0.05f);
     if (params.signal_enabled) {
-        // Replace NearestFoodPerception (3 dims) with SignalPerception (signal_channels dims)
+        // Replace NearestFoodPerception (3 dims) with FoodScentPerception (2 dims) + SignalPerception
+        // FoodScent gives coarse direction; SignalPerception gives precise location via communication
         params.input_dim -= 3;  // remove NearestFoodPerception
-        params.input_dim += params.signal_channels;
+        params.input_dim += FoodScentPerception::kDim;  // add coarse scent
+        params.input_dim += params.signal_channels;      // add signal perception
         params.output_dim += params.signal_channels;
     }
     params.coop_enabled = config.getOr<bool>("world.coop.enabled", false);
@@ -598,10 +601,13 @@ void populateWorld(World2D& world,
             agent->setSpeciesId(it->second);
         }
         agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
-        // When signal is enabled, remove direct food perception to force communication
+        // When signal is enabled, replace direct food perception with coarse scent
         // Literature: "if individuals can directly perceive targets, communication won't evolve" (Rawal & Miikkulainen 2014)
+        // FoodScentPerception gives rough direction; SignalPerception gives precise location
         if (!params.signal_enabled) {
             agent->addPerception(std::make_unique<NearestFoodPerception>());
+        } else {
+            agent->addPerception(std::make_unique<FoodScentPerception>());
         }
         if (params.terrain_enabled) {
             agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
