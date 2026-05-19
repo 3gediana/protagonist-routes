@@ -9,6 +9,7 @@
 #include "core/capability/MoveCapability.h"
 #include "core/evolution/ClassicGA.h"
 #include "core/evolution/NeatEvolution.h"
+#include "core/evolution/Nsga2Evolution.h"
 #include "core/events/EventBus.h"
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IBrain.h"
@@ -170,6 +171,7 @@ struct RuntimeParams {
     std::size_t curriculum_stage1_gen;
     std::size_t curriculum_stage2_gen;
     std::size_t curriculum_stage3_gen;
+    bool nsga2_enabled;
 };
 
 struct GenerationStats {
@@ -339,6 +341,7 @@ RuntimeParams loadParams(const config::Config& config) {
     params.curriculum_stage1_gen = config.getOr<std::size_t>("evolution.curriculum.stage1_gen", 30);
     params.curriculum_stage2_gen = config.getOr<std::size_t>("evolution.curriculum.stage2_gen", 80);
     params.curriculum_stage3_gen = config.getOr<std::size_t>("evolution.curriculum.stage3_gen", 150);
+    params.nsga2_enabled = config.getOr<bool>("evolution.nsga2.enabled", false);
     return params;
 }
 
@@ -360,6 +363,27 @@ std::unique_ptr<IEvolutionStrategy> createEvolutionStrategy(const RuntimeParams&
     }
 
     if (params.brain_type == "neat") {
+        if (params.nsga2_enabled) {
+            return std::make_unique<Nsga2Evolution>(
+                params.elite_ratio,
+                params.tournament_size,
+                params.weight_perturb_rate,
+                params.weight_reset_rate,
+                params.add_node_rate,
+                params.add_connection_rate,
+                params.toggle_connection_rate,
+                params.add_modulatory_rate,
+                params.weight_perturb_sigma,
+                params.compatibility_threshold,
+                params.c1_excess,
+                params.c2_disjoint,
+                params.c3_weight,
+                params.tau_min,
+                params.tau_max,
+                params.random_seed + 5000,
+                params.decision_interval_min,
+                params.decision_interval_max);
+        }
         return std::make_unique<NeatEvolution>(
             params.elite_ratio,
             params.tournament_size,
@@ -710,15 +734,25 @@ void evaluatePopulation(World2D& world,
 
 std::vector<EvaluatedIndividual> collectEvaluated(
     World2D& world,
-    const std::vector<std::unique_ptr<IGenome>>& population) {
+    const std::vector<std::unique_ptr<IGenome>>& population,
+    bool nsga2_enabled = false) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) {
         throw std::runtime_error("AgentLayer missing from world");
     }
 
+    // Build a set of genome IDs in this population for fast lookup
+    std::unordered_set<GenomeId> pop_ids;
+    for (const auto& genome : population) {
+        pop_ids.insert(genome->id());
+    }
+
     std::vector<EvaluatedIndividual> evaluated;
-    evaluated.reserve(agent_layer->size());
+    evaluated.reserve(population.size());
     for (Agent* agent : agent_layer->agents()) {
+        // Only include agents whose genome is in this population
+        if (pop_ids.find(agent->genomeId()) == pop_ids.end()) continue;
+
         std::size_t complexity = 0;
         std::size_t modulatory = 0;
         float immunity_rate = 0.05f;
@@ -736,14 +770,26 @@ std::vector<EvaluatedIndividual> collectEvaluated(
             }
         }
 
-        evaluated.push_back(EvaluatedIndividual{
+        EvaluatedIndividual eval{
             agent->genomeId(),
             agent->fitness(),
             agent->speciesId(),
             complexity,
             modulatory,
             immunity_rate,
-        });
+        };
+
+        // Multi-objective for NSGA-II: [survival, foraging, exploration]
+        if (nsga2_enabled) {
+            const auto* concrete = dynamic_cast<const Agent*>(agent);
+            double survival = static_cast<double>(agent->age());
+            // Foraging: use fitness as proxy (dominated by food reward)
+            double foraging = agent->fitness();
+            double exploration = concrete ? static_cast<double>(concrete->visitedCellCount()) : 0.0;
+            eval.objectives = {survival, foraging, exploration};
+        }
+
+        evaluated.push_back(std::move(eval));
     }
     return evaluated;
 }
@@ -795,6 +841,259 @@ std::vector<IGenome*> rawGenomePointers(std::vector<std::unique_ptr<IGenome>>& p
 
 }  // namespace
 
+int runCoevolution(const RuntimeParams& params,
+                   const std::filesystem::path& run_dir,
+                   const std::atomic<bool>& stop_requested) {
+    // Two independent populations: predators and prey
+    const std::size_t pred_count = static_cast<std::size_t>(
+        static_cast<float>(params.population_size) * params.pred_ratio);
+    const std::size_t prey_count = params.population_size - pred_count;
+
+    // Separate evolution strategies with independent innovation trackers
+    auto pred_evolution = std::make_unique<NeatEvolution>(
+        params.elite_ratio, params.tournament_size,
+        params.weight_perturb_rate, params.weight_reset_rate,
+        params.add_node_rate, params.add_connection_rate,
+        params.toggle_connection_rate, params.add_modulatory_rate,
+        params.weight_perturb_sigma,
+        params.compatibility_threshold,
+        params.c1_excess, params.c2_disjoint, params.c3_weight,
+        params.tau_min, params.tau_max,
+        params.random_seed + 1,
+        params.decision_interval_min, params.decision_interval_max);
+
+    auto prey_evolution = std::make_unique<NeatEvolution>(
+        params.elite_ratio, params.tournament_size,
+        params.weight_perturb_rate, params.weight_reset_rate,
+        params.add_node_rate, params.add_connection_rate,
+        params.toggle_connection_rate, params.add_modulatory_rate,
+        params.weight_perturb_sigma,
+        params.compatibility_threshold,
+        params.c1_excess, params.c2_disjoint, params.c3_weight,
+        params.tau_min, params.tau_max,
+        params.random_seed + 2,
+        params.decision_interval_min, params.decision_interval_max);
+
+    // Create initial populations
+    std::mt19937 pred_rng(params.random_seed == 0 ? std::random_device{}() : params.random_seed + 100);
+    std::mt19937 prey_rng(params.random_seed == 0 ? std::random_device{}() : params.random_seed + 200);
+
+    pred_evolution->innovationTracker().beginGeneration();
+    prey_evolution->innovationTracker().beginGeneration();
+
+    std::vector<std::unique_ptr<IGenome>> pred_pop;
+    pred_pop.reserve(pred_count);
+    for (std::size_t i = 0; i < pred_count; ++i) {
+        pred_pop.push_back(NeatGenome::minimal(
+            GenomeId{i + 1}, params.input_dim, params.output_dim,
+            pred_evolution->innovationTracker(), pred_rng,
+            params.tau_min, params.tau_max,
+            params.decision_interval_min, params.decision_interval_max));
+    }
+
+    std::vector<std::unique_ptr<IGenome>> prey_pop;
+    prey_pop.reserve(prey_count);
+    for (std::size_t i = 0; i < prey_count; ++i) {
+        prey_pop.push_back(NeatGenome::minimal(
+            GenomeId{pred_count + i + 1}, params.input_dim, params.output_dim,
+            prey_evolution->innovationTracker(), prey_rng,
+            params.tau_min, params.tau_max,
+            params.decision_interval_min, params.decision_interval_max));
+    }
+
+    auto rewards = createRewards(params);
+    FitnessRecorder recorder(run_dir / "fitness.csv");
+    SpeciesObserver pred_species(run_dir / "species_log_pred.jsonl");
+    SpeciesObserver prey_species(run_dir / "species_log_prey.jsonl");
+    PerformanceObserver perf_observer(run_dir / "perf.csv");
+    ModuleMetricsObserver module_observer(run_dir / "module_metrics.csv");
+
+    std::ofstream evo_csv(run_dir / "evolution.csv", std::ios::out | std::ios::trunc);
+    if (!evo_csv.is_open()) return 1;
+    evo_csv << "generation,pred_avg_fitness,pred_best_fitness,pred_species,prey_avg_fitness,prey_best_fitness,prey_species,avg_immunity_gain_rate\n";
+
+    LOG_INFO("Coevolution: {} predators + {} prey, independent NEAT populations",
+             pred_count, prey_count);
+
+    std::uint64_t next_agent_id = 1;
+    for (std::size_t generation = 0; generation < params.generations; ++generation) {
+        if (stop_requested.load()) break;
+
+        // Assign species independently
+        auto pred_raw = rawGenomePointers(pred_pop);
+        auto prey_raw = rawGenomePointers(prey_pop);
+        auto pred_species_lookup = assignSpeciesIfNeeded(pred_evolution.get(), pred_raw);
+        auto prey_species_lookup = assignSpeciesIfNeeded(prey_evolution.get(), prey_raw);
+
+        perf_observer.markGenerationStart();
+        auto world = createWorld(params, static_cast<Generation>(generation));
+        recorder.onAttach(*world);
+        perf_observer.onAttach(*world);
+        module_observer.onAttach(*world);
+        pred_species.onAttach(*world);
+        prey_species.onAttach(*world);
+
+        // Populate world with both populations
+        auto* agent_layer = world->getLayer<AgentLayer>();
+        if (agent_layer == nullptr) {
+            throw std::runtime_error("AgentLayer missing from world");
+        }
+        std::mt19937 spawn_rng(params.random_seed == 0
+            ? std::random_device{}()
+            : params.random_seed + 1000 + generation);
+
+        // Add predators first
+        for (const auto& genome_ptr : pred_pop) {
+            auto brain = createBrainForGenome(*genome_ptr, params);
+            float decision_interval = 1.0f;
+            const auto* ng = dynamic_cast<const NeatGenome*>(genome_ptr.get());
+            if (ng) decision_interval = ng->decisionInterval();
+
+            auto agent = std::make_unique<Agent>(
+                AgentId{next_agent_id++}, genome_ptr->id(), std::move(brain),
+                randomPosition(params.world_size, spawn_rng),
+                params.initial_energy, params.exploration_grid_size, decision_interval);
+            if (const auto it = pred_species_lookup.find(genome_ptr->id()); it != pred_species_lookup.end()) {
+                agent->setSpeciesId(it->second);
+            }
+            agent->setPredator(true);
+            // Add perceptions and capabilities (same as populateWorld)
+            agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
+            if (!params.signal_enabled) {
+                agent->addPerception(std::make_unique<NearestFoodPerception>());
+            } else {
+                agent->addPerception(std::make_unique<FoodScentPerception>());
+            }
+            if (params.terrain_enabled) agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
+            if (params.day_night_enabled) agent->addPerception(std::make_unique<TimeOfDayPerception>());
+            if (params.season_enabled) agent->addPerception(std::make_unique<SeasonPerception>());
+            if (params.disease_enabled) agent->addPerception(std::make_unique<InfectionPerception>(params.infection_perception_radius));
+            if (params.signal_enabled) agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius));
+            agent->addCapability(std::make_unique<MoveCapability>(params.max_speed, params.decision_cost, params.movement_cost_factor, params.exploration_grid_size));
+            agent->addCapability(std::make_unique<EatCapability>(params.eat_radius));
+            if (params.combat_enabled) agent->addCapability(std::make_unique<AttackCapability>(params.attack_range, params.damage_factor, params.energy_transfer_rate, params.attack_cost, params.attack_threshold));
+            if (params.lifetime_learning_enabled) agent->addCapability(std::make_unique<HebbianLearning>(params.hebbian_learning_rate));
+            if (params.signal_enabled) agent->addCapability(std::make_unique<EmitSignalCapability>(params.signal_channels, params.signal_emit_cost));
+            agent->addCapability(std::make_unique<PredatorHuntCapability>(params.pred_hunt_radius, params.pred_damage, params.pred_energy_gain, params.pred_hunt_cost));
+            agent->addCapability(std::make_unique<FleeCapability>(params.pred_flee_radius, params.pred_flee_boost, params.pred_flee_cost));
+            if (params.disease_enabled && ng) agent->setImmunityGainRate(ng->immunityGainRate());
+            agent_layer->addAgent(std::move(agent), *world);
+        }
+
+        // Add prey
+        for (const auto& genome_ptr : prey_pop) {
+            auto brain = createBrainForGenome(*genome_ptr, params);
+            float decision_interval = 1.0f;
+            const auto* ng = dynamic_cast<const NeatGenome*>(genome_ptr.get());
+            if (ng) decision_interval = ng->decisionInterval();
+
+            auto agent = std::make_unique<Agent>(
+                AgentId{next_agent_id++}, genome_ptr->id(), std::move(brain),
+                randomPosition(params.world_size, spawn_rng),
+                params.initial_energy, params.exploration_grid_size, decision_interval);
+            if (const auto it = prey_species_lookup.find(genome_ptr->id()); it != prey_species_lookup.end()) {
+                agent->setSpeciesId(it->second);
+            }
+            agent->setPredator(false);
+            agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
+            if (!params.signal_enabled) {
+                agent->addPerception(std::make_unique<NearestFoodPerception>());
+            } else {
+                agent->addPerception(std::make_unique<FoodScentPerception>());
+            }
+            if (params.terrain_enabled) agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
+            if (params.day_night_enabled) agent->addPerception(std::make_unique<TimeOfDayPerception>());
+            if (params.season_enabled) agent->addPerception(std::make_unique<SeasonPerception>());
+            if (params.disease_enabled) agent->addPerception(std::make_unique<InfectionPerception>(params.infection_perception_radius));
+            if (params.signal_enabled) agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius));
+            agent->addCapability(std::make_unique<MoveCapability>(params.max_speed, params.decision_cost, params.movement_cost_factor, params.exploration_grid_size));
+            agent->addCapability(std::make_unique<EatCapability>(params.eat_radius));
+            if (params.combat_enabled) agent->addCapability(std::make_unique<AttackCapability>(params.attack_range, params.damage_factor, params.energy_transfer_rate, params.attack_cost, params.attack_threshold));
+            if (params.lifetime_learning_enabled) agent->addCapability(std::make_unique<HebbianLearning>(params.hebbian_learning_rate));
+            if (params.signal_enabled) agent->addCapability(std::make_unique<EmitSignalCapability>(params.signal_channels, params.signal_emit_cost));
+            agent->addCapability(std::make_unique<PredatorHuntCapability>(params.pred_hunt_radius, params.pred_damage, params.pred_energy_gain, params.pred_hunt_cost));
+            agent->addCapability(std::make_unique<FleeCapability>(params.pred_flee_radius, params.pred_flee_boost, params.pred_flee_cost));
+            if (params.disease_enabled && ng) agent->setImmunityGainRate(ng->immunityGainRate());
+            agent_layer->addAgent(std::move(agent), *world);
+        }
+
+        // Evaluate together in shared world
+        perf_observer.markEvaluationStart();
+        evaluatePopulation(*world, rewards, params, stop_requested, module_observer);
+        perf_observer.markEvaluationEnd();
+
+        // Collect evaluated separately for each population
+        auto pred_evaluated = collectEvaluated(*world, pred_pop, params.nsga2_enabled);
+        auto prey_evaluated = collectEvaluated(*world, prey_pop, params.nsga2_enabled);
+
+        // Compute stats
+        auto pred_stats = computeStats(pred_evaluated);
+        auto prey_stats = computeStats(prey_evaluated);
+
+        // Lamarckian learning
+        if (params.lifetime_learning_enabled && params.lamarck_mode) {
+            auto* al = world->getLayer<AgentLayer>();
+            if (al) {
+                for (auto* agent : al->agents()) {
+                    auto* nb = dynamic_cast<NeatBrain*>(&agent->brain());
+                    if (!nb) continue;
+                    const auto lw = nb->currentWeights();
+                    // Check both populations
+                    for (auto& genome : pred_pop) {
+                        if (genome->id() == agent->genomeId()) {
+                            auto* ng = dynamic_cast<NeatGenome*>(genome.get());
+                            if (ng) ng->setWeights(lw);
+                            break;
+                        }
+                    }
+                    for (auto& genome : prey_pop) {
+                        if (genome->id() == agent->genomeId()) {
+                            auto* ng = dynamic_cast<NeatGenome*>(genome.get());
+                            if (ng) ng->setWeights(lw);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        evo_csv << generation << ','
+                << pred_stats.avg_fitness << ',' << pred_stats.best_fitness << ',' << pred_stats.species_count << ','
+                << prey_stats.avg_fitness << ',' << prey_stats.best_fitness << ',' << prey_stats.species_count << ','
+                << prey_stats.avg_immunity_gain_rate << '\n';
+        evo_csv.flush();
+
+        pred_species.onDetach(*world);
+        prey_species.onDetach(*world);
+        recorder.onDetach(*world);
+        perf_observer.onDetach(*world);
+        module_observer.onDetach(*world);
+
+        LOG_INFO("Gen {} coevo: pred avg={:.1f} best={:.1f} sp={} | prey avg={:.1f} best={:.1f} sp={} alive={}/{}",
+                 generation, pred_stats.avg_fitness, pred_stats.best_fitness, pred_stats.species_count,
+                 prey_stats.avg_fitness, prey_stats.best_fitness, prey_stats.species_count,
+                 agent_layer ? agent_layer->livingCount() : 0, params.population_size);
+
+        if (generation + 1 >= params.generations || stop_requested.load()) {
+            perf_observer.finishGeneration(static_cast<Generation>(generation));
+            break;
+        }
+
+        // Reproduce independently
+        perf_observer.markReproductionStart();
+        pred_evolution->innovationTracker().beginGeneration();
+        prey_evolution->innovationTracker().beginGeneration();
+        auto pred_raw2 = rawGenomePointers(pred_pop);
+        auto prey_raw2 = rawGenomePointers(prey_pop);
+        pred_pop = pred_evolution->reproduce(pred_evaluated, pred_raw2);
+        prey_pop = prey_evolution->reproduce(prey_evaluated, prey_raw2);
+        perf_observer.markReproductionEnd();
+        perf_observer.finishGeneration(static_cast<Generation>(generation));
+    }
+
+    return 0;
+}
+
 HeadlessRuntime::HeadlessRuntime(config::Config config)
     : config_(std::move(config)) {}
 
@@ -825,6 +1124,15 @@ int HeadlessRuntime::run() {
     int rc = 0;
     try {
         const RuntimeParams params = loadParams(config_);
+
+        // F-COEVO: when predators enabled with NEAT, use independent populations
+        if (params.pred_enabled && params.brain_type == "neat") {
+            rc = runCoevolution(params, run_dir_, stop_requested_);
+            LOG_INFO("HeadlessRuntime: run finished");
+            running_.store(false);
+            return rc;
+        }
+
         auto evolution_strategy = createEvolutionStrategy(params);
         auto population = createInitialPopulation(params, evolution_strategy.get());
         auto rewards = createRewards(params);
@@ -876,7 +1184,7 @@ int HeadlessRuntime::run() {
             evaluatePopulation(*world, rewards, params, stop_requested_, module_observer);
             perf_observer.markEvaluationEnd();
 
-            const auto evaluated = collectEvaluated(*world, population);
+            const auto evaluated = collectEvaluated(*world, population, params.nsga2_enabled);
 
             if (params.lifetime_learning_enabled && params.lamarck_mode) {
                 auto* agent_layer_lam = world->getLayer<AgentLayer>();

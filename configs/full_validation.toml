@@ -83,6 +83,9 @@ output_dim = 2
 generations = 100
 episode_ticks = 200
 
+[evolution.nsga2]
+enabled = true
+
 [evolution.selection]
 elite_ratio = 0.25
 tournament_size = 2

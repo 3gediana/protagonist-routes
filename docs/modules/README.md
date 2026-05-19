@@ -57,8 +57,8 @@
 | 模块 | 作用 | 难度 | 依赖 | 状态 |
 |---|---|---|---|---|
 | [F-NOVELTY](F-NOVELTY_novelty_search.md) | 新颖性搜索 | 🟡 中 | M3 | ✅⛳⛳ |
-| [F-COEVO](F-COEVO_coevolution.md) | 多种群共进化 | 🟡 中 | M5 | 📋 |
-| [F-NSGA](F-NSGA_multi_objective.md) | 多目标进化 NSGA-II | 🟡 中 | M3 | 📋 |
+| [F-COEVO](F-COEVO_coevolution.md) | 多种群共进化 | 🟡 中 | M5 | ✅⛳⛳ |
+| [F-NSGA](F-NSGA_multi_objective.md) | 多目标进化 NSGA-II | 🟡 中 | M3 | ✅⛳⛳ |
 | [F-CURRICULUM](F-CURRICULUM_curriculum.md) | 课程学习逐级解锁难度 | 🟢 低 | M3 | ✅⛳⛳ |
 
 ### 🔬 观测类（新增）
@@ -128,5 +128,5 @@
 
 ```
 baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
-modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / F-PRED ✅⛳⛳ / F-CURRICULUM ✅⛳⛳ / F-TREE 📋 / F-HEAT 📋 / F-FORK 📋 / F-STAT 📋 / F-REPLAY 📋 / others 📋
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / F-PRED ✅⛳⛳ / F-CURRICULUM ✅⛳⛳ / F-COEVO ✅⛳⛳ / F-NSGA ✅⛳⛳ / F-TREE 📋 / F-HEAT 📋 / F-FORK 📋 / F-STAT 📋 / F-REPLAY 📋 / others 📋
 ```

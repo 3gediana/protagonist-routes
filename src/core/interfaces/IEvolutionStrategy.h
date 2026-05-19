@@ -33,6 +33,8 @@ struct EvaluatedIndividual {
     std::size_t complexity;      // genome complexity (for stats)
     std::size_t modulatory_nodes; // count of modulatory nodes in genome
     float     immunity_gain_rate; // evolvable disease resistance trait
+    // Multi-objective fitness vector (for NSGA-II). Empty = single-objective mode.
+    std::vector<double> objectives;
 };
 
 class IEvolutionStrategy {
