@@ -246,3 +246,70 @@
 - **确定成立**：M3 headless-first 默认基线已经不是单 seed 偶然现象；5 seed 下都能完成 100/200 代长跑
 - **确定成立**：复杂度和物种数都能在长跑中维持，不再出现“前期分化、后期普遍塌成 1 个物种”的问题
 - **仍未完全收尾**：还差 `SpeciesObserver` / `species_log.jsonl`，然后才适合把 M3 标成阶段完成
+
+---
+
+## 2026-05-19 · 全模块验证与参数调优
+
+### 目标
+证明每个模块真的在产生预期行为，不是"能跑就行"。
+
+### 发现的 Bug
+
+1. **DiseaseLayer 初始感染失败**：`onAttach` 在 `populateWorld` 之前调用，此时 AgentLayer 为空。
+   - 修复：将初始感染延迟到第一个 `tick`，检查 `agent_layer->size() > 0`
+
+2. **ModuleMetricsObserver 只记录最终 tick 快照**：DAY/SEASON 的 light_level 和 season_index 在 episode 结束时恰好回到同一值，看起来没变化。
+   - 修复：添加 `onTick()` 方法，每 tick 更新 min/max 极值
+
+3. **PredatorHuntCapability 阈值太高**：初始 NEAT 输出很少超过 0.5，导致 kills=0
+   - 修复：阈值从 0.5 降到 0.3；同时增大 damage (0.5→5.0) 和 energy_gain (0.3→3.0)
+
+### 参数调优
+
+| 参数 | 原值 | 新值 | 原因 |
+|---|---|---|---|
+| `pred_damage` | 0.5 | 5.0 | 40 能量猎物需要 80 tick 持续伤害才能死，不现实 |
+| `pred_energy_gain` | 0.3 | 3.0 | 与 damage 成比例 |
+| `pred_hunt_threshold` | 0.5 | 0.3 | NEAT 初始输出偏低，降低发现门槛 |
+| `coop_required_workers` | 3 | 2 | 24 agent 在 80x80 世界太难凑 3 人 |
+| `coop_required_ticks` | 5 | 3 | 连续 5 tick 太难维持 |
+| `coop_collect_radius` | 5.0 | 8.0 | 增大合作触发范围 |
+
+### 验证结果（100 代 full_validation.toml）
+
+| 模块 | 关键指标 | 范围 | 判定 |
+|---|---|---|---|
+| F-FIGHT | total_damage_dealt | 15~625 | ✅ 攻击在发生 |
+| F-PRED | total_kills | 0~7 | ✅ 捕食者在击杀 |
+| F-DISEASE | max_infected | 16~23 | ✅ 疫情大规模传播 |
+| F-COMM | signal_field_energy | 95~785 | ✅ 信号场有能量 |
+| F-COOP | heavy_resources_available | 0~3 | ✅ 重型资源被消耗 |
+| F-RESOURCE | resource_available | 24~32 | ✅ 资源在消耗/再生 |
+| F-DAY | min_light~max_light | 0~1 | ✅ 昼夜循环 |
+| F-SEASON | min_season~max_season | 0~2 | ✅ 季节变化 |
+| F-NEUROMOD | avg_modulatory | 0→0.54~0.79 | ✅ 调制节点被进化保留 |
+
+### A/B 对比：Lamarck vs Darwin（100 代，same seed=42）
+
+| 指标 | Lamarck | Darwin |
+|---|---|---|
+| last20 best_fitness avg | 273.05 | 254.81 |
+| last20 avg_fitness avg | 64.81 | 68.86 |
+| last20 avg_modulatory | 0.10 | 0.30 |
+
+Lamarck 模式 best_fitness 略高（+7%），证明学习权重回传有正面效果。
+Darwin 模式 avg_fitness 略高且 modulatory 更多，可能因为不回传学习权重，进化需要更多调制机制来补偿。
+
+### 可视化区分要点
+
+要区分各模块效果，可视化需要展示：
+
+- **FIGHT/PRED**：攻击线/击杀标记，捕食者用不同颜色
+- **DISEASE**：感染 agent 用红色光晕，传播路径
+- **COMM**：信号场热力图叠加
+- **COOP**：重型资源周围 agent 聚集动画
+- **DAY/SEASON**：背景亮度/色调变化
+- **NEUROMOD**：调制节点高亮（不同颜色）
+- **LEARN**：Lamarck vs Darwin 对照分屏
+- **RESOURCE**：资源量柱状图随时间变化

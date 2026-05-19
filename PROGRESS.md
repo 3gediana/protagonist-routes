@@ -9,9 +9,9 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-19 |
-| **当前阶段** | 🟩 Baseline 完成 + 12 Modules MVP |
+| **当前阶段** | 🟩 Baseline 完成 + 12 Modules MVP + 证据验证 |
 | **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 约 99% |
-| **最近会话摘要** | 12 modules MVP：FIGHT/NEUROMOD/LEARN/DAY/SEASON/DISEASE/RESOURCE/COMM/COOP/NOVELTY/PRED/CURRICULUM。Hebbian rate修复。59测试通过。 |
+| **最近会话摘要** | 全模块证据验证：修复 DiseaseLayer/PredatorHunt 阈值/指标收集 bug；100 代 full_validation 验证 9 模块有可量化证据；Lamarck vs Darwin A/B 对比；ModuleMetricsObserver tick 级追踪；modulatory 节点追踪 |
 | **下一步建议** | F-NSGA多目标 / F-COEVO协同进化 / 或进入可视化整合(M2) |
 
 ---

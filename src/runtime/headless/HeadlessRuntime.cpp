@@ -173,6 +173,7 @@ struct GenerationStats {
     double best_fitness;
     std::size_t species_count;
     double avg_complexity;
+    double avg_modulatory_nodes;
 };
 
 std::string makeTimestamp() {
@@ -685,9 +686,16 @@ std::vector<EvaluatedIndividual> collectEvaluated(
     evaluated.reserve(agent_layer->size());
     for (Agent* agent : agent_layer->agents()) {
         std::size_t complexity = 0;
+        std::size_t modulatory = 0;
         for (const auto& genome : population) {
             if (genome->id() == agent->genomeId()) {
                 complexity = genome->complexity();
+                const auto* neat_genome = dynamic_cast<const NeatGenome*>(genome.get());
+                if (neat_genome) {
+                    for (const auto& node : neat_genome->nodes()) {
+                        if (node.type == NodeGeneType::Modulatory) ++modulatory;
+                    }
+                }
                 break;
             }
         }
@@ -697,6 +705,7 @@ std::vector<EvaluatedIndividual> collectEvaluated(
             agent->fitness(),
             agent->speciesId(),
             complexity,
+            modulatory,
         });
     }
     return evaluated;
@@ -704,7 +713,7 @@ std::vector<EvaluatedIndividual> collectEvaluated(
 
 GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) {
     if (evaluated.empty()) {
-        return {0.0, 0.0, 0.0, 0, 0.0};
+        return {0.0, 0.0, 0.0, 0, 0.0, 0.0};
     }
 
     double min_fitness = std::numeric_limits<double>::max();
@@ -712,12 +721,14 @@ GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) 
     double fitness_sum = 0.0;
     double complexity_sum = 0.0;
     std::unordered_set<SpeciesId> species_ids;
+    double modulatory_sum = 0.0;
     for (const auto& item : evaluated) {
         const double f = std::isfinite(item.fitness) ? item.fitness : 0.0;
         min_fitness = std::min(min_fitness, f);
         best_fitness = std::max(best_fitness, f);
         fitness_sum += f;
         complexity_sum += static_cast<double>(item.complexity);
+        modulatory_sum += static_cast<double>(item.modulatory_nodes);
         if (item.species_id != kInvalidSpeciesId) {
             species_ids.insert(item.species_id);
         }
@@ -729,6 +740,7 @@ GenerationStats computeStats(const std::vector<EvaluatedIndividual>& evaluated) 
         best_fitness,
         species_ids.size(),
         complexity_sum / static_cast<double>(evaluated.size()),
+        modulatory_sum / static_cast<double>(evaluated.size()),
     };
 }
 
@@ -787,7 +799,7 @@ int HeadlessRuntime::run() {
         if (!evolution_metrics.is_open()) {
             throw std::runtime_error("Failed to open evolution metrics output file");
         }
-        evolution_metrics << "generation,min_fitness,avg_fitness,best_fitness,species_count,avg_complexity\n";
+        evolution_metrics << "generation,min_fitness,avg_fitness,best_fitness,species_count,avg_complexity,avg_modulatory\n";
         LOG_INFO("HeadlessRuntime: using evolution strategy '{}' with brain.type='{}'",
                  evolution_strategy->name(),
                  params.brain_type);
@@ -853,7 +865,8 @@ int HeadlessRuntime::run() {
                               << stats.avg_fitness << ','
                               << stats.best_fitness << ','
                               << stats.species_count << ','
-                              << stats.avg_complexity << '\n';
+                              << stats.avg_complexity << ','
+                              << stats.avg_modulatory_nodes << '\n';
             evolution_metrics.flush();
             world->eventBus().publish(events::Event{
                 events::EventType::GenerationEnded,

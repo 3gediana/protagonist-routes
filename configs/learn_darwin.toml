@@ -1,0 +1,133 @@
+[runtime]
+mode = "headless"
+random_seed = 42
+log_level = "info"
+
+[world]
+size = [80.0, 80.0]
+
+[world.resources]
+count = 16
+amount = 12.0
+respawn_ticks = 20
+
+[world.terrain]
+enabled = true
+height_scale = 30.0
+slope_resistance = 0.6
+cave_density = 0.05
+cave_shelter_factor = 0.5
+seed = 42
+grid_resolution = 64
+perlin_frequency = 4.0
+perlin_persistence = 0.5
+perlin_octaves = 4
+
+[world.day_night]
+enabled = true
+day_length_ticks = 50
+
+[world.season]
+enabled = true
+ticks_per_season = 40
+
+[world.disease]
+enabled = true
+infection_radius = 5.0
+infection_prob = 0.1
+infection_duration = 20.0
+death_prob = 0.3
+initial_infection_rate = 0.1
+seed = 42
+
+[world.signal]
+enabled = true
+channels = 4
+decay_rate = 0.1
+diffusion_rate = 0.05
+grid_resolution = 32
+perception_radius = 15.0
+emit_cost = 0.05
+
+[world.coop]
+enabled = true
+heavy_count = 3
+heavy_amount = 30.0
+required_workers = 2
+required_ticks = 3
+collect_radius = 8.0
+
+[world.predator]
+enabled = true
+ratio = 0.25
+hunt_radius = 5.0
+damage = 5.0
+energy_gain = 3.0
+hunt_cost = 0.05
+
+[world.combat]
+enabled = true
+attack_range = 3.0
+damage_factor = 0.3
+energy_transfer_rate = 0.5
+attack_cost = 0.02
+
+[population]
+size = 24
+input_dim = 5
+output_dim = 2
+
+[evolution]
+generations = 100
+episode_ticks = 80
+
+[evolution.lifetime_learning]
+enabled = true
+hebbian_rate = 0.002
+lamarck_mode = false
+
+[evolution.selection]
+elite_ratio = 0.25
+tournament_size = 2
+
+[evolution.mutation]
+weight_perturb_rate = 0.80
+weight_reset_rate = 0.05
+add_node_rate = 0.03
+add_connection_rate = 0.05
+toggle_connection_rate = 0.01
+add_modulatory_rate = 0.01
+weight_perturb_sigma = 0.5
+
+[evolution.speciation]
+compatibility_threshold = 3.0
+c1_excess = 1.0
+c2_disjoint = 1.0
+c3_weight = 0.4
+
+[brain]
+type = "neat"
+
+[brain.ctrnn]
+tau_min = 0.1
+tau_max = 5.0
+
+[reward]
+survival_weight = 1.0
+food_weight = 10.0
+intrinsic_weight = 1.5
+
+[energy]
+initial = 40.0
+base_metabolism = 0.01
+decision_cost = 0.01
+movement_cost_factor = 0.01
+death_threshold = 0.0
+
+[agent]
+max_speed = 1.5
+eat_radius = 3.0
+exploration_grid_size = 10
+
+[output]
+runs_dir = "data/runs/learn_darwin"
