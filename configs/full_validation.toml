@@ -86,6 +86,9 @@ episode_ticks = 200
 [evolution.nsga2]
 enabled = true
 
+[evolution.snapshot]
+interval = 50
+
 [evolution.selection]
 elite_ratio = 0.25
 tournament_size = 2

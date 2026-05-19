@@ -7,6 +7,7 @@
 #include "core/interfaces/IEvolutionStrategy.h"
 
 #include <random>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -44,6 +45,10 @@ public:
     InnovationTracker& innovationTracker();
     std::vector<SpeciesGroup> assignSpecies(const std::vector<IGenome*>& current_genomes);
     const std::vector<SpeciesGroup>& lastSpeciesGroups() const;
+
+    // Write Pareto front data for visualization
+    void writeParetoFront(const std::vector<EvaluatedIndividual>& evaluated,
+                          const std::string& output_file) const;
 
 private:
     // NSGA-II core

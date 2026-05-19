@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <limits>
 
 namespace neuro {
@@ -466,6 +467,27 @@ void Nsga2Evolution::mutateImmunityGainRate(NeatGenome& genome) {
         float rate = genome.immunityGainRate() + perturb_dist(rng_);
         genome.setImmunityGainRate(std::clamp(rate, 0.01f, 0.5f));
     }
+}
+
+void Nsga2Evolution::writeParetoFront(const std::vector<EvaluatedIndividual>& evaluated,
+                                       const std::string& output_file) const {
+    if (evaluated.empty()) return;
+
+    auto assignments = const_cast<Nsga2Evolution*>(this)->nonDominatedSort(evaluated);
+
+    std::ofstream out(output_file, std::ios::out | std::ios::app);
+    if (!out.is_open()) return;
+
+    for (std::size_t i = 0; i < evaluated.size(); ++i) {
+        if (assignments[i].rank > 2) continue;  // Only top 3 fronts
+        out << assignments[i].rank << ','
+            << evaluated[i].fitness;
+        for (const auto& obj : evaluated[i].objectives) {
+            out << ',' << obj;
+        }
+        out << ',' << assignments[i].crowding << '\n';
+    }
+    out.flush();
 }
 
 }  // namespace neuro

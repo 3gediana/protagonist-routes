@@ -22,6 +22,7 @@
 #include "core/observer/ModuleMetricsObserver.h"
 #include "core/observer/HeatmapObserver.h"
 #include "core/observer/AdvancedStatsObserver.h"
+#include "core/snapshot/SnapshotIO.h"
 #include "runtime/headless/EvaluationPool.h"
 #include "core/perception/NearestFoodPerception.h"
 #include "core/perception/SelfPerception.h"
@@ -174,6 +175,9 @@ struct RuntimeParams {
     std::size_t curriculum_stage2_gen;
     std::size_t curriculum_stage3_gen;
     bool nsga2_enabled;
+    std::size_t snapshot_interval;  // auto-snapshot every N generations (0 = disabled)
+    std::string snapshot_label;
+    std::string resume_from;       // path to snapshot dir to resume from
 };
 
 struct GenerationStats {
@@ -344,6 +348,9 @@ RuntimeParams loadParams(const config::Config& config) {
     params.curriculum_stage2_gen = config.getOr<std::size_t>("evolution.curriculum.stage2_gen", 80);
     params.curriculum_stage3_gen = config.getOr<std::size_t>("evolution.curriculum.stage3_gen", 150);
     params.nsga2_enabled = config.getOr<bool>("evolution.nsga2.enabled", false);
+    params.snapshot_interval = config.getOr<std::size_t>("evolution.snapshot.interval", 0);
+    params.snapshot_label = config.getOr<std::string>("evolution.snapshot.label", "");
+    params.resume_from = config.getOr<std::string>("evolution.snapshot.resume_from", "");
     return params;
 }
 
@@ -1038,6 +1045,14 @@ int runCoevolution(const RuntimeParams& params,
         auto pred_evaluated = collectEvaluated(*world, pred_pop, params.nsga2_enabled);
         auto prey_evaluated = collectEvaluated(*world, prey_pop, params.nsga2_enabled);
 
+        // Write Pareto fronts if NSGA-II enabled
+        if (params.nsga2_enabled) {
+            auto* pred_nsga = dynamic_cast<Nsga2Evolution*>(pred_evolution.get());
+            auto* prey_nsga = dynamic_cast<Nsga2Evolution*>(prey_evolution.get());
+            if (pred_nsga) pred_nsga->writeParetoFront(pred_evaluated, (run_dir / "pareto_pred.csv").string());
+            if (prey_nsga) prey_nsga->writeParetoFront(prey_evaluated, (run_dir / "pareto_prey.csv").string());
+        }
+
         // Compute stats
         auto pred_stats = computeStats(pred_evaluated);
         auto prey_stats = computeStats(prey_evaluated);
@@ -1097,6 +1112,17 @@ int runCoevolution(const RuntimeParams& params,
                  generation, pred_stats.avg_fitness, pred_stats.best_fitness, pred_stats.species_count,
                  prey_stats.avg_fitness, prey_stats.best_fitness, prey_stats.species_count,
                  agent_layer ? agent_layer->livingCount() : 0, params.population_size);
+
+        // Auto-snapshot
+        if (params.snapshot_interval > 0 && generation > 0 && generation % params.snapshot_interval == 0) {
+            const auto snap_dir = run_dir / "snapshots" / ("gen" + std::to_string(generation));
+            SnapshotIO::save(snap_dir, pred_pop, pred_evolution->innovationTracker(),
+                             static_cast<Generation>(generation), params.brain_type,
+                             params.snapshot_label + "_pred");
+            SnapshotIO::save(snap_dir / "prey", prey_pop, prey_evolution->innovationTracker(),
+                             static_cast<Generation>(generation), params.brain_type,
+                             params.snapshot_label + "_prey");
+        }
 
         if (generation + 1 >= params.generations || stop_requested.load()) {
             perf_observer.finishGeneration(static_cast<Generation>(generation));
@@ -1158,7 +1184,27 @@ int HeadlessRuntime::run() {
         }
 
         auto evolution_strategy = createEvolutionStrategy(params);
-        auto population = createInitialPopulation(params, evolution_strategy.get());
+        std::vector<std::unique_ptr<IGenome>> population;
+        Generation start_generation = 0;
+
+        // Resume from snapshot if configured
+        if (!params.resume_from.empty()) {
+            InnovationTracker loaded_tracker;
+            if (SnapshotIO::load(params.resume_from, population, loaded_tracker, start_generation)) {
+                LOG_INFO("HeadlessRuntime: resumed from snapshot at gen {}", start_generation);
+                // Update evolution strategy's innovation tracker
+                auto* neat_evo = dynamic_cast<NeatEvolution*>(evolution_strategy.get());
+                auto* nsga_evo = dynamic_cast<Nsga2Evolution*>(evolution_strategy.get());
+                if (neat_evo) neat_evo->innovationTracker() = loaded_tracker;
+                if (nsga_evo) nsga_evo->innovationTracker() = loaded_tracker;
+            } else {
+                LOG_WARN("HeadlessRuntime: failed to resume from snapshot, starting fresh");
+                population = createInitialPopulation(params, evolution_strategy.get());
+                start_generation = 0;
+            }
+        } else {
+            population = createInitialPopulation(params, evolution_strategy.get());
+        }
         auto rewards = createRewards(params);
         FitnessRecorder recorder(run_dir_ / "fitness.csv");
         std::unique_ptr<SpeciesObserver> species_observer;
@@ -1179,7 +1225,7 @@ int HeadlessRuntime::run() {
                  params.brain_type);
 
         std::uint64_t next_agent_id = 1;
-        for (std::size_t generation = 0; generation < params.generations; ++generation) {
+        for (std::size_t generation = start_generation; generation < params.generations; ++generation) {
             if (stop_requested_.load()) {
                 break;
             }
@@ -1213,6 +1259,15 @@ int HeadlessRuntime::run() {
             perf_observer.markEvaluationEnd();
 
             const auto evaluated = collectEvaluated(*world, population, params.nsga2_enabled);
+
+            // Write Pareto front if NSGA-II enabled
+            if (params.nsga2_enabled) {
+                auto* nsga_evo = dynamic_cast<Nsga2Evolution*>(evolution_strategy.get());
+                if (nsga_evo) {
+                    const auto pareto_file = (run_dir_ / "pareto_front.csv").string();
+                    nsga_evo->writeParetoFront(evaluated, pareto_file);
+                }
+            }
 
             if (params.lifetime_learning_enabled && params.lamarck_mode) {
                 auto* agent_layer_lam = world->getLayer<AgentLayer>();
@@ -1274,6 +1329,15 @@ int HeadlessRuntime::run() {
                 stats.avg_complexity,
                 agent_layer != nullptr ? agent_layer->livingCount() : 0,
                 params.population_size);
+
+            // Auto-snapshot
+            if (params.snapshot_interval > 0 && generation > 0 && generation % params.snapshot_interval == 0) {
+                const auto snap_dir = run_dir_ / "snapshots" / ("gen" + std::to_string(generation));
+                InnovationTracker dummy_tracker;
+                SnapshotIO::save(snap_dir, population, dummy_tracker,
+                                 static_cast<Generation>(generation), params.brain_type,
+                                 params.snapshot_label);
+            }
 
             if (generation + 1 >= params.generations || stop_requested_.load()) {
                 perf_observer.finishGeneration(static_cast<Generation>(generation));

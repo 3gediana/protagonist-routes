@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 #include <vector>
 
 namespace neuro {
@@ -26,21 +27,23 @@ public:
 private:
     void onTick();
     void onGenerationEnded(Generation generation);
-    void writeHeatmapCsv(Generation generation);
+    void writeHeatmapCsv(Generation generation, const std::vector<float>& grid,
+                         const std::string& suffix);
 
     std::size_t grid_resolution_;
     std::size_t sample_interval_;
     std::filesystem::path output_dir_;
 
-    // Current generation heatmap (grid_resolution x grid_resolution)
-    std::vector<float> heatmap_;
-    // Cumulative heatmap across all generations
-    std::vector<float> cumulative_;
+    // Per-category heatmaps: "all", "predator", "prey", "species_N"
+    std::unordered_map<std::string, std::vector<float>> heatmaps_;
+    std::unordered_map<std::string, std::vector<float>> cumulative_;
 
     IWorld* world_;
     events::SubscriptionId tick_sub_id_;
     events::SubscriptionId gen_sub_id_;
     std::size_t tick_counter_;
+
+    void ensureHeatmap(const std::string& key);
 };
 
 }  // namespace neuro
