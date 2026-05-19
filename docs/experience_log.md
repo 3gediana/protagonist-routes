@@ -313,3 +313,72 @@ Darwin 模式 avg_fitness 略高且 modulatory 更多，可能因为不回传学
 - **NEUROMOD**：调制节点高亮（不同颜色）
 - **LEARN**：Lamarck vs Darwin 对照分屏
 - **RESOURCE**：资源量柱状图随时间变化
+
+---
+
+## 2026-05-19 · 游戏机制参考后的系统整合方向
+
+### 参考思路
+
+参考 survival game / colony sim / ecosystem simulation 的常见做法后，疾病不应只是“随机传播 + 随机死亡”，而应成为能改变行为的状态系统：
+
+- **状态效果**：感染降低移动速度、提高代谢消耗
+- **进度条逻辑**：感染持续时间、死亡/恢复构成可视化进度
+- **环境影响**：季节改变传播压力，洞穴/庇护地降低传播风险
+- **风险收益**：捕食感染猎物收益降低，捕食者可能被跨种感染
+- **行为反馈**：健康个体能感知最近感染方向，从而进化出回避
+
+### 仪表盘应该看“现象链”
+
+| 仪表盘区域 | 要看的现象 | 解释 |
+|---|---|---|
+| 感染链 | max_infected / infection_deaths / healthy_infected_dist | 疫情是否形成波，以及健康个体是否学会远离 |
+| 生理链 | avg_speed vs avg_infected_speed / avg_energy | 感染是否真的削弱个体 |
+| 环境链 | current_season / max_infected | 冬季是否更容易爆发，夏季是否缓和 |
+| 地形链 | 洞穴内外感染密度（后续加） | 地形不只是画面，而是庇护资源 |
+| 捕食链 | predator_kills / total_kills / infected prey penalty | 捕食是否受疫情反向制约 |
+| 合作链 | heavy_workers_avg / heavy_resources_available | 是否有聚集与协作采集 |
+| 通信链 | signal_field_energy / 群体聚集或分散指标（后续加） | 信号是否对应群体行为变化 |
+
+### 当前代码落地
+
+- 感染者速度降为 60%
+- 感染者基础代谢 ×2
+- 夏季传播 ×0.5，秋季 ×1.5，冬季 ×2.5
+- 洞穴内被感染概率 ×0.3
+- InfectionPerception 从 2 维扩展到 4 维：自我感染、附近感染比例、最近感染者 dx/dy
+- 捕食感染猎物：伤害减半、收益 30%、捕食者有 30% 概率感染
+- ModuleMetricsObserver 新增：avg_speed、avg_infected_speed、predator_kills、infection_deaths、healthy_infected_dist、current_season
+
+### ACCESS_VIOLATION 崩溃修复
+
+**症状**：Release 模式下随机崩溃（exit code -1073741819 = 0xC0000005），崩溃代数不固定（gen 14~92）。
+
+**根因**：NEAT CTRNN 内部状态产生 NaN → 传播到 agent position → `HeightField::heightAt()` 接收 NaN 坐标 → `static_cast<size_t>(floor(NaN))` 产生极大值 → `data_[y * width_ + x]` 越界访问 → ACCESS_VIOLATION。
+
+**Windows Event Log 确认**：Fault offset 始终为 0x6db22，通过 .map 文件定位到 `HeightField::heightAt`。
+
+**修复**（多层防护）：
+1. `NeatBrain::forward`：内部 CTRNN 状态 NaN 检测 → 重置为 0
+2. `NeatBrain::forward`：输出 NaN 检测 → 重置为 0
+3. `FixedTopologyBrain::forward`：输出 NaN 检测
+4. `MoveCapability::apply`：direction NaN 检测
+5. `HeightField::heightAt`：入口 NaN 检测 + gx/gy clamp 到 [0, width-1]
+6. `CaveMask::toGridX/toGridY`：入口 NaN 检测
+
+### 整合验证结果（100 代 full_validation.toml）
+
+| 现象链 | 指标 | 范围 | 判定 |
+|---|---|---|---|
+| 感染链 | max_infected | 15~21 | ✅ 疫情大规模传播 |
+| 感染链 | infection_deaths | 4~15 | ✅ 疾病致死 |
+| 感染链 | healthy_infected_dist | 12~45 | ✅ 健康个体与感染者有距离（但回避行为尚未进化出显著趋势） |
+| 生理链 | avg_speed | 0.70~1.25 | ✅ 正常移动 |
+| 生理链 | avg_infected_speed | 0.38~0.66 | ✅ 感染者速度约为正常 55%（符合 0.6x penalty） |
+| 生理链 | avg_energy | 42~78 | ✅ 能量在波动 |
+| 捕食链 | predator_kills | 0~4 | ✅ 捕食在发生 |
+| 捕食链 | total_kills | 0~6 | ✅ |
+| 环境 | min_light~max_light | 0~1 | ✅ 昼夜循环 |
+| 环境 | min_season~max_season | 0~2 | ✅ 季节变化 |
+| 合作 | heavy_workers_avg | 0~1 | ✅ |
+| 通信 | signal_energy | 64~610 | ✅ |

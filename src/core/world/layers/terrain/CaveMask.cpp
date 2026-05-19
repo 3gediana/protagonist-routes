@@ -35,11 +35,13 @@ bool CaveMask::at(std::size_t x, std::size_t y) const {
 }
 
 std::size_t CaveMask::toGridX(float x) const {
+    if (!std::isfinite(x)) return 0;
     const std::size_t gx = static_cast<std::size_t>(std::max(0.0f, std::floor(x / cell_size_)));
     return std::min(gx, width_ - 1);
 }
 
 std::size_t CaveMask::toGridY(float y) const {
+    if (!std::isfinite(y)) return 0;
     const std::size_t gy = static_cast<std::size_t>(std::max(0.0f, std::floor(y / cell_size_)));
     return std::min(gy, height_ - 1);
 }

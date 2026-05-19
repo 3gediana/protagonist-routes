@@ -1,5 +1,7 @@
 #include "core/world/layers/DiseaseLayer.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/SeasonLayer.h"
+#include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/agent/Agent.h"
 #include "core/interfaces/IWorld.h"
 
@@ -40,6 +42,20 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
 
     const auto& agents = agent_layer->agents();
 
+    // Season affects disease spread: winter increases, summer decreases
+    float season_factor = 1.0f;
+    const auto* season = world.getLayer<SeasonLayer>();
+    if (season) {
+        switch (season->currentSeason()) {
+            case SeasonType::Spring: season_factor = 1.0f; break;
+            case SeasonType::Summer: season_factor = 0.5f; break;
+            case SeasonType::Autumn: season_factor = 1.5f; break;
+            case SeasonType::Winter: season_factor = 2.5f; break;
+        }
+    }
+
+    const auto* terrain = world.getLayer<TerrainLayer>();
+
     for (auto* agent : agents) {
         if (!agent->infected()) continue;
 
@@ -64,7 +80,13 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
             const float dist = std::sqrt(dx * dx + dy * dy);
 
             if (dist < infection_radius_) {
-                std::bernoulli_distribution transmits(infection_prob_ * dt);
+                // Terrain cave provides shelter from disease
+                float shelter_factor = 1.0f;
+                if (terrain && terrain->inCave(other->position().x, other->position().y)) {
+                    shelter_factor = 0.3f;
+                }
+                const float effective_prob = infection_prob_ * season_factor * shelter_factor * dt;
+                std::bernoulli_distribution transmits(effective_prob);
                 if (transmits(rng_)) {
                     other->setInfected(true);
                 }

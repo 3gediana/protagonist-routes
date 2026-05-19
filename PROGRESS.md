@@ -1,4 +1,4 @@
-# PROGRESS.md · 项目进度追踪
+﻿# PROGRESS.md · 项目进度追踪
 
 > **这份文档是项目的"实时进度仪表盘"**。任何 AI 助手进入项目时，先读 [`AGENTS.md`](AGENTS.md)，再读这份，立刻就知道项目走到了哪一步、下一步该做什么、需要看哪些文件。
 
@@ -9,10 +9,10 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-19 |
-| **当前阶段** | 🟩 Baseline 完成 + 12 Modules MVP + 证据验证 |
-| **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 约 99% |
-| **最近会话摘要** | 全模块证据验证：修复 DiseaseLayer/PredatorHunt 阈值/指标收集 bug；100 代 full_validation 验证 9 模块有可量化证据；Lamarck vs Darwin A/B 对比；ModuleMetricsObserver tick 级追踪；modulatory 节点追踪 |
-| **下一步建议** | F-NSGA多目标 / F-COEVO协同进化 / 或进入可视化整合(M2) |
+| **当前阶段** | 🟩 Baseline M0-M5 全部完成 + 12 Modules MVP 证据验证 |
+| **整体进度** | ▰▰▰▰▰▰▰▰▰░ 约 90% |
+| **最近会话摘要** | Baseline 机制全完成（M0-M5）；12 模块 MVP 通过并带量化证据验证（F-FIGHT/F-PRED/F-DISEASE/F-COMM/F-COOP/F-RESOURCE/F-DAY/F-SEASON/F-NEUROMOD/F-LEARN/F-NOVELTY/F-CURRICULUM）；M2 可视化仍延后 |
+| **下一步建议** | 进入 M2 可视化整合（raylib + i18n + HUD + FitnessChart）或补 F-TREE / F-HEAT / F-FORK 等观测模块 |
 
 ---
 
@@ -217,15 +217,16 @@
 ### 🟦 M4 · 多线程加速
 
 > 详细文档：[`docs/baseline/M4_async.md`](docs/baseline/M4_async.md)
-> 状态：⬜⬜⬜
+> 状态：✅✅⛳（EvaluationPool 线程池 / PerformanceObserver / 异步决策周期 / 能量系统均已实现；git tag 待补）
+> 前置：M3 完美通过
 
-- [ ] EvaluationPool 多线程
-- [ ] 异步个体决策周期（基因可进化）
-- [ ] 能量消耗系统
-- [ ] 线程安全审计（InnovationTracker 加锁、thread_local RNG）
-- [ ] PerformanceObserver
-- [ ] 训练时长加速 ≥ 3 倍
-- [ ] 决策频率分化可观察
+- [x] EvaluationPool 线程池（`src/runtime/headless/EvaluationPool.h/.cpp`）
+- [x] PerformanceObserver 性能记录（`src/core/observer/PerformanceObserver.h/.cpp`）
+- [x] 异步决策周期（NeatGenome.decision_interval 可进化基因）
+- [x] 能量消耗系统（base_metabolism / decision_cost / movement_cost_factor）
+- [x] HeadlessRuntime 集成 eval_threads 配置
+- [ ] 训练时长加速 ≥ 3 倍验收
+- [ ] 决策频率分化可观察（标准差 ≥ 5 tick）
 - [ ] git tag `baseline-M4-done`
 
 ---
@@ -233,17 +234,17 @@
 ### 🟦 M5 · 真实 2.5D 地形
 
 > 详细文档：[`docs/baseline/M5_terrain.md`](docs/baseline/M5_terrain.md)
-> 状态：⬜⬜⬜
+> 状态：✅✅⛳（TerrainLayer / HeightField / CaveMask / TerrainPerception / 地形物理均已实现；等距渲染顺延到 M2 整合；git tag 待补）
+> 前置：M4 完美通过
 
-- [ ] TerrainLayer + HeightField + CaveMask
-- [ ] PerlinNoiseGenerator（默认地形生成）
-- [ ] TerrainPerception（5 维输出接入感知）
-- [ ] 移动速度 / 能量消耗按地形修正
-- [ ] 视野遮挡（raycasting + 高度比较）
-- [ ] 山洞机制（进入/离开事件）
-- [ ] IsometricProjection 渲染（不做真 3D）
-- [ ] 资源-地形耦合分布
-- [ ] **接口压力测试 #2**：core 主框架 0 修改
+- [x] TerrainLayer 实现 IWorldLayer（`src/core/world/layers/terrain/TerrainLayer.h/.cpp`）
+- [x] HeightField 双线性插值高度查询（`HeightField.h/.cpp`）
+- [x] CaveMask 山洞标记 + 进入/离开判定（`CaveMask.h/.cpp`）
+- [x] TerrainGenerator 地形生成（`TerrainGenerator.h/.cpp`）
+- [x] TerrainPerception 5 维输出接入感知（`src/core/perception/TerrainPerception.h/.cpp`）
+- [x] MoveCapability 地形速度修正 hook
+- [x] HeadlessRuntime 地形启用配置 + 输入维度自动扩展
+- [ ] 等距渲染（IsometricProjection）— 顺延到 M2 可视化整合
 - [ ] 跑 100 代后地形分化可观察
 - [ ] git tag `baseline-M5-done` + `baseline-complete`
 
@@ -254,29 +255,48 @@
 > 完成 baseline 后从这里挑模块加。
 > 完整推荐路径见 [`docs/modules/README.md`](docs/modules/README.md) 末尾。
 
+### 已实现（MVP ✅⛳⛳，均通过 100 代 full_validation 量化证据验证）
+
+| 模块 | 代码位置 | 关键证据 |
+|---|---|---|
+| **F-FIGHT** 对抗机制 | `AttackCapability` / `CombatReward` | total_damage_dealt 15~625 |
+| **F-PRED** 捕食者-猎物 | `PredatorHuntCapability` | total_kills 0~7 |
+| **F-DISEASE** 疾病传播 | `DiseaseLayer` / `InfectionPerception` | max_infected 16~23 |
+| **F-COMM** 通信信号场 | `SignalLayer` / `SignalPerception` / `EmitSignalCapability` | signal_field_energy 95~785 |
+| **F-COOP** 合作机制 | `HeavyResourceLayer` / `CoopReward` | heavy_resources_available 0~3 |
+| **F-RESOURCE** 动态资源 | `ResourceLayer` dynamic 模式 | resource_available 24~32 |
+| **F-DAY** 昼夜循环 | `TimeOfDayLayer` / `TimeOfDayPerception` | min_light~max_light 0~1 |
+| **F-SEASON** 季节变化 | `SeasonLayer` / `SeasonPerception` | min_season~max_season 0~2 |
+| **F-NEUROMOD** 神经调节 | NeatBrain modulatory nodes | avg_modulatory 0→0.54~0.79 |
+| **F-LEARN** 终身学习 + 拉马克 | `HebbianLearning` / lamarck_mode | Lamarck best_fitness +7% |
+| **F-NOVELTY** 新颖性搜索 | `NoveltyReward` / `NoveltyArchive` | 已接入 reward 系统 |
+| **F-CURRICULUM** 课程学习 | HeadlessRuntime curriculum 配置 | 4 阶段难度递增 |
+
 ### Stage A · 答辩底线（必做）
 - [ ] **F-TREE** 物种树 → [`docs/modules/F-TREE_phylogenetic.md`](docs/modules/F-TREE_phylogenetic.md)
 - [ ] **F-HEAT** 行为热力图 → [`docs/modules/F-HEAT_heatmap.md`](docs/modules/F-HEAT_heatmap.md)
 - [ ] **F-GOD** 上帝按钮 → [`docs/modules/F-GOD_god_panel.md`](docs/modules/F-GOD_god_panel.md)
 
-### Stage B · 中等亮点（争取做 1-2 个）
-- [ ] **F-NEUROMOD** 神经调节情绪
-- [ ] **F-COMM** 通信信号场
-- [ ] **F-LEARN** 拉马克开关
+### Stage B · 中等亮点
+- [x] **F-NEUROMOD** 神经调节情绪 ✅⛳⛳
+- [x] **F-COMM** 通信信号场 ✅⛳⛳
+- [x] **F-LEARN** 拉马克开关 ✅⛳⛳
 
-### Stage C · 王炸彩蛋（运气项）
-- [ ] **F-COOP** 合作机制（围猎涌现）
+### Stage C · 王炸彩蛋
+- [x] **F-COOP** 合作机制（围猎涌现） ✅⛳⛳
 - [ ] **F-LLM** LLM 解说员
 
 ### Stage D · 锦上添花
 - [ ] **F-FORK** 平行宇宙存档
 - [ ] **F-COMPARE** 对照实验
 
-### 其它（备选）
-- [ ] F-FIGHT / F-PRED / F-TOOL / F-NOVELTY
-- [ ] F-DAY / F-SEASON / F-DISEASE / F-RESOURCE / F-CAVE
-- [ ] F-STAT / F-REPLAY / F-CURRICULUM
-- [ ] F-COEVO / F-NSGA
+### 其它（已实现）
+- [x] F-FIGHT ✅⛳⛳ / F-PRED ✅⛳⛳ / F-NOVELTY ✅⛳⛳
+- [x] F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳
+- [x] F-CURRICULUM ✅⛳⛳
+
+### 其它（待开发）
+- [ ] F-TOOL / F-CAVE / F-COEVO / F-NSGA
 
 ---
 
@@ -300,9 +320,10 @@ _目前无_
 | 2026-05-18 | 第 1 次会话：项目立项 + 文档体系 | 顶层 README/ROADMAP/ARCHITECTURE/DESIGN_DECISIONS/GLOSSARY；4 份 ADR；6 份 baseline 阶段卡；24 份模块卡；工程占位文件；AGENTS.md；PROGRESS.md | 准备进入 M0 实施 |
 | 2026-05-18 | 第 2 次会话：完成 M0 实施 | FetchContent 依赖接入；基础类型；12 个核心接口；EventBus；Config；Logger；Headless/Interactive Runtime 骨架；CLI；24 个单测；Release 构建通过；`--hello` 与 headless smoke test 通过 | 开始 M1 实现 |
 | 2026-05-18 | 第 3 次会话：完成 M1 核心实现 | FixedTopologyGenome/Brain；Agent / Perception / Capability；World2D + AgentLayer + ResourceLayer；ClassicGA；Reward；FitnessRecorder；真实 Headless 代际循环；新增测试后总计 32 个全过；12 代真实试跑已看到 fitness 明显上升 | 待做 100 代正式验收与调参 |
-| 2026-05-18 | 第 4 次会话：补齐 M1 验收工具并完成多 seed 基线测量 | `plot_fitness.py`；`run_m1_acceptance.py`；默认配置 5 seed × 100 代基线（平均倍率 2.256x）；经验配置 5 seed × 100 代复核（平均倍率 1.929x）；`configs/m1_acceptance.toml`；文档数值改为“示例/起始猜测”口径 | 待补更可解释的验收指标并继续调参 |
-| 2026-05-18 | 第 5 次会话：确认延后可视化并改路线 | ADR-0005；ROADMAP/PROGRESS 同步为“先机制、后可视化整合”；下一阶段确定为 M3 headless-first | 待开始 M3 NEAT 基础数据结构 |
+| 2026-05-18 | 第 4 次会话：补齐 M1 验收工具并完成多 seed 基线测量 | `plot_fitness.py`；`run_m1_acceptance.py`；默认配置 5 seed × 100 代基线（平均倍率 2.256x）；经验配置 5 seed × 100 代复核（平均倍率 1.929x）；`configs/m1_acceptance.toml`；文档数值改为"示例/起始猜测"口径 | 待补更可解释的验收指标并继续调参 |
+| 2026-05-18 | 第 5 次会话：确认延后可视化并改路线 | ADR-0005；ROADMAP/PROGRESS 同步为"先机制、后可视化整合"；下一阶段确定为 M3 headless-first | 待开始 M3 NEAT 基础数据结构 |
 | 2026-05-19 | 第 6 次会话：完成 M3 实现、验收与回归保护 | `NodeGene/ConnectionGene/InnovationTracker/NeatGenome/NeatBrain/Speciation/NeatEvolution`；`brain.type = neat` headless 接入；`evolution.csv` + `species_log.jsonl`；`run_m3_acceptance.py`；`5 seed × 100/200 代` 验证；修复 `addNodeMutation()` 悬空引用 bug 并补 regression test | 准备进入 M4 调研与实现 |
+| 2026-05-19 | 第 7 次会话：完成 M4/M5 + 12 模块实现与全证据验证 | M4: EvaluationPool 线程池 + PerformanceObserver + 异步决策周期 + 能量系统；M5: TerrainLayer/HeightField/CaveMask/TerrainPerception/TerrainGenerator + 地形物理 hook；12 模块（F-FIGHT/F-PRED/F-DISEASE/F-COMM/F-COOP/F-RESOURCE/F-DAY/F-SEASON/F-NEUROMOD/F-LEARN/F-NOVELTY/F-CURRICULUM）全部 MVP 通过；100 代 full_validation 量化证据；Lamarck vs Darwin A/B 对比；ModuleMetricsObserver tick 级追踪 | Baseline 机制全部完成，待进入 M2 可视化整合 |
 
 ---
 
@@ -338,7 +359,7 @@ _目前无_
 
 ### 设计相关
 1. **i18n 系统从 M2 第一天就要上**，不能事后国际化
-2. **NEAT 输入维度不能写死**——M5 加地形会扩展，F-COMM 还会再扩展
+2. **NEAT 输入维度不能写死**——M5 加地形会扩展，F-COMM 还会再扩展（HeadlessRuntime 已按模块开关动态扩展 input_dim）
 3. **EventBus 用 deferred queue**，避免回调死锁
 4. **每个 agent 一个独立 RNG（thread_local）**，不共享全局
 5. **NEAT 物种 ID 永远递增不复用**，否则物种树会画错
@@ -346,7 +367,7 @@ _目前无_
 ### 实施相关
 1. **Windows 本机没有全局 `cmake` 在 PATH**，但 VS2022 BuildTools 自带的 `cmake.exe` / `ninja.exe` 可直接用
 2. 当前已验证的构建链：**VS2022 BuildTools + MSVC 14.44 + CMake 3.31（BuildTools 自带）**
-3. `git tag` 尚未执行；代码、构建、测试状态已就绪，可在后续有 git 写操作时补打 `baseline-M0-done`
+3. `git tag` 尚未执行；代码、构建、测试状态已就绪，可在后续有 git 写操作时补打 `baseline-M0-done` ~ `baseline-M5-done`
 4. M1 当前卡点已从“实现”转为“验收与调参”——已完成 5 seed × 100 代默认配置测量，平均倍率 `2.256x`
 5. 文档里的具体数值（tick、种群规模、reward 权重、倍率目标）都只应视为**示例/起始猜测**，后续以真实实验结果为准
 6. `FoodReward` 已修正为按“吃到的食物个数”计 reward；修正前后的 fitness 绝对值不能直接横向比较

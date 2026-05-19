@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
     add_compile_options(/W4 /utf-8 /Zc:__cplusplus)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:8388608 /MAP")
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

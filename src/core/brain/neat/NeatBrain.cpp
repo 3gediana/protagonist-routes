@@ -111,6 +111,7 @@ std::span<const float> NeatBrain::forward(std::span<const float> inputs, float d
         const float activated = activate(node.bias + node.response * sum);
         const float alpha = std::clamp(step / node.time_constant, 0.0f, 1.0f);
         next[index] = current[index] + alpha * (-current[index] + activated);
+        if (!std::isfinite(next[index])) next[index] = 0.0f;
     }
 
     active_buffer_index_ = 1 - active_buffer_index_;
@@ -120,7 +121,8 @@ std::span<const float> NeatBrain::forward(std::span<const float> inputs, float d
         if (node_it == node_index_by_id_.end()) {
             throw std::runtime_error("NeatBrain output node id missing from node table");
         }
-        outputs_[o] = active[node_it->second];
+        float val = active[node_it->second];
+        outputs_[o] = std::isfinite(val) ? val : 0.0f;
     }
 
     return outputs_;

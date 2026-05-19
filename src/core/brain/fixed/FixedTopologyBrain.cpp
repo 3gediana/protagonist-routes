@@ -53,6 +53,7 @@ std::span<const float> FixedTopologyBrain::forward(std::span<const float> inputs
             sum += hidden_[h] * hidden_output_weights_[h * output_dim_ + o];
         }
         output_[o] = activate(sum);
+        if (!std::isfinite(output_[o])) output_[o] = 0.0f;
     }
 
     return output_;

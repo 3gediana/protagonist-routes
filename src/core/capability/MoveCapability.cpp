@@ -32,6 +32,9 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     }
 
     Vec2 direction{outputs[0], outputs[1]};
+    // Sanitize NaN/Inf from neural network outputs
+    if (!std::isfinite(direction.x)) direction.x = 0.0f;
+    if (!std::isfinite(direction.y)) direction.y = 0.0f;
     const float norm = direction.length();
     if (norm > 1.0f) {
         direction /= norm;
@@ -41,6 +44,11 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     const float previous_energy = agent.energy();
 
     Vec2 velocity = direction * max_speed_;
+
+    auto* concrete_agent = dynamic_cast<Agent*>(&agent);
+    if (concrete_agent && concrete_agent->infected()) {
+        velocity = velocity * 0.6f;
+    }
 
     auto* terrain = world.getLayer<TerrainLayer>();
     float terrain_cost_factor = 1.0f;

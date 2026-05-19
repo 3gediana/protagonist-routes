@@ -14,11 +14,13 @@ HeightField::HeightField(std::size_t width, std::size_t height, float cell_size)
       data_(width * height, 0.0f) {}
 
 float HeightField::heightAt(float x, float y) const {
+    if (!std::isfinite(x) || !std::isfinite(y)) return 0.0f;
+
     const float gx = x / cell_size_;
     const float gy = y / cell_size_;
 
-    const std::size_t x0 = static_cast<std::size_t>(std::max(0.0f, std::floor(gx)));
-    const std::size_t y0 = static_cast<std::size_t>(std::max(0.0f, std::floor(gy)));
+    const std::size_t x0 = static_cast<std::size_t>(std::max(0.0f, std::floor(std::clamp(gx, 0.0f, static_cast<float>(width_ - 1)))));
+    const std::size_t y0 = static_cast<std::size_t>(std::max(0.0f, std::floor(std::clamp(gy, 0.0f, static_cast<float>(height_ - 1)))));
     const std::size_t x1 = std::min(x0 + 1, width_ - 1);
     const std::size_t y1 = std::min(y0 + 1, height_ - 1);
 

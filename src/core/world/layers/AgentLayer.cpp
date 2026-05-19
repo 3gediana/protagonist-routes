@@ -29,7 +29,11 @@ void AgentLayer::tick(IWorld& world, float dt) {
         agent->incrementAge();
 
         const float previous_energy = agent->energy();
-        const float next_energy = previous_energy - base_metabolism_;
+        float metabolism = base_metabolism_;
+        if (agent->infected()) {
+            metabolism *= 2.0f;
+        }
+        const float next_energy = previous_energy - metabolism;
         agent->setEnergy(next_energy);
         if (next_energy != previous_energy) {
             world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,

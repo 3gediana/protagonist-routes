@@ -104,6 +104,9 @@ void Agent::step(IWorld& world, float dt) {
             offset += perception->dim();
         }
 
+        if (brain_->inputDim() != inputs.size()) {
+            throw std::runtime_error("Agent perception input dim mismatch");
+        }
         auto output_span = brain_->forward(inputs, dt);
         last_outputs_.assign(output_span.begin(), output_span.end());
         next_decision_tick_ = world.currentTick() + static_cast<Tick>(decision_interval_);

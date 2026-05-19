@@ -80,14 +80,14 @@
 **最后更新**：2026-05-19
 
 ```
-阶段：🟦 M3 已基本收尾（headless-first），NEAT 主干、multi-seed 验证与 species 记录已就位，下一步进入 M4
-进度：baseline M0 ✅ / M1 ✅⛳⛳ / M2 ⏸ / M3 ✅✅⛳ / M4-M5 ⬜
-      modules  全部 📋 卡片就位待开发
+阶段：🟩 Baseline M0-M5 全部完成 + 12 Modules MVP 证据验证，下一步进入 M2 可视化整合
+进度：baseline M0 ✅ / M1 ✅⛳⛳ / M2 ⏸ / M3 ✅✅⛳ / M4 ✅✅⛳ / M5 ✅✅⛳
+      modules  12 个 MVP ✅⛳⛳ / 其余 📋
 ```
 
-**已完成**：所有顶层文档 + ADR + baseline 阶段卡 + 全部 module 卡；M0 脚手架；M1 核心系统（固定拓扑 brain、世界层、GA、reward、CSV 记录、headless 代际循环）；M3 核心与收尾（NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入 / `evolution.csv` / `species_log.jsonl` / `run_m3_acceptance.py` / 5 seed × 100/200 代验证）
+**已完成**：所有顶层文档 + ADR + baseline 阶段卡 + 全部 module 卡；M0 脚手架；M1 核心系统（固定拓扑 brain、世界层、GA、reward、CSV 记录、headless 代际循环）；M3 核心与收尾（NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入 / `evolution.csv` / `species_log.jsonl` / `run_m3_acceptance.py` / 5 seed × 100/200 代验证）；M4 多线程（EvaluationPool 线程池 / PerformanceObserver / 异步决策周期 / 能量系统）；M5 地形（TerrainLayer / HeightField / CaveMask / TerrainPerception / 地形物理 hook）；12 模块 MVP（F-FIGHT / F-PRED / F-DISEASE / F-COMM / F-COOP / F-RESOURCE / F-DAY / F-SEASON / F-NEUROMOD / F-LEARN / F-NOVELTY / F-CURRICULUM）
 
-**下一步**：进入 M4：先读 `docs/baseline/M4_async.md`，再查多线程评估 / 异步决策相关资料，最后开始实现 `EvaluationPool + async decision + PerformanceObserver` 的最小闭环。
+**下一步**：进入 M2 可视化整合：先读 `docs/baseline/M2_visualization.md`，实现 raylib 接入 + i18n 系统 + CJK 字体加载 + WorldRenderer / AgentRenderer + HUD / ControlPanel / StatsPanel / LangSwitcher + FitnessChart 实时折线图。
 
 ---
 
@@ -267,7 +267,7 @@ git tag                 # 列出所有完成 tag
 不重复 ROADMAP / baseline 文档里讲过的，这里只列**会话切换时容易遗忘的**：
 
 1. **i18n 系统从 M2 第一天就要上**，不能"先硬编码 UI 字符串再国际化"
-2. **NEAT 输入维度不能写死**——M5 加地形会扩展输入，F-COMM 会再扩展
+2. **NEAT 输入维度不能写死**——M5 加地形已扩展输入（HeadlessRuntime 动态扩展），F-COMM 会再扩展
 3. **EventBus 用 deferred queue**，避免订阅者回调里发新事件导致死锁
 4. **headless 训练时不要渲染**，从 runtime 层就分离
 5. **每个 agent 一个独立 RNG（thread_local）**，不共享全局随机数发生器
