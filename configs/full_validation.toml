@@ -67,6 +67,12 @@ damage = 5.0
 energy_gain = 3.0
 hunt_cost = 0.05
 
+[world.terrain_mod]
+enabled = true
+dig_rate = 2.0
+build_rate = 2.0
+energy_cost = 0.5
+
 [world.combat]
 enabled = true
 attack_range = 3.0

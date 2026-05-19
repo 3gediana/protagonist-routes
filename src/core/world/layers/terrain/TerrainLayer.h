@@ -31,6 +31,10 @@ public:
     const HeightField& heightField() const { return height_field_; }
     const CaveMask& caveMask() const { return cave_mask_; }
 
+    // Non-const accessors for terrain modification (F-TOOL)
+    HeightField& heightFieldMut() { return height_field_; }
+    CaveMask& caveMaskMut() { return cave_mask_; }
+
 private:
     TerrainParams params_;
     HeightField height_field_;

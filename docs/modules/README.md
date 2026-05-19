@@ -67,9 +67,15 @@
 |---|---|---|---|---|
 | [F-TREE](F-TREE_phylogenetic.md) | 物种谱系树 | 🟡 中 | M3 | ✅⛳⛳ |
 | [F-HEAT](F-HEAT_heatmap.md) | 行为热力图 | 🟢 低 | M1 | ✅⛳⛳ |
-| [F-FORK](F-FORK_parallel_universe.md) | 平行宇宙存档 | 🟡 中 | M3 | 📋 |
+| [F-FORK](F-FORK_parallel_universe.md) | 平行宇宙存档 | 🟡 中 | M3 | ✅⛳⛳ |
 | [F-STAT](F-STAT_advanced_stats.md) | 高级统计 | 🟡 中 | M3 | ✅⛳⛳ |
 | [F-REPLAY](F-REPLAY_replay.md) | 录制回放 | 🟡 中 | M3 | 📋 |
+
+### 🌍 环境交互类（新增）
+
+| 模块 | 作用 | 难度 | 依赖 | 状态 |
+|---|---|---|---|---|
+| [F-TOOL](F-TOOL_terrain_mod.md) | 物种改造地形 | 🟡 中 | M5 | ✅⛳⛳ |
 
 ### 🎬 演示类
 
@@ -128,5 +134,5 @@
 
 ```
 baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
-modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / F-PRED ✅⛳⛳ / F-CURRICULUM ✅⛳⛳ / F-COEVO ✅⛳⛳ / F-NSGA ✅⛳⛳ / F-TREE ✅⛳⛳ / F-HEAT ✅⛳⛳ / F-STAT ✅⛳⛳ / F-FORK 📋 / F-REPLAY 📋 / others 📋
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / F-PRED ✅⛳⛳ / F-CURRICULUM ✅⛳⛳ / F-COEVO ✅⛳⛳ / F-NSGA ✅⛳⛳ / F-TREE ✅⛳⛳ / F-HEAT ✅⛳⛳ / F-STAT ✅⛳⛳ / F-FORK ✅⛳⛳ / F-TOOL ✅⛳⛳ / F-REPLAY 📋 / others 📋
 ```

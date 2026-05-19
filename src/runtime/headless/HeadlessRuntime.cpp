@@ -7,6 +7,7 @@
 #include "core/brain/neat/NeatGenome.h"
 #include "core/capability/EatCapability.h"
 #include "core/capability/MoveCapability.h"
+#include "core/capability/TerrainModifier.h"
 #include "core/evolution/ClassicGA.h"
 #include "core/evolution/NeatEvolution.h"
 #include "core/evolution/Nsga2Evolution.h"
@@ -178,6 +179,10 @@ struct RuntimeParams {
     std::size_t snapshot_interval;  // auto-snapshot every N generations (0 = disabled)
     std::string snapshot_label;
     std::string resume_from;       // path to snapshot dir to resume from
+    bool terrain_mod_enabled;
+    float terrain_mod_dig_rate;
+    float terrain_mod_build_rate;
+    float terrain_mod_energy_cost;
 };
 
 struct GenerationStats {
@@ -351,6 +356,13 @@ RuntimeParams loadParams(const config::Config& config) {
     params.snapshot_interval = config.getOr<std::size_t>("evolution.snapshot.interval", 0);
     params.snapshot_label = config.getOr<std::string>("evolution.snapshot.label", "");
     params.resume_from = config.getOr<std::string>("evolution.snapshot.resume_from", "");
+    params.terrain_mod_enabled = config.getOr<bool>("world.terrain_mod.enabled", false);
+    params.terrain_mod_dig_rate = config.getOr<float>("world.terrain_mod.dig_rate", 2.0f);
+    params.terrain_mod_build_rate = config.getOr<float>("world.terrain_mod.build_rate", 2.0f);
+    params.terrain_mod_energy_cost = config.getOr<float>("world.terrain_mod.energy_cost", 0.5f);
+    if (params.terrain_mod_enabled) {
+        params.output_dim += 2;  // dig + build outputs
+    }
     return params;
 }
 
@@ -675,6 +687,11 @@ void populateWorld(World2D& world,
             agent->addCapability(std::make_unique<HebbianLearning>(
                 params.hebbian_learning_rate));
         }
+        if (params.terrain_mod_enabled) {
+            agent->addCapability(std::make_unique<TerrainModifier>(
+                params.terrain_mod_dig_rate, params.terrain_mod_build_rate,
+                params.terrain_mod_energy_cost));
+        }
         if (params.signal_enabled) {
             agent->addCapability(std::make_unique<EmitSignalCapability>(
                 params.signal_channels, params.signal_emit_cost));
@@ -992,6 +1009,7 @@ int runCoevolution(const RuntimeParams& params,
             agent->addCapability(std::make_unique<EatCapability>(params.eat_radius));
             if (params.combat_enabled) agent->addCapability(std::make_unique<AttackCapability>(params.attack_range, params.damage_factor, params.energy_transfer_rate, params.attack_cost, params.attack_threshold));
             if (params.lifetime_learning_enabled) agent->addCapability(std::make_unique<HebbianLearning>(params.hebbian_learning_rate));
+            if (params.terrain_mod_enabled) agent->addCapability(std::make_unique<TerrainModifier>(params.terrain_mod_dig_rate, params.terrain_mod_build_rate, params.terrain_mod_energy_cost));
             if (params.signal_enabled) agent->addCapability(std::make_unique<EmitSignalCapability>(params.signal_channels, params.signal_emit_cost));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(params.pred_hunt_radius, params.pred_damage, params.pred_energy_gain, params.pred_hunt_cost));
             agent->addCapability(std::make_unique<FleeCapability>(params.pred_flee_radius, params.pred_flee_boost, params.pred_flee_cost));
@@ -1029,6 +1047,7 @@ int runCoevolution(const RuntimeParams& params,
             agent->addCapability(std::make_unique<EatCapability>(params.eat_radius));
             if (params.combat_enabled) agent->addCapability(std::make_unique<AttackCapability>(params.attack_range, params.damage_factor, params.energy_transfer_rate, params.attack_cost, params.attack_threshold));
             if (params.lifetime_learning_enabled) agent->addCapability(std::make_unique<HebbianLearning>(params.hebbian_learning_rate));
+            if (params.terrain_mod_enabled) agent->addCapability(std::make_unique<TerrainModifier>(params.terrain_mod_dig_rate, params.terrain_mod_build_rate, params.terrain_mod_energy_cost));
             if (params.signal_enabled) agent->addCapability(std::make_unique<EmitSignalCapability>(params.signal_channels, params.signal_emit_cost));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(params.pred_hunt_radius, params.pred_damage, params.pred_energy_gain, params.pred_hunt_cost));
             agent->addCapability(std::make_unique<FleeCapability>(params.pred_flee_radius, params.pred_flee_boost, params.pred_flee_cost));
