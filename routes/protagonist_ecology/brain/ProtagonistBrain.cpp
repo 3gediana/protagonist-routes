@@ -43,7 +43,11 @@ ProtagonistBrain::ProtagonistBrain(std::size_t input_dim,
       memory_gate_bias_(memory_cells, 0.0f),
       hidden_(hidden_dim_, 0.0f),
       outputs_(action_dim_, 0.0f),
-      memory_(memory_cells) {
+      memory_(memory_cells),
+      spatial_memory_(32, 32, 200.0f, 200.0f),
+      episodic_memory_(32),
+      social_memory_(32),
+      goal_memory_() {
     if (input_dim == 0 || hidden_dim == 0 || memory_cells == 0 || action_dim == 0) {
         throw std::invalid_argument("ProtagonistBrain dims must be > 0");
     }
@@ -74,7 +78,11 @@ ProtagonistBrain::ProtagonistBrain(const ProtagonistGenome& genome)
       memory_gate_bias_(genome.memoryGateBias()),
       hidden_(hidden_dim_, 0.0f),
       outputs_(action_dim_, 0.0f),
-      memory_(genome.memoryCells()) {}
+      memory_(genome.memoryCells()),
+      spatial_memory_(32, 32, 200.0f, 200.0f),
+      episodic_memory_(32),
+      social_memory_(32),
+      goal_memory_() {}
 
 std::size_t ProtagonistBrain::inputDim() const {
     return external_input_dim_;
@@ -88,6 +96,11 @@ std::span<const float> ProtagonistBrain::forward(std::span<const float> inputs, 
     if (inputs.size() != external_input_dim_) {
         throw std::invalid_argument("ProtagonistBrain input dim mismatch");
     }
+
+    // Step V2 memory banks
+    spatial_memory_.tick(dt);
+    social_memory_.tick(dt);
+    goal_memory_.tick(dt);
 
     std::vector<float> full_input(total_input_dim_, 0.0f);
     std::copy(inputs.begin(), inputs.end(), full_input.begin());
@@ -133,6 +146,10 @@ void ProtagonistBrain::reset() {
     std::fill(hidden_.begin(), hidden_.end(), 0.0f);
     std::fill(outputs_.begin(), outputs_.end(), 0.0f);
     memory_.reset();
+    spatial_memory_.reset();
+    episodic_memory_.reset();
+    social_memory_.reset();
+    goal_memory_.reset();
 }
 
 std::size_t ProtagonistBrain::parameterCount() const {

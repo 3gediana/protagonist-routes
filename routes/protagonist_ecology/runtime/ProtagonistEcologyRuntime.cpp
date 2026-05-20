@@ -36,9 +36,11 @@
 #include "runtime/ProtagonistEcologyConfig.h"
 #include "runtime/ProtagonistWorldFactory.h"
 #include "runtime/TraceRecorder.h"
+#include "world/BaseLayer.h"
 #include "world/CampfireLayer.h"
 #include "world/InterventionDirectorLayer.h"
 #include "world/NurseryLogisticsLayer.h"
+#include "world/WaterLayer.h"
 #include "world/WorksiteLayer.h"
 
 #include <algorithm>
@@ -405,6 +407,7 @@ void evaluatePopulation(World2D& world,
     auto* campfire_layer = world.getLayer<CampfireLayer>();
     auto* signal_layer = world.getLayer<SignalLayer>();
     auto* resource_layer = world.getLayer<ResourceLayer>();
+    auto* water_layer = world.getLayer<WaterLayer>();
 
     std::unordered_set<GenomeId> protagonist_ids;
     protagonist_ids.reserve(population.size());
@@ -528,6 +531,86 @@ void evaluatePopulation(World2D& world,
             reward += params.combat_weight * static_cast<double>(kill_delta) * params.combat_kill_bonus;
 
             if (alive_now) {
+                // Memory V2: Record sensory sightings & episodic events to brain banks
+                auto* brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain());
+                if (brain != nullptr) {
+                    const auto agent_pos = concrete->position();
+                    const auto current_world_tick = world.currentTick();
+
+                    // 1. Spatial Memory Sightings (Visual radius approx 24.0 - 36.0)
+                    if (water_layer != nullptr) {
+                        for (const auto& source : water_layer->sources()) {
+                            if (Vec2::distanceSquared(agent_pos, source.position) <= 36.0f * 36.0f) {
+                                brain->spatialMemory().recordSighting(source.position, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                            }
+                        }
+                    }
+                    auto* base_layer = world.getLayer<BaseLayer>();
+                    if (base_layer != nullptr) {
+                        const auto base_center = base_layer->baseCenter();
+                        if (Vec2::distanceSquared(agent_pos, base_center) <= 28.0f * 28.0f) {
+                            brain->spatialMemory().recordSighting(base_center, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+                        }
+                    }
+                    if (campfire_layer != nullptr) {
+                        for (const auto& fire : campfire_layer->fires()) {
+                            if (fire.active && Vec2::distanceSquared(agent_pos, fire.position) <= 24.0f * 24.0f) {
+                                brain->spatialMemory().recordSighting(fire.position, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+                            }
+                        }
+                    }
+                    if (worksite_layer != nullptr) {
+                        for (const auto& site : worksite_layer->sites()) {
+                            if (site.active && Vec2::distanceSquared(agent_pos, site.position) <= 28.0f * 28.0f) {
+                                brain->spatialMemory().recordSighting(site.position, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+                            }
+                        }
+                    }
+                    auto* object_layer = world.getLayer<ObjectLayer>();
+                    if (object_layer != nullptr) {
+                        for (const auto& obj : object_layer->objects()) {
+                            if (!obj.carried && Vec2::distanceSquared(agent_pos, obj.pos) <= 18.0f * 18.0f) {
+                                const float is_stone = (obj.type == ObjectType::Stone) ? 1.0f : 0.0f;
+                                const float is_stick = (obj.type == ObjectType::Stick) ? 1.0f : 0.0f;
+                                brain->spatialMemory().recordSighting(obj.pos, 0.0f, 0.0f, 0.0f, std::max(is_stone, is_stick), 0.0f, 0.0f);
+                            }
+                        }
+                    }
+                    if (resource_layer != nullptr) {
+                        for (const auto& res : resource_layer->resources()) {
+                            if (res.available && res.amount > 0.0f && Vec2::distanceSquared(agent_pos, res.position) <= 24.0f * 24.0f) {
+                                brain->spatialMemory().recordSighting(res.position, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                            }
+                        }
+                    }
+
+                    // 2. Episodic Memory Key Events
+                    if (concrete->foodEatenThisTick() > 0.0f) {
+                        brain->episodicMemory().recordEvent(current_world_tick, agent_pos, "ate_food", 0.5f);
+                    }
+                    if (damage_delta > 0.0f) {
+                        brain->episodicMemory().recordEvent(current_world_tick, agent_pos, "attacked_enemy", 0.8f);
+                    }
+                    if (kill_delta > 0) {
+                        brain->episodicMemory().recordEvent(current_world_tick, agent_pos, "killed_prey", 0.9f);
+                    }
+
+                    // 3. Social Sightings (Record other living companions and predators)
+                    for (const auto* peer : alive_protagonists) {
+                        if (peer != nullptr && peer != concrete) {
+                            if (Vec2::distanceSquared(agent_pos, peer->position()) <= 24.0f * 24.0f) {
+                                brain->socialMemory().recordSighting(peer->id(), peer->position(), current_world_tick, false);
+                            }
+                        }
+                    }
+
+                    // 4. Goal Commitment Reinforce on actions
+                    if (concrete->foodEatenThisTick() > 0.0f && brain->goalMemory().currentGoal() == GoalType::FindFood) {
+                        brain->goalMemory().reinforceCommitment(0.35f);
+                        brain->goalMemory().progress(0.40f);
+                    }
+                }
+
                 bool inside_active_worksite = false;
                 if (worksite_layer != nullptr) {
                     for (const auto& site : worksite_layer->sites()) {

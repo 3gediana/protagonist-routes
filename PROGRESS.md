@@ -11,8 +11,8 @@
 | **最后更新** | 2026-05-20 |
 | **当前阶段** | 🟩 Baseline M0-M5 完成 + 12 Modules MVP + protagonist 8-物种全生态联合演化训练流水线就绪 |
 | **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 100% (Baseline + MVP + Protagonist Research & Trace基座完成) |
-| **最近会话摘要** | 已为 protagonist 路线完成世界理解长期研究工程方案（WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md）和专属 PROGRESS.md；并高标准落地 Phase 1 基座：新建并打通 `TraceRecorder.h/cpp`，支持按 `[trace]` 选项按 episode 独立输出 `event_trace.jsonl`（记录系统全部异步事件）、`agent_trace.csv`（记录个体级生理、能量、行为、免疫、社交、携带字段）、`world_trace.csv`（记录宏观生态总量和生存状态）、`replay_manifest.json`，已用 3 代 smoke run 验证通过；实现 `checkpoint_manifest.json`，且打通 `runtime.resume_checkpoint_path` 支持完美 resume 主角 population，已在 smoke checkpoint 加载跑通并在新一轮运行（avg_fitness=155.5 / best_fitness=447.5）验证了基因段代际继承。此外，已将用户提出的“连续时间世界框架 / CTRNN / 连续动作强度”作为 P1 后置架构问题记录归档，为 Memory V2 做好了观察和可回溯基础。 |
-| **下一步建议** | 既然 Trace/Resume 基座已经稳健落地且完美可追溯，下一步建议进入方案里的第 2 步：升级 Memory V2。新建 `WorkingMemory / SpatialMemory / EpisodicMemory / SocialMemory / GoalMemory` 专门记忆区并接入 `ProtagonistBrain`，利用新生成的 trace 对其进行空间寻水、危险绕行等专门的 ablation 消融测试，确保主角脑部参数与地图感知充分接通。 |
+| **最近会话摘要** | protagonist 路线的 Trace/Resume 基座已保持完成态；本轮继续把 Memory V2 半成品修回可编译、可运行状态：修复 `SpatialMemoryBank.cpp` 与 `MemoryCognitionPerception` 的接口错误，`neural-eco-protagonist` 重新构建成功，并再次用 `configs/protagonist_ecology_train_smoke.toml` 跑通 smoke。随后按用户新优先级完成连续时间方向的外部调研，并新建 `routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md`，明确后续采用 hybrid continuous-time 路线：真实时间 `seconds` + 子步积分 + 事件双时间戳（`time_seconds` / `step_index`）+ 连续动作持续时间模型。相关状态已同步更新到 protagonist route 专属 `PROGRESS.md`。 |
+| **下一步建议** | 既然用户已将连续时间框架前置，下一步建议先落 `CONTINUOUS_TIME_WORLD_DESIGN.md` 里的 CT-0 / CT-1：把 `time_seconds` 接进 `core/event/world` 接口，并让 protagonist runtime 从 `episode_ticks` 迁到 `episode_duration_seconds + substep_dt`。等统一时间语义稳定后，再继续深化 Memory V2、合作信用分配和 CTRNN protagonist brain。 |
 
 ---
 

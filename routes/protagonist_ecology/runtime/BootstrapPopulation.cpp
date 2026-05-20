@@ -31,6 +31,7 @@
 #include "perception/BasePerception.h"
 #include "perception/CarriedObjectPerception.h"
 #include "perception/DangerPerception.h"
+#include "perception/MemoryCognitionPerception.h"
 #include "perception/ObjectLogisticsPerception.h"
 #include "perception/StockpilePerception.h"
 #include "perception/SurvivalStatePerception.h"
@@ -129,6 +130,9 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
     if (config.signal.enabled) {
         sensory_dim += SignalPerception::featureDim(config.signal.channels);
     }
+
+    // Memory V2 cognition input
+    sensory_dim += MemoryCognitionPerception::kDim;
 
     return sensory_dim;
 }
@@ -239,6 +243,9 @@ std::unique_ptr<Agent> makeProtagonist(AgentId id,
     if (config.signal.enabled) {
         agent->addPerception(std::make_unique<SignalPerception>(config.signal.channels, kSignalRadius));
     }
+
+    // Memory V2 Cognition Perception
+    agent->addPerception(std::make_unique<MemoryCognitionPerception>());
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));
     agent->addCapability(std::make_unique<EatCapability>(kEatRadius));

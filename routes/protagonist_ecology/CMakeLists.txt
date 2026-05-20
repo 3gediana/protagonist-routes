@@ -6,12 +6,17 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     capability/ProtagonistHuntCapability.cpp
     capability/ThrowCarriedObjectCapability.cpp
     brain/MemoryBank.cpp
+    brain/SpatialMemoryBank.cpp
+    brain/EpisodicMemoryBank.cpp
+    brain/SocialMemoryBank.cpp
+    brain/GoalMemory.cpp
     brain/ProtagonistBrain.cpp
     brain/ProtagonistGenome.cpp
     perception/AgentSocialPerception.cpp
     perception/BasePerception.cpp
     perception/CarriedObjectPerception.cpp
     perception/DangerPerception.cpp
+    perception/MemoryCognitionPerception.cpp
     perception/ObjectLogisticsPerception.cpp
     perception/StockpilePerception.cpp
     perception/SurvivalStatePerception.cpp
@@ -46,12 +51,17 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     capability/ProtagonistHuntCapability.h
     capability/ThrowCarriedObjectCapability.h
     brain/MemoryBank.h
+    brain/SpatialMemoryBank.h
+    brain/EpisodicMemoryBank.h
+    brain/SocialMemoryBank.h
+    brain/GoalMemory.h
     brain/ProtagonistBrain.h
     brain/ProtagonistGenome.h
     perception/AgentSocialPerception.h
     perception/BasePerception.h
     perception/CarriedObjectPerception.h
     perception/DangerPerception.h
+    perception/MemoryCognitionPerception.h
     perception/ObjectLogisticsPerception.h
     perception/StockpilePerception.h
     perception/SurvivalStatePerception.h
