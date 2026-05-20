@@ -133,6 +133,85 @@ def parse_fitness(run_dir: Path) -> dict:
     }
 
 
+def parse_event_trace_counts(run_dir: Path) -> dict:
+    """Walk every gen/episode event_trace.jsonl and count protagonist-route
+    structured events. Returns a flat dict so the summary table can include
+    these alongside fitness + behaviors.
+    """
+    counts = {
+        "chop_started": 0, "chop_completed": 0, "chop_abandoned": 0,
+        "build_started": 0, "build_completed": 0,
+        "deposits": 0,
+        "credit_assigned_build": 0, "credit_assigned_hunt": 0,
+        "credit_total_reward": 0.0,
+    }
+    paths = list(run_dir.glob("trace/generation_*/episode_*/event_trace.jsonl"))
+    if not paths:
+        return counts
+    import json
+    for p in paths:
+        try:
+            with p.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    t = evt.get("type", "")
+                    if t == "ChopStarted":
+                        counts["chop_started"] += 1
+                    elif t == "ChopCompleted":
+                        counts["chop_completed"] += 1
+                    elif t == "ChopAbandoned":
+                        counts["chop_abandoned"] += 1
+                    elif t == "BuildStarted":
+                        counts["build_started"] += 1
+                    elif t == "BuildCompleted":
+                        counts["build_completed"] += 1
+                    elif t == "WorksiteMaterialDeposited":
+                        counts["deposits"] += 1
+                    elif t == "CreditAssigned":
+                        sk = evt.get("source_kind", -1)
+                        if sk == 0:
+                            counts["credit_assigned_build"] += 1
+                        elif sk == 1:
+                            counts["credit_assigned_hunt"] += 1
+                        counts["credit_total_reward"] += float(evt.get("reward", 0.0))
+        except OSError:
+            continue
+    return counts
+
+
+def parse_map_elites_coverage(run_dir: Path) -> int:
+    """Run trace_to_map_elites and return the unique-cell coverage count."""
+    summary = run_dir / "map_elites_summary.txt"
+    if not summary.exists():
+        # Try to invoke the tool inline.
+        try:
+            subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "trace_to_map_elites.py"),
+                 str(run_dir), "--bins", "4"],
+                cwd=str(REPO_ROOT),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError:
+            return 0
+    if not summary.exists():
+        return 0
+    for line in summary.read_text(encoding="utf-8").splitlines():
+        if line.startswith("observed_unique_cells"):
+            try:
+                return int(line.split("=")[1].strip())
+            except (IndexError, ValueError):
+                return 0
+    return 0
+
+
 def parse_behaviors(run_dir: Path) -> dict:
     fpath = run_dir / "protagonist_behaviors.csv"
     if not fpath.exists():
@@ -204,9 +283,15 @@ def run_variant(variant_name: str, config_path: Path) -> tuple[dict, dict]:
         raise SystemExit(f"[ablation] no run dir produced for {variant_name}")
     fit = parse_fitness(run_dir)
     beh = parse_behaviors(run_dir)
+    evt = parse_event_trace_counts(run_dir)
+    map_e = parse_map_elites_coverage(run_dir)
+    beh["_events"] = evt
+    beh["_map_elites_cells"] = map_e
     print(f"[ablation] {variant_name} -> avg={fit.get('avg', 'na'):.1f} "
           f"best={fit.get('best', 'na'):.1f} chop={beh.get('chop_successes', 0)} "
-          f"signal={beh.get('signal_emits', 0)}", flush=True)
+          f"signal={beh.get('signal_emits', 0)} "
+          f"credit_b={evt['credit_assigned_build']} credit_h={evt['credit_assigned_hunt']} "
+          f"map_cells={map_e}", flush=True)
     return fit, beh
 
 
@@ -227,13 +312,15 @@ def main() -> int:
     print()
     print("## Memory Ablation Smoke Summary")
     print()
-    print("| variant | avg fitness (last gen) | best fitness | chop_succ | deposits | "
-          "completed_worksites | signal_emits | signal_co_attend | hunt_succ | "
-          "survived | dnc_usage_mean | dnc_read_peak |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| variant | avg fitness (last gen) | best | chop_compl | "
+          "build_compl | deposits | credit_build | credit_hunt | "
+          "credit_total_reward | signal_emits | hunt_succ | "
+          "survived | map_cells | dnc_usage |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     base_fit, base_beh = results["baseline"]
     for name, _ in VARIANTS:
         fit, beh = results[name]
+        evt = beh.get("_events", {})
         avg = fit.get("avg", float("nan"))
         best = fit.get("best", float("nan"))
         delta = ""
@@ -241,12 +328,15 @@ def main() -> int:
             d = avg - base_fit["avg"]
             delta = f" ({'+' if d >= 0 else ''}{d:.1f})"
         print(
-            f"| {name} | {avg:.1f}{delta} | {best:.1f} | {beh.get('chop_successes', 0)} | "
-            f"{beh.get('deposits_total', 0)} | {beh.get('completed_worksites', 0)} | "
-            f"{beh.get('signal_emits', 0)} | {beh.get('signal_co_attendance', 0)} | "
+            f"| {name} | {avg:.1f}{delta} | {best:.1f} | "
+            f"{evt.get('chop_completed', 0)} | {evt.get('build_completed', 0)} | "
+            f"{evt.get('deposits', 0)} | {evt.get('credit_assigned_build', 0)} | "
+            f"{evt.get('credit_assigned_hunt', 0)} | "
+            f"{evt.get('credit_total_reward', 0):.1f} | "
+            f"{beh.get('signal_emits', 0)} | "
             f"{beh.get('hunt_successes', 0)} | {beh.get('survived_last', 0)} | "
-            f"{beh.get('dnc_usage_mean_last', 0):.3f} | "
-            f"{beh.get('dnc_read_peak_last', 0):.3f} |"
+            f"{beh.get('_map_elites_cells', 0)} | "
+            f"{beh.get('dnc_usage_mean_last', 0):.3f} |"
         )
     print()
     print("> Note: smoke-sized run (3 generations, ~200 simulated seconds, 8 protagonists).")
