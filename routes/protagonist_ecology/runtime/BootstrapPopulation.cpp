@@ -299,6 +299,14 @@ std::size_t computeBackgroundSensoryDim(const ProtagonistEcologyConfig& config) 
     if (config.disease.enabled) {
         dim += InfectionPerception::kDim;
     }
+    // Background species used to be deaf - they had no SignalPerception, so
+    // protagonist warning shouts and inter-prey signaling were invisible to
+    // them. Adding it here lets prey react to alarm calls and predators
+    // pick up communication-driven prey-aggregation cues, which is exactly
+    // the kind of "the world can be understood" that the project aims for.
+    if (config.signal.enabled) {
+        dim += SignalPerception::featureDim(config.signal.channels);
+    }
     return dim;
 }
 
@@ -316,6 +324,13 @@ void attachBackgroundCommonSensors(Agent& agent,
     }
     if (config.disease.enabled) {
         agent.addPerception(std::make_unique<InfectionPerception>(8.0f));
+    }
+    if (config.signal.enabled) {
+        // Same SignalPerception protagonist uses, sized to match the world's
+        // configured channel count. Radius 16 keeps the signal field cheap
+        // for background species while still letting an alarm call reach
+        // immediate neighbours.
+        agent.addPerception(std::make_unique<SignalPerception>(config.signal.channels, /*perception_radius=*/16.0f));
     }
 }
 
