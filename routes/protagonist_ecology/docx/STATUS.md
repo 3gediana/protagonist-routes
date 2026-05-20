@@ -3,10 +3,12 @@
 > 最后巡检：2026-05-21（夜间会话）
 > 巡检范围：`d:/claude-code/c++` 整个工作树
 > 当前分支：`master`
-> 当前 HEAD：`146c37f feat(core): Stage 5 - MapElitesArchive for quality-diverse curriculum`
+> 当前 HEAD：`8bfd3a2 docs(protagonist): rewrite STATUS.md handoff manual for 5-stage completion`
 > 交接目标：让新对话能在**不依赖旧上下文**的情况下，快速接手仓库真实状态。
 
-> **本版本相对 2026-05-20 版的主要变化**：完成 Stage 0 / 1 / 2 / 3 / 4 / 5 全部 5 个机制扩展阶段。下面正文以"现在状态"为准，不再重复昨天的旧叙述。
+> **本版本相对 2026-05-20 版的主要变化**：完成 Stage 0 / 1 / 2 / 3 / 4 / 5 全部 5 个机制扩展阶段 + 准备好 CUDA 12.8 安装包与激活脚本（等用户管理员身份点一下）。下面正文以"现在状态"为准，不再重复昨天的旧叙述。
+
+> **CUDA 设置就绪**：用户睡前问"想办法打通 GPU"。CUDA 12.8 网络安装包已下到 `D:\claude-code\downloads\cuda_12.8.0_windows_network.exe`，配套静默安装 .bat 和激活 .bat 也已写好。具体用法见 `D:\claude-code\downloads\README_CUDA_SETUP.md`。**安装阶段需要管理员权限**，所以新对话不能自己装；要让用户点。安装完成后跑 `activate_protagonist_gpu.bat` 自动 reconfigure + 全量编译 + 跑测试。GPU 训练默认在 `compute.protagonist_dense_gpu_enabled = true` 时启用（已经是 default）。
 
 ---
 
