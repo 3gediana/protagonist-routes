@@ -13,7 +13,8 @@ class AgentLayer final : public IWorldLayer {
 public:
     static constexpr const char* kName = "agent";
 
-    AgentLayer(float death_threshold, float base_metabolism);
+    AgentLayer(float death_threshold, float base_metabolism, std::size_t decision_threads = 1);
+    ~AgentLayer() override;
 
     const char* layerName() const override;
     void onAttach(IWorld& world) override;
@@ -28,8 +29,12 @@ public:
     std::vector<const Agent*> agents() const;
 
 private:
+    class DecisionExecutor;
+
     float death_threshold_;
     float base_metabolism_;
+    std::size_t decision_threads_;
+    std::unique_ptr<DecisionExecutor> decision_executor_;
     std::vector<std::unique_ptr<Agent>> agents_;
 };
 

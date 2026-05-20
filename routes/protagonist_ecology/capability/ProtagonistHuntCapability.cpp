@@ -2,6 +2,8 @@
 
 #include "brain/ProtagonistBrain.h"
 #include "core/agent/Agent.h"
+#include "core/events/EventBus.h"
+#include "core/events/EventPayloads.h"
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
@@ -55,6 +57,11 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
         const float actual_gain = energy_gain_ * dt;
         target->setEnergy(target->energy() - actual_damage);
         concrete->setEnergy(concrete->energy() + actual_gain);
+        world.eventBus().publish(events::Event{
+            events::EventType::AgentAttacked,
+            events::AgentAttacked{agent.id(), target->id(), actual_damage},
+            world.currentTick(),
+            world.currentTimeSeconds()});
         concrete->noteDamageDealt(actual_damage);
         if (actual_gain > 0.0f) {
             concrete->noteMeatFood(actual_gain);

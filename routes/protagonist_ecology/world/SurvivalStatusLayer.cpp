@@ -27,23 +27,23 @@ SurvivalStatusLayer::SurvivalStatusLayer(float max_health,
                                          float max_hydration,
                                          float initial_health_ratio,
                                          float initial_hydration_ratio,
-                                         float hydration_decay_per_tick,
+                                         float hydration_decay_per_second,
                                          float dehydration_threshold_ratio,
-                                         float dehydration_damage_per_tick,
-                                         float fire_health_damage_per_tick,
-                                         float warmth_recovery_per_tick,
-                                         float nest_recovery_per_tick,
+                                         float dehydration_damage_per_second,
+                                         float fire_health_damage_per_second,
+                                         float warmth_recovery_per_second,
+                                         float nest_recovery_per_second,
                                          float injured_threshold_ratio)
     : max_health_(std::max(1.0f, max_health)),
       max_hydration_(std::max(1.0f, max_hydration)),
       initial_health_ratio_(std::clamp(initial_health_ratio, 0.0f, 1.0f)),
       initial_hydration_ratio_(std::clamp(initial_hydration_ratio, 0.0f, 1.0f)),
-      hydration_decay_per_tick_(std::max(0.0f, hydration_decay_per_tick)),
+      hydration_decay_per_second_(std::max(0.0f, hydration_decay_per_second)),
       dehydration_threshold_ratio_(std::clamp(dehydration_threshold_ratio, 0.0f, 1.0f)),
-      dehydration_damage_per_tick_(std::max(0.0f, dehydration_damage_per_tick)),
-      fire_health_damage_per_tick_(std::max(0.0f, fire_health_damage_per_tick)),
-      warmth_recovery_per_tick_(std::max(0.0f, warmth_recovery_per_tick)),
-      nest_recovery_per_tick_(std::max(0.0f, nest_recovery_per_tick)),
+      dehydration_damage_per_second_(std::max(0.0f, dehydration_damage_per_second)),
+      fire_health_damage_per_second_(std::max(0.0f, fire_health_damage_per_second)),
+      warmth_recovery_per_second_(std::max(0.0f, warmth_recovery_per_second)),
+      nest_recovery_per_second_(std::max(0.0f, nest_recovery_per_second)),
       injured_threshold_ratio_(std::clamp(injured_threshold_ratio, 0.0f, 1.0f)) {}
 
 void SurvivalStatusLayer::onAttach(IWorld& world) {
@@ -71,19 +71,19 @@ void SurvivalStatusLayer::tick(IWorld& world, float dt) {
         }
 
         auto& state = it->second;
-        state.hydration = std::clamp(state.hydration - hydration_decay_per_tick_ * dt, 0.0f, max_hydration_);
+        state.hydration = std::clamp(state.hydration - hydration_decay_per_second_ * dt, 0.0f, max_hydration_);
 
         if (state.hydration < dehydration_threshold && dehydration_threshold > 0.0f) {
             const float severity = 1.0f + (dehydration_threshold - state.hydration) / dehydration_threshold;
-            state.health = std::max(0.0f, state.health - dehydration_damage_per_tick_ * severity * dt);
+            state.health = std::max(0.0f, state.health - dehydration_damage_per_second_ * severity * dt);
         }
 
         if (campfire_ != nullptr && campfire_->inDangerZone(agent->position())) {
-            state.health = std::max(0.0f, state.health - fire_health_damage_per_tick_ * dt);
+            state.health = std::max(0.0f, state.health - fire_health_damage_per_second_ * dt);
         } else if (base_ != nullptr && base_->inNest(agent->position())) {
-            state.health = std::min(max_health_, state.health + nest_recovery_per_tick_ * dt);
+            state.health = std::min(max_health_, state.health + nest_recovery_per_second_ * dt);
         } else if (campfire_ != nullptr && campfire_->inWarmthZone(agent->position()) && state.hydration >= dehydration_threshold) {
-            state.health = std::min(max_health_, state.health + warmth_recovery_per_tick_ * dt);
+            state.health = std::min(max_health_, state.health + warmth_recovery_per_second_ * dt);
         }
 
         if (state.health <= 0.0f && agent->alive()) {

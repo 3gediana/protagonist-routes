@@ -22,9 +22,12 @@ void SpatialMemoryBank::reset() {
         cells_[i].water_seen = 0.0f;
         cells_[i].food_seen = 0.0f;
         cells_[i].tree_seen = 0.0f;
-        cells_[i].object_seen = 0.0f;
+        cells_[i].stone_seen = 0.0f;
+        cells_[i].stick_seen = 0.0f;
         cells_[i].danger_seen = 0.0f;
         cells_[i].base_seen = 0.0f;
+        cells_[i].fire_seen = 0.0f;
+        cells_[i].worksite_seen = 0.0f;
         cells_[i].last_visit_age = 999.0f; // Very old
     }
 }
@@ -35,14 +38,26 @@ void SpatialMemoryBank::tick(float dt) {
         cell.water_seen = std::max(0.0f, cell.water_seen - 0.001f * dt);
         cell.food_seen = std::max(0.0f, cell.food_seen - 0.005f * dt); // Food decays faster
         cell.tree_seen = std::max(0.0f, cell.tree_seen - 0.0001f * dt); // Trees are very stable
-        cell.object_seen = std::max(0.0f, cell.object_seen - 0.002f * dt);
+        cell.stone_seen = std::max(0.0f, cell.stone_seen - 0.001f * dt);
+        cell.stick_seen = std::max(0.0f, cell.stick_seen - 0.003f * dt);
         cell.danger_seen = std::max(0.0f, cell.danger_seen - 0.01f * dt); // Danger (predators) decays fast
         cell.base_seen = std::max(0.0f, cell.base_seen - 0.00005f * dt); // Camps are extremely stable
+        cell.fire_seen = std::max(0.0f, cell.fire_seen - 0.0005f * dt);
+        cell.worksite_seen = std::max(0.0f, cell.worksite_seen - 0.0005f * dt);
         cell.last_visit_age += dt;
     }
 }
 
-void SpatialMemoryBank::recordSighting(Vec2 world_pos, float water, float food, float tree, float object, float danger, float base) {
+void SpatialMemoryBank::recordSighting(Vec2 world_pos,
+                                        float water,
+                                        float food,
+                                        float tree,
+                                        float stone,
+                                        float stick,
+                                        float danger,
+                                        float base,
+                                        float fire,
+                                        float worksite) {
     const std::size_t idx = worldToCellIndex(world_pos);
     if (idx >= cells_.size()) {
         return;
@@ -51,9 +66,12 @@ void SpatialMemoryBank::recordSighting(Vec2 world_pos, float water, float food, 
     if (water > 0.0f)  cell.water_seen = std::clamp(cell.water_seen + water, 0.0f, 1.0f);
     if (food > 0.0f)   cell.food_seen = std::clamp(cell.food_seen + food, 0.0f, 1.0f);
     if (tree > 0.0f)   cell.tree_seen = std::clamp(cell.tree_seen + tree, 0.0f, 1.0f);
-    if (object > 0.0f) cell.object_seen = std::clamp(cell.object_seen + object, 0.0f, 1.0f);
+    if (stone > 0.0f)  cell.stone_seen = std::clamp(cell.stone_seen + stone, 0.0f, 1.0f);
+    if (stick > 0.0f)  cell.stick_seen = std::clamp(cell.stick_seen + stick, 0.0f, 1.0f);
     if (danger > 0.0f) cell.danger_seen = std::clamp(cell.danger_seen + danger, 0.0f, 1.0f);
     if (base > 0.0f)   cell.base_seen = std::clamp(cell.base_seen + base, 0.0f, 1.0f);
+    if (fire > 0.0f)   cell.fire_seen = std::clamp(cell.fire_seen + fire, 0.0f, 1.0f);
+    if (worksite > 0.0f) cell.worksite_seen = std::clamp(cell.worksite_seen + worksite, 0.0f, 1.0f);
     cell.last_visit_age = 0.0f; // Just visited/seen
 }
 
@@ -94,8 +112,12 @@ Vec2 SpatialMemoryBank::findNearestTree(Vec2 from_pos, float threshold) const {
     return findNearestCellMatching(from_pos, cells_, threshold, [](const auto& c) { return c.tree_seen; });
 }
 
-Vec2 SpatialMemoryBank::findNearestObject(Vec2 from_pos, float threshold) const {
-    return findNearestCellMatching(from_pos, cells_, threshold, [](const auto& c) { return c.object_seen; });
+Vec2 SpatialMemoryBank::findNearestStone(Vec2 from_pos, float threshold) const {
+    return findNearestCellMatching(from_pos, cells_, threshold, [](const auto& c) { return c.stone_seen; });
+}
+
+Vec2 SpatialMemoryBank::findNearestStick(Vec2 from_pos, float threshold) const {
+    return findNearestCellMatching(from_pos, cells_, threshold, [](const auto& c) { return c.stick_seen; });
 }
 
 Vec2 SpatialMemoryBank::findNearestDanger(Vec2 from_pos, float threshold) const {
@@ -104,6 +126,14 @@ Vec2 SpatialMemoryBank::findNearestDanger(Vec2 from_pos, float threshold) const 
 
 Vec2 SpatialMemoryBank::findNearestBase(Vec2 from_pos, float threshold) const {
     return findNearestCellMatching(from_pos, cells_, threshold, [](const auto& c) { return c.base_seen; });
+}
+
+Vec2 SpatialMemoryBank::findNearestFire(Vec2 from_pos, float threshold) const {
+    return findNearestCellMatching(from_pos, cells_, threshold, [](const auto& c) { return c.fire_seen; });
+}
+
+Vec2 SpatialMemoryBank::findNearestWorksite(Vec2 from_pos, float threshold) const {
+    return findNearestCellMatching(from_pos, cells_, threshold, [](const auto& c) { return c.worksite_seen; });
 }
 
 std::size_t SpatialMemoryBank::worldToCellIndex(Vec2 world_pos) const {

@@ -52,8 +52,8 @@ public:
     int tickOrder() const override;
 
     std::optional<NearestResource> nearestAvailable(Vec2 position) const;
-    float tryConsume(Vec2 position, float radius, IWorld& world);
-    ConsumeResult tryConsumeTyped(Vec2 position, float radius, IWorld& world);
+    float tryConsume(Vec2 position, float radius, IWorld& world, float amount_limit = -1.0f);
+    ConsumeResult tryConsumeTyped(Vec2 position, float radius, IWorld& world, float amount_limit = -1.0f);
     const std::vector<Resource>& resources() const;
 
     // Spawn a transient meat resource at the given position (used for corpses).

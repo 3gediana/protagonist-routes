@@ -1,5 +1,434 @@
 # experience_log.md · 实验与调参记录
 
+## 2026-05-20 · protagonist mixed compute 第一轮工程化（CPU 决策并行已验证，GPU backend 代码已落但环境未就绪）
+
+### 本次目标
+
+把前一轮只是停在“设计/分析”的 compute 承接，推进到真正可编译、可跑、可继续迭代的工程底座：
+
+- 把 protagonist route 的 CPU 并行从 episode 级继续下钻到 agent decision 级
+- 保持 capability/world mutation 仍然串行，避免一上来把世界层线程安全问题扩大
+- 给 `ProtagonistBrain` 的 dense controller 接上可选 GPU backend
+- 做到 **即便本机 CUDA 不完整，也能优雅回退到 CPU 路径**
+
+### 这次真正改掉的点
+
+1. **`Agent` 被拆成了“算决策”和“提交动作”两相**
+   - `src/core/agent/Agent.*`
+   - 原先 `step()` 里混着：
+     - perception
+     - brain forward
+     - `DecisionTriggered` 事件
+     - capability apply
+   - 现在拆成：
+     - `decide()`
+     - `publishDecisionEvent()`
+     - `applyCapabilities()`
+   - 这样可以先并行做重计算，再按固定顺序串行提交世界写入。
+
+2. **`AgentLayer` 现在具备 per-world agent decision 并行执行器**
+   - `src/core/world/layers/AgentLayer.*`
+   - 新增持久化 `DecisionExecutor`，不是每 tick 临时起线程
+   - decision 阶段可以并行扫 agent 列表
+   - capability apply、能量结算、死亡事件仍保持串行
+   - 这一步的关键价值是：**把 CPU 热点从“一个 episode 只吃一核”推进到“一个 world 内也能吃多核”**。
+
+3. **route training 的外层 episode 并行与内层 decision 并行现在会联动分配线程预算**
+   - `routes/protagonist_ecology/runtime/ProtagonistEcologyRuntime.cpp`
+   - 不再简单按 `episodes_per_generation` 决定 `EvaluationPool`
+   - 新逻辑会综合：
+     - `evolution.num_threads`
+     - `compute.agent_decision_threads`
+     - `episodes_per_generation`
+     - `hardware_concurrency`
+   - 目的不是绝对最优，而是先避免最糟糕的“外层 3 个 episode 并行、内层每个 world 再开满 31 线程”这种 CPU 过度超卖。
+
+4. **`ProtagonistBrain` 已接入可选 dense GPU backend**
+   - 新增：
+     - `routes/protagonist_ecology/brain/ProtagonistDenseGpu.h`
+     - `routes/protagonist_ecology/brain/ProtagonistDenseGpu.cpp`
+     - `routes/protagonist_ecology/brain/ProtagonistDenseGpu.cu`
+   - `ProtagonistBrain` 现在支持：
+     - dense controller 前向可走 GPU
+     - DNC memory core 继续留在 CPU
+     - GPU 不可用时自动退回 CPU dense path
+   - 这和目标一致：**先把最适合 GPU 的 dense matmul/activation 卸载出去，不碰 world/event/memory 主逻辑**。
+
+5. **route 级 compute 配置已经接通**
+   - `routes/protagonist_ecology/runtime/ProtagonistEcologyConfig.*`
+   - 新增：
+     - `compute.protagonist_dense_gpu_enabled`
+     - `compute.agent_decision_threads`
+   - `ProtagonistWorldFactory` 现在会把 per-world decision thread 配置传给 `AgentLayer`
+   - `BootstrapPopulation` 会按配置决定 protagonist brain 是否尝试启用 GPU dense。
+
+6. **顺手修掉了 protagonist brain 参数量日志低报问题**
+   - `ProtagonistEcologyRuntime` 的 `brain_probe` 之前手拼 sensory dim
+   - 现在统一改用 `protagonistSensoryDim()`
+   - 这能避免后续 perception 再扩维时，日志/估算继续悄悄落后于真实参数量。
+
+### 这次最关键的经验
+
+1. **agent 级并行要先做到“读世界”和“写世界”分离**
+   - 真正危险的不是 dense forward 本身，而是 capability apply 期间的 world mutation
+   - 所以第一步不是“把整个 `Agent::step()` 并行化”，而是先把 decision 相位剥出来。
+
+2. **双层并行如果不做预算联动，CPU 很容易被自己打爆**
+   - 外层 `EvaluationPool` 已经能并 episode
+   - 再叠每个 world 内 decision threads，默认就会出现线程数乘法膨胀
+   - 所以 route runtime 至少要先做一个“够保守”的预算分配，而不是只顾着把两个开关都开到最大。
+
+3. **GPU backend 最好从 route 内局部接起，不要一上来污染全仓库构建链**
+   - 这次做法是：
+     - 顶层只加 optional CUDA language / toolkit 检测
+     - 真正 `.cu` 源只挂到 `routes/protagonist_ecology`
+   - 这样就算 CUDA 不存在，也不会把整个仓库都拖死。
+
+4. **本机“有 NVIDIA 目录”不等于“有完整 CUDA toolkit”**
+   - 这次最关键的环境结论是：
+     - `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8` / `v12.4` 确实存在
+     - 但目录里只有 `extras/`，没有标准 `bin/include/lib`
+     - `where.exe nvcc` 明确找不到 `nvcc`
+   - 所以当前状态不是“代码没接好”，而是**机器上没有完整可编译 CUDA toolchain**。
+
+### 验证结果
+
+1. **Release 重编通过**
+   - 命令：`cmake --build build --config Release --target neural-eco-protagonist neural-eco`
+   - 结果：通过
+
+2. **route 非训练 preview 验证通过**
+   - 命令：`build/bin/Release/neural-eco-protagonist.exe --config configs/protagonist_ecology_bootstrap.toml`
+   - 结果：通过
+   - 说明：
+     - `Agent` 两相拆分没有破坏现有 route 运行
+     - `AgentLayer` 新 decision executor 没把基本 world loop 弄崩
+     - protagonist route 的 mixed compute 接线至少在 CPU fallback 路径上是稳定的
+
+3. **GPU 路径当前未真正编入**
+   - `build/CMakeCache.txt` 中：`CMAKE_CUDA_COMPILER:FILEPATH=NOTFOUND`
+   - route 生成文件里也没有 `.cu` / `cudart` 痕迹
+   - 这意味着本次成功编译的是：
+     - CPU agent decision parallel path
+     - GPU backend 代码存在但未激活的 fallback build
+
+### 当前仍未完全收尾的点
+
+- 本机缺完整 CUDA toolkit，当前还无法验证 protagonist dense GPU kernel 真正上卡
+- 还没补 CPU/GPU dense forward 的 profiling / 对照日志
+- compute 主线当前只是第一轮工程化，不代表已经完成最终性能调优
+
+### 当前结论
+
+- **CPU 侧的下一层并行底座已经真的接上了，不再只停留在 episode 并行**
+- **GPU 侧的 protagonist dense backend 代码与 CMake 路径已经落地，但当前被本机 CUDA 环境缺口卡住**
+- **如果下次继续算力线，先补 `nvcc + bin/include/lib`；如果继续主线，则可以放心回到 Memory Phase A，不会和这次 compute 底座冲突**
+
+## 2026-05-20 · protagonist route checkpoint-resume Phase 1 全收口（RNG + speciation + generation+1）
+
+### 本次目标
+
+把上一轮已经做到一半的 protagonist route Phase 1 Trace / Resume **一次性收口**，不再留“最后一个坑以后再补”：
+
+- protagonist evolution RNG 要能恢复
+- background species NEAT evolution RNG 要能恢复
+- background species 的 speciation 内部状态要能恢复
+- checkpoint 语义从“重评估当前代”改成真正的 `generation + 1` 续跑
+- 文档和 smoke 验证一次补齐
+
+### 这次真正改掉的点
+
+1. **evolution 内部状态不再只靠 seed 重建，而是显式持久化**
+   - `routes/protagonist_ecology/runtime/ProtagonistEvolution.*`
+   - `src/core/evolution/NeatEvolution.*`
+   - `src/core/evolution/speciation/Speciation.*`
+   - 新增了显式 `exportState()/importState()`：
+     - protagonist GA：保存/恢复 `std::mt19937` RNG 状态
+     - background NEAT：保存/恢复 RNG 状态 + `SpeciationState`
+   - `SpeciationState` 里现在包含：
+     - compatibility threshold
+     - next species id
+     - previous representatives
+
+2. **route checkpoint 改成 post-reproduction 语义**
+   - `routes/protagonist_ecology/runtime/ProtagonistEcologyRuntime.cpp`
+   - 现在 checkpoint 保存点从“评估后、繁殖前”挪到了“繁殖后”
+   - `checkpoint_state.toml` 新增：
+     - `evaluated_generation`
+     - `resume_generation`
+     - `best_fitness_seen`
+   - resume 后直接从 `resume_generation` 开始，不再重复评估已存那一代
+
+3. **checkpoint 目录现在额外带完整 evolution sidecar**
+   - protagonist checkpoint 根目录新增：
+     - `protagonist_evolution_rng.txt`
+     - `best_genome_overall.bin`
+     - `best_genome_latest.bin`
+   - 每个背景物种 slot 目录新增：
+     - `neat_evolution_rng.txt`
+     - `neat_evolution_state.toml`
+     - `speciation_representatives/`
+   - 这意味着 checkpoint 不再只是“种群快照”，而是更接近真正的 **training continuation state**
+
+4. **resume continuity 顺手补了 best genome 链**
+   - `best_fitness_seen` 进入 checkpoint state
+   - 恢复时会把 `best_genome_overall.bin / best_genome_latest.bin` 复制进新 run 目录
+   - 这样 resumed run 的 `best_genome_overall.bin` 不会从头重算
+
+5. **修掉了一个非常隐蔽但会破坏 resume 等价性的排序坑**
+   - protagonist checkpoint 之前按文件名字典序读 `genome_*.bin`
+   - `genome_10.bin` 会排到 `genome_9.bin` 前面
+   - 这会悄悄打乱 population 顺序，进而改变 agent 装配顺序和训练轨迹
+   - 现在改成按数值 genome id 排序加载
+
+### 这次最关键的经验
+
+1. **真正的“可续训”不等于只存 population**
+   - population / innovation tracker / generation index 只够做到“差不多接上”
+   - 要做到真正完整，至少还要补：
+     - evolution RNG
+     - NEAT speciation threshold / representative memory / next species id
+
+2. **resume 语义如果还是“重评估当前代”，长期实验会一直别扭**
+   - 训练中最自然的断点是“这代已经评完并繁殖出下一代了”
+   - 所以 checkpoint 最好直接保存 **下一代种群 + 下一代 evolution state**
+   - 这样 resume 才是真正的 `generation + 1`
+
+3. **验证 checkpoint-resume 时，要区分“resume 逻辑问题”和“训练并行本身不完全确定”**
+   - protagonist route 多线程训练目前不是逐 run 完全确定性的
+   - 所以 resume 等价性不能只拿默认多线程 smoke 做强对照
+   - 这次真正有说服力的验证方式是：
+     - 保持同一配置
+     - 临时设 `evolution.num_threads = 1`
+     - 比较 full run 与 resume run 的同一代 `fitness.csv`
+
+4. **checkpoint 文件命名/读取顺序这种“小问题”，足以毁掉完整 resume**
+   - 这次 numeric sort 的 bug 很典型：逻辑看起来都对，但顺序错了就不等价
+   - 以后只要 checkpoint 目录里是按文件扫描组 population，都要优先检查排序口径
+
+### 验证结果
+
+1. **Release 重编通过**
+   - 命令：`cmake --build build --config Release --target test_core neural-eco-protagonist`
+   - 结果：通过
+
+2. **核心测试通过**
+   - `test_core` 通过
+   - 新增了：
+     - `Speciation` export/import regression test
+     - `NeatEvolution` export/import regression test
+
+3. **默认 smoke 验证通过**
+   - `configs/protagonist_ecology_train_smoke.toml`
+   - 新 checkpoint 下 `checkpoint_state.toml` 已显示：
+     - `resume_generation = 2`
+     - `rng_state_resume = true`
+     - `speciation_resume = true`
+
+4. **resume 语义验证通过**
+   - 从 `checkpoint_gen1` 恢复后，新的 `fitness.csv` 只包含：
+     - `generation = 2`
+   - 说明已经不再重跑 `generation = 1`
+
+5. **single-thread full-vs-resume 等价对照通过**
+   - 临时把 `evolution.num_threads = 1`
+   - full run 的 `fitness.csv`：
+     - `0,178.046,586.866,1223.38`
+     - `1,487.051,828.103,1824.9`
+     - `2,360.286,755.699,1594.6`
+   - resume run（从 `checkpoint_gen1`）的 `fitness.csv`：
+     - `2,360.286,755.699,1594.6`
+   - 这说明 **Phase 1 checkpoint-resume 的核心续训状态已经对齐**
+
+### 当前仍未完全收尾的点
+
+- protagonist route 默认多线程训练跨 run 仍不是严格确定性的；这不是本次 checkpoint 缺口，而是后续如有需要可单独处理的“并行确定性”问题
+- `SnapshotIO` 对 NEAT genome 的行为基因覆盖仍以当前 route 实际训练所需字段为主；如果后续 route 真开始使用更多 evolvable trait，需要再评估是否继续扩充 snapshot 字段
+
+### 当前结论
+
+- **protagonist route Phase 1 Trace / Resume 现在已经不再是“半成品断点续训”，而是完整训练 continuation 管线**
+- **checkpoint 已覆盖主角 / 背景 / RNG / speciation / best-genome continuity，并且 resume 语义已经是 `generation + 1`**
+- **下一步可以放心回到 CT-2 / future-event / Memory V2，不需要再把 Phase 1 当未收口事项挂着**
+
+## 2026-05-20 · protagonist route checkpoint-resume 扩到主角 + 配角 + generation index
+
+### 本次目标
+
+把 protagonist route 的 Phase 1 Trace / Resume 从“只能恢复主角 population”的半成品，推进到更接近真正训练流水线的状态：
+
+- checkpoint 不只存 protagonist genomes
+- background species 的 NEAT population 也一起存
+- innovation tracker 能接上
+- generation index 能接上
+
+这一步的意义不是“多存几份文件”，而是让这条路线真正具备你前面强调的那种训练工作流基础：**先练、再存、再继续、再投放**。
+
+### 这次真正改掉的点
+
+1. **route checkpoint 从 protagonist-only 扩到 protagonist + background species**
+   - `routes/protagonist_ecology/runtime/ProtagonistEcologyRuntime.cpp`
+   - checkpoint 目录现在除了 `genome_*.bin`，还会为每个背景物种 slot 写：
+     - `background_slot_XX_<archetype>/meta.toml`
+     - `background_slot_XX_<archetype>/population.bin`
+   - 这部分直接复用 `SnapshotIO`，把背景 NEAT population 和 innovation tracker 一起存下来了。
+
+2. **新增 machine-readable checkpoint state**
+   - 新增 `checkpoint_state.toml`
+   - 里面记录：
+     - `generation`
+     - protagonist population 数量
+     - background species 数量
+     - 每个 slot 的 archetype / snapshot_dir / population_size
+   - 这样 route resume 不再只能扫目录猜状态，而是有稳定的程序读取入口。
+
+3. **resume 现在能同时恢复三类关键内容**
+   - protagonist population
+   - background species NEAT population
+   - background species innovation tracker
+   - generation index
+
+4. **resume 代数语义和主系统保持一致**
+   - 当前 checkpoint 仍然是在“该 generation 完成评估后、繁殖前”保存。
+   - 所以 resume 后会**从该 generation 重新开始评估**，而不是直接跳到 `generation + 1`。
+   - 这和主系统 `SnapshotIO` 的现有语义一致，虽然不是最理想的 long-run continuation，但至少全仓库口径一致，不会 route 单独搞一套不同规则。
+
+### 这次最关键的经验
+
+1. **训练 checkpoint 最怕“只存主角，不存生态对手”**
+   - 如果主角恢复了，但背景物种从头随机，那训练上下文就已经变了。
+   - 对 protagonist 这条线来说，配角不是背景板，所以 checkpoint 也必须把它们当成训练状态的一部分。
+
+2. **generation index 比想象中重要**
+   - 如果 resume 以后代数从 0 重新编号，`fitness.csv / species_metrics.csv / trace` 的含义都会乱。
+   - 即使先不做真正的 RNG 完全续跑，至少 generation index 要先接上，不然后续根本没法把多次训练拼成一条长实验记录。
+
+3. **先把语义讲清，再去追求“完美续跑”**
+   - 这次没有顺手硬做 RNG state resume，因为那会把 scope 一下拉大。
+   - 当前先完成：population + innovation tracker + generation index。
+   - 剩下的 RNG 完整恢复，可以作为 Phase 1 的最后缺口单独做。
+
+### 验证结果
+
+1. **Release 重编通过**
+   - 命令：`cmake --build build --config Release --target neural-eco-protagonist`
+   - 结果：编译通过
+
+2. **训练 smoke 重新通过，并生成扩展 checkpoint**
+   - 命令：`build/bin/Release/neural-eco-protagonist.exe --config configs/protagonist_ecology_train_smoke.toml`
+   - 结果：正常完成 3 代 smoke，输出目录 `data/runs/protagonist_smoke/20260520-191608/`
+   - `checkpoint_gen1/` 下已出现：
+     - protagonist `genome_*.bin`
+     - `checkpoint_manifest.json`
+     - `checkpoint_state.toml`
+     - 7 个 `background_slot_XX_<archetype>/population.bin + meta.toml`
+
+3. **resume smoke 通过**
+   - 使用刚生成的 `checkpoint_gen1` 做临时 resume 配置重新启动训练
+   - 结果：route 正常从 `Gen 1` 跑起，并再次成功输出 background snapshots
+
+### 当前仍未完全收尾的点
+
+- RNG state resume 仍未完成
+- 当前 checkpoint 语义仍是“该 generation 重新评估”，不是 generation+1 无缝续跑
+- `SnapshotIO` 的 NEAT genome 序列化目前主要覆盖 route 实际在用的核心字段；如果后面要让更多行为基因在 route 内真实生效，需要顺手补齐更完整的 genome 字段覆盖
+
+### 当前结论
+
+- **protagonist route 已经从“可训练”推进到“可断点续训”**
+- **而且断点续训不再只保主角，而是开始保整个共同训练生态的一阶状态**
+- **下一步最值的是补 RNG state resume，然后再继续回到 CT-2 / event queue / Memory V2 这些更高阶底座**
+
+## 2026-05-20 · protagonist continuous-time CT-2A 收尾：残余 `per_tick` 口径清理 + 连续摄食
+
+### 本次目标
+
+在上一轮把 protagonist runtime 主链切到 seconds 之后，继续把 route 里仍然带强烈 tick 命名/离散语义的部分收干净，避免出现“底层已经 continuous-time，但局部机制还是离散按钮”的半迁移状态。
+
+这次重点不是再做大架构，而是做两类很值钱的收尾：
+
+- 把 route-local 残余 `per_tick` 速率口径切到 `per_second`
+- 把 `eat` 从“碰到资源就瞬间吃光”改成按 `dt` 累积的持续摄食
+
+### 这次真正改掉的点
+
+1. **route-local 速率命名改成 `per_second`**
+   - `routes/protagonist_ecology/runtime/ProtagonistEcologyConfig.h/.cpp`
+   - `routes/protagonist_ecology/world/SurvivalStatusLayer.*`
+   - `routes/protagonist_ecology/world/InterventionDirectorLayer.*`
+   - `routes/protagonist_ecology/runtime/ProtagonistWorldFactory.cpp`
+   - `SurvivalStatusLayer` / `InterventionDirectorLayer` 现在在接口、成员名、配置字段名上都统一成 `*_per_second`
+   - 同时保留 legacy `*_per_tick` 兼容读取，不会把旧配置直接跑崩
+
+2. **`EatCapability` 改成真正的持续摄食**
+   - `src/core/capability/EatCapability.*`
+   - `src/core/world/layers/ResourceLayer.*`
+   - 新行为：每次 `apply()` 最多只会消耗 `eat_rate_per_second * dt`
+   - `ResourceLayer` 新增部分消耗能力；只有资源真的被吃空时才发 `ResourceConsumed`
+   - 这样 substep 变细时不会再出现“一口吞空整个资源”的离散失真
+
+3. **补了连续摄食回归测试**
+   - `tests/core/test_comm.cpp`
+   - 新测试锁住三个关键点：
+     - 小 `dt` 只吃掉小部分资源
+     - 资源剩余量持续下降而不是立刻归零
+     - 吃空时才变成 unavailable
+
+4. **同步更新了一批 protagonist 高使用频率配置键**
+   - 至少确认 `protagonist_ecology_preview_long.toml` 已切到 `per_second` 命名
+   - 兼容层保留，所以剩余配置可以逐步迁，不要求一次性全改完
+
+### 这次最关键的经验
+
+1. **continuous-time 重构里，名字也是机制的一部分**
+   - 即使逻辑已经是 `value * dt`，如果配置和成员名还写 `per_tick`，后续很容易让人误判真实语义。
+   - 尤其 protagonist route 这种独立路线，文档/配置/实现要尽量同口径，不然后面做 CT-3 event queue 会继续混乱。
+
+2. **“持续动作”优先修 `eat` 很值**
+   - `move / drink / signal` 之前已经基本按 `dt` 走了，但 `eat` 还是最明显的离散跳变点。
+   - 把 `eat` 改成部分消耗后，substep 变小不会再改变“单位真实时间最大摄食量”，这是 continuous-time 非常关键的 invariant。
+
+3. **资源层最好支持部分消耗，而不是在 capability 里硬模拟**
+   - 如果只在 `EatCapability` 里做假分片，`ResourceLayer` 仍然会维持“一次拿走全部”的底层语义。
+   - 这次把部分消耗能力真正下沉到 `ResourceLayer`，后面做 `graze / sip / nibble / build material progress` 都能复用。
+
+4. **验证最好用 preview，而不是继续加训练 run**
+   - 这次 route 级验证用了 `configs/protagonist_ecology_preview_long.toml`。
+   - 它足够覆盖 protagonist route 的真实世界层交互，但不会额外把问题混到训练流程里，更适合做 continuous-time 收尾验收。
+
+5. **`build/worksite` 不能在没有显式 action 设计时硬加隐式连续门槛**
+   - 这次试过给 `WorksiteLayer` 加“低速停留才持续施工”的隐式就位门槛。
+   - 结果是 `preview_xlong` 的闭环表现波动很大：有时材料能送到工地但 `site_progress` 长时间不涨，有时甚至连 worksite unlock 都回退。
+   - 结论：这类连续化最好等到有明确 `build` action / progress channel 时再做；本次已把该试验回退，不保留在主线。
+
+### 验证结果
+
+1. **Release 重编通过**
+   - 命令：`cmake --build build --config Release --target test_core neural-eco neural-eco-protagonist`
+   - 结果：全部通过，仅保留既有 warning
+
+2. **核心测试通过**
+   - `build/bin/Release/test_core.exe`
+   - 结果：`71 / 71 passed`
+   - 说明新增连续摄食测试和旧测试都兼容
+
+3. **protagonist preview 验证通过**
+   - 命令：`build/bin/Release/neural-eco-protagonist.exe --config configs/protagonist_ecology_preview_long.toml`
+   - 结果：正常完成 preview，日志末尾显示 `advanced 600 seconds with substep_dt=0.1`
+
+### 当前仍未完全收尾的点
+
+- 其它 protagonist configs 里仍有一批 legacy `per_tick` 键，虽然已有兼容读取，但还没全部换名
+- `chop / build / worksite` 仍然比 `eat` 更偏“站位即触发”式逻辑，还没做成更强的持续进度语义
+- 还没落最小 future-event / due-action 队列
+- `preview_xlong` 在 continuous-eat 改动后对 nursery 闭环节奏更敏感，后续需要重新做一轮 route-local 难度/速率复核
+
+### 当前结论
+
+- **protagonist continuous-time 现在不只是 runtime 级 seconds 化，而是已经开始进入动作语义层面的连续化**
+- **`eat` 已经从离散瞬时事件，变成受 `dt` 和速率上限约束的持续动作**
+- **下一步最该做的是 `build / chop / event queue`，而不是再回头重复修 runtime 主循环**
+
 ## 2026-05-20 · protagonist continuous-time 主链迁移（CT-1 ~ CT-4 核心落地）
 
 ### 本次目标

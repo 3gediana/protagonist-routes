@@ -8,23 +8,31 @@
 #include "core/world/layers/ResourceLayer.h"
 #include "core/world/layers/signal/SignalLayer.h"
 
+#include <algorithm>
+
 namespace neuro {
 
-EatCapability::EatCapability(float eat_radius)
-    : eat_radius_(eat_radius) {}
+EatCapability::EatCapability(float eat_radius, float eat_rate_per_second)
+    : eat_radius_(eat_radius),
+      eat_rate_per_second_(eat_rate_per_second) {}
 
 std::size_t EatCapability::consumedOutputs() const {
     return 0;
 }
 
-void EatCapability::apply(IAgent& agent, IWorld& world, std::span<const float>, float) {
+void EatCapability::apply(IAgent& agent, IWorld& world, std::span<const float>, float dt) {
     auto* resources = world.getLayer<ResourceLayer>();
     if (resources == nullptr) {
         return;
     }
 
+    const float consume_budget = std::max(0.0f, eat_rate_per_second_ * std::max(0.0f, dt));
+    if (consume_budget <= 0.0f) {
+        return;
+    }
+
     const float previous_energy = agent.energy();
-    const auto consume = resources->tryConsumeTyped(agent.position(), eat_radius_, world);
+    const auto consume = resources->tryConsumeTyped(agent.position(), eat_radius_, world, consume_budget);
     if (consume.amount <= 0.0f) {
         return;
     }

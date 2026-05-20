@@ -49,15 +49,15 @@ Vec2 keepOutsideStockpile(const BaseLayer& base, Vec2 candidate, Vec2 world_size
 
 InterventionDirectorLayer::InterventionDirectorLayer(float initial_budget,
                                                      float max_budget,
-                                                     float recharge_per_tick,
-                                                     float stress_decay_per_tick,
+                                                     float recharge_per_second,
+                                                     float stress_decay_per_second,
                                                      float max_stress,
                                                      SimTimeSeconds cooldown_seconds,
                                                      std::uint32_t seed)
     : budget_(initial_budget),
       max_budget_(max_budget),
-      recharge_per_tick_(recharge_per_tick),
-      stress_decay_per_tick_(stress_decay_per_tick),
+      recharge_per_second_(recharge_per_second),
+      stress_decay_per_second_(stress_decay_per_second),
       max_stress_(max_stress),
       cooldown_seconds_(std::max<SimTimeSeconds>(0.0, cooldown_seconds)),
       rng_(seed == 0 ? std::random_device{}() : seed) {}
@@ -71,8 +71,8 @@ void InterventionDirectorLayer::onAttach(IWorld& world) {
 }
 
 void InterventionDirectorLayer::tick(IWorld& world, float dt) {
-    budget_ = std::min(max_budget_, budget_ + recharge_per_tick_ * dt);
-    stress_ = std::max(0.0f, stress_ - stress_decay_per_tick_ * dt);
+    budget_ = std::min(max_budget_, budget_ + recharge_per_second_ * dt);
+    stress_ = std::max(0.0f, stress_ - stress_decay_per_second_ * dt);
 
     if (pending_.empty()) {
         return;

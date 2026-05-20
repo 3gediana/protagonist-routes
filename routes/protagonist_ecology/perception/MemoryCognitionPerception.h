@@ -6,7 +6,7 @@ namespace neuro::routes::protagonist {
 
 class MemoryCognitionPerception final : public IPerception {
 public:
-    static constexpr std::size_t kDim = 12;
+    static constexpr std::size_t kDim = 44;
 
     MemoryCognitionPerception();
 

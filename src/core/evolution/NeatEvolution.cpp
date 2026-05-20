@@ -270,6 +270,27 @@ const std::vector<SpeciesGroup>& NeatEvolution::lastSpeciesGroups() const {
     return last_species_groups_;
 }
 
+NeatEvolutionState NeatEvolution::exportState() const {
+    std::ostringstream rng_state;
+    rng_state << rng_;
+    return NeatEvolutionState{
+        rng_state.str(),
+        speciation_.exportState(),
+    };
+}
+
+void NeatEvolution::importState(const NeatEvolutionState& state) {
+    if (!state.rng_state.empty()) {
+        std::istringstream rng_stream(state.rng_state);
+        rng_stream >> rng_;
+        if (!rng_stream) {
+            throw std::runtime_error("NeatEvolution: failed to restore RNG state");
+        }
+    }
+    speciation_.importState(state.speciation_state);
+    last_species_groups_.clear();
+}
+
 const NeatGenome* NeatEvolution::findGenome(const std::vector<IGenome*>& current_genomes, GenomeId id) const {
     for (const IGenome* genome : current_genomes) {
         if (genome != nullptr && genome->id() == id) {

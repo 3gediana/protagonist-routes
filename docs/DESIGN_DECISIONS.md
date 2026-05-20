@@ -13,6 +13,7 @@
 | [0002](adr/0002-brain-architecture-recipe.md) | 神经网络配方与档次承诺 | NEAT + CTRNN + 神经调节 + 内在动机 + 通信 + 拉马克；按确定性档次承诺产出 |
 | [0003](adr/0003-i18n-english-code-bilingual-ui.md) | 代码英文 + UI 中英双语切换 | 代码英文，文档中文，UI 一键切换 |
 | [0004](adr/0004-incremental-perfect-then-add.md) | 渐进添加哲学 | 前一步完美才加下一步，三档完美标准 |
+| [0006](adr/0006-protagonist-memory-uses-standard-dnc.md) | protagonist 记忆板块采用标准 DNC | 主角记忆板块上标准 DNC，不上 MT-DNC，保留显式语义记忆层作为上层解释层 |
 
 ---
 

@@ -57,6 +57,9 @@ public:
     void addPerception(std::unique_ptr<IPerception> perception);
     void addCapability(std::unique_ptr<IAgentCapability> capability);
     void beginTick();
+    void decide(IWorld& world, float dt);
+    void publishDecisionEvent(IWorld& world);
+    void applyCapabilities(IWorld& world, float dt);
     void step(IWorld& world, float dt);
     void incrementAge(float dt);
 
@@ -131,6 +134,7 @@ private:
     float decision_interval_;
     SimTimeSeconds next_decision_time_seconds_;
     std::vector<float> last_outputs_;
+    bool decision_triggered_this_tick_;
     float food_eaten_this_tick_;
     float plant_food_this_tick_;
     float meat_food_this_tick_;

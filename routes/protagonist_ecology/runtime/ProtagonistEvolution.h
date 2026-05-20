@@ -3,10 +3,15 @@
 #include "core/interfaces/IEvolutionStrategy.h"
 
 #include <random>
+#include <string>
 
 namespace neuro::routes::protagonist {
 
 class ProtagonistGenome;
+
+struct ProtagonistEvolutionState {
+    std::string rng_state;
+};
 
 class ProtagonistEvolution final : public IEvolutionStrategy {
 public:
@@ -23,6 +28,9 @@ public:
         const std::vector<std::pair<GenomeId, GenomeId>>* mating_pairs = nullptr) override;
 
     const char* name() const override;
+
+    ProtagonistEvolutionState exportState() const;
+    void importState(const ProtagonistEvolutionState& state);
 
 private:
     ProtagonistGenome crossover(const ProtagonistGenome& a,

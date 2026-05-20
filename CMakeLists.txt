@@ -28,6 +28,22 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # ============================================================================
 option(NEURAL_ECO_BUILD_TESTS "Build unit tests" ON)
 option(NEURAL_ECO_BUILD_VIZ "Build visualization (interactive runtime)" ON)
+option(NEURAL_ECO_ENABLE_PROTAGONIST_CUDA "Enable CUDA mixed backend for protagonist route" ON)
+
+include(CheckLanguage)
+if(NEURAL_ECO_ENABLE_PROTAGONIST_CUDA)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        find_package(CUDAToolkit QUIET)
+    endif()
+endif()
+
+if(CMAKE_CUDA_COMPILER AND CUDAToolkit_FOUND)
+    set(NEURAL_ECO_HAS_PROTAGONIST_CUDA ON)
+else()
+    set(NEURAL_ECO_HAS_PROTAGONIST_CUDA OFF)
+endif()
 
 # ============================================================================
 # Dependencies
@@ -54,5 +70,6 @@ message(STATUS "Neural Eco ${PROJECT_VERSION}")
 message(STATUS "  C++ standard      : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build tests       : ${NEURAL_ECO_BUILD_TESTS}")
 message(STATUS "  Build viz         : ${NEURAL_ECO_BUILD_VIZ}")
+message(STATUS "  Protagonist CUDA  : ${NEURAL_ECO_HAS_PROTAGONIST_CUDA}")
 message(STATUS "  Build type        : ${CMAKE_BUILD_TYPE}")
 message(STATUS "")

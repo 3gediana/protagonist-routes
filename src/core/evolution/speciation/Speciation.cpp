@@ -109,6 +109,36 @@ double Speciation::compatibilityThreshold() const {
     return compatibility_threshold_;
 }
 
+SpeciationState Speciation::exportState() const {
+    SpeciationState state;
+    state.compatibility_threshold = compatibility_threshold_;
+    state.next_species_id = next_species_id_;
+    state.previous_species.reserve(previous_species_.size());
+    for (const auto& previous : previous_species_) {
+        if (previous.representative == nullptr) {
+            continue;
+        }
+        state.previous_species.push_back(SpeciationPreviousSpeciesState{
+            previous.id,
+            *previous.representative,
+        });
+    }
+    return state;
+}
+
+void Speciation::importState(SpeciationState state) {
+    compatibility_threshold_ = state.compatibility_threshold;
+    next_species_id_ = state.next_species_id;
+    previous_species_.clear();
+    previous_species_.reserve(state.previous_species.size());
+    for (auto& previous : state.previous_species) {
+        previous_species_.push_back(PreviousSpecies{
+            previous.id,
+            std::make_unique<NeatGenome>(std::move(previous.representative)),
+        });
+    }
+}
+
 void Speciation::adjustCompatibilityThreshold(std::size_t min_species,
                                               std::size_t max_species,
                                               std::size_t current_species,

@@ -87,12 +87,12 @@ struct SurvivalConfig {
     float max_hydration{100.0f};
     float initial_health_ratio{1.0f};
     float initial_hydration_ratio{0.72f};
-    float hydration_decay_per_tick{0.055f};
+    float hydration_decay_per_second{0.055f};
     float dehydration_threshold_ratio{0.3f};
-    float dehydration_damage_per_tick{0.18f};
-    float fire_health_damage_per_tick{0.45f};
-    float warmth_recovery_per_tick{0.06f};
-    float nest_recovery_per_tick{0.1f};
+    float dehydration_damage_per_second{0.18f};
+    float fire_health_damage_per_second{0.45f};
+    float warmth_recovery_per_second{0.06f};
+    float nest_recovery_per_second{0.1f};
     float injured_threshold_ratio{0.45f};
 };
 
@@ -122,8 +122,8 @@ struct InterventionConfig {
     bool enabled{true};
     float initial_budget{1.4f};
     float max_budget{3.0f};
-    float recharge_per_tick{0.025f};
-    float stress_decay_per_tick{0.01f};
+    float recharge_per_second{0.025f};
+    float stress_decay_per_second{0.01f};
     float max_stress{0.85f};
     SimTimeSeconds cooldown_seconds{18.0};
 };
@@ -173,11 +173,23 @@ struct SimulationTimeConfig {
     SimTimeSeconds preview_duration_seconds{1.0};
 };
 
+struct ComputeConfig {
+    bool protagonist_dense_gpu_enabled{true};
+    std::size_t agent_decision_threads{0};
+};
+
 struct ProtagonistBrainConfig {
     std::size_t count{32};
     std::size_t hidden_dim{512};
     std::size_t memory_cells{48};
+    std::size_t memory_slots{64};
+    std::size_t read_heads{4};
     std::size_t action_dim{13};
+    bool memory_cognition_enabled{true};
+    bool spatial_memory_writes_enabled{true};
+    bool episodic_memory_writes_enabled{true};
+    bool social_memory_writes_enabled{true};
+    bool goal_manager_enabled{true};
 };
 
 struct SpeciesSlotConfig {
@@ -199,6 +211,7 @@ struct ProtagonistEcologyConfig {
     std::string scenario_name{"bootstrap"};
     Vec2 world_size{200.0f, 200.0f};
     SimulationTimeConfig sim_time{};
+    ComputeConfig compute{};
     bool terrain_enabled{true};
     TerrainParams terrain{};
     ResourceConfig resources{};

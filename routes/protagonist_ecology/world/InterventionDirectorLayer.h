@@ -41,8 +41,8 @@ public:
 
     InterventionDirectorLayer(float initial_budget,
                               float max_budget,
-                              float recharge_per_tick,
-                              float stress_decay_per_tick,
+                              float recharge_per_second,
+                              float stress_decay_per_second,
                               float max_stress,
                               SimTimeSeconds cooldown_seconds,
                               std::uint32_t seed);
@@ -68,9 +68,9 @@ private:
     WorksiteLayer* worksite_ = nullptr;
     float budget_;
     float max_budget_;
-    float recharge_per_tick_;
+    float recharge_per_second_;
     float stress_ = 0.0f;
-    float stress_decay_per_tick_;
+    float stress_decay_per_second_;
     float max_stress_;
     SimTimeSeconds cooldown_seconds_;
     SimTimeSeconds last_execution_time_seconds_ = -1.0;

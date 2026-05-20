@@ -6,6 +6,8 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     capability/ProtagonistHuntCapability.cpp
     capability/ThrowCarriedObjectCapability.cpp
     brain/MemoryBank.cpp
+    brain/DNCMemory.cpp
+    brain/ProtagonistDenseGpu.cpp
     brain/SpatialMemoryBank.cpp
     brain/EpisodicMemoryBank.cpp
     brain/SocialMemoryBank.cpp
@@ -51,6 +53,8 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     capability/ProtagonistHuntCapability.h
     capability/ThrowCarriedObjectCapability.h
     brain/MemoryBank.h
+    brain/DNCMemory.h
+    brain/ProtagonistDenseGpu.h
     brain/SpatialMemoryBank.h
     brain/EpisodicMemoryBank.h
     brain/SocialMemoryBank.h
@@ -92,6 +96,13 @@ add_library(neural_eco_route_protagonist STATIC
     ${PROTAGONIST_ECOLOGY_ROUTE_SOURCES}
     ${PROTAGONIST_ECOLOGY_ROUTE_HEADERS}
 )
+
+if(NEURAL_ECO_HAS_PROTAGONIST_CUDA)
+    target_sources(neural_eco_route_protagonist PRIVATE
+        brain/ProtagonistDenseGpu.cu
+    )
+endif()
+
 add_library(neural_eco::route_protagonist ALIAS neural_eco_route_protagonist)
 
 target_include_directories(neural_eco_route_protagonist
@@ -104,6 +115,12 @@ target_link_libraries(neural_eco_route_protagonist
         neural_eco::core
         neural_eco::runtime_headless
 )
+
+if(NEURAL_ECO_HAS_PROTAGONIST_CUDA)
+    target_link_libraries(neural_eco_route_protagonist PRIVATE CUDA::cudart)
+    target_compile_definitions(neural_eco_route_protagonist PRIVATE NEURAL_ECO_HAS_PROTAGONIST_CUDA=1)
+    set_target_properties(neural_eco_route_protagonist PROPERTIES CUDA_ARCHITECTURES native)
+endif()
 
 target_compile_features(neural_eco_route_protagonist PUBLIC cxx_std_20)
 

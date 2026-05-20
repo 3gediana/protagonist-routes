@@ -15,6 +15,17 @@ struct SpeciesGroup {
     std::vector<GenomeId> members;
 };
 
+struct SpeciationPreviousSpeciesState {
+    SpeciesId id;
+    NeatGenome representative;
+};
+
+struct SpeciationState {
+    double compatibility_threshold{0.0};
+    SpeciesId next_species_id{SpeciesId{1}};
+    std::vector<SpeciationPreviousSpeciesState> previous_species;
+};
+
 class Speciation {
 public:
     Speciation(CompatibilityDistance distance,
@@ -24,6 +35,8 @@ public:
     std::vector<SpeciesGroup> assign(const std::vector<const NeatGenome*>& genomes);
     SpeciesId lastSpeciesId() const;
     double compatibilityThreshold() const;
+    SpeciationState exportState() const;
+    void importState(SpeciationState state);
     void adjustCompatibilityThreshold(std::size_t min_species,
                                       std::size_t max_species,
                                       std::size_t current_species,

@@ -4,6 +4,7 @@
 #include "core/evolution/selection/EliteSelection.h"
 #include "core/evolution/selection/TournamentSelection.h"
 
+#include <sstream>
 #include <stdexcept>
 
 namespace neuro::routes::protagonist {
@@ -76,17 +77,36 @@ const char* ProtagonistEvolution::name() const {
     return "protagonist_ga";
 }
 
+ProtagonistEvolutionState ProtagonistEvolution::exportState() const {
+    std::ostringstream rng_state;
+    rng_state << rng_;
+    return ProtagonistEvolutionState{rng_state.str()};
+}
+
+void ProtagonistEvolution::importState(const ProtagonistEvolutionState& state) {
+    if (state.rng_state.empty()) {
+        return;
+    }
+    std::istringstream rng_stream(state.rng_state);
+    rng_stream >> rng_;
+    if (!rng_stream) {
+        throw std::runtime_error("ProtagonistEvolution: failed to restore RNG state");
+    }
+}
+
 ProtagonistGenome ProtagonistEvolution::crossover(const ProtagonistGenome& a,
                                                   const ProtagonistGenome& b,
                                                   GenomeId child_id) {
     if (a.inputDim() != b.inputDim()
         || a.hiddenDim() != b.hiddenDim()
         || a.memoryCells() != b.memoryCells()
+        || a.memorySlots() != b.memorySlots()
+        || a.readHeads() != b.readHeads()
         || a.actionDim() != b.actionDim()) {
         throw std::invalid_argument("ProtagonistEvolution crossover requires identical topology");
     }
 
-    ProtagonistGenome child(child_id, a.inputDim(), a.hiddenDim(), a.memoryCells(), a.actionDim());
+    ProtagonistGenome child(child_id, a.inputDim(), a.hiddenDim(), a.memoryCells(), a.memorySlots(), a.readHeads(), a.actionDim());
     std::bernoulli_distribution pick_a(0.5);
 
     auto blend = [&](const std::vector<float>& lhs, const std::vector<float>& rhs, std::vector<float>& out) {
@@ -99,10 +119,8 @@ ProtagonistGenome ProtagonistEvolution::crossover(const ProtagonistGenome& a,
     blend(a.hiddenBias(), b.hiddenBias(), child.hiddenBias());
     blend(a.hiddenActionWeights(), b.hiddenActionWeights(), child.hiddenActionWeights());
     blend(a.actionBias(), b.actionBias(), child.actionBias());
-    blend(a.hiddenMemoryCandidateWeights(), b.hiddenMemoryCandidateWeights(), child.hiddenMemoryCandidateWeights());
-    blend(a.memoryCandidateBias(), b.memoryCandidateBias(), child.memoryCandidateBias());
-    blend(a.hiddenMemoryGateWeights(), b.hiddenMemoryGateWeights(), child.hiddenMemoryGateWeights());
-    blend(a.memoryGateBias(), b.memoryGateBias(), child.memoryGateBias());
+    blend(a.hiddenInterfaceWeights(), b.hiddenInterfaceWeights(), child.hiddenInterfaceWeights());
+    blend(a.interfaceBias(), b.interfaceBias(), child.interfaceBias());
     return child;
 }
 
@@ -126,10 +144,8 @@ void ProtagonistEvolution::mutate(ProtagonistGenome& genome) {
     mutate_weights(genome.hiddenBias());
     mutate_weights(genome.hiddenActionWeights());
     mutate_weights(genome.actionBias());
-    mutate_weights(genome.hiddenMemoryCandidateWeights());
-    mutate_weights(genome.memoryCandidateBias());
-    mutate_weights(genome.hiddenMemoryGateWeights());
-    mutate_weights(genome.memoryGateBias());
+    mutate_weights(genome.hiddenInterfaceWeights());
+    mutate_weights(genome.interfaceBias());
 }
 
 const ProtagonistGenome* ProtagonistEvolution::findGenome(const std::vector<IGenome*>& current_genomes,

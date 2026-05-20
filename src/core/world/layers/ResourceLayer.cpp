@@ -90,11 +90,11 @@ std::optional<ResourceLayer::NearestResource> ResourceLayer::nearestAvailable(Ve
     return best;
 }
 
-float ResourceLayer::tryConsume(Vec2 position, float radius, IWorld& world) {
-    return tryConsumeTyped(position, radius, world).amount;
+float ResourceLayer::tryConsume(Vec2 position, float radius, IWorld& world, float amount_limit) {
+    return tryConsumeTyped(position, radius, world, amount_limit).amount;
 }
 
-ResourceLayer::ConsumeResult ResourceLayer::tryConsumeTyped(Vec2 position, float radius, IWorld& world) {
+ResourceLayer::ConsumeResult ResourceLayer::tryConsumeTyped(Vec2 position, float radius, IWorld& world, float amount_limit) {
     const float radius_sq = radius * radius;
     std::size_t best_index = resources_.size();
     float best_distance_sq = radius_sq;
@@ -117,12 +117,17 @@ ResourceLayer::ConsumeResult ResourceLayer::tryConsumeTyped(Vec2 position, float
 
     auto& resource = resources_[best_index];
     const bool was_meat = resource.is_meat;
+    const float consume_limit = amount_limit > 0.0f ? amount_limit : resource.amount;
+    const float consumed = std::min(resource.amount, consume_limit);
+    if (consumed <= 0.0f) {
+        return ConsumeResult{};
+    }
 
     // Transient corpses are not regenerated after consumption.
     const SimTimeSeconds respawn_after = resource.is_transient ? 0.0 : respawn_seconds_;
 
-    if (dynamic_) {
-        const float consumed = resource.amount;
+    resource.amount = std::max(0.0f, resource.amount - consumed);
+    if (resource.amount <= 1.0e-6f) {
         resource.amount = 0.0f;
         resource.available = false;
         resource.respawn_seconds_remaining = respawn_after;
@@ -132,13 +137,13 @@ ResourceLayer::ConsumeResult ResourceLayer::tryConsumeTyped(Vec2 position, float
                                                world.currentTimeSeconds()});
         return ConsumeResult{consumed, was_meat};
     }
-    const float consumed = resource.amount;
-    resource.available = false;
-    resource.respawn_seconds_remaining = respawn_after;
-    world.eventBus().publish(events::Event{events::EventType::ResourceConsumed,
-                                           events::ResourceConsumed{resource.position},
-                                           world.currentTick(),
-                                           world.currentTimeSeconds()});
+
+    if (dynamic_) {
+        resource.available = true;
+        return ConsumeResult{consumed, was_meat};
+    }
+
+    resource.available = true;
     return ConsumeResult{consumed, was_meat};
 }
 

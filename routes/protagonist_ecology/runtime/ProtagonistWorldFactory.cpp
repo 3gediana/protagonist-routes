@@ -133,7 +133,7 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
         config.resources.dynamic,
         config.resources.regen_rate,
         config.resources.terrain_adjustment_enabled));
-    world->addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f));
+    world->addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, config.compute.agent_decision_threads));
 
     if (config.terrain_enabled) {
         world->addLayer(std::make_unique<TerrainLayer>(config.world_size, config.terrain));
@@ -207,12 +207,12 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.survival.max_hydration,
             config.survival.initial_health_ratio,
             config.survival.initial_hydration_ratio,
-            config.survival.hydration_decay_per_tick,
+            config.survival.hydration_decay_per_second,
             config.survival.dehydration_threshold_ratio,
-            config.survival.dehydration_damage_per_tick,
-            config.survival.fire_health_damage_per_tick,
-            config.survival.warmth_recovery_per_tick,
-            config.survival.nest_recovery_per_tick,
+            config.survival.dehydration_damage_per_second,
+            config.survival.fire_health_damage_per_second,
+            config.survival.warmth_recovery_per_second,
+            config.survival.nest_recovery_per_second,
             config.survival.injured_threshold_ratio));
     }
 
@@ -232,8 +232,8 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
         world->addLayer(std::make_unique<InterventionDirectorLayer>(
             config.intervention.initial_budget,
             config.intervention.max_budget,
-            config.intervention.recharge_per_tick,
-            config.intervention.stress_decay_per_tick,
+            config.intervention.recharge_per_second,
+            config.intervention.stress_decay_per_second,
             config.intervention.max_stress,
             config.intervention.cooldown_seconds,
             config.random_seed + 904));

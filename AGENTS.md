@@ -72,22 +72,23 @@
 3. **ADR-0003** 代码英文 / 文档中文 / UI 中英切换
 4. **ADR-0004** 渐进添加：前一步完美才加下一步
 5. **ADR-0005** 先做机制，延后可视化整合（不做半成品展示层）
+6. **ADR-0006** protagonist 记忆板块采用标准 DNC，不上 MT-DNC
 
 ---
 
 ## 2 · 项目当前状态
 
-**最后更新**：2026-05-19
+**最后更新**：2026-05-20
 
 ```
-阶段：🟩 Baseline M0-M5 全部完成 + 12 Modules MVP + 病原体进化 + 抗原漂移，下一步进入 M2 可视化整合
+阶段：🟩 Baseline M0-M5 全部完成 + 12 Modules MVP + protagonist 联合演化训练流水线就绪 + continuous-time 主链已接通 + protagonist memory board 标准 DNC 已接入
 进度：baseline M0 ✅ / M1 ✅⛳⛳ / M2 ⏸ / M3 ✅✅⛳ / M4 ✅✅⛳ / M5 ✅✅⛳
-      modules  12 个 MVP ✅⛳⛳ / F-DISEASE 升级为病原体-宿主军备竞赛 ✅✅ / 其余 📋
+      modules  12 个 MVP ✅⛳⛳ / F-DISEASE 升级为病原体-宿主军备竞赛 ✅✅ / protagonist memory DNC ✅ / 其余 📋
 ```
 
-**已完成**：所有顶层文档 + ADR + baseline 阶段卡 + 全部 module 卡；M0 脚手架；M1 核心系统（固定拓扑 brain、世界层、GA、reward、CSV 记录、headless 代际循环）；M3 核心与收尾（NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入 / `evolution.csv` / `species_log.jsonl` / `run_m3_acceptance.py` / 5 seed × 100/200 代验证）；M4 多线程（EvaluationPool 线程池 / PerformanceObserver / 异步决策周期 / 能量系统）；M5 地形（TerrainLayer / HeightField / CaveMask / TerrainPerception / 地形物理 hook）；12 模块 MVP（F-FIGHT / F-PRED / F-DISEASE / F-COMM / F-COOP / F-RESOURCE / F-DAY / F-SEASON / F-NEUROMOD / F-LEARN / F-NOVELTY / F-CURRICULUM）；F-DISEASE 深度升级（PathogenGenome 31 权重 NN / Pathogen 实体 / 抗原漂移 strain-based immunity / 宿主 immunity_gain_rate 可进化 / 跨物种传播 / pathogen evolution metrics）
+**已完成**：所有顶层文档 + ADR + baseline 阶段卡 + 全部 module 卡；M0 脚手架；M1 核心系统（固定拓扑 brain、世界层、GA、reward、CSV 记录、headless 代际循环）；M3 核心与收尾（NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入 / `evolution.csv` / `species_log.jsonl` / `run_m3_acceptance.py` / 5 seed × 100/200 代验证）；M4 多线程（EvaluationPool 线程池 / PerformanceObserver / 异步决策周期 / 能量系统）；M5 地形（TerrainLayer / HeightField / CaveMask / TerrainPerception / 地形物理 hook）；12 模块 MVP（F-FIGHT / F-PRED / F-DISEASE / F-COMM / F-COOP / F-RESOURCE / F-DAY / F-SEASON / F-NEUROMOD / F-LEARN / F-NOVELTY / F-CURRICULUM）；F-DISEASE 深度升级（PathogenGenome 31 权重 NN / Pathogen 实体 / 抗原漂移 strain-based immunity / 宿主 immunity_gain_rate 可进化 / 跨物种传播 / pathogen evolution metrics）；protagonist route 的 Trace/Resume 基础设施；protagonist standard DNC 记忆主链（`DNCMemory` + `ProtagonistBrain/Genome/Evolution/Runtime` 接入）
 
-**下一步**：进入 M2 可视化整合：先读 `docs/baseline/M2_visualization.md`，实现 raylib 接入 + i18n 系统 + CJK 字体加载 + WorldRenderer / AgentRenderer + HUD / ControlPanel / StatsPanel / LangSwitcher + FitnessChart 实时折线图。
+**下一步**：继续 protagonist memory board 第二层：把 `MemoryCognitionPerception`、reward、curriculum 和 trace 改成真正依赖 DNC 检索的训练环境，再回头推进 CT-2/CT-3 的 `chop / build / worksite` 持续进度语义。
 
 ---
 

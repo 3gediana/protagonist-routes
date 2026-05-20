@@ -40,6 +40,8 @@
 #include "world/CampfireLayer.h"
 #include "world/InterventionDirectorLayer.h"
 #include "world/NurseryLogisticsLayer.h"
+#include "world/SurvivalStatusLayer.h"
+#include "world/TreeLayer.h"
 #include "world/WaterLayer.h"
 #include "world/WorksiteLayer.h"
 
@@ -116,6 +118,11 @@ struct TrainingParams {
     double neat_toggle_connection_rate{0.02};
     double neat_add_modulatory_rate{0.005};
     double neat_compatibility_threshold{3.0};
+    bool memory_cognition_enabled{true};
+    bool spatial_memory_writes_enabled{true};
+    bool episodic_memory_writes_enabled{true};
+    bool social_memory_writes_enabled{true};
+    bool goal_manager_enabled{true};
 };
 
 struct BehaviorAccumulator {
@@ -139,6 +146,11 @@ struct BehaviorAccumulator {
     double cooperative_co_presence_seconds{0.0};
     std::size_t survived_protagonists{0};
     std::size_t total_protagonists{0};
+    double dnc_usage_mean_sum{0.0};
+    double dnc_write_peak_sum{0.0};
+    double dnc_read_peak_sum{0.0};
+    double dnc_precedence_peak_sum{0.0};
+    std::size_t dnc_samples{0};
 };
 
 struct GenerationStats {
@@ -163,6 +175,26 @@ std::string makeTimestamp() {
 
 bool trainingEnabled(const config::Config& config) {
     return config.getOr<std::size_t>("evolution.generations", 0) > 0;
+}
+
+std::size_t resolveAgentDecisionThreads(std::size_t requested_threads,
+                                       std::size_t available_threads,
+                                       std::size_t concurrent_worlds) {
+    if (requested_threads > 0) {
+        return requested_threads;
+    }
+    const std::size_t safe_worlds = std::max<std::size_t>(1, concurrent_worlds);
+    return std::max<std::size_t>(1, available_threads / safe_worlds);
+}
+
+std::size_t resolveEpisodePoolSize(std::size_t requested_threads,
+                                   std::size_t available_threads,
+                                   std::size_t episodes_per_generation,
+                                   std::size_t agent_decision_threads) {
+    const std::size_t pool_target = requested_threads == 0 ? available_threads : requested_threads;
+    const std::size_t per_world_threads = std::max<std::size_t>(1, agent_decision_threads);
+    const std::size_t world_budget = std::max<std::size_t>(1, available_threads / per_world_threads);
+    return std::max<std::size_t>(1, std::min({episodes_per_generation, pool_target, world_budget}));
 }
 
 TrainingParams loadTrainingParams(const config::Config& config) {
@@ -222,6 +254,11 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.neat_toggle_connection_rate = config.getOr<double>("evolution.neat.toggle_connection_rate", params.neat_toggle_connection_rate);
     params.neat_add_modulatory_rate = config.getOr<double>("evolution.neat.add_modulatory_rate", params.neat_add_modulatory_rate);
     params.neat_compatibility_threshold = config.getOr<double>("evolution.neat.compatibility_threshold", params.neat_compatibility_threshold);
+    params.memory_cognition_enabled = config.getOr<bool>("population.protagonist.memory_cognition_enabled", params.memory_cognition_enabled);
+    params.spatial_memory_writes_enabled = config.getOr<bool>("population.protagonist.spatial_memory_writes_enabled", params.spatial_memory_writes_enabled);
+    params.episodic_memory_writes_enabled = config.getOr<bool>("population.protagonist.episodic_memory_writes_enabled", params.episodic_memory_writes_enabled);
+    params.social_memory_writes_enabled = config.getOr<bool>("population.protagonist.social_memory_writes_enabled", params.social_memory_writes_enabled);
+    params.goal_manager_enabled = config.getOr<bool>("population.protagonist.goal_manager_enabled", params.goal_manager_enabled);
 
     return params;
 }
@@ -260,6 +297,8 @@ std::vector<std::unique_ptr<IGenome>> createInitialPopulation(const ProtagonistE
             sensory_dim,
             route.protagonist.hidden_dim,
             route.protagonist.memory_cells,
+            route.protagonist.memory_slots,
+            route.protagonist.read_heads,
             route.protagonist.action_dim,
             rng));
     }
@@ -294,6 +333,8 @@ std::vector<std::unique_ptr<IGenome>> loadProtagonistCheckpointPopulation(const 
         if (genome->inputDim() != protagonistSensoryDim(route)
             || genome->hiddenDim() != route.protagonist.hidden_dim
             || genome->memoryCells() != route.protagonist.memory_cells
+            || genome->memorySlots() != route.protagonist.memory_slots
+            || genome->readHeads() != route.protagonist.read_heads
             || genome->actionDim() != route.protagonist.action_dim) {
             throw std::runtime_error("checkpoint protagonist genome shape does not match current scenario: " + path.string());
         }
@@ -330,6 +371,8 @@ std::vector<std::unique_ptr<IGenome>> createPopulationFromGenomeFile(const Prota
     if (loaded->inputDim() != protagonistSensoryDim(route)
         || loaded->hiddenDim() != route.protagonist.hidden_dim
         || loaded->memoryCells() != route.protagonist.memory_cells
+        || loaded->memorySlots() != route.protagonist.memory_slots
+        || loaded->readHeads() != route.protagonist.read_heads
         || loaded->actionDim() != route.protagonist.action_dim) {
         throw std::runtime_error("loaded protagonist genome shape does not match current scenario");
     }
@@ -417,6 +460,8 @@ void evaluatePopulation(World2D& world,
     auto* campfire_layer = world.getLayer<CampfireLayer>();
     auto* signal_layer = world.getLayer<SignalLayer>();
     auto* resource_layer = world.getLayer<ResourceLayer>();
+    auto* survival_layer = world.getLayer<SurvivalStatusLayer>();
+    auto* tree_layer = world.getLayer<TreeLayer>();
     auto* water_layer = world.getLayer<WaterLayer>();
 
     std::unordered_set<GenomeId> protagonist_ids;
@@ -440,9 +485,19 @@ void evaluatePopulation(World2D& world,
         SimTimeSeconds time_seconds{0.0};
         Vec2 position{};
     };
+    struct AttackEventInfo {
+        AgentId attacker{0};
+        AgentId victim{0};
+        float damage{0.0f};
+        Vec2 attacker_pos{};
+        Vec2 victim_pos{};
+        bool attacker_is_predator{false};
+    };
     std::unordered_map<AgentId, SignalEmitInfo> last_signal_emit;
     std::vector<events::AgentEmittedSignal> tick_emits;
     tick_emits.reserve(64);
+    std::vector<AttackEventInfo> tick_attacks;
+    tick_attacks.reserve(64);
     std::unordered_map<AgentId, float> previous_damage;
     std::unordered_map<AgentId, std::size_t> previous_kills;
     std::unordered_set<AgentId> alive_last_tick;
@@ -458,6 +513,29 @@ void evaluatePopulation(World2D& world,
             last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), payload.pos};
             tick_emits.push_back(payload);
         }) : 0u;
+
+    auto subscribe_attacked = world.eventBus().subscribe(
+        events::EventType::AgentAttacked,
+        [&](const events::Event& event) {
+            const auto& payload = event.payloadAs<events::AgentAttacked>();
+            Vec2 attacker_pos{};
+            Vec2 victim_pos{};
+            bool attacker_is_predator = false;
+            for (auto* actor : agent_layer->agents()) {
+                if (actor == nullptr) {
+                    continue;
+                }
+                if (actor->id() == payload.attacker) {
+                    attacker_pos = actor->position();
+                    const auto archetype_it = bg_archetype_by_id.find(actor->genomeId());
+                    attacker_is_predator = archetype_it != bg_archetype_by_id.end() && isPredatorArchetype(archetype_it->second);
+                }
+                if (actor->id() == payload.victim) {
+                    victim_pos = actor->position();
+                }
+            }
+            tick_attacks.push_back(AttackEventInfo{payload.attacker, payload.victim, payload.damage, attacker_pos, victim_pos, attacker_is_predator});
+        });
 
     // Spawn corpse meat at death position when any agent dies.
     // Scavengers/predators/omnivores can then eat it via EatCapability.
@@ -486,6 +564,7 @@ void evaluatePopulation(World2D& world,
         const SimTimeSeconds dt_seconds = std::min(effective_substep_dt, remaining_seconds);
         const float dt = static_cast<float>(dt_seconds);
         tick_emits.clear();
+        tick_attacks.clear();
         world.tick(dt);
         elapsed_seconds += dt_seconds;
         bool any_alive = false;
@@ -553,12 +632,75 @@ void evaluatePopulation(World2D& world,
                     const auto agent_pos = concrete->position();
                     const auto current_world_tick = world.currentTick();
                     const auto current_world_time = world.currentTimeSeconds();
+                    const float hydration_ratio = survival_layer != nullptr ? survival_layer->hydrationRatio(agent->id()) : 1.0f;
+                    const float health_ratio = survival_layer != nullptr ? survival_layer->healthRatio(agent->id()) : 1.0f;
+                    const auto dnc = brain->dncSummary();
+                    behavior.dnc_usage_mean_sum += static_cast<double>(dnc.usage_mean);
+                    behavior.dnc_write_peak_sum += static_cast<double>(dnc.write_peak);
+                    behavior.dnc_read_peak_sum += static_cast<double>(dnc.read_peak);
+                    behavior.dnc_precedence_peak_sum += static_cast<double>(dnc.precedence_peak);
+                    behavior.dnc_samples += 1;
+                    bool predator_nearby = false;
+                    bool worksite_nearby = false;
+                    bool fire_nearby = false;
+                    auto record_spatial = [&](Vec2 sight_pos,
+                                              float water,
+                                              float food,
+                                              float tree,
+                                              float stone,
+                                              float stick,
+                                              float danger,
+                                              float base,
+                                              float fire,
+                                              float worksite) {
+                        if (!params.spatial_memory_writes_enabled) {
+                            return;
+                        }
+                        brain->spatialMemory().recordSighting(sight_pos, water, food, tree, stone, stick, danger, base, fire, worksite);
+                    };
+                    auto record_episode = [&](Vec2 event_pos, const char* event_type, float salience) {
+                        if (!params.episodic_memory_writes_enabled) {
+                            return;
+                        }
+                        brain->episodicMemory().recordEvent(current_world_tick, current_world_time, event_pos, event_type, salience);
+                    };
+                    auto social_sighting = [&](AgentId peer_id, Vec2 peer_pos, bool is_predator) {
+                        if (!params.social_memory_writes_enabled) {
+                            return;
+                        }
+                        brain->socialMemory().recordSighting(peer_id, peer_pos, current_world_tick, current_world_time, is_predator);
+                    };
+                    auto social_coop = [&](AgentId peer_id, float amount) {
+                        if (!params.social_memory_writes_enabled) {
+                            return;
+                        }
+                        brain->socialMemory().rewardCooperation(peer_id, amount);
+                    };
+                    auto social_comm = [&](AgentId peer_id, float amount) {
+                        if (!params.social_memory_writes_enabled) {
+                            return;
+                        }
+                        brain->socialMemory().rewardCommunication(peer_id, amount);
+                    };
+                    auto social_hostility = [&](AgentId peer_id, float amount) {
+                        if (!params.social_memory_writes_enabled) {
+                            return;
+                        }
+                        brain->socialMemory().recordHostility(peer_id, amount);
+                    };
 
                     // 1. Spatial Memory Sightings (Visual radius approx 24.0 - 36.0)
                     if (water_layer != nullptr) {
                         for (const auto& source : water_layer->sources()) {
                             if (Vec2::distanceSquared(agent_pos, source.position) <= 36.0f * 36.0f) {
-                                brain->spatialMemory().recordSighting(source.position, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                                record_spatial(source.position, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                            }
+                        }
+                    }
+                    if (tree_layer != nullptr) {
+                        for (const auto& tree : tree_layer->trees()) {
+                            if (tree.available && Vec2::distanceSquared(agent_pos, tree.position) <= 30.0f * 30.0f) {
+                                record_spatial(tree.position, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
                             }
                         }
                     }
@@ -566,20 +708,22 @@ void evaluatePopulation(World2D& world,
                     if (base_layer != nullptr) {
                         const auto base_center = base_layer->baseCenter();
                         if (Vec2::distanceSquared(agent_pos, base_center) <= 28.0f * 28.0f) {
-                            brain->spatialMemory().recordSighting(base_center, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+                            record_spatial(base_center, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
                         }
                     }
                     if (campfire_layer != nullptr) {
                         for (const auto& fire : campfire_layer->fires()) {
                             if (fire.active && Vec2::distanceSquared(agent_pos, fire.position) <= 24.0f * 24.0f) {
-                                brain->spatialMemory().recordSighting(fire.position, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+                                fire_nearby = true;
+                                record_spatial(fire.position, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
                             }
                         }
                     }
                     if (worksite_layer != nullptr) {
                         for (const auto& site : worksite_layer->sites()) {
                             if (site.active && Vec2::distanceSquared(agent_pos, site.position) <= 28.0f * 28.0f) {
-                                brain->spatialMemory().recordSighting(site.position, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+                                worksite_nearby = true;
+                                record_spatial(site.position, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
                             }
                         }
                     }
@@ -589,42 +733,120 @@ void evaluatePopulation(World2D& world,
                             if (!obj.carried && Vec2::distanceSquared(agent_pos, obj.pos) <= 18.0f * 18.0f) {
                                 const float is_stone = (obj.type == ObjectType::Stone) ? 1.0f : 0.0f;
                                 const float is_stick = (obj.type == ObjectType::Stick) ? 1.0f : 0.0f;
-                                brain->spatialMemory().recordSighting(obj.pos, 0.0f, 0.0f, 0.0f, std::max(is_stone, is_stick), 0.0f, 0.0f);
+                                record_spatial(obj.pos, 0.0f, 0.0f, 0.0f, is_stone, is_stick, 0.0f, 0.0f, 0.0f, 0.0f);
                             }
                         }
                     }
                     if (resource_layer != nullptr) {
                         for (const auto& res : resource_layer->resources()) {
                             if (res.available && res.amount > 0.0f && Vec2::distanceSquared(agent_pos, res.position) <= 24.0f * 24.0f) {
-                                brain->spatialMemory().recordSighting(res.position, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                                record_spatial(res.position, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
                             }
+                        }
+                    }
+                    for (auto* other : agent_layer->agents()) {
+                        if (other == nullptr || other == agent || !other->alive()) {
+                            continue;
+                        }
+                        const auto archetype_it = bg_archetype_by_id.find(other->genomeId());
+                        if (archetype_it == bg_archetype_by_id.end() || !isPredatorArchetype(archetype_it->second)) {
+                            continue;
+                        }
+                        if (Vec2::distanceSquared(agent_pos, other->position()) <= 28.0f * 28.0f) {
+                            predator_nearby = true;
+                            record_spatial(other->position(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+                            social_sighting(other->id(), other->position(), true);
+                        }
+                    }
+                    for (const auto& attack : tick_attacks) {
+                        if (attack.victim != agent->id()) {
+                            continue;
+                        }
+                        social_sighting(attack.attacker, attack.attacker_pos, attack.attacker_is_predator);
+                        social_hostility(attack.attacker, attack.damage);
+                    }
+
+                    if (params.goal_manager_enabled) {
+                        constexpr SimTimeSeconds kGoalRefreshSeconds = 6.0;
+                        const bool should_refresh_goal = brain->goalMemory().elapsedSeconds() >= kGoalRefreshSeconds
+                            || brain->goalMemory().commitment() <= 0.20f;
+
+                        if (predator_nearby || health_ratio <= 0.30f) {
+                            brain->goalMemory().setGoal(GoalType::Flee, 1.0f);
+                        } else if (hydration_ratio <= 0.40f) {
+                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::FindWater) {
+                                brain->goalMemory().setGoal(GoalType::FindWater, 0.95f);
+                            }
+                        } else if (worksite_nearby && concrete->isCarrying()) {
+                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::BuildWorksite) {
+                                brain->goalMemory().setGoal(GoalType::BuildWorksite, 0.85f);
+                            }
+                        } else if (fire_nearby && health_ratio <= 0.70f) {
+                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::RestNearFire) {
+                                brain->goalMemory().setGoal(GoalType::RestNearFire, 0.70f);
+                            }
+                        } else if (concrete->energy() <= 70.0f) {
+                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::FindFood) {
+                                brain->goalMemory().setGoal(GoalType::FindFood, 0.75f);
+                            }
+                        } else if (should_refresh_goal) {
+                            brain->goalMemory().setGoal(GoalType::Explore, 0.55f);
                         }
                     }
 
                     // 2. Episodic Memory Key Events
                     if (concrete->foodEatenThisTick() > 0.0f) {
-                        brain->episodicMemory().recordEvent(current_world_tick, current_world_time, agent_pos, "ate_food", 0.5f);
-                    }
-                    if (damage_delta > 0.0f) {
-                        brain->episodicMemory().recordEvent(current_world_tick, current_world_time, agent_pos, "attacked_enemy", 0.8f);
+                        record_episode(agent_pos, "ate_food", 0.5f);
                     }
                     if (kill_delta > 0) {
-                        brain->episodicMemory().recordEvent(current_world_tick, current_world_time, agent_pos, "killed_prey", 0.9f);
+                        record_episode(agent_pos, "killed_prey", 0.9f);
+                    }
+                    if (completed_this_tick > 0 && worksite_nearby) {
+                        record_episode(agent_pos, "completed_worksite", 1.0f);
+                    }
+                    for (const auto& attack : tick_attacks) {
+                        if (attack.attacker == agent->id()) {
+                            record_episode(attack.victim_pos, "attacked_enemy", std::clamp(attack.damage, 0.2f, 1.0f));
+                        }
+                        if (attack.victim == agent->id()) {
+                            record_episode(attack.attacker_pos, "was_attacked", std::clamp(attack.damage, 0.2f, 1.0f));
+                        }
                     }
 
                     // 3. Social Sightings (Record other living companions and predators)
                     for (const auto* peer : alive_protagonists) {
                         if (peer != nullptr && peer != concrete) {
-                            if (Vec2::distanceSquared(agent_pos, peer->position()) <= 24.0f * 24.0f) {
-                                brain->socialMemory().recordSighting(peer->id(), peer->position(), current_world_tick, current_world_time, false);
+                            const float peer_dist_sq = Vec2::distanceSquared(agent_pos, peer->position());
+                            if (peer_dist_sq <= 24.0f * 24.0f) {
+                                social_sighting(peer->id(), peer->position(), false);
+                                if (peer_dist_sq <= params.social_proximity_radius * params.social_proximity_radius) {
+                                    social_coop(peer->id(), 0.01f * dt);
+                                }
+                                if (worksite_nearby && peer_dist_sq <= params.social_proximity_radius * params.social_proximity_radius) {
+                                    social_coop(peer->id(), 0.02f * dt);
+                                }
                             }
                         }
                     }
 
                     // 4. Goal Commitment Reinforce on actions
-                    if (concrete->foodEatenThisTick() > 0.0f && brain->goalMemory().currentGoal() == GoalType::FindFood) {
-                        brain->goalMemory().reinforceCommitment(0.35f);
-                        brain->goalMemory().progress(0.40f);
+                    if (params.goal_manager_enabled) {
+                        if (concrete->foodEatenThisTick() > 0.0f && brain->goalMemory().currentGoal() == GoalType::FindFood) {
+                            brain->goalMemory().reinforceCommitment(0.35f);
+                            brain->goalMemory().progress(0.40f);
+                        }
+                        if (brain->goalMemory().currentGoal() == GoalType::FindWater && hydration_ratio >= 0.90f) {
+                            brain->goalMemory().reinforceCommitment(0.20f);
+                            brain->goalMemory().progress(0.35f);
+                        }
+                        if (worksite_nearby && concrete->isCarrying() && brain->goalMemory().currentGoal() == GoalType::BuildWorksite) {
+                            brain->goalMemory().reinforceCommitment(0.08f);
+                            brain->goalMemory().progress(0.05f);
+                        }
+                        if (completed_this_tick > 0 && brain->goalMemory().currentGoal() == GoalType::BuildWorksite) {
+                            brain->goalMemory().reinforceCommitment(0.45f);
+                            brain->goalMemory().progress(0.65f);
+                        }
                     }
                 }
 
@@ -642,10 +864,34 @@ void evaluatePopulation(World2D& world,
                 }
                 if (inside_active_worksite) {
                     reward += params.cooperation_weight * static_cast<double>(params.worksite_proximity_reward) * static_cast<double>(dt_seconds);
+                    if (params.social_memory_writes_enabled) {
+                        if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
+                            for (const auto* peer : alive_protagonists) {
+                                if (peer == nullptr || peer == concrete) {
+                                    continue;
+                                }
+                                if (Vec2::distanceSquared(concrete->position(), peer->position()) <= params.social_proximity_radius * params.social_proximity_radius) {
+                                    protagonist_brain->socialMemory().rewardCooperation(peer->id(), 0.015f * dt);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (completed_this_tick > 0 && inside_active_worksite) {
                     reward += params.cooperation_weight * static_cast<double>(params.worksite_completion_reward);
+                    if (params.social_memory_writes_enabled) {
+                        if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
+                            for (const auto* peer : alive_protagonists) {
+                                if (peer == nullptr || peer == concrete) {
+                                    continue;
+                                }
+                                if (Vec2::distanceSquared(concrete->position(), peer->position()) <= params.social_proximity_radius * params.social_proximity_radius) {
+                                    protagonist_brain->socialMemory().rewardCooperation(peer->id(), 0.20f);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 std::size_t neighbours = 0;
@@ -682,6 +928,11 @@ void evaluatePopulation(World2D& world,
                             }
                             if (Vec2::distanceSquared(emit_pos, peer->position()) <= params.signal_emit_companion_radius * params.signal_emit_companion_radius) {
                                 reward += params.communication_weight * static_cast<double>(params.signal_emit_reward);
+                                if (params.social_memory_writes_enabled) {
+                                    if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
+                                        protagonist_brain->socialMemory().rewardCommunication(peer->id(), 0.10f);
+                                    }
+                                }
                                 break;
                             }
                         }
@@ -700,6 +951,11 @@ void evaluatePopulation(World2D& world,
                                     && peer->foodEatenThisTick() > 0.0f) {
                                     reward += params.communication_weight * static_cast<double>(params.signal_co_attendance_reward);
                                     ++behavior.signal_co_attendance;
+                                    if (params.social_memory_writes_enabled) {
+                                        if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
+                                            protagonist_brain->socialMemory().rewardCommunication(peer->id(), 0.18f);
+                                        }
+                                    }
                                     break;
                                 }
                             }
@@ -714,6 +970,11 @@ void evaluatePopulation(World2D& world,
                         }
                         if (Vec2::distanceSquared(concrete->position(), peer->position()) <= params.joint_hunt_radius * params.joint_hunt_radius) {
                             reward += params.cooperation_weight * static_cast<double>(params.joint_hunt_reward);
+                            if (params.social_memory_writes_enabled) {
+                                if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
+                                    protagonist_brain->socialMemory().rewardCooperation(peer->id(), 0.25f);
+                                }
+                            }
                             break;
                         }
                     }
@@ -849,6 +1110,9 @@ void evaluatePopulation(World2D& world,
     if (signal_layer != nullptr && subscribe_signals != 0) {
         world.eventBus().unsubscribe(subscribe_signals);
     }
+    if (subscribe_attacked != 0) {
+        world.eventBus().unsubscribe(subscribe_attacked);
+    }
     if (resource_layer != nullptr && subscribe_died != 0) {
         world.eventBus().unsubscribe(subscribe_died);
     }
@@ -964,7 +1228,12 @@ void ProtagonistEcologyRuntime::initialize() {
         return;
     }
 
-    const auto route = ProtagonistEcologyConfig::fromConfig(config_);
+    auto route = ProtagonistEcologyConfig::fromConfig(config_);
+    const std::size_t hw_threads = std::max<std::size_t>(1u, std::thread::hardware_concurrency());
+    const std::size_t available_threads = hw_threads > 1 ? hw_threads - 1 : 1;
+    route.compute.agent_decision_threads = resolveAgentDecisionThreads(route.compute.agent_decision_threads,
+                                                                       available_threads,
+                                                                       1);
     ChopTreeCapability::resetCounters();
     CraftSpearCapability::resetCounters();
     ProtagonistHuntCapability::resetCounters();
@@ -978,7 +1247,7 @@ void ProtagonistEcologyRuntime::initialize() {
     }
 
     LOG_INFO(
-        "ProtagonistEcologyRuntime: world ready (role={}, scenario={}, mode_train={}, mode_eval={}, mode_live={}, world={}x{}, protagonist={}, background_foragers={}, background_predators={}, protagonist_hidden={}, protagonist_memory={})",
+        "ProtagonistEcologyRuntime: world ready (role={}, scenario={}, mode_train={}, mode_eval={}, mode_live={}, world={}x{}, protagonist={}, background_foragers={}, background_predators={}, protagonist_hidden={}, protagonist_memory={}, protagonist_slots={}, protagonist_read_heads={}, protagonist_dense_gpu={}, agent_decision_threads={})",
         route.world_role,
         route.scenario_name,
         route.isTrainRole(),
@@ -990,15 +1259,20 @@ void ProtagonistEcologyRuntime::initialize() {
         route.background.forager_count,
         route.background.predator_count,
         route.protagonist.hidden_dim,
-        route.protagonist.memory_cells);
-    const bool has_tree_curriculum = route.tree.enabled && route.objects.enabled && route.base.enabled;
-    const bool has_tool_curriculum = route.objects.enabled && route.base.enabled;
+        route.protagonist.memory_cells,
+        route.protagonist.memory_slots,
+        route.protagonist.read_heads,
+        route.compute.protagonist_dense_gpu_enabled,
+        route.compute.agent_decision_threads);
     const ProtagonistBrain brain_probe(
-        2 + 3 + 10 + (route.water.enabled ? WaterPerception::kDim : 0) + (route.survival.enabled ? SurvivalStatePerception::kDim : 0) + ((route.background.forager_count > 0 || route.background.predator_count > 0) ? AgentSocialPerception::kDim : 0) + (has_tree_curriculum ? TreePerception::kDim : 0) + (has_tool_curriculum ? (CarriedObjectPerception::kDim + StockpilePerception::kDim + WeaponPerception::kDim) : 0) + (route.objects.enabled ? ObjectLogisticsPerception::kDim : 0) + (route.campfire.enabled ? 5 : 0) + (route.worksite.enabled ? 8 : 0) + (route.terrain_enabled ? 5 : 0) + (route.signal.enabled ? route.signal.channels * 2 : 0),
+        protagonistSensoryDim(route),
         route.protagonist.hidden_dim,
         route.protagonist.memory_cells,
+        route.protagonist.memory_slots,
+        route.protagonist.read_heads,
         route.protagonist.action_dim,
-        route.random_seed);
+        route.random_seed,
+        route.compute.protagonist_dense_gpu_enabled);
     LOG_INFO("ProtagonistEcologyRuntime: protagonist brain parameters per agent={}", brain_probe.parameterCount());
 
     if (const auto* agent_layer = world_->getLayer<AgentLayer>(); agent_layer != nullptr) {
@@ -1042,7 +1316,7 @@ int ProtagonistEcologyRuntime::run() {
 }
 
 int ProtagonistEcologyRuntime::runTraining() {
-    const auto route = ProtagonistEcologyConfig::fromConfig(config_);
+    auto route = ProtagonistEcologyConfig::fromConfig(config_);
     const auto params = loadTrainingParams(config_);
     if (params.generations == 0 || params.episode_duration_seconds <= 0.0 || params.substep_dt <= 0.0) {
         LOG_ERROR("ProtagonistEcologyRuntime: invalid training params generations={} episode_duration_seconds={} substep_dt={}",
@@ -1053,22 +1327,26 @@ int ProtagonistEcologyRuntime::runTraining() {
     }
     const std::size_t episodes_per_generation = std::max<std::size_t>(params.episodes_per_generation, 1);
 
-    // Multi-threaded episode evaluation. We cap thread count at episodes_per_generation
-    // because each episode runs as a single task; more threads than tasks gains nothing.
     const std::size_t requested_threads = params.num_threads;
     const std::size_t hw_threads = std::max<std::size_t>(1u, std::thread::hardware_concurrency());
-    const std::size_t auto_threads = hw_threads > 1 ? hw_threads - 1 : 1;
-    const std::size_t pool_size = std::min(
-        episodes_per_generation,
-        requested_threads == 0 ? auto_threads : requested_threads);
+    const std::size_t available_threads = hw_threads > 1 ? hw_threads - 1 : 1;
+    route.compute.agent_decision_threads = resolveAgentDecisionThreads(route.compute.agent_decision_threads,
+                                                                       available_threads,
+                                                                       episodes_per_generation);
+    const std::size_t pool_size = resolveEpisodePoolSize(requested_threads,
+                                                         available_threads,
+                                                         episodes_per_generation,
+                                                         route.compute.agent_decision_threads);
     runtime::EvaluationPool evaluation_pool(pool_size);
 
     const auto run_dir = makeRunDir(config_);
-    LOG_INFO("ProtagonistEcologyRuntime: training initialize (config={}, run_dir={}, episodes_per_generation={}, pool_threads={})",
+    LOG_INFO("ProtagonistEcologyRuntime: training initialize (config={}, run_dir={}, episodes_per_generation={}, pool_threads={}, agent_decision_threads={}, protagonist_dense_gpu={})",
              config_.path().string(),
              run_dir.string(),
              episodes_per_generation,
-             pool_size);
+             pool_size,
+             route.compute.agent_decision_threads,
+             route.compute.protagonist_dense_gpu_enabled);
 
     const auto trace_config = loadTraceRecorderConfig(config_);
     auto population = createTrainingPopulationFromConfig(config_, route);
@@ -1192,7 +1470,8 @@ int ProtagonistEcologyRuntime::runTraining() {
     behavior_csv << "generation,episodes,total_protagonists,survived_protagonists,deposits_total,deposits_stick,deposits_stone,"
                  << "completed_worksites,worksite_completion_events,active_fires,chop_attempts,chop_successes,"
                  << "craft_attempts,craft_successes,throw_attempts,throw_hits,hunt_attempts,hunt_successes,"
-                 << "signal_emits,signal_co_attendance,cooperative_co_presence_seconds\n";
+                 << "signal_emits,signal_co_attendance,cooperative_co_presence_seconds,"
+                 << "dnc_usage_mean_avg,dnc_write_peak_avg,dnc_read_peak_avg,dnc_precedence_peak_avg,dnc_samples\n";
 
     std::ofstream species_csv(run_dir / "species_metrics.csv", std::ios::out | std::ios::trunc);
     if (!species_csv.is_open()) {
@@ -1315,6 +1594,11 @@ int ProtagonistEcologyRuntime::runTraining() {
             behavior.cooperative_co_presence_seconds += r.behavior.cooperative_co_presence_seconds;
             behavior.survived_protagonists += r.behavior.survived_protagonists;
             behavior.total_protagonists += r.behavior.total_protagonists;
+            behavior.dnc_usage_mean_sum += r.behavior.dnc_usage_mean_sum;
+            behavior.dnc_write_peak_sum += r.behavior.dnc_write_peak_sum;
+            behavior.dnc_read_peak_sum += r.behavior.dnc_read_peak_sum;
+            behavior.dnc_precedence_peak_sum += r.behavior.dnc_precedence_peak_sum;
+            behavior.dnc_samples += r.behavior.dnc_samples;
         }
         // Capability counters are global atomics; read once at end (sum across episodes).
         behavior.chop_attempts = ChopTreeCapability::chop_attempts.load();
@@ -1373,6 +1657,18 @@ int ProtagonistEcologyRuntime::runTraining() {
         fitness_csv.flush();
 
         // ---- write protagonist_behaviors.csv ----
+        const double dnc_usage_mean_avg = behavior.dnc_samples > 0
+            ? behavior.dnc_usage_mean_sum / static_cast<double>(behavior.dnc_samples)
+            : 0.0;
+        const double dnc_write_peak_avg = behavior.dnc_samples > 0
+            ? behavior.dnc_write_peak_sum / static_cast<double>(behavior.dnc_samples)
+            : 0.0;
+        const double dnc_read_peak_avg = behavior.dnc_samples > 0
+            ? behavior.dnc_read_peak_sum / static_cast<double>(behavior.dnc_samples)
+            : 0.0;
+        const double dnc_precedence_peak_avg = behavior.dnc_samples > 0
+            ? behavior.dnc_precedence_peak_sum / static_cast<double>(behavior.dnc_samples)
+            : 0.0;
         behavior_csv << generation << ','
                      << episodes_per_generation << ','
                      << behavior.total_protagonists << ','
@@ -1393,7 +1689,12 @@ int ProtagonistEcologyRuntime::runTraining() {
                      << behavior.hunt_successes << ','
                      << behavior.signal_emits << ','
                      << behavior.signal_co_attendance << ','
-                     << behavior.cooperative_co_presence_seconds << '\n';
+                     << behavior.cooperative_co_presence_seconds << ','
+                     << dnc_usage_mean_avg << ','
+                     << dnc_write_peak_avg << ','
+                     << dnc_read_peak_avg << ','
+                     << dnc_precedence_peak_avg << ','
+                     << behavior.dnc_samples << '\n';
         behavior_csv.flush();
 
         // ---- write species_metrics.csv (one row per species) ----
@@ -1460,14 +1761,18 @@ int ProtagonistEcologyRuntime::runTraining() {
             std::vector<std::string> saved_files;
             saved_files.reserve(population.size());
             for (const auto& genome : population) {
-                if (genome == nullptr) continue;
-                if (auto* protagonist_genome = dynamic_cast<const ProtagonistGenome*>(genome.get())) {
-                    const auto filename = "genome_" + std::to_string(genome->id().value) + ".bin";
-                    const auto path = checkpoint_dir / filename;
-                    if (protagonist_genome->saveToFile(path)) {
-                        ++saved;
-                        saved_files.push_back(filename);
-                    }
+                if (genome == nullptr) {
+                    continue;
+                }
+                const auto* protagonist_genome = dynamic_cast<const ProtagonistGenome*>(genome.get());
+                if (protagonist_genome == nullptr) {
+                    continue;
+                }
+                const auto filename = std::string("genome_") + std::to_string(genome->id().value) + ".bin";
+                const auto path = checkpoint_dir / filename;
+                if (protagonist_genome->saveToFile(path)) {
+                    ++saved;
+                    saved_files.push_back(filename);
                 }
             }
             std::ofstream manifest(checkpoint_dir / "checkpoint_manifest.json", std::ios::out | std::ios::trunc);

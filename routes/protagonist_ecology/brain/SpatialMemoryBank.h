@@ -12,9 +12,12 @@ struct SpatialMemoryCell {
     float water_seen{0.0f};
     float food_seen{0.0f};
     float tree_seen{0.0f};
-    float object_seen{0.0f};
+    float stone_seen{0.0f};
+    float stick_seen{0.0f};
     float danger_seen{0.0f};
     float base_seen{0.0f};
+    float fire_seen{0.0f};
+    float worksite_seen{0.0f};
     float last_visit_age{0.0f};
 };
 
@@ -26,15 +29,27 @@ public:
     void tick(float dt);
 
     // Write a point memory (e.g. agent saw something at world position)
-    void recordSighting(Vec2 world_pos, float water, float food, float tree, float object, float danger, float base);
+    void recordSighting(Vec2 world_pos,
+                        float water,
+                        float food,
+                        float tree,
+                        float stone,
+                        float stick,
+                        float danger,
+                        float base,
+                        float fire,
+                        float worksite);
 
     // Query nearest cell matching threshold
     Vec2 findNearestWater(Vec2 from_pos, float threshold = 0.1f) const;
     Vec2 findNearestFood(Vec2 from_pos, float threshold = 0.1f) const;
     Vec2 findNearestTree(Vec2 from_pos, float threshold = 0.1f) const;
-    Vec2 findNearestObject(Vec2 from_pos, float threshold = 0.1f) const;
+    Vec2 findNearestStone(Vec2 from_pos, float threshold = 0.1f) const;
+    Vec2 findNearestStick(Vec2 from_pos, float threshold = 0.1f) const;
     Vec2 findNearestDanger(Vec2 from_pos, float threshold = 0.1f) const;
     Vec2 findNearestBase(Vec2 from_pos, float threshold = 0.1f) const;
+    Vec2 findNearestFire(Vec2 from_pos, float threshold = 0.1f) const;
+    Vec2 findNearestWorksite(Vec2 from_pos, float threshold = 0.1f) const;
 
     // Direct cell grid access
     std::size_t gridWidth() const { return w_; }

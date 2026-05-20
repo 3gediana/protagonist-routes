@@ -1,26 +1,43 @@
 #pragma once
 
-#include "brain/MemoryBank.h"
+#include "brain/DNCMemory.h"
 #include "brain/SpatialMemoryBank.h"
 #include "brain/EpisodicMemoryBank.h"
 #include "brain/SocialMemoryBank.h"
 #include "brain/GoalMemory.h"
 #include "core/interfaces/IBrain.h"
 
+#include <memory>
 #include <vector>
 
 namespace neuro::routes::protagonist {
 
+struct DNCStateSummary {
+    float usage_mean{0.0f};
+    float usage_max{0.0f};
+    float write_peak{0.0f};
+    float read_peak{0.0f};
+    float read_norm{0.0f};
+    float precedence_peak{0.0f};
+    float write_focus_slot{0.0f};
+    float read_focus_slot{0.0f};
+};
+
 class ProtagonistGenome;
+class ProtagonistDenseGpu;
 
 class ProtagonistBrain final : public IBrain {
 public:
     ProtagonistBrain(std::size_t input_dim,
                      std::size_t hidden_dim,
                      std::size_t memory_cells,
+                     std::size_t memory_slots,
+                     std::size_t read_heads,
                      std::size_t action_dim,
-                     std::uint32_t seed);
-    explicit ProtagonistBrain(const ProtagonistGenome& genome);
+                     std::uint32_t seed,
+                     bool enable_gpu_dense = false);
+    explicit ProtagonistBrain(const ProtagonistGenome& genome, bool enable_gpu_dense = false);
+    ~ProtagonistBrain() override;
 
     std::size_t inputDim() const override;
     std::size_t outputDim() const override;
@@ -29,7 +46,14 @@ public:
     std::size_t parameterCount() const override;
 
     std::size_t hiddenDim() const { return hidden_dim_; }
-    std::size_t memoryCells() const { return memory_.cellCount(); }
+    std::size_t memoryCells() const { return memory_cells_; }
+    std::size_t memorySlots() const { return memory_slots_; }
+    std::size_t readHeads() const { return read_heads_; }
+
+    DNCStateSummary dncSummary() const;
+
+    DNCMemory& dncMemory() { return dnc_memory_; }
+    const DNCMemory& dncMemory() const { return dnc_memory_; }
 
     SpatialMemoryBank& spatialMemory() { return spatial_memory_; }
     const SpatialMemoryBank& spatialMemory() const { return spatial_memory_; }
@@ -47,20 +71,21 @@ private:
     std::size_t external_input_dim_;
     std::size_t total_input_dim_;
     std::size_t hidden_dim_;
+    std::size_t memory_cells_;
+    std::size_t memory_slots_;
+    std::size_t read_heads_;
     std::size_t action_dim_;
     std::vector<float> in_hidden_weights_;
     std::vector<float> hidden_bias_;
     std::vector<float> hidden_action_weights_;
     std::vector<float> action_bias_;
-    std::vector<float> hidden_memory_candidate_weights_;
-    std::vector<float> memory_candidate_bias_;
-    std::vector<float> hidden_memory_gate_weights_;
-    std::vector<float> memory_gate_bias_;
+    std::vector<float> hidden_interface_weights_;
+    std::vector<float> interface_bias_;
     std::vector<float> hidden_;
     std::vector<float> outputs_;
-    MemoryBank memory_;
+    std::unique_ptr<ProtagonistDenseGpu> dense_gpu_;
+    DNCMemory dnc_memory_;
 
-    // Specialized Memory Banks V2
     SpatialMemoryBank spatial_memory_;
     EpisodicMemoryBank episodic_memory_;
     SocialMemoryBank social_memory_;

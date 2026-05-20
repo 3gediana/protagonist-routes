@@ -25,12 +25,12 @@ public:
                         float max_hydration,
                         float initial_health_ratio,
                         float initial_hydration_ratio,
-                        float hydration_decay_per_tick,
+                        float hydration_decay_per_second,
                         float dehydration_threshold_ratio,
-                        float dehydration_damage_per_tick,
-                        float fire_health_damage_per_tick,
-                        float warmth_recovery_per_tick,
-                        float nest_recovery_per_tick,
+                        float dehydration_damage_per_second,
+                        float fire_health_damage_per_second,
+                        float warmth_recovery_per_second,
+                        float nest_recovery_per_second,
                         float injured_threshold_ratio);
 
     const char* layerName() const override { return kName; }
@@ -66,12 +66,12 @@ private:
     float max_hydration_;
     float initial_health_ratio_;
     float initial_hydration_ratio_;
-    float hydration_decay_per_tick_;
+    float hydration_decay_per_second_;
     float dehydration_threshold_ratio_;
-    float dehydration_damage_per_tick_;
-    float fire_health_damage_per_tick_;
-    float warmth_recovery_per_tick_;
-    float nest_recovery_per_tick_;
+    float dehydration_damage_per_second_;
+    float fire_health_damage_per_second_;
+    float warmth_recovery_per_second_;
+    float nest_recovery_per_second_;
     float injured_threshold_ratio_;
     std::unordered_map<AgentId, SurvivalState> states_;
 };

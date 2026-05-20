@@ -33,6 +33,7 @@ Agent::Agent(AgentId id,
       fitness_(0.0),
       decision_interval_(std::max(0.0f, decision_interval)),
       next_decision_time_seconds_(0.0),
+      decision_triggered_this_tick_(false),
       food_eaten_this_tick_(0.0f),
       plant_food_this_tick_(0.0f),
       meat_food_this_tick_(0.0f),
@@ -105,9 +106,10 @@ void Agent::beginTick() {
     plant_food_this_tick_ = 0.0f;
     meat_food_this_tick_ = 0.0f;
     discovered_new_cell_this_tick_ = false;
+    decision_triggered_this_tick_ = false;
 }
 
-void Agent::step(IWorld& world, float dt) {
+void Agent::decide(IWorld& world, float dt) {
     if (!alive_) return;
 
     if (shouldDecideAt(world.currentTimeSeconds())) {
@@ -130,10 +132,24 @@ void Agent::step(IWorld& world, float dt) {
         auto output_span = brain_->forward(inputs, dt);
         last_outputs_.assign(output_span.begin(), output_span.end());
         next_decision_time_seconds_ = world.currentTimeSeconds() + static_cast<SimTimeSeconds>(decision_interval_);
-        world.eventBus().publish(events::Event{events::EventType::DecisionTriggered,
-                                               events::DecisionTriggered{ id_, world.currentTick() },
-                                               world.currentTick(),
-                                               world.currentTimeSeconds()});
+        decision_triggered_this_tick_ = true;
+    }
+}
+
+void Agent::publishDecisionEvent(IWorld& world) {
+    if (!alive_ || !decision_triggered_this_tick_) {
+        return;
+    }
+
+    world.eventBus().publish(events::Event{events::EventType::DecisionTriggered,
+                                           events::DecisionTriggered{ id_, world.currentTick() },
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
+}
+
+void Agent::applyCapabilities(IWorld& world, float dt) {
+    if (!alive_) {
+        return;
     }
 
     if (!last_outputs_.empty()) {
@@ -152,6 +168,12 @@ void Agent::step(IWorld& world, float dt) {
             throw std::runtime_error("Agent capability outputs do not fully consume brain outputs");
         }
     }
+}
+
+void Agent::step(IWorld& world, float dt) {
+    decide(world, dt);
+    publishDecisionEvent(world);
+    applyCapabilities(world, dt);
 }
 
 void Agent::incrementAge(float dt) {

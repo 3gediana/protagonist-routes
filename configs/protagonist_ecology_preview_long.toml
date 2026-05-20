@@ -89,12 +89,12 @@ max_health = 100.0
 max_hydration = 100.0
 initial_health_ratio = 1.0
 initial_hydration_ratio = 0.68
-hydration_decay_per_tick = 0.060
+hydration_decay_per_second = 0.060
 dehydration_threshold_ratio = 0.32
-dehydration_damage_per_tick = 0.14
-fire_health_damage_per_tick = 0.40
-warmth_recovery_per_tick = 0.06
-nest_recovery_per_tick = 0.10
+dehydration_damage_per_second = 0.14
+fire_health_damage_per_second = 0.40
+warmth_recovery_per_second = 0.06
+nest_recovery_per_second = 0.10
 injured_threshold_ratio = 0.45
 
 [world.tree]
@@ -121,8 +121,8 @@ shelter_energy_bonus = 0.03
 enabled = true
 initial_budget = 1.3
 max_budget = 2.6
-recharge_per_tick = 0.020
-stress_decay_per_tick = 0.01
+recharge_per_second = 0.020
+stress_decay_per_second = 0.01
 max_stress = 0.80
 cooldown_ticks = 20
 

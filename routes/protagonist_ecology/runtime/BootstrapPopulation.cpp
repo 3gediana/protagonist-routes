@@ -132,7 +132,9 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
     }
 
     // Memory V2 cognition input
-    sensory_dim += MemoryCognitionPerception::kDim;
+    if (config.protagonist.memory_cognition_enabled) {
+        sensory_dim += MemoryCognitionPerception::kDim;
+    }
 
     return sensory_dim;
 }
@@ -143,15 +145,18 @@ std::unique_ptr<IBrain> makeProtagonistBrain(const IGenome& genome,
                                              const ProtagonistEcologyConfig& config,
                                              AgentId id) {
     if (const auto* protagonist_genome = dynamic_cast<const ProtagonistGenome*>(&genome); protagonist_genome != nullptr) {
-        return std::make_unique<ProtagonistBrain>(*protagonist_genome);
+        return std::make_unique<ProtagonistBrain>(*protagonist_genome, config.compute.protagonist_dense_gpu_enabled);
     }
 
     return std::make_unique<ProtagonistBrain>(
         protagonistSensoryDim(config),
         config.protagonist.hidden_dim,
         config.protagonist.memory_cells,
+        config.protagonist.memory_slots,
+        config.protagonist.read_heads,
         config.protagonist.action_dim,
-        config.random_seed + static_cast<std::uint32_t>(id.value * 31));
+        config.random_seed + static_cast<std::uint32_t>(id.value * 31),
+        config.compute.protagonist_dense_gpu_enabled);
 }
 
 std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
@@ -180,6 +185,7 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     constexpr float kDangerSenseRadius = 28.0f;
     constexpr float kWorksiteSenseRadius = 28.0f;
     constexpr float kWaterSenseRadius = 36.0f;
+    constexpr float kEatRate = 48.0f;
 
     const bool has_tree_curriculum = config.tree.enabled && config.objects.enabled && config.base.enabled;
     const bool has_tool_curriculum = config.objects.enabled && config.base.enabled;
@@ -196,8 +202,11 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
                                          sensory_dim,
                                          config.protagonist.hidden_dim,
                                          config.protagonist.memory_cells,
+                                         config.protagonist.memory_slots,
+                                         config.protagonist.read_heads,
                                          config.protagonist.action_dim,
-                                         config.random_seed + static_cast<std::uint32_t>(id.value * 31));
+                                         config.random_seed + static_cast<std::uint32_t>(id.value * 31),
+                                         config.compute.protagonist_dense_gpu_enabled);
 
     auto agent = std::make_unique<Agent>(
         id,
@@ -245,10 +254,12 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     }
 
     // Memory V2 Cognition Perception
-    agent->addPerception(std::make_unique<MemoryCognitionPerception>());
+    if (config.protagonist.memory_cognition_enabled) {
+        agent->addPerception(std::make_unique<MemoryCognitionPerception>());
+    }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));
-    agent->addCapability(std::make_unique<EatCapability>(kEatRadius));
+    agent->addCapability(std::make_unique<EatCapability>(kEatRadius, kEatRate));
     if (config.signal.enabled) {
         agent->addCapability(std::make_unique<EmitSignalCapability>(config.signal.channels, kSignalCost));
     }
@@ -353,7 +364,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             // Large grazers: slow, defensive flee, plant diet
             agent->setDietPreference(0.05f);  // pure herbivore
             agent->addCapability(std::make_unique<MoveCapability>(1.8f, 0.0035f, 0.0009f, 20));
-            agent->addCapability(std::make_unique<EatCapability>(4.5f));
+            agent->addCapability(std::make_unique<EatCapability>(4.5f, 40.0f));
             agent->addCapability(std::make_unique<FleeCapability>(10.0f, 0.7f, 0.012f));
             // outputs: Move 2 + Eat 0 + Flee 1 = 3
             break;
@@ -362,7 +373,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             // Small fast rodents: high speed, quick flee, plant diet
             agent->setDietPreference(0.10f);
             agent->addCapability(std::make_unique<MoveCapability>(2.3f, 0.005f, 0.0011f, 20));
-            agent->addCapability(std::make_unique<EatCapability>(3.5f));
+            agent->addCapability(std::make_unique<EatCapability>(3.5f, 44.0f));
             agent->addCapability(std::make_unique<FleeCapability>(6.0f, 1.0f, 0.012f));
             // outputs: Move 2 + Eat 0 + Flee 1 = 3
             break;
@@ -400,7 +411,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             // Carnivore diet preference (eats corpses) but weak fighter.
             agent->setDietPreference(0.85f);
             agent->addCapability(std::make_unique<MoveCapability>(2.2f, 0.004f, 0.001f, 20, /*aerial=*/true));
-            agent->addCapability(std::make_unique<EatCapability>(5.0f));
+            agent->addCapability(std::make_unique<EatCapability>(5.0f, 54.0f));
             agent->addCapability(std::make_unique<AttackCapability>(3.0f, 0.10f, 0.0f, 0.018f));
             agent->addCapability(std::make_unique<FleeCapability>(8.0f, 0.8f, 0.012f));
             // outputs: Move 2 + Eat 0 + Attack 3 + Flee 1 = 6
@@ -410,7 +421,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             // Boar/bear-cub: flexible diet, medium combat
             agent->setDietPreference(0.50f);  // balanced omnivore
             agent->addCapability(std::make_unique<MoveCapability>(1.7f, 0.005f, 0.0011f, 20));
-            agent->addCapability(std::make_unique<EatCapability>(4.0f));
+            agent->addCapability(std::make_unique<EatCapability>(4.0f, 42.0f));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(4.0f, 7.0f, 5.0f, 0.02f));
             agent->addCapability(std::make_unique<AttackCapability>(3.8f, 0.35f, 0.0f, 0.022f));
             agent->addCapability(std::make_unique<FleeCapability>(7.0f, 0.7f, 0.012f));
@@ -450,7 +461,7 @@ std::unique_ptr<Agent> makeBackgroundForager(AgentId id,
     agent->addPerception(std::make_unique<SelfPerception>(kInitialEnergy, 3000.0));
     agent->addPerception(std::make_unique<NearestFoodPerception>());
     agent->addCapability(std::make_unique<MoveCapability>(1.7f, 0.004f, 0.001f, 20));
-    agent->addCapability(std::make_unique<EatCapability>(4.0f));
+    agent->addCapability(std::make_unique<EatCapability>(4.0f, 42.0f));
     return agent;
 }
 

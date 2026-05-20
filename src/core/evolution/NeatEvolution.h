@@ -5,12 +5,18 @@
 #include "core/interfaces/IEvolutionStrategy.h"
 
 #include <random>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace neuro {
 
 class NeatGenome;
+
+struct NeatEvolutionState {
+    std::string rng_state;
+    SpeciationState speciation_state;
+};
 
 class NeatEvolution final : public IEvolutionStrategy {
 public:
@@ -43,6 +49,8 @@ public:
     InnovationTracker& innovationTracker();
     std::vector<SpeciesGroup> assignSpecies(const std::vector<IGenome*>& current_genomes);
     const std::vector<SpeciesGroup>& lastSpeciesGroups() const;
+    NeatEvolutionState exportState() const;
+    void importState(const NeatEvolutionState& state);
 
 private:
     struct SpeciesState {

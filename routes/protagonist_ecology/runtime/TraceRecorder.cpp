@@ -1,5 +1,6 @@
 #include "runtime/TraceRecorder.h"
 
+#include "brain/ProtagonistBrain.h"
 #include "core/agent/Agent.h"
 #include "core/events/EventBus.h"
 #include "core/events/EventPayloads.h"
@@ -14,6 +15,7 @@
 #include "world/WorksiteLayer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -74,6 +76,32 @@ std::size_t objectCountByType(const ObjectLayer* objects, ObjectType type) {
     return count;
 }
 
+float averageValue(const std::vector<float>& values) {
+    if (values.empty()) {
+        return 0.0f;
+    }
+    float sum = 0.0f;
+    for (const float value : values) {
+        sum += value;
+    }
+    return sum / static_cast<float>(values.size());
+}
+
+float maxValue(const std::vector<float>& values) {
+    if (values.empty()) {
+        return 0.0f;
+    }
+    return *std::max_element(values.begin(), values.end());
+}
+
+float l2Norm(const std::vector<float>& values) {
+    float sum = 0.0f;
+    for (const float value : values) {
+        sum += value * value;
+    }
+    return std::sqrt(sum);
+}
+
 }  // namespace
 
 TraceRecorderConfig loadTraceRecorderConfig(const config::Config& config) {
@@ -118,7 +146,7 @@ TraceRecorder::TraceRecorder(World2D& world,
     if (config_.agents_enabled) {
         agent_trace_.open(trace_dir_ / "agent_trace.csv", std::ios::out | std::ios::trunc);
         if (agent_trace_.is_open()) {
-            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills\n";
+            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills,goal_index,goal_name,goal_commitment,goal_elapsed_seconds,goal_progress,episodic_event_count,episodic_top_type,episodic_top_salience,social_relation_count,social_best_coop,social_best_comm,social_best_hostility,spatial_water_cells,spatial_food_cells,spatial_danger_cells,spatial_fire_cells,spatial_worksite_cells,dnc_usage_mean,dnc_usage_max,dnc_write_peak,dnc_read_peak,dnc_read_norm,dnc_precedence_peak,dnc_write_focus_slot,dnc_read_focus_slot\n";
         }
     }
     if (config_.world_enabled) {
@@ -356,6 +384,76 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
         const auto vel = agent->velocity();
         const float health = survival != nullptr ? survival->healthRatio(agent->id()) : 1.0f;
         const float hydration = survival != nullptr ? survival->hydrationRatio(agent->id()) : 1.0f;
+        int goal_index = -1;
+        const char* goal_name = "na";
+        float goal_commitment = 0.0f;
+        float goal_elapsed_seconds = 0.0f;
+        float goal_progress = 0.0f;
+        std::size_t episodic_event_count = 0;
+        std::string episodic_top_type = "none";
+        float episodic_top_salience = 0.0f;
+        std::size_t social_relation_count = 0;
+        float social_best_coop = 0.0f;
+        float social_best_comm = 0.0f;
+        float social_best_hostility = 0.0f;
+        std::size_t spatial_water_cells = 0;
+        std::size_t spatial_food_cells = 0;
+        std::size_t spatial_danger_cells = 0;
+        std::size_t spatial_fire_cells = 0;
+        std::size_t spatial_worksite_cells = 0;
+        float dnc_usage_mean = 0.0f;
+        float dnc_usage_max = 0.0f;
+        float dnc_write_peak = 0.0f;
+        float dnc_read_peak = 0.0f;
+        float dnc_read_norm = 0.0f;
+        float dnc_precedence_peak = 0.0f;
+        float dnc_write_focus_slot = 0.0f;
+        float dnc_read_focus_slot = 0.0f;
+
+        if (const auto* protagonist_brain = dynamic_cast<const ProtagonistBrain*>(&agent->brain()); protagonist_brain != nullptr) {
+            const auto dnc = protagonist_brain->dncSummary();
+            const auto& goal = protagonist_brain->goalMemory();
+            goal_index = static_cast<int>(goal.currentGoal());
+            goal_name = goalTypeName(goal.currentGoal());
+            goal_commitment = goal.commitment();
+            goal_elapsed_seconds = goal.elapsedSeconds();
+            goal_progress = goal.completionProgress();
+
+            const auto& episodic = protagonist_brain->episodicMemory();
+            episodic_event_count = episodic.events().size();
+            const auto top_events = episodic.topSalient(1);
+            if (!top_events.empty()) {
+                episodic_top_type = top_events.front().type;
+                episodic_top_salience = top_events.front().salience;
+            }
+
+            const auto& social = protagonist_brain->socialMemory();
+            social_relation_count = social.relations().size();
+            for (const auto& [_, rel] : social.relations()) {
+                social_best_coop = std::max(social_best_coop, rel.cooperation_score);
+                social_best_comm = std::max(social_best_comm, rel.communication_score);
+                social_best_hostility = std::max(social_best_hostility, rel.hostility_score);
+            }
+
+            const auto& cells = protagonist_brain->spatialMemory().cells();
+            for (const auto& cell : cells) {
+                spatial_water_cells += cell.water_seen >= 0.15f ? 1u : 0u;
+                spatial_food_cells += cell.food_seen >= 0.15f ? 1u : 0u;
+                spatial_danger_cells += cell.danger_seen >= 0.15f ? 1u : 0u;
+                spatial_fire_cells += cell.fire_seen >= 0.15f ? 1u : 0u;
+                spatial_worksite_cells += cell.worksite_seen >= 0.15f ? 1u : 0u;
+            }
+
+            dnc_usage_mean = dnc.usage_mean;
+            dnc_usage_max = dnc.usage_max;
+            dnc_write_peak = dnc.write_peak;
+            dnc_read_peak = dnc.read_peak;
+            dnc_read_norm = dnc.read_norm;
+            dnc_precedence_peak = dnc.precedence_peak;
+            dnc_write_focus_slot = dnc.write_focus_slot;
+            dnc_read_focus_slot = dnc.read_focus_slot;
+        }
+
         agent_trace_ << world.currentTick() << ','
                      << world.currentTimeSeconds() << ','
                      << agent->id().value << ','
@@ -379,7 +477,32 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
                      << agent->meatFoodThisTick() << ','
                      << agent->visitedCellCount() << ','
                      << agent->damageDealt() << ','
-                     << agent->kills() << '\n';
+                     << agent->kills() << ','
+                     << goal_index << ','
+                     << goal_name << ','
+                     << goal_commitment << ','
+                     << goal_elapsed_seconds << ','
+                     << goal_progress << ','
+                     << episodic_event_count << ','
+                     << episodic_top_type << ','
+                     << episodic_top_salience << ','
+                     << social_relation_count << ','
+                     << social_best_coop << ','
+                     << social_best_comm << ','
+                     << social_best_hostility << ','
+                     << spatial_water_cells << ','
+                     << spatial_food_cells << ','
+                     << spatial_danger_cells << ','
+                     << spatial_fire_cells << ','
+                     << spatial_worksite_cells << ','
+                     << dnc_usage_mean << ','
+                     << dnc_usage_max << ','
+                     << dnc_write_peak << ','
+                     << dnc_read_peak << ','
+                     << dnc_read_norm << ','
+                     << dnc_precedence_peak << ','
+                     << dnc_write_focus_slot << ','
+                     << dnc_read_focus_slot << '\n';
     }
     agent_trace_.flush();
 }

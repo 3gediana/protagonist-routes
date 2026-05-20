@@ -26,6 +26,14 @@ SimTimeSeconds getDurationCompat(const config::Config& config,
                                 config.getOr<double>(legacy_ticks_key, default_value));
 }
 
+ float getRateCompat(const config::Config& config,
+                     const char* per_second_key,
+                     const char* legacy_per_tick_key,
+                     float default_value) {
+     return config.getOr<float>(per_second_key,
+                                config.getOr<float>(legacy_per_tick_key, default_value));
+ }
+
 }  // namespace
 
 bool ProtagonistEcologyConfig::isTrainRole() const {
@@ -60,6 +68,8 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
                                                               "simulation.time.preview_duration_seconds",
                                                               "runtime.preview_ticks",
                                                               out.sim_time.preview_duration_seconds);
+    out.compute.protagonist_dense_gpu_enabled = config.getOr<bool>("compute.protagonist_dense_gpu_enabled", out.compute.protagonist_dense_gpu_enabled);
+    out.compute.agent_decision_threads = config.getOr<std::size_t>("compute.agent_decision_threads", out.compute.agent_decision_threads);
 
     out.terrain_enabled = config.getOr<bool>("world.terrain.enabled", true);
     out.terrain.height_scale = config.getOr<float>("world.terrain.height_scale", out.terrain.height_scale);
@@ -132,12 +142,27 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.survival.max_hydration = config.getOr<float>("world.survival.max_hydration", out.survival.max_hydration);
     out.survival.initial_health_ratio = config.getOr<float>("world.survival.initial_health_ratio", out.survival.initial_health_ratio);
     out.survival.initial_hydration_ratio = config.getOr<float>("world.survival.initial_hydration_ratio", out.survival.initial_hydration_ratio);
-    out.survival.hydration_decay_per_tick = config.getOr<float>("world.survival.hydration_decay_per_tick", out.survival.hydration_decay_per_tick);
+    out.survival.hydration_decay_per_second = getRateCompat(config,
+                                                            "world.survival.hydration_decay_per_second",
+                                                            "world.survival.hydration_decay_per_tick",
+                                                            out.survival.hydration_decay_per_second);
     out.survival.dehydration_threshold_ratio = config.getOr<float>("world.survival.dehydration_threshold_ratio", out.survival.dehydration_threshold_ratio);
-    out.survival.dehydration_damage_per_tick = config.getOr<float>("world.survival.dehydration_damage_per_tick", out.survival.dehydration_damage_per_tick);
-    out.survival.fire_health_damage_per_tick = config.getOr<float>("world.survival.fire_health_damage_per_tick", out.survival.fire_health_damage_per_tick);
-    out.survival.warmth_recovery_per_tick = config.getOr<float>("world.survival.warmth_recovery_per_tick", out.survival.warmth_recovery_per_tick);
-    out.survival.nest_recovery_per_tick = config.getOr<float>("world.survival.nest_recovery_per_tick", out.survival.nest_recovery_per_tick);
+    out.survival.dehydration_damage_per_second = getRateCompat(config,
+                                                               "world.survival.dehydration_damage_per_second",
+                                                               "world.survival.dehydration_damage_per_tick",
+                                                               out.survival.dehydration_damage_per_second);
+    out.survival.fire_health_damage_per_second = getRateCompat(config,
+                                                               "world.survival.fire_health_damage_per_second",
+                                                               "world.survival.fire_health_damage_per_tick",
+                                                               out.survival.fire_health_damage_per_second);
+    out.survival.warmth_recovery_per_second = getRateCompat(config,
+                                                            "world.survival.warmth_recovery_per_second",
+                                                            "world.survival.warmth_recovery_per_tick",
+                                                            out.survival.warmth_recovery_per_second);
+    out.survival.nest_recovery_per_second = getRateCompat(config,
+                                                          "world.survival.nest_recovery_per_second",
+                                                          "world.survival.nest_recovery_per_tick",
+                                                          out.survival.nest_recovery_per_second);
     out.survival.injured_threshold_ratio = config.getOr<float>("world.survival.injured_threshold_ratio", out.survival.injured_threshold_ratio);
 
     out.tree.enabled = config.getOr<bool>("world.tree.enabled", out.tree.enabled);
@@ -164,8 +189,14 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.intervention.enabled = config.getOr<bool>("world.intervention.enabled", out.intervention.enabled);
     out.intervention.initial_budget = config.getOr<float>("world.intervention.initial_budget", out.intervention.initial_budget);
     out.intervention.max_budget = config.getOr<float>("world.intervention.max_budget", out.intervention.max_budget);
-    out.intervention.recharge_per_tick = config.getOr<float>("world.intervention.recharge_per_tick", out.intervention.recharge_per_tick);
-    out.intervention.stress_decay_per_tick = config.getOr<float>("world.intervention.stress_decay_per_tick", out.intervention.stress_decay_per_tick);
+    out.intervention.recharge_per_second = getRateCompat(config,
+                                                         "world.intervention.recharge_per_second",
+                                                         "world.intervention.recharge_per_tick",
+                                                         out.intervention.recharge_per_second);
+    out.intervention.stress_decay_per_second = getRateCompat(config,
+                                                             "world.intervention.stress_decay_per_second",
+                                                             "world.intervention.stress_decay_per_tick",
+                                                             out.intervention.stress_decay_per_second);
     out.intervention.max_stress = config.getOr<float>("world.intervention.max_stress", out.intervention.max_stress);
     out.intervention.cooldown_seconds = getDurationCompat(config,
                                                           "world.intervention.cooldown_seconds",
@@ -221,7 +252,14 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist.count = config.getOr<std::size_t>("population.protagonist.count", out.protagonist.count);
     out.protagonist.hidden_dim = config.getOr<std::size_t>("population.protagonist.hidden_dim", out.protagonist.hidden_dim);
     out.protagonist.memory_cells = config.getOr<std::size_t>("population.protagonist.memory_cells", out.protagonist.memory_cells);
+    out.protagonist.memory_slots = config.getOr<std::size_t>("population.protagonist.memory_slots", out.protagonist.memory_slots);
+    out.protagonist.read_heads = config.getOr<std::size_t>("population.protagonist.read_heads", out.protagonist.read_heads);
     out.protagonist.action_dim = config.getOr<std::size_t>("population.protagonist.action_dim", out.protagonist.action_dim);
+    out.protagonist.memory_cognition_enabled = config.getOr<bool>("population.protagonist.memory_cognition_enabled", out.protagonist.memory_cognition_enabled);
+    out.protagonist.spatial_memory_writes_enabled = config.getOr<bool>("population.protagonist.spatial_memory_writes_enabled", out.protagonist.spatial_memory_writes_enabled);
+    out.protagonist.episodic_memory_writes_enabled = config.getOr<bool>("population.protagonist.episodic_memory_writes_enabled", out.protagonist.episodic_memory_writes_enabled);
+    out.protagonist.social_memory_writes_enabled = config.getOr<bool>("population.protagonist.social_memory_writes_enabled", out.protagonist.social_memory_writes_enabled);
+    out.protagonist.goal_manager_enabled = config.getOr<bool>("population.protagonist.goal_manager_enabled", out.protagonist.goal_manager_enabled);
 
     out.background.forager_count = config.getOr<std::size_t>("population.background.forager_count", out.background.forager_count);
     out.background.predator_count = config.getOr<std::size_t>("population.background.predator_count", out.background.predator_count);

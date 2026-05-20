@@ -2,6 +2,8 @@
 
 #include "brain/ProtagonistBrain.h"
 #include "core/agent/Agent.h"
+#include "core/events/EventBus.h"
+#include "core/events/EventPayloads.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/object/ObjectLayer.h"
@@ -81,8 +83,14 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
     concrete->setEnergy(concrete->energy() - energy_cost_ * dt);
 
     if (best_target != nullptr) {
-        best_target->setEnergy(best_target->energy() - damage * dt);
-        concrete->noteDamageDealt(damage * dt);
+        const float actual_damage = damage * dt;
+        best_target->setEnergy(best_target->energy() - actual_damage);
+        world.eventBus().publish(events::Event{
+            events::EventType::AgentAttacked,
+            events::AgentAttacked{agent.id(), best_target->id(), actual_damage},
+            world.currentTick(),
+            world.currentTimeSeconds()});
+        concrete->noteDamageDealt(actual_damage);
         if (best_target->energy() <= 0.0f) {
             best_target->kill(carried->type == ObjectType::Spear ? "thrown_spear" : "thrown_stone");
             concrete->noteKill();

@@ -3,6 +3,7 @@
 #include "core/agent/Agent.h"
 #include "core/brain/fixed/FixedTopologyBrain.h"
 #include "core/brain/fixed/FixedTopologyGenome.h"
+#include "core/capability/EatCapability.h"
 #include "core/perception/FoodScentPerception.h"
 #include "core/perception/SignalPerception.h"
 #include "core/capability/EmitSignalCapability.h"
@@ -17,6 +18,7 @@
 
 #include <array>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace {
@@ -142,6 +144,39 @@ TEST(Comm, SignalEmissionCostScalesWithIntensity) {
     EXPECT_LT(low_agent->energy(), low_before);
     EXPECT_LT(high_agent->energy(), high_before);
     EXPECT_LT(high_agent->energy(), low_agent->energy());
+}
+
+TEST(Comm, EatCapabilityConsumesResourcesGraduallyWithDt) {
+    neuro::World2D world(neuro::WorldId{5}, {100.0f, 100.0f});
+    world.addLayer(std::make_unique<neuro::ResourceLayer>(1, 10.0f, 10.0, 1));
+
+    auto* resources = world.getLayer<neuro::ResourceLayer>();
+    ASSERT_NE(resources, nullptr);
+
+    auto& mutable_resources = const_cast<std::vector<neuro::ResourceLayer::Resource>&>(resources->resources());
+    ASSERT_EQ(mutable_resources.size(), 1u);
+    mutable_resources[0].position = {50.0f, 50.0f};
+    mutable_resources[0].amount = 10.0f;
+    mutable_resources[0].max_amount = 10.0f;
+    mutable_resources[0].available = true;
+    mutable_resources[0].respawn_seconds_remaining = 0.0;
+
+    auto agent = makeAgent(neuro::AgentId{51}, neuro::GenomeId{51}, {50.0f, 50.0f});
+    neuro::EatCapability capability(3.0f, 4.0f);
+
+    const float initial_energy = agent->energy();
+    capability.apply(*agent, world, std::span<const float>{}, 0.25f);
+    EXPECT_NEAR(agent->energy(), initial_energy + 1.0f, 1e-6f);
+    EXPECT_NEAR(resources->resources()[0].amount, 9.0f, 1e-6f);
+    EXPECT_TRUE(resources->resources()[0].available);
+
+    capability.apply(*agent, world, std::span<const float>{}, 2.0f);
+    EXPECT_NEAR(resources->resources()[0].amount, 1.0f, 1e-6f);
+    EXPECT_TRUE(resources->resources()[0].available);
+
+    capability.apply(*agent, world, std::span<const float>{}, 1.0f);
+    EXPECT_NEAR(resources->resources()[0].amount, 0.0f, 1e-6f);
+    EXPECT_FALSE(resources->resources()[0].available);
 }
 
 TEST(Comm, SignalSamplingWeightsNearbyCellsMoreStrongly) {
