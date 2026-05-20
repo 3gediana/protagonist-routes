@@ -30,6 +30,16 @@ struct TreeResource {
     SimTimeSeconds regrow_seconds_remaining;
 };
 
+// Result of a single chop tick. Lets ChopTreeCapability emit structured
+// ChopStarted / ChopCompleted events without re-doing the spatial query.
+struct ChopHitResult {
+    std::size_t tree_id = 0;       // 0 means: no tree was in range
+    Vec2 tree_pos{};
+    float remaining_integrity = 0.0f;
+    bool felled = false;           // true on the tick the tree drops
+    std::size_t wood_yield = 0;
+};
+
 class TreeLayer final : public IWorldLayer {
 public:
     static constexpr const char* kName = "protagonist_trees";
@@ -50,7 +60,11 @@ public:
     const std::vector<TreeResource>& trees() const { return trees_; }
     std::optional<TreeResource> nearestTree(Vec2 position) const;
     bool inChopRange(Vec2 position, float chop_radius) const;
-    bool chopNearest(Vec2 position, float chop_radius, float damage, IWorld& world);
+    // Apply one tick worth of chop damage to the closest tree in range.
+    // Returns ChopHitResult{tree_id=0} if no tree was in range; otherwise
+    // returns the affected tree's id, its (post-damage) integrity, and a
+    // `felled` flag set to true on exactly the tick the tree drops.
+    ChopHitResult chopNearest(Vec2 position, float chop_radius, float damage, IWorld& world);
     std::size_t availableTreeCount() const;
     std::size_t harvestedCount() const { return harvested_count_; }
 

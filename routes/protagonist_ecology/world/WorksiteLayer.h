@@ -1,12 +1,15 @@
 #pragma once
 
 #include "core/interfaces/IWorldLayer.h"
+#include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <random>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace neuro {
@@ -30,6 +33,18 @@ struct Worksite {
     std::size_t required_sticks;
     std::size_t required_stones;
     float build_progress;
+
+    // Continuous-time bookkeeping (CT-2/CT-3).
+    // build_started_at_seconds: timestamp of the first tick where any agent
+    //   contributed to this site's build progress. < 0 means: not started yet.
+    // per_agent_contribution_seconds: time-weighted contribution of each agent
+    //   that stood inside the site while build_progress advanced. Used by the
+    //   credit-assignment ledger (P3) and by the BuildCompleted contributor list.
+    // active_builders: agents currently inside the site (used to detect
+    //   per-agent BuildStarted on first entry).
+    double build_started_at_seconds = -1.0;
+    std::unordered_map<AgentId, float> per_agent_contribution_seconds;
+    std::unordered_set<AgentId> active_builders;
 };
 
 class WorksiteLayer final : public IWorldLayer {
@@ -59,7 +74,7 @@ public:
 
 private:
     void seedSites(Vec2 world_size);
-    void absorbCarriedMaterials();
+    void absorbCarriedMaterials(IWorld& world);
     void absorbNearbyMaterials();
     void progressConstruction(IWorld& world, float dt);
 

@@ -362,6 +362,66 @@ void TraceRecorder::writeEvent(const events::Event& event) {
                          << ",\"user\":\"" << jsonEscape(payload.user) << "\"";
             break;
         }
+        case events::EventType::ChopStarted: {
+            const auto& payload = event.payloadAs<events::ChopStarted>();
+            event_trace_ << ",\"chopper\":" << payload.chopper.value
+                         << ",\"tree_id\":" << payload.tree_id
+                         << ",\"x\":" << payload.tree_pos.x
+                         << ",\"y\":" << payload.tree_pos.y
+                         << ",\"started_at_seconds\":" << payload.started_at_seconds;
+            break;
+        }
+        case events::EventType::ChopCompleted: {
+            const auto& payload = event.payloadAs<events::ChopCompleted>();
+            event_trace_ << ",\"chopper\":" << payload.chopper.value
+                         << ",\"tree_id\":" << payload.tree_id
+                         << ",\"x\":" << payload.tree_pos.x
+                         << ",\"y\":" << payload.tree_pos.y
+                         << ",\"started_at_seconds\":" << payload.started_at_seconds
+                         << ",\"duration_seconds\":" << payload.duration_seconds
+                         << ",\"wood_yield\":" << payload.wood_yield;
+            break;
+        }
+        case events::EventType::ChopAbandoned: {
+            const auto& payload = event.payloadAs<events::ChopAbandoned>();
+            event_trace_ << ",\"chopper\":" << payload.chopper.value
+                         << ",\"tree_id\":" << payload.tree_id
+                         << ",\"started_at_seconds\":" << payload.started_at_seconds
+                         << ",\"duration_seconds\":" << payload.duration_seconds
+                         << ",\"remaining_integrity\":" << payload.remaining_integrity;
+            break;
+        }
+        case events::EventType::BuildStarted: {
+            const auto& payload = event.payloadAs<events::BuildStarted>();
+            event_trace_ << ",\"builder\":" << payload.builder.value
+                         << ",\"worksite_id\":" << payload.worksite_id
+                         << ",\"x\":" << payload.site_pos.x
+                         << ",\"y\":" << payload.site_pos.y
+                         << ",\"started_at_seconds\":" << payload.started_at_seconds;
+            break;
+        }
+        case events::EventType::BuildCompleted: {
+            const auto& payload = event.payloadAs<events::BuildCompleted>();
+            event_trace_ << ",\"worksite_id\":" << payload.worksite_id
+                         << ",\"x\":" << payload.site_pos.x
+                         << ",\"y\":" << payload.site_pos.y
+                         << ",\"started_at_seconds\":" << payload.started_at_seconds
+                         << ",\"duration_seconds\":" << payload.duration_seconds
+                         << ",\"contributors\":[";
+            for (std::size_t i = 0; i < payload.contributors.size(); ++i) {
+                if (i != 0) event_trace_ << ',';
+                event_trace_ << payload.contributors[i].value;
+            }
+            event_trace_ << ']';
+            break;
+        }
+        case events::EventType::WorksiteMaterialDeposited: {
+            const auto& payload = event.payloadAs<events::WorksiteMaterialDeposited>();
+            event_trace_ << ",\"depositor\":" << payload.depositor.value
+                         << ",\"worksite_id\":" << payload.worksite_id
+                         << ",\"material_type\":" << static_cast<int>(payload.material_type);
+            break;
+        }
         default:
             break;
     }

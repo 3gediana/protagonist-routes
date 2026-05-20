@@ -73,6 +73,17 @@ enum class EventType : std::uint16_t {
     UniverseForked,
     UniverseLoaded,
 
+    // ====================== protagonist route (CT-2/CT-3) =================
+    // Structured continuous-action lifecycle events. Each *Started / *Completed
+    // pair lets memory and credit-assignment layers reconstruct who did what
+    // for how long, instead of treating each tick as an isolated action.
+    ChopStarted,                // agent began chopping a tree
+    ChopCompleted,              // tree fell (with chopper attribution + duration)
+    ChopAbandoned,              // agent stopped chopping before tree fell
+    BuildStarted,               // agent began contributing build progress to a worksite
+    BuildCompleted,             // worksite finished (with contributor list + duration)
+    WorksiteMaterialDeposited,  // agent deposited a stick/stone at a worksite
+
     // ====================== sentinel ======================================
     Count,                      // keep last
 };

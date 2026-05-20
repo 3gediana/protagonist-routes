@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 最后更新 | 2026-05-20 |
-| 当前阶段 | Phase 1 Trace/Resume 完整收口（主角+背景+RNG+speciation+generation+1 resume） + 连续时间世界 CT-1 完成 + CT-2A 首批持续动作语义落地 + 记忆系统总设计与 Phase A 接线计划完成 + mixed compute 第一轮工程化（CPU agent decision 并行已接通，protagonist dense GPU backend 已落代码） |
+| 最后更新 | 2026-05-21 |
+| 当前阶段 | Phase 1 Trace/Resume 完整收口 + 连续时间世界 CT-1/CT-2A 完成 + **Stage 0 (CT-2B/CT-3) 结构化动作事件完成** + 记忆系统总设计与 Phase A 接线计划完成 + mixed compute 第一轮工程化 |
 | 当前主线 | Memory Phase A 仍是路线主线，但 compute 承接底座已开始落地：CPU 已从 episode 级推进到 per-world agent decision 级；如继续 GPU 线，下一步先补齐本机完整 CUDA toolkit / nvcc，再验证 protagonist dense inference 真正上卡 |
 | 最新用户新增问题 | 用户已明确：记忆系统不能单独做成“大头娃娃”，必须和主行为控制脑同步扩容；优先先把主角记忆系统设计完整、系统化，让 agent 真能记住世界、事件、同伴、目标与因果链，再规划 protagonist 参数上 GPU，同时把 CPU 并行利用率吃满 |
 
@@ -135,7 +135,35 @@
   - `world_trace.csv` 增加 `time_seconds`
 - 已完成重新构建与 protagonist smoke 验证
 
-### 7. mixed compute 第一轮工程化
+### 7. Stage 0 · CT-2B/CT-3 结构化动作事件（2026-05-21）
+
+新对话规划下的 Stage 0 收口。目的：让 chop/build 等持续动作以**结构化 started/completed 事件对**的形式被记录，Memory Phase A 才有真正可消费的因果素材。
+
+**已落地**：
+
+- core EventType 新增 6 个 protagonist route 事件：`ChopStarted` / `ChopCompleted` / `ChopAbandoned` / `BuildStarted` / `BuildCompleted` / `WorksiteMaterialDeposited`，含 EventType.h + EventType.cpp + EventPayloads.h
+- `TreeLayer::chopNearest` 改返回 `ChopHitResult{tree_id, tree_pos, remaining_integrity, felled, wood_yield}`，让 capability 不必二次查询就能获得归因
+- `ChopTreeCapability` 改成有状态的 per-agent session 状态机：start / continue-same-tree / target-switch (abandon-old + start-new) / abandon (output drop / out-of-range / now-carrying) / complete；每个 agent 自己一份实例，串行 apply 无需锁
+- `WorksiteLayer` 增加三个 CT 字段：`build_started_at_seconds` / `per_agent_contribution_seconds` (map) / `active_builders` (set)；`progressConstruction` 现在做：首次进入发 BuildStarted、每 dt 累积 per-agent 贡献时间、完成时按贡献时长降序生成 contributors 列表发 BuildCompleted
+- `absorbCarriedMaterials` 每次实际入库发 `WorksiteMaterialDeposited`，带 depositor + material_type
+- `TraceRecorder` 已为全部 6 个事件接好 payload 序列化，`event_trace.jsonl` 可看到完整字段（如 `{"chopper":8,"tree_id":5,"started_at_seconds":2.5,"duration_seconds":2.5,"wood_yield":3}`）
+- Reward 时间积分口径审计完成：survival/proximity/social 等已是 `* dt_seconds`，combat/death/signal/joint_hunt 是 per-event one-shot，food 通过连续 EatCapability 的 plant/meatFoodThisTick 自然按 dt 累积。**没有发现任何 per_tick artifact**
+
+**已验证**：
+
+- Release 构建通过（`neural-eco-protagonist` + `test_core`）
+- 73/73 单测通过
+- protagonist smoke 跑通，event_trace.jsonl 显示 ChopStarted=8 / ChopCompleted=6 / ChopAbandoned=2 完整闭合，payload 字段齐全
+
+**意义**：
+
+- 之前的 chop/build 只能体现为离散计数（"chop_attempts/successes 加一"）。现在每一个完整 chop 都是一个带起止时间 + 时长 + 树木归因的结构化事件，Memory Phase A 的 EpisodicMemoryBank 可以直接 push 这种事件
+- Worksite 的 `per_agent_contribution_seconds` 是 P3 ContributionLedger 的现成数据源——以前是"在场就分"，现在是"按陪伴时长分"，路过者天然吃不到分
+- BuildCompleted 已经按贡献时长降序排好 contributors 列表，下游消费 0 成本
+
+**已主动延后**：CT-Step 4（EventQueue / DueAction）当前没有真实消费者，决定推到 Stage 1（Memory Phase A 的 goal expiry / episodic decay 会真正需要它），避免过度工程
+
+### 8. mixed compute 第一轮工程化
 
 - 已把 `Agent::step()` 拆成 `decide / publishDecisionEvent / applyCapabilities` 三相，保证重计算与世界写入分离
 - 已给 `AgentLayer` 新增持久化 decision executor，支持 route 通过 `compute.agent_decision_threads` 做 per-world agent decision 并行

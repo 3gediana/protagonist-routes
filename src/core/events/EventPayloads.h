@@ -12,7 +12,10 @@
 #include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace neuro::events {
 
@@ -71,5 +74,16 @@ struct InterventionTriggered { std::string kind; std::string user; };
 // ---- F-FORK ----
 struct UniverseForked     { WorldId source; WorldId fork; };
 struct UniverseLoaded     { WorldId id; std::string snapshot_path; };
+
+// ---- protagonist route (CT-2/CT-3 structured action events) ----
+// Continuous-time semantics: a chop / build is not a single tick action but a
+// sustained interaction with `started_at_seconds` -> `completed_at_seconds`.
+// Memory + ledger layers consume these to reconstruct causal chains.
+struct ChopStarted        { AgentId chopper; std::size_t tree_id; Vec2 tree_pos; double started_at_seconds; };
+struct ChopCompleted      { AgentId chopper; std::size_t tree_id; Vec2 tree_pos; double started_at_seconds; double duration_seconds; std::size_t wood_yield; };
+struct ChopAbandoned      { AgentId chopper; std::size_t tree_id; double started_at_seconds; double duration_seconds; float remaining_integrity; };
+struct BuildStarted       { AgentId builder; std::size_t worksite_id; Vec2 site_pos; double started_at_seconds; };
+struct BuildCompleted     { std::size_t worksite_id; Vec2 site_pos; std::vector<AgentId> contributors; double started_at_seconds; double duration_seconds; };
+struct WorksiteMaterialDeposited { AgentId depositor; std::size_t worksite_id; std::uint8_t material_type; double time_seconds; };
 
 }  // namespace neuro::events

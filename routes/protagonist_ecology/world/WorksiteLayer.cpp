@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace neuro::routes::protagonist {
 
@@ -48,7 +49,7 @@ void WorksiteLayer::onAttach(IWorld& world) {
 }
 
 void WorksiteLayer::tick(IWorld& world, float dt) {
-    absorbCarriedMaterials();
+    absorbCarriedMaterials(world);
     absorbNearbyMaterials();
     progressConstruction(world, dt);
 }
@@ -150,10 +151,13 @@ void WorksiteLayer::seedSites(Vec2 world_size) {
     }
 }
 
-void WorksiteLayer::absorbCarriedMaterials() {
+void WorksiteLayer::absorbCarriedMaterials(IWorld& world) {
     if (sites_.empty() || objects_ == nullptr || agents_ == nullptr) {
         return;
     }
+
+    const double now = world.currentTimeSeconds();
+    const Tick now_tick = world.currentTick();
 
     for (auto& site : sites_) {
         if (!site.active || site.completed) {
@@ -175,12 +179,15 @@ void WorksiteLayer::absorbCarriedMaterials() {
             }
 
             bool consumed = false;
+            std::uint8_t material_type = 0;
             if (object->type == ObjectType::Stick && site.stored_sticks < site.required_sticks) {
                 ++site.stored_sticks;
                 consumed = true;
+                material_type = static_cast<std::uint8_t>(ObjectType::Stick);
             } else if (object->type == ObjectType::Stone && site.stored_stones < site.required_stones) {
                 ++site.stored_stones;
                 consumed = true;
+                material_type = static_cast<std::uint8_t>(ObjectType::Stone);
             }
             if (!consumed) {
                 continue;
@@ -189,7 +196,14 @@ void WorksiteLayer::absorbCarriedMaterials() {
             object->velocity = kZeroVec2;
             object->pos = site.position;
             object->carried = true;
+            const AgentId depositor = agent->id();
             agent->setCarriedObject(0);
+
+            world.eventBus().publish(events::Event{
+                events::EventType::WorksiteMaterialDeposited,
+                events::WorksiteMaterialDeposited{depositor, site.id, material_type, now},
+                now_tick,
+                now});
         }
     }
 }
@@ -233,6 +247,9 @@ void WorksiteLayer::progressConstruction(IWorld& world, float dt) {
         return;
     }
 
+    const double now = world.currentTimeSeconds();
+    const Tick now_tick = world.currentTick();
+
     for (auto& site : sites_) {
         if (!site.active || site.completed) {
             continue;
@@ -241,24 +258,88 @@ void WorksiteLayer::progressConstruction(IWorld& world, float dt) {
             continue;
         }
 
-        std::size_t nearby_workers = 0;
+        // Snapshot present-this-tick set and emit BuildStarted on first entry
+        // for any new builder. This is per-agent (not per-site) so memory and
+        // ledger know who joined when.
+        std::unordered_set<AgentId> present_now;
+        present_now.reserve(8);
         for (const auto* agent : agent_layer->agents()) {
             if (agent == nullptr || !agent->alive()) {
                 continue;
             }
-            if (Vec2::distanceSquared(agent->position(), site.position) <= site.radius * site.radius) {
-                ++nearby_workers;
+            if (Vec2::distanceSquared(agent->position(), site.position) > site.radius * site.radius) {
+                continue;
+            }
+            present_now.insert(agent->id());
+            if (site.active_builders.find(agent->id()) == site.active_builders.end()) {
+                site.active_builders.insert(agent->id());
+                world.eventBus().publish(events::Event{
+                    events::EventType::BuildStarted,
+                    events::BuildStarted{agent->id(), site.id, site.position, now},
+                    now_tick,
+                    now});
+            }
+        }
+        // Drop builders who left the radius. We do not emit a "BuildLeft"
+        // event right now (their accumulated time stays in the ledger map),
+        // but if needed later it can be added here.
+        for (auto it = site.active_builders.begin(); it != site.active_builders.end();) {
+            if (present_now.find(*it) == present_now.end()) {
+                it = site.active_builders.erase(it);
+            } else {
+                ++it;
             }
         }
 
+        const std::size_t nearby_workers = present_now.size();
         if (nearby_workers == 0) {
             continue;
+        }
+
+        // Per-agent contribution accumulation: each present agent gets dt
+        // seconds of credit on this site. Used by BuildCompleted contributors
+        // payload and by the credit-assignment ledger (P3).
+        for (AgentId id : present_now) {
+            site.per_agent_contribution_seconds[id] += dt;
+        }
+
+        if (site.build_started_at_seconds < 0.0) {
+            site.build_started_at_seconds = now;
         }
 
         site.build_progress += static_cast<float>(nearby_workers) * assembly_rate_ * dt;
         if (site.build_progress >= 1.0f) {
             site.build_progress = 1.0f;
             site.completed = true;
+
+            // Build the contributor list ordered by contribution time desc
+            // so consumers (memory / ledger) see the dominant builders first.
+            std::vector<std::pair<AgentId, float>> sorted;
+            sorted.reserve(site.per_agent_contribution_seconds.size());
+            for (const auto& [aid, secs] : site.per_agent_contribution_seconds) {
+                sorted.emplace_back(aid, secs);
+            }
+            std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+                return a.second > b.second;
+            });
+            std::vector<AgentId> contributors;
+            contributors.reserve(sorted.size());
+            for (const auto& [aid, _] : sorted) {
+                contributors.push_back(aid);
+            }
+            const double duration = site.build_started_at_seconds >= 0.0
+                                        ? now - site.build_started_at_seconds
+                                        : 0.0;
+            world.eventBus().publish(events::Event{
+                events::EventType::BuildCompleted,
+                events::BuildCompleted{
+                    site.id,
+                    site.position,
+                    std::move(contributors),
+                    site.build_started_at_seconds,
+                    duration},
+                now_tick,
+                now});
         }
     }
 

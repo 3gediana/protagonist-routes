@@ -85,7 +85,7 @@ bool TreeLayer::inChopRange(Vec2 position, float chop_radius) const {
     return false;
 }
 
-bool TreeLayer::chopNearest(Vec2 position, float chop_radius, float damage, IWorld& world) {
+ChopHitResult TreeLayer::chopNearest(Vec2 position, float chop_radius, float damage, IWorld& world) {
     (void)world;
     TreeResource* best = nullptr;
     float best_dist_sq = 0.0f;
@@ -104,17 +104,25 @@ bool TreeLayer::chopNearest(Vec2 position, float chop_radius, float damage, IWor
         }
     }
     if (best == nullptr) {
-        return false;
+        return ChopHitResult{};
     }
 
     best->integrity = std::max(0.0f, best->integrity - std::max(0.0f, damage));
+
+    ChopHitResult result;
+    result.tree_id = best->id;
+    result.tree_pos = best->position;
+    result.remaining_integrity = best->integrity;
+    result.wood_yield = best->wood_yield;
+
     if (best->integrity > 0.0f) {
-        return true;
+        return result;
     }
 
     best->available = false;
     best->regrow_seconds_remaining = regrow_seconds_;
     ++harvested_count_;
+    result.felled = true;
 
     if (objects_ != nullptr) {
         std::uniform_real_distribution<float> angle_dist(0.0f, 6.28318530718f);
@@ -135,7 +143,7 @@ bool TreeLayer::chopNearest(Vec2 position, float chop_radius, float damage, IWor
             });
         }
     }
-    return true;
+    return result;
 }
 
 std::size_t TreeLayer::availableTreeCount() const {

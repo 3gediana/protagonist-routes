@@ -48,6 +48,13 @@ const char* toString(EventType type) {
         case EventType::UniverseForked:         return "UniverseForked";
         case EventType::UniverseLoaded:         return "UniverseLoaded";
 
+        case EventType::ChopStarted:               return "ChopStarted";
+        case EventType::ChopCompleted:             return "ChopCompleted";
+        case EventType::ChopAbandoned:             return "ChopAbandoned";
+        case EventType::BuildStarted:              return "BuildStarted";
+        case EventType::BuildCompleted:            return "BuildCompleted";
+        case EventType::WorksiteMaterialDeposited: return "WorksiteMaterialDeposited";
+
         case EventType::Count:                  return "Count";
     }
     return "Unknown";
