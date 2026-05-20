@@ -23,6 +23,9 @@
 #include "core/observer/ModuleMetricsObserver.h"
 #include "core/observer/HeatmapObserver.h"
 #include "core/observer/AdvancedStatsObserver.h"
+#include "core/observer/EmergenceAuditor.h"
+#include "core/observer/ComprehensiveMetrics.h"
+#include "core/reward/SignalBackpropReward.h"
 #include "core/snapshot/SnapshotIO.h"
 #include "runtime/headless/EvaluationPool.h"
 #include "core/perception/NearestFoodPerception.h"
@@ -33,17 +36,22 @@
 #include "core/perception/InfectionPerception.h"
 #include "core/perception/SignalPerception.h"
 #include "core/perception/FoodScentPerception.h"
+#include "core/perception/NearbyObjectPerception.h"
+#include "core/capability/PickUpCapability.h"
+#include "core/capability/DropCapability.h"
 #include "core/reward/FoodReward.h"
 #include "core/reward/IntrinsicReward.h"
 #include "core/reward/SurvivalReward.h"
 #include "core/reward/CombatReward.h"
 #include "core/reward/CoopReward.h"
 #include "core/reward/NoveltyReward.h"
+#include "core/reward/HabitatReward.h"
 #include "core/capability/AttackCapability.h"
 #include "core/capability/HebbianLearning.h"
 #include "core/capability/EmitSignalCapability.h"
 #include "core/capability/PredatorHuntCapability.h"
 #include "core/capability/FleeCapability.h"
+#include "core/capability/MateCapability.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -53,6 +61,7 @@
 #include "core/world/layers/DiseaseLayer.h"
 #include "core/world/layers/signal/SignalLayer.h"
 #include "core/world/layers/HeavyResourceLayer.h"
+#include "core/world/layers/object/ObjectLayer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -87,6 +96,7 @@ struct RuntimeParams {
     std::size_t resource_count;
     float resource_amount;
     std::size_t resource_respawn_ticks;
+    bool terrain_resource_adjustment_enabled;
     float initial_energy;
     float base_metabolism;
     float decision_cost;
@@ -117,7 +127,16 @@ struct RuntimeParams {
     float decision_interval_max;
     std::size_t eval_threads;
     bool terrain_enabled;
+    bool terrain_perception_enabled;
     TerrainParams terrain_params;
+    bool terrain_curriculum_enabled;
+    std::size_t terrain_curriculum_ramp_end_gen;
+    float terrain_curriculum_start_height_scale_factor;
+    float terrain_curriculum_start_slope_resistance_factor;
+    float terrain_curriculum_start_cave_density_factor;
+    float terrain_curriculum_start_perlin_frequency_factor;
+    double habitat_reward_weight;
+    double activity_reward_weight;
     bool combat_enabled;
     float attack_range;
     float damage_factor;
@@ -149,7 +168,10 @@ struct RuntimeParams {
     float signal_diffusion_rate;
     std::size_t signal_grid_resolution;
     float signal_perception_radius;
+    bool signal_terrain_modulation_enabled;
     float signal_emit_cost;
+    float signal_backprop_factor;
+    std::size_t signal_backprop_window;
     bool coop_enabled;
     std::size_t heavy_resource_count;
     float heavy_resource_amount;
@@ -171,6 +193,15 @@ struct RuntimeParams {
     float pred_flee_radius;
     float pred_flee_boost;
     float pred_flee_cost;
+    bool tools_enabled;
+    std::size_t tools_object_count;
+    float tools_pick_radius;
+    float tools_pick_cost;
+    float tools_drop_cost;
+    float tools_perception_radius;
+    bool mate_enabled;
+    float mate_radius;
+    float mate_energy_cost;
     bool curriculum_enabled;
     std::size_t curriculum_stage1_gen;
     std::size_t curriculum_stage2_gen;
@@ -229,6 +260,7 @@ RuntimeParams loadParams(const config::Config& config) {
     params.resource_count = config.getOr<std::size_t>("world.resources.count", 40);
     params.resource_amount = config.getOr<float>("world.resources.amount", 20.0f);
     params.resource_respawn_ticks = config.getOr<std::size_t>("world.resources.respawn_ticks", 300);
+    params.terrain_resource_adjustment_enabled = config.getOr<bool>("world.resources.terrain_adjustment_enabled", true);
     params.initial_energy = config.getOr<float>("energy.initial", 100.0f);
     params.base_metabolism = config.getOr<float>("energy.base_metabolism", 0.001f);
     params.decision_cost = config.getOr<float>("energy.decision_cost", 0.005f);
@@ -259,6 +291,7 @@ RuntimeParams loadParams(const config::Config& config) {
     params.decision_interval_max = config.getOr<float>("brain.decision_interval_max", 30.0f);
     params.eval_threads = config.getOr<std::size_t>("runtime.eval_threads", 0);
     params.terrain_enabled = config.getOr<bool>("world.terrain.enabled", false);
+    params.terrain_perception_enabled = config.getOr<bool>("world.terrain.perception_enabled", true);
     params.terrain_params.height_scale = config.getOr<float>("world.terrain.height_scale", 30.0f);
     params.terrain_params.slope_resistance = config.getOr<float>("world.terrain.slope_resistance", 0.6f);
     params.terrain_params.cave_density = config.getOr<float>("world.terrain.cave_density", 0.05f);
@@ -268,7 +301,15 @@ RuntimeParams loadParams(const config::Config& config) {
     params.terrain_params.perlin_frequency = config.getOr<float>("world.terrain.perlin_frequency", 4.0f);
     params.terrain_params.perlin_persistence = config.getOr<float>("world.terrain.perlin_persistence", 0.5f);
     params.terrain_params.perlin_octaves = config.getOr<int>("world.terrain.perlin_octaves", 4);
-    if (params.terrain_enabled) {
+    params.terrain_curriculum_enabled = config.getOr<bool>("world.terrain.curriculum.enabled", false);
+    params.terrain_curriculum_ramp_end_gen = config.getOr<std::size_t>("world.terrain.curriculum.ramp_end_gen", 0);
+    params.terrain_curriculum_start_height_scale_factor = config.getOr<float>("world.terrain.curriculum.start_height_scale_factor", 0.5f);
+    params.terrain_curriculum_start_slope_resistance_factor = config.getOr<float>("world.terrain.curriculum.start_slope_resistance_factor", 0.5f);
+    params.terrain_curriculum_start_cave_density_factor = config.getOr<float>("world.terrain.curriculum.start_cave_density_factor", 0.5f);
+    params.terrain_curriculum_start_perlin_frequency_factor = config.getOr<float>("world.terrain.curriculum.start_perlin_frequency_factor", 0.75f);
+    params.habitat_reward_weight = config.getOr<double>("reward.habitat_weight", 0.3);
+    params.activity_reward_weight = config.getOr<double>("reward.activity_weight", 0.2);
+    if (params.terrain_enabled && params.terrain_perception_enabled) {
         params.input_dim += TerrainPerception::kDim;
     }
     params.combat_enabled = config.getOr<bool>("combat.enabled", false);
@@ -314,13 +355,16 @@ RuntimeParams loadParams(const config::Config& config) {
     params.signal_diffusion_rate = config.getOr<float>("world.signal.diffusion_rate", 0.05f);
     params.signal_grid_resolution = config.getOr<std::size_t>("world.signal.grid_resolution", 32);
     params.signal_perception_radius = config.getOr<float>("world.signal.perception_radius", 15.0f);
+    params.signal_terrain_modulation_enabled = config.getOr<bool>("world.signal.terrain_modulation_enabled", true);
     params.signal_emit_cost = config.getOr<float>("world.signal.emit_cost", 0.05f);
+    params.signal_backprop_factor = config.getOr<float>("world.signal.backprop_factor", 0.3f);
+    params.signal_backprop_window = config.getOr<std::size_t>("world.signal.backprop_window", 20);
     if (params.signal_enabled) {
         // Replace NearestFoodPerception (3 dims) with FoodScentPerception (2 dims) + SignalPerception
         // FoodScent gives coarse direction; SignalPerception gives precise location via communication
         params.input_dim -= 3;  // remove NearestFoodPerception
         params.input_dim += FoodScentPerception::kDim;  // add coarse scent
-        params.input_dim += params.signal_channels;      // add signal perception
+        params.input_dim += SignalPerception::featureDim(params.signal_channels);      // add signal perception
         params.output_dim += params.signal_channels;
     }
     params.coop_enabled = config.getOr<bool>("world.coop.enabled", false);
@@ -344,9 +388,25 @@ RuntimeParams loadParams(const config::Config& config) {
     params.pred_flee_radius = config.getOr<float>("world.predator.flee_radius", 15.0f);
     params.pred_flee_boost = config.getOr<float>("world.predator.flee_boost", 3.0f);
     params.pred_flee_cost = config.getOr<float>("world.predator.flee_cost", 0.03f);
+    params.tools_enabled = config.getOr<bool>("world.tools.enabled", false);
+    params.tools_object_count = config.getOr<std::size_t>("world.tools.object_count", 10);
+    params.tools_pick_radius = config.getOr<float>("world.tools.pick_radius", 5.0f);
+    params.tools_pick_cost = config.getOr<float>("world.tools.pick_cost", 0.05f);
+    params.tools_drop_cost = config.getOr<float>("world.tools.drop_cost", 0.02f);
+    params.tools_perception_radius = config.getOr<float>("world.tools.perception_radius", 15.0f);
+    params.mate_enabled = config.getOr<bool>("world.mate.enabled", false);
+    params.mate_radius = config.getOr<float>("world.mate.radius", 5.0f);
+    params.mate_energy_cost = config.getOr<float>("world.mate.energy_cost", 2.0f);
+    if (params.tools_enabled) {
+        params.input_dim += NearbyObjectPerception::kDim;
+        params.output_dim += 2;  // pick_up + drop
+    }
     if (params.pred_enabled) {
         params.output_dim += 1;  // hunt output for predators
         params.output_dim += 1;  // flee output for prey
+    }
+    if (params.mate_enabled) {
+        params.output_dim += 1;  // mate output
     }
     params.curriculum_enabled = config.getOr<bool>("evolution.curriculum.enabled", false);
     params.curriculum_stage1_gen = config.getOr<std::size_t>("evolution.curriculum.stage1_gen", 30);
@@ -364,6 +424,49 @@ RuntimeParams loadParams(const config::Config& config) {
         params.output_dim += 2;  // dig + build outputs
     }
     return params;
+}
+
+float terrainCurriculumProgress(const RuntimeParams& params, Generation generation) {
+    if (!params.terrain_curriculum_enabled || params.terrain_curriculum_ramp_end_gen == 0) {
+        return 1.0f;
+    }
+
+    const float ramp_end = static_cast<float>(params.terrain_curriculum_ramp_end_gen);
+    const float gen = static_cast<float>(generation);
+    return std::clamp(gen / ramp_end, 0.0f, 1.0f);
+}
+
+float interpolateTerrainFactor(float start_factor, float progress) {
+    return start_factor + (1.0f - start_factor) * progress;
+}
+
+TerrainParams effectiveTerrainParams(const RuntimeParams& params, Generation generation) {
+    auto terrain_params = params.terrain_params;
+    terrain_params.seed = params.terrain_params.seed + static_cast<std::uint32_t>(generation);
+
+    if (!params.terrain_enabled || !params.terrain_curriculum_enabled) {
+        return terrain_params;
+    }
+
+    const float progress = terrainCurriculumProgress(params, generation);
+    terrain_params.height_scale = std::max(
+        1.0f,
+        params.terrain_params.height_scale
+            * interpolateTerrainFactor(params.terrain_curriculum_start_height_scale_factor, progress));
+    terrain_params.slope_resistance = std::max(
+        0.0f,
+        params.terrain_params.slope_resistance
+            * interpolateTerrainFactor(params.terrain_curriculum_start_slope_resistance_factor, progress));
+    terrain_params.cave_density = std::clamp(
+        params.terrain_params.cave_density
+            * interpolateTerrainFactor(params.terrain_curriculum_start_cave_density_factor, progress),
+        0.0f,
+        1.0f);
+    terrain_params.perlin_frequency = std::max(
+        0.1f,
+        params.terrain_params.perlin_frequency
+            * interpolateTerrainFactor(params.terrain_curriculum_start_perlin_frequency_factor, progress));
+    return terrain_params;
 }
 
 Vec2 randomPosition(const Vec2& world_size, std::mt19937& rng) {
@@ -535,6 +638,14 @@ std::vector<std::unique_ptr<IRewardComponent>> createRewards(const RuntimeParams
         rewards.push_back(std::make_unique<NoveltyReward>(
             params.novelty_weight, archive));
     }
+    if (params.terrain_enabled) {
+        if (params.habitat_reward_weight > 0.0) {
+            rewards.push_back(std::make_unique<HabitatReward>(params.habitat_reward_weight, 50.0f));
+        }
+        if (params.activity_reward_weight > 0.0) {
+            rewards.push_back(std::make_unique<ActivityReward>(params.activity_reward_weight));
+        }
+    }
     return rewards;
 }
 
@@ -547,6 +658,7 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
     const bool stage1 = !curriculum || gen >= params.curriculum_stage1_gen;
     const bool stage2 = !curriculum || gen >= params.curriculum_stage2_gen;
     const bool stage3 = !curriculum || gen >= params.curriculum_stage3_gen;
+    const TerrainParams terrain_params = effectiveTerrainParams(params, generation);
 
     const std::size_t resource_count = stage0 ? params.resource_count * 2 : params.resource_count;
     const float resource_amount = stage0 ? params.resource_amount * 1.5f : params.resource_amount;
@@ -557,11 +669,10 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
         params.resource_respawn_ticks,
         params.random_seed + generation + 1,
         params.dynamic_resources && stage1,
-        params.resource_regen_rate));
+        params.resource_regen_rate,
+        params.terrain_resource_adjustment_enabled));
     world->addLayer(std::make_unique<AgentLayer>(params.death_threshold, params.base_metabolism));
     if (params.terrain_enabled) {
-        auto terrain_params = params.terrain_params;
-        terrain_params.seed = params.terrain_params.seed + static_cast<std::uint32_t>(generation);
         world->addLayer(std::make_unique<TerrainLayer>(params.world_size, terrain_params));
     }
     if (params.day_night_enabled) {
@@ -596,9 +707,24 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
             params.heavy_collect_radius,
             params.random_seed + 200));
     }
+    if (params.tools_enabled) {
+        world->addLayer(std::make_unique<ObjectLayer>(
+            params.world_size,
+            params.tools_object_count));
+    }
     if (params.curriculum_enabled) {
-        const char* stage_name = stage0 ? "greenhouse" : stage1 ? "survival" : stage2 ? "competition" : "ecology";
+        const char* stage_name = stage3 ? "ecology" : stage2 ? "competition" : stage1 ? "survival" : "greenhouse";
         LOG_INFO("Curriculum stage: {} (gen={})", stage_name, gen);
+    }
+    if (params.terrain_enabled && params.terrain_curriculum_enabled) {
+        LOG_INFO(
+            "Terrain curriculum: gen={} progress={:.2f} height_scale={:.2f} slope_resistance={:.2f} cave_density={:.3f} perlin_frequency={:.2f}",
+            gen,
+            terrainCurriculumProgress(params, generation),
+            terrain_params.height_scale,
+            terrain_params.slope_resistance,
+            terrain_params.cave_density,
+            terrain_params.perlin_frequency);
     }
 
     return world;
@@ -627,10 +753,12 @@ void populateWorld(World2D& world,
         }
 
         float decision_interval = 1.0f;
+        bool has_modulatory = false;
         if (params.brain_type == "neat") {
             const auto* neat_genome = dynamic_cast<const NeatGenome*>(genome_ptr.get());
             if (neat_genome != nullptr) {
                 decision_interval = neat_genome->decisionInterval();
+                has_modulatory = neat_genome->hasModulatoryNodes();
             }
         }
 
@@ -645,6 +773,7 @@ void populateWorld(World2D& world,
         if (const auto it = species_lookup.find(genome_ptr->id()); it != species_lookup.end()) {
             agent->setSpeciesId(it->second);
         }
+        if (has_modulatory) agent->setHasModulatory(true);
         agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
         // When signal is enabled, replace direct food perception with coarse scent
         // Literature: "if individuals can directly perceive targets, communication won't evolve" (Rawal & Miikkulainen 2014)
@@ -654,7 +783,7 @@ void populateWorld(World2D& world,
         } else {
             agent->addPerception(std::make_unique<FoodScentPerception>());
         }
-        if (params.terrain_enabled) {
+        if (params.terrain_enabled && params.terrain_perception_enabled) {
             agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
         }
         if (params.day_night_enabled) {
@@ -667,7 +796,10 @@ void populateWorld(World2D& world,
             agent->addPerception(std::make_unique<InfectionPerception>(params.infection_perception_radius));
         }
         if (params.signal_enabled) {
-            agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius));
+            agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius, params.signal_terrain_modulation_enabled));
+        }
+        if (params.tools_enabled) {
+            agent->addPerception(std::make_unique<NearbyObjectPerception>(params.tools_perception_radius));
         }
         agent->addCapability(std::make_unique<MoveCapability>(
             params.max_speed,
@@ -696,6 +828,12 @@ void populateWorld(World2D& world,
             agent->addCapability(std::make_unique<EmitSignalCapability>(
                 params.signal_channels, params.signal_emit_cost));
         }
+        if (params.tools_enabled) {
+            agent->addCapability(std::make_unique<PickUpCapability>(
+                params.tools_pick_radius, params.tools_pick_cost));
+            agent->addCapability(std::make_unique<DropCapability>(
+                params.tools_drop_cost));
+        }
         if (params.pred_enabled) {
             const bool is_pred = (agent_index < static_cast<std::size_t>(
                 static_cast<float>(params.population_size) * params.pred_ratio));
@@ -712,11 +850,17 @@ void populateWorld(World2D& world,
                 params.pred_flee_boost,
                 params.pred_flee_cost));
         }
+        if (params.mate_enabled) {
+            agent->addCapability(std::make_unique<MateCapability>(params.mate_radius, params.mate_energy_cost));
+        }
         if (params.disease_enabled) {
             // Inherit immunity gain rate from genome (evolvable trait)
             const auto* neat_genome = dynamic_cast<const NeatGenome*>(genome_ptr.get());
             if (neat_genome) {
                 agent->setImmunityGainRate(neat_genome->immunityGainRate());
+                agent->setHabitatPreference(neat_genome->habitatPreference());
+                agent->setActivityPeriod(neat_genome->activityPeriod());
+                agent->setDietPreference(neat_genome->dietPreference());
             }
         }
         agent_layer->addAgent(std::move(agent), world);
@@ -728,7 +872,8 @@ void evaluatePopulation(World2D& world,
                         const std::vector<std::unique_ptr<IRewardComponent>>& rewards,
                         const RuntimeParams& params,
                         const std::atomic<bool>& stop_requested,
-                        ModuleMetricsObserver& module_observer) {
+                        ModuleMetricsObserver& module_observer,
+                        SignalBackpropReward* backprop = nullptr) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) {
         throw std::runtime_error("AgentLayer missing from world");
@@ -747,9 +892,20 @@ void evaluatePopulation(World2D& world,
                 continue;
             }
 
+            double reward_before = agent->fitness();
             for (const auto& reward : rewards) {
                 agent->addFitness(reward->weight() * reward->evaluate(*agent, world, params.tick_dt));
             }
+            double reward_delta = agent->fitness() - reward_before;
+
+            if (backprop && reward_delta > 0.0) {
+                backprop->recordReceiverReward(agent->id(), agent->position(), reward_delta, world.currentTick());
+            }
+        }
+
+        if (backprop) {
+            backprop->applyBackprop(world, world.currentTick());
+            backprop->reset();
         }
 
         if (agent_layer->livingCount() == 0) {
@@ -865,6 +1021,61 @@ std::vector<IGenome*> rawGenomePointers(std::vector<std::unique_ptr<IGenome>>& p
     return raw;
 }
 
+std::vector<std::pair<GenomeId, GenomeId>> collectMatingGenomePairs(
+    const World2D& world,
+    const std::vector<std::pair<AgentId, AgentId>>& agent_pairs) {
+    std::vector<std::pair<GenomeId, GenomeId>> genome_pairs;
+    if (agent_pairs.empty()) {
+        return genome_pairs;
+    }
+
+    const auto* agent_layer = world.getLayer<AgentLayer>();
+    if (agent_layer == nullptr) {
+        return genome_pairs;
+    }
+
+    std::unordered_map<AgentId, GenomeId> agent_to_genome;
+    agent_to_genome.reserve(agent_layer->agents().size());
+    for (const auto* agent : agent_layer->agents()) {
+        agent_to_genome.emplace(agent->id(), agent->genomeId());
+    }
+
+    genome_pairs.reserve(agent_pairs.size());
+    for (const auto& [lhs, rhs] : agent_pairs) {
+        const auto lhs_it = agent_to_genome.find(lhs);
+        const auto rhs_it = agent_to_genome.find(rhs);
+        if (lhs_it == agent_to_genome.end() || rhs_it == agent_to_genome.end()) {
+            continue;
+        }
+        if (!lhs_it->second || !rhs_it->second || lhs_it->second == rhs_it->second) {
+            continue;
+        }
+        genome_pairs.emplace_back(lhs_it->second, rhs_it->second);
+    }
+    return genome_pairs;
+}
+
+std::vector<std::pair<GenomeId, GenomeId>> filterMatingGenomePairs(
+    const std::vector<std::pair<GenomeId, GenomeId>>& mating_pairs,
+    const std::vector<std::unique_ptr<IGenome>>& population) {
+    std::unordered_set<GenomeId> genome_ids;
+    genome_ids.reserve(population.size());
+    for (const auto& genome : population) {
+        if (genome) {
+            genome_ids.insert(genome->id());
+        }
+    }
+
+    std::vector<std::pair<GenomeId, GenomeId>> filtered;
+    filtered.reserve(mating_pairs.size());
+    for (const auto& pair : mating_pairs) {
+        if (genome_ids.contains(pair.first) && genome_ids.contains(pair.second)) {
+            filtered.push_back(pair);
+        }
+    }
+    return filtered;
+}
+
 }  // namespace
 
 int runCoevolution(const RuntimeParams& params,
@@ -935,7 +1146,8 @@ int runCoevolution(const RuntimeParams& params,
     ModuleMetricsObserver module_observer(run_dir / "module_metrics.csv");
     HeatmapObserver heatmap_observer(64, 5, run_dir / "heatmaps");
     AdvancedStatsObserver advanced_stats(run_dir / "advanced_stats.csv");
-
+    EmergenceAuditor emergence_auditor(run_dir / "emergence_audit.csv");
+    ComprehensiveMetrics comp_metrics(run_dir / "comprehensive");
     std::ofstream evo_csv(run_dir / "evolution.csv", std::ios::out | std::ios::trunc);
     if (!evo_csv.is_open()) return 1;
     evo_csv << "generation,pred_avg_fitness,pred_best_fitness,pred_species,prey_avg_fitness,prey_best_fitness,prey_species,avg_immunity_gain_rate\n";
@@ -962,6 +1174,15 @@ int runCoevolution(const RuntimeParams& params,
         prey_species.onAttach(*world);
         heatmap_observer.onAttach(*world);
         advanced_stats.onAttach(*world);
+        emergence_auditor.onAttach(*world);
+        comp_metrics.onAttach(*world);
+
+        std::vector<std::pair<AgentId, AgentId>> mating_agent_pairs;
+        world->eventBus().subscribe(events::EventType::MatingOccurred,
+            [&mating_agent_pairs](const events::Event& event) {
+                const auto& payload = event.payloadAs<events::MatingOccurred>();
+                mating_agent_pairs.emplace_back(payload.initiator, payload.partner);
+            });
 
         world->eventBus().publish(events::Event{
             events::EventType::GenerationStarted,
@@ -982,13 +1203,15 @@ int runCoevolution(const RuntimeParams& params,
         for (const auto& genome_ptr : pred_pop) {
             auto brain = createBrainForGenome(*genome_ptr, params);
             float decision_interval = 1.0f;
+            bool has_mod = false;
             const auto* ng = dynamic_cast<const NeatGenome*>(genome_ptr.get());
-            if (ng) decision_interval = ng->decisionInterval();
+            if (ng) { decision_interval = ng->decisionInterval(); has_mod = ng->hasModulatoryNodes(); }
 
             auto agent = std::make_unique<Agent>(
                 AgentId{next_agent_id++}, genome_ptr->id(), std::move(brain),
                 randomPosition(params.world_size, spawn_rng),
                 params.initial_energy, params.exploration_grid_size, decision_interval);
+            if (has_mod) agent->setHasModulatory(true);
             if (const auto it = pred_species_lookup.find(genome_ptr->id()); it != pred_species_lookup.end()) {
                 agent->setSpeciesId(it->second);
             }
@@ -1000,20 +1223,31 @@ int runCoevolution(const RuntimeParams& params,
             } else {
                 agent->addPerception(std::make_unique<FoodScentPerception>());
             }
-            if (params.terrain_enabled) agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
+            if (params.terrain_enabled && params.terrain_perception_enabled) agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
             if (params.day_night_enabled) agent->addPerception(std::make_unique<TimeOfDayPerception>());
             if (params.season_enabled) agent->addPerception(std::make_unique<SeasonPerception>());
             if (params.disease_enabled) agent->addPerception(std::make_unique<InfectionPerception>(params.infection_perception_radius));
-            if (params.signal_enabled) agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius));
+            if (params.signal_enabled) agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius, params.signal_terrain_modulation_enabled));
+            if (params.tools_enabled) agent->addPerception(std::make_unique<NearbyObjectPerception>(params.tools_perception_radius));
             agent->addCapability(std::make_unique<MoveCapability>(params.max_speed, params.decision_cost, params.movement_cost_factor, params.exploration_grid_size));
             agent->addCapability(std::make_unique<EatCapability>(params.eat_radius));
             if (params.combat_enabled) agent->addCapability(std::make_unique<AttackCapability>(params.attack_range, params.damage_factor, params.energy_transfer_rate, params.attack_cost, params.attack_threshold));
             if (params.lifetime_learning_enabled) agent->addCapability(std::make_unique<HebbianLearning>(params.hebbian_learning_rate));
             if (params.terrain_mod_enabled) agent->addCapability(std::make_unique<TerrainModifier>(params.terrain_mod_dig_rate, params.terrain_mod_build_rate, params.terrain_mod_energy_cost));
             if (params.signal_enabled) agent->addCapability(std::make_unique<EmitSignalCapability>(params.signal_channels, params.signal_emit_cost));
+            if (params.tools_enabled) {
+                agent->addCapability(std::make_unique<PickUpCapability>(params.tools_pick_radius, params.tools_pick_cost));
+                agent->addCapability(std::make_unique<DropCapability>(params.tools_drop_cost));
+            }
             agent->addCapability(std::make_unique<PredatorHuntCapability>(params.pred_hunt_radius, params.pred_damage, params.pred_energy_gain, params.pred_hunt_cost));
             agent->addCapability(std::make_unique<FleeCapability>(params.pred_flee_radius, params.pred_flee_boost, params.pred_flee_cost));
+            if (params.mate_enabled) agent->addCapability(std::make_unique<MateCapability>(params.mate_radius, params.mate_energy_cost));
             if (params.disease_enabled && ng) agent->setImmunityGainRate(ng->immunityGainRate());
+            if (ng) {
+                agent->setHabitatPreference(ng->habitatPreference());
+                agent->setActivityPeriod(ng->activityPeriod());
+                agent->setDietPreference(ng->dietPreference());
+            }
             agent_layer->addAgent(std::move(agent), *world);
         }
 
@@ -1021,13 +1255,15 @@ int runCoevolution(const RuntimeParams& params,
         for (const auto& genome_ptr : prey_pop) {
             auto brain = createBrainForGenome(*genome_ptr, params);
             float decision_interval = 1.0f;
+            bool has_mod = false;
             const auto* ng = dynamic_cast<const NeatGenome*>(genome_ptr.get());
-            if (ng) decision_interval = ng->decisionInterval();
+            if (ng) { decision_interval = ng->decisionInterval(); has_mod = ng->hasModulatoryNodes(); }
 
             auto agent = std::make_unique<Agent>(
                 AgentId{next_agent_id++}, genome_ptr->id(), std::move(brain),
                 randomPosition(params.world_size, spawn_rng),
                 params.initial_energy, params.exploration_grid_size, decision_interval);
+            if (has_mod) agent->setHasModulatory(true);
             if (const auto it = prey_species_lookup.find(genome_ptr->id()); it != prey_species_lookup.end()) {
                 agent->setSpeciesId(it->second);
             }
@@ -1038,26 +1274,48 @@ int runCoevolution(const RuntimeParams& params,
             } else {
                 agent->addPerception(std::make_unique<FoodScentPerception>());
             }
-            if (params.terrain_enabled) agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
+            if (params.terrain_enabled && params.terrain_perception_enabled) agent->addPerception(std::make_unique<TerrainPerception>(params.terrain_params.height_scale));
             if (params.day_night_enabled) agent->addPerception(std::make_unique<TimeOfDayPerception>());
             if (params.season_enabled) agent->addPerception(std::make_unique<SeasonPerception>());
             if (params.disease_enabled) agent->addPerception(std::make_unique<InfectionPerception>(params.infection_perception_radius));
-            if (params.signal_enabled) agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius));
+            if (params.signal_enabled) agent->addPerception(std::make_unique<SignalPerception>(params.signal_channels, params.signal_perception_radius, params.signal_terrain_modulation_enabled));
+            if (params.tools_enabled) agent->addPerception(std::make_unique<NearbyObjectPerception>(params.tools_perception_radius));
             agent->addCapability(std::make_unique<MoveCapability>(params.max_speed, params.decision_cost, params.movement_cost_factor, params.exploration_grid_size));
             agent->addCapability(std::make_unique<EatCapability>(params.eat_radius));
             if (params.combat_enabled) agent->addCapability(std::make_unique<AttackCapability>(params.attack_range, params.damage_factor, params.energy_transfer_rate, params.attack_cost, params.attack_threshold));
             if (params.lifetime_learning_enabled) agent->addCapability(std::make_unique<HebbianLearning>(params.hebbian_learning_rate));
             if (params.terrain_mod_enabled) agent->addCapability(std::make_unique<TerrainModifier>(params.terrain_mod_dig_rate, params.terrain_mod_build_rate, params.terrain_mod_energy_cost));
             if (params.signal_enabled) agent->addCapability(std::make_unique<EmitSignalCapability>(params.signal_channels, params.signal_emit_cost));
+            if (params.tools_enabled) {
+                agent->addCapability(std::make_unique<PickUpCapability>(params.tools_pick_radius, params.tools_pick_cost));
+                agent->addCapability(std::make_unique<DropCapability>(params.tools_drop_cost));
+            }
             agent->addCapability(std::make_unique<PredatorHuntCapability>(params.pred_hunt_radius, params.pred_damage, params.pred_energy_gain, params.pred_hunt_cost));
             agent->addCapability(std::make_unique<FleeCapability>(params.pred_flee_radius, params.pred_flee_boost, params.pred_flee_cost));
+            if (params.mate_enabled) agent->addCapability(std::make_unique<MateCapability>(params.mate_radius, params.mate_energy_cost));
             if (params.disease_enabled && ng) agent->setImmunityGainRate(ng->immunityGainRate());
+            if (ng) {
+                agent->setHabitatPreference(ng->habitatPreference());
+                agent->setActivityPeriod(ng->activityPeriod());
+                agent->setDietPreference(ng->dietPreference());
+            }
             agent_layer->addAgent(std::move(agent), *world);
         }
 
         // Evaluate together in shared world
         perf_observer.markEvaluationStart();
-        evaluatePopulation(*world, rewards, params, stop_requested, module_observer);
+        SignalBackpropReward* backprop_ptr = nullptr;
+        std::unique_ptr<SignalBackpropReward> backprop;
+        if (params.signal_enabled) {
+            auto* sig_layer = world->getLayer<SignalLayer>();
+            if (sig_layer) {
+                backprop = std::make_unique<SignalBackpropReward>(
+                    sig_layer->history(), params.signal_backprop_factor,
+                    params.signal_backprop_window, params.signal_perception_radius);
+                backprop_ptr = backprop.get();
+            }
+        }
+        evaluatePopulation(*world, rewards, params, stop_requested, module_observer, backprop_ptr);
         perf_observer.markEvaluationEnd();
 
         // Collect evaluated separately for each population
@@ -1118,6 +1376,9 @@ int runCoevolution(const RuntimeParams& params,
                 pred_stats.avg_fitness},
             world->currentTick()});
         world->eventBus().flush();
+        const auto mating_genome_pairs = collectMatingGenomePairs(*world, mating_agent_pairs);
+        const auto pred_mating_pairs = filterMatingGenomePairs(mating_genome_pairs, pred_pop);
+        const auto prey_mating_pairs = filterMatingGenomePairs(mating_genome_pairs, prey_pop);
 
         pred_species.onDetach(*world);
         prey_species.onDetach(*world);
@@ -1126,6 +1387,8 @@ int runCoevolution(const RuntimeParams& params,
         module_observer.onDetach(*world);
         heatmap_observer.onDetach(*world);
         advanced_stats.onDetach(*world);
+        emergence_auditor.onDetach(*world);
+        comp_metrics.onDetach(*world);
 
         LOG_INFO("Gen {} coevo: pred avg={:.1f} best={:.1f} sp={} | prey avg={:.1f} best={:.1f} sp={} alive={}/{}",
                  generation, pred_stats.avg_fitness, pred_stats.best_fitness, pred_stats.species_count,
@@ -1154,8 +1417,8 @@ int runCoevolution(const RuntimeParams& params,
         prey_evolution->innovationTracker().beginGeneration();
         auto pred_raw2 = rawGenomePointers(pred_pop);
         auto prey_raw2 = rawGenomePointers(prey_pop);
-        pred_pop = pred_evolution->reproduce(pred_evaluated, pred_raw2);
-        prey_pop = prey_evolution->reproduce(prey_evaluated, prey_raw2);
+        pred_pop = pred_evolution->reproduce(pred_evaluated, pred_raw2, pred_mating_pairs.empty() ? nullptr : &pred_mating_pairs);
+        prey_pop = prey_evolution->reproduce(prey_evaluated, prey_raw2, prey_mating_pairs.empty() ? nullptr : &prey_mating_pairs);
         perf_observer.markReproductionEnd();
         perf_observer.finishGeneration(static_cast<Generation>(generation));
     }
@@ -1234,6 +1497,8 @@ int HeadlessRuntime::run() {
         ModuleMetricsObserver module_observer(run_dir_ / "module_metrics.csv");
         HeatmapObserver heatmap_observer(64, 5, run_dir_ / "heatmaps");
         AdvancedStatsObserver advanced_stats(run_dir_ / "advanced_stats.csv");
+        EmergenceAuditor emergence_auditor(run_dir_ / "emergence_audit.csv");
+        ComprehensiveMetrics comp_metrics(run_dir_ / "comprehensive");
         std::ofstream evolution_metrics(run_dir_ / "evolution.csv", std::ios::out | std::ios::trunc);
         if (!evolution_metrics.is_open()) {
             throw std::runtime_error("Failed to open evolution metrics output file");
@@ -1258,9 +1523,17 @@ int HeadlessRuntime::run() {
             module_observer.onAttach(*world);
             heatmap_observer.onAttach(*world);
             advanced_stats.onAttach(*world);
+            emergence_auditor.onAttach(*world);
+            comp_metrics.onAttach(*world);
             if (species_observer) {
                 species_observer->onAttach(*world);
             }
+            std::vector<std::pair<AgentId, AgentId>> mating_agent_pairs;
+            world->eventBus().subscribe(events::EventType::MatingOccurred,
+                [&mating_agent_pairs](const events::Event& event) {
+                    const auto& payload = event.payloadAs<events::MatingOccurred>();
+                    mating_agent_pairs.emplace_back(payload.initiator, payload.partner);
+                });
             world->eventBus().publish(events::Event{
                 events::EventType::GenerationStarted,
                 events::GenerationStarted{static_cast<Generation>(generation)},
@@ -1274,7 +1547,18 @@ int HeadlessRuntime::run() {
                           next_agent_id,
                           static_cast<Generation>(generation));
             perf_observer.markEvaluationStart();
-            evaluatePopulation(*world, rewards, params, stop_requested_, module_observer);
+            SignalBackpropReward* backprop_ptr = nullptr;
+            std::unique_ptr<SignalBackpropReward> backprop;
+            if (params.signal_enabled) {
+                auto* sig_layer = world->getLayer<SignalLayer>();
+                if (sig_layer) {
+                    backprop = std::make_unique<SignalBackpropReward>(
+                        sig_layer->history(), params.signal_backprop_factor,
+                        params.signal_backprop_window, params.signal_perception_radius);
+                    backprop_ptr = backprop.get();
+                }
+            }
+            evaluatePopulation(*world, rewards, params, stop_requested_, module_observer, backprop_ptr);
             perf_observer.markEvaluationEnd();
 
             const auto evaluated = collectEvaluated(*world, population, params.nsga2_enabled);
@@ -1329,6 +1613,7 @@ int HeadlessRuntime::run() {
                 },
                 world->currentTick()});
             world->eventBus().flush();
+            const auto mating_genome_pairs = collectMatingGenomePairs(*world, mating_agent_pairs);
             if (species_observer) {
                 species_observer->onDetach(*world);
             }
@@ -1337,6 +1622,8 @@ int HeadlessRuntime::run() {
             module_observer.onDetach(*world);
             heatmap_observer.onDetach(*world);
             advanced_stats.onDetach(*world);
+            emergence_auditor.onDetach(*world);
+            comp_metrics.onDetach(*world);
 
             LOG_INFO(
                 "Generation {} complete: min={:.3f} avg={:.3f} best={:.3f} species={} complexity={:.2f} alive={}/{}",
@@ -1365,7 +1652,7 @@ int HeadlessRuntime::run() {
 
             perf_observer.markReproductionStart();
             auto raw = rawGenomePointers(population);
-            population = evolution_strategy->reproduce(evaluated, raw);
+            population = evolution_strategy->reproduce(evaluated, raw, mating_genome_pairs.empty() ? nullptr : &mating_genome_pairs);
             perf_observer.markReproductionEnd();
             perf_observer.finishGeneration(static_cast<Generation>(generation));
         }

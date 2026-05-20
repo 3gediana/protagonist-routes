@@ -20,8 +20,9 @@ double CombatReward::evaluate(const IAgent& agent, const IWorld& world, float dt
     const auto* concrete = dynamic_cast<const Agent*>(&agent);
     if (concrete == nullptr) return 0.0;
 
-    reward += static_cast<double>(concrete->damageDealt()) * attack_reward_;
-    reward += static_cast<double>(concrete->kills()) * kill_bonus_;
+    const double combat_scale = 0.5 + 0.5 * static_cast<double>(concrete->dietPreference());
+    reward += static_cast<double>(concrete->damageDealt()) * attack_reward_ * combat_scale;
+    reward += static_cast<double>(concrete->kills()) * kill_bonus_ * combat_scale;
 
     if (!agent.alive()) {
         reward -= death_penalty_;

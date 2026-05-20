@@ -1,0 +1,123 @@
+[runtime]
+random_seed = 42
+log_level = "info"
+preview_ticks = 120
+world_role = "train"
+scenario_name = "nursery_bootstrap"
+
+[world]
+size = [200.0, 200.0]
+
+[world.resources]
+count = 80
+amount = 18.0
+respawn_ticks = 15
+dynamic = true
+regen_rate = 0.2
+terrain_adjustment_enabled = true
+
+[world.terrain]
+enabled = true
+height_scale = 35.0
+slope_resistance = 0.45
+cave_density = 0.05
+cave_shelter_factor = 0.5
+min_velocity_factor = 0.15
+seed = 42
+grid_resolution = 128
+perlin_frequency = 4.0
+perlin_persistence = 0.5
+perlin_octaves = 4
+
+[world.signal]
+enabled = true
+channels = 2
+grid_resolution = 64
+decay_rate = 0.05
+diffusion_rate = 0.08
+
+[world.objects]
+enabled = true
+count = 48
+damping = 0.9
+
+[world.base]
+enabled = true
+center_x = 60.0
+center_y = 100.0
+radius = 18.0
+stockpile_radius = 12.0
+nest_radius = 10.0
+stockpile_offset = 14.0
+nest_offset = -12.0
+
+[world.nursery]
+enabled = true
+deposit_energy_bonus = 8.0
+deposit_fitness_bonus = 3.0
+stockpile_snap_radius = 6.0
+
+[world.nursery_supply]
+enabled = true
+min_nearby_sticks = 8
+replenish_batch = 4
+near_radius = 16.0
+spawn_radius = 10.0
+cooldown_ticks = 25
+
+[world.campfire]
+enabled = true
+count = 2
+spawn_radius = 16.0
+warmth_radius = 11.0
+danger_radius = 3.5
+warmth_energy_bonus = 0.05
+danger_damage = 0.4
+
+[world.worksite]
+enabled = true
+count = 2
+spawn_radius = 12.0
+interaction_radius = 10.0
+required_sticks = 4
+required_stones = 1
+assembly_rate = 0.20
+shelter_energy_bonus = 0.03
+
+[world.intervention]
+enabled = true
+initial_budget = 1.4
+max_budget = 3.0
+recharge_per_tick = 0.025
+stress_decay_per_tick = 0.01
+max_stress = 0.85
+cooldown_ticks = 18
+
+[world.progression]
+enabled = true
+first_fire_stick_threshold = 4
+worksite_unlock_deposit_threshold = 8
+worksite_unlock_stone_threshold = 1
+stone_unlock_deposit_threshold = 6
+heavy_unlock_deposit_threshold = 12
+second_fire_deposit_threshold = 16
+heavy_unlock_stone_threshold = 2
+second_fire_stone_threshold = 3
+stone_unlock_count = 10
+heavy_unlock_count = 6
+unlock_radius_min = 24.0
+unlock_radius_max = 42.0
+event_min_interval_ticks = 20
+event_max_interval_ticks = 80
+
+[population.protagonist]
+count = 32
+hidden_dim = 512
+memory_cells = 48
+action_dim = 13
+
+[population.background]
+forager_count = 96
+predator_count = 12
+ambient_count = 0
+hidden_dim = 32

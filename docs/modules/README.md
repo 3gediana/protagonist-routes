@@ -75,7 +75,8 @@
 
 | 模块 | 作用 | 难度 | 依赖 | 状态 |
 |---|---|---|---|---|
-| [F-TOOL](F-TOOL_terrain_mod.md) | 物种改造地形 | 🟡 中 | M5 | ✅⛳⛳ |
+| [F-DIG](F-DIG_terrain_modification.md) | 物种改造地形 | 🟡 中 | M5 | ✅⛳⛳ |
+| [F-TOOL](F-TOOL_tools.md) | 可移动物体/工具使用 | 🔴 高 | M5 | 📋 |
 
 ### 🎬 演示类
 
@@ -134,5 +135,5 @@
 
 ```
 baseline:   M0 ✅ / M1 ✅ / M2 ⏸ / M3 ✅ / M4 ✅ / M5 ✅
-modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / F-PRED ✅⛳⛳ / F-CURRICULUM ✅⛳⛳ / F-COEVO ✅⛳⛳ / F-NSGA ✅⛳⛳ / F-TREE ✅⛳⛳ / F-HEAT ✅⛳⛳ / F-STAT ✅⛳⛳ / F-FORK ✅⛳⛳ / F-TOOL ✅⛳⛳ / F-REPLAY 📋 / others 📋
+modules:    F-FIGHT ✅⛳⛳ / F-NEUROMOD ✅⛳⛳ / F-LEARN ✅⛳⛳ / F-DAY ✅⛳⛳ / F-SEASON ✅⛳⛳ / F-DISEASE ✅⛳⛳ / F-RESOURCE ✅⛳⛳ / F-COMM ✅⛳⛳ / F-COOP ✅⛳⛳ / F-NOVELTY ✅⛳⛳ / F-PRED ✅⛳⛳ / F-CURRICULUM ✅⛳⛳ / F-COEVO ✅⛳⛳ / F-NSGA ✅⛳⛳ / F-TREE ✅⛳⛳ / F-HEAT ✅⛳⛳ / F-STAT ✅⛳⛳ / F-FORK ✅⛳⛳ / F-DIG ✅⛳⛳ / F-TOOL 📋 / F-REPLAY 📋 / others 📋
 ```

@@ -1,0 +1,123 @@
+[runtime]
+random_seed = 314
+log_level = "info"
+preview_ticks = 3600
+world_role = "eval"
+scenario_name = "nursery_eval_generalization"
+
+[world]
+size = [220.0, 180.0]
+
+[world.resources]
+count = 72
+amount = 16.0
+respawn_ticks = 18
+dynamic = true
+regen_rate = 0.16
+terrain_adjustment_enabled = true
+
+[world.terrain]
+enabled = true
+height_scale = 42.0
+slope_resistance = 0.52
+cave_density = 0.08
+cave_shelter_factor = 0.6
+min_velocity_factor = 0.12
+seed = 314
+grid_resolution = 128
+perlin_frequency = 5.2
+perlin_persistence = 0.55
+perlin_octaves = 5
+
+[world.signal]
+enabled = true
+channels = 2
+grid_resolution = 64
+decay_rate = 0.05
+diffusion_rate = 0.08
+
+[world.objects]
+enabled = true
+count = 52
+damping = 0.9
+
+[world.base]
+enabled = true
+center_x = 142.0
+center_y = 86.0
+radius = 18.0
+stockpile_radius = 11.0
+nest_radius = 9.0
+stockpile_offset = -16.0
+nest_offset = 10.0
+
+[world.nursery]
+enabled = true
+deposit_energy_bonus = 8.0
+deposit_fitness_bonus = 3.0
+stockpile_snap_radius = 6.0
+
+[world.nursery_supply]
+enabled = true
+min_nearby_sticks = 7
+replenish_batch = 3
+near_radius = 14.0
+spawn_radius = 12.0
+cooldown_ticks = 32
+
+[world.campfire]
+enabled = true
+count = 2
+spawn_radius = 20.0
+warmth_radius = 11.5
+danger_radius = 3.5
+warmth_energy_bonus = 0.05
+danger_damage = 0.4
+
+[world.worksite]
+enabled = true
+count = 2
+spawn_radius = 16.0
+interaction_radius = 9.0
+required_sticks = 4
+required_stones = 1
+assembly_rate = 0.16
+shelter_energy_bonus = 0.03
+
+[world.intervention]
+enabled = true
+initial_budget = 1.2
+max_budget = 2.8
+recharge_per_tick = 0.022
+stress_decay_per_tick = 0.01
+max_stress = 0.82
+cooldown_ticks = 22
+
+[world.progression]
+enabled = true
+first_fire_stick_threshold = 4
+worksite_unlock_deposit_threshold = 9
+worksite_unlock_stone_threshold = 1
+stone_unlock_deposit_threshold = 7
+heavy_unlock_deposit_threshold = 13
+second_fire_deposit_threshold = 18
+heavy_unlock_stone_threshold = 2
+second_fire_stone_threshold = 3
+stone_unlock_count = 10
+heavy_unlock_count = 6
+unlock_radius_min = 26.0
+unlock_radius_max = 46.0
+event_min_interval_ticks = 30
+event_max_interval_ticks = 110
+
+[population.protagonist]
+count = 32
+hidden_dim = 512
+memory_cells = 48
+action_dim = 13
+
+[population.background]
+forager_count = 96
+predator_count = 12
+ambient_count = 0
+hidden_dim = 32

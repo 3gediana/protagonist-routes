@@ -41,6 +41,15 @@ void SignalLayer::emit(Vec2 position, const std::vector<float>& signal) {
     }
 }
 
+void SignalLayer::emitWithHistory(AgentId source, Vec2 position, const std::vector<float>& signal, std::size_t tick) {
+    emit(position, signal);
+    for (std::size_t c = 0; c < channels_ && c < signal.size(); ++c) {
+        if (signal[c] > 0.01f) {
+            history_.record(source, c, position, tick, signal[c]);
+        }
+    }
+}
+
 std::vector<float> SignalLayer::sample(Vec2 position, float radius) const {
     std::vector<float> result(channels_, 0.0f);
 
@@ -55,19 +64,35 @@ std::vector<float> SignalLayer::sample(Vec2 position, float radius) const {
     const std::size_t min_gy = static_cast<std::size_t>(std::max(0.0f, cy - radius_cells));
     const std::size_t max_gy = static_cast<std::size_t>(std::min(static_cast<float>(grid_res_ - 1), cy + radius_cells));
 
+    float total_weight = 0.0f;
+
     for (std::size_t gy = min_gy; gy <= max_gy; ++gy) {
         for (std::size_t gx = min_gx; gx <= max_gx; ++gx) {
+            const float cell_center_x = (static_cast<float>(gx) + 0.5f) * cell_size;
+            const float cell_center_y = (static_cast<float>(gy) + 0.5f) * cell_size;
+            const float dx = cell_center_x - position.x;
+            const float dy = cell_center_y - position.y;
+            const float distance = std::sqrt(dx * dx + dy * dy);
+            if (distance > radius) {
+                continue;
+            }
+
+            const float weight = std::max(0.0f, 1.0f - distance / std::max(radius, 1.0e-3f));
+            if (weight <= 0.0f) {
+                continue;
+            }
+
             const auto& cell = field_[gy * grid_res_ + gx];
             for (std::size_t c = 0; c < channels_; ++c) {
-                result[c] += cell[c];
+                result[c] += cell[c] * weight;
             }
+            total_weight += weight;
         }
     }
 
-    const float area = static_cast<float>((max_gx - min_gx + 1) * (max_gy - min_gy + 1));
-    if (area > 0.0f) {
+    if (total_weight > 0.0f) {
         for (auto& v : result) {
-            v /= area;
+            v /= total_weight;
         }
     }
 

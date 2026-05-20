@@ -5,6 +5,7 @@
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/terrain/TerrainLayer.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace neuro {
@@ -23,8 +24,9 @@ void TerrainPerception::sense(const IAgent& agent, const IWorld& world, std::spa
 
     const float x = agent.position().x;
     const float y = agent.position().y;
+    const float effective_height_scale = terrain->heightScale() > 0.0f ? terrain->heightScale() : height_scale_;
 
-    output[0] = terrain->heightAt(x, y) / height_scale_;
+    output[0] = terrain->heightAt(x, y) / effective_height_scale;
     const Vec2 slope = terrain->slopeAt(x, y);
     output[1] = slope.x;
     output[2] = slope.y;

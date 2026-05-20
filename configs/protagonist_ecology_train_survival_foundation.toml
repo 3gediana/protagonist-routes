@@ -1,0 +1,156 @@
+[runtime]
+random_seed = 77
+log_level = "info"
+preview_ticks = 1200
+world_role = "train"
+scenario_name = "curriculum_survival_foundation"
+
+[world]
+size = [180.0, 180.0]
+
+[world.resources]
+count = 96
+amount = 20.0
+respawn_ticks = 10
+dynamic = true
+regen_rate = 0.24
+terrain_adjustment_enabled = true
+
+[world.terrain]
+enabled = true
+height_scale = 24.0
+slope_resistance = 0.30
+cave_density = 0.03
+cave_shelter_factor = 0.45
+min_velocity_factor = 0.20
+seed = 77
+grid_resolution = 128
+perlin_frequency = 3.2
+perlin_persistence = 0.45
+perlin_octaves = 4
+
+[world.signal]
+enabled = true
+channels = 2
+grid_resolution = 64
+decay_rate = 0.05
+diffusion_rate = 0.08
+
+[world.objects]
+enabled = true
+count = 32
+damping = 0.9
+
+[world.base]
+enabled = true
+center_x = 72.0
+center_y = 90.0
+radius = 18.0
+stockpile_radius = 12.0
+nest_radius = 10.0
+stockpile_offset = 12.0
+nest_offset = -10.0
+
+[world.nursery]
+enabled = true
+deposit_energy_bonus = 8.0
+deposit_fitness_bonus = 3.0
+stockpile_snap_radius = 6.0
+
+[world.nursery_supply]
+enabled = true
+min_nearby_sticks = 10
+replenish_batch = 5
+near_radius = 16.0
+spawn_radius = 10.0
+cooldown_ticks = 18
+
+[world.campfire]
+enabled = true
+count = 1
+spawn_radius = 14.0
+warmth_radius = 11.0
+danger_radius = 3.5
+warmth_energy_bonus = 0.05
+danger_damage = 0.35
+
+[world.water]
+enabled = true
+source_count = 3
+spawn_radius_min = 12.0
+spawn_radius_max = 28.0
+source_radius = 6.0
+drink_radius = 4.0
+drink_rate = 30.0
+
+[world.survival]
+enabled = true
+max_health = 100.0
+max_hydration = 100.0
+initial_health_ratio = 1.0
+initial_hydration_ratio = 0.62
+hydration_decay_per_tick = 0.075
+dehydration_threshold_ratio = 0.35
+dehydration_damage_per_tick = 0.10
+fire_health_damage_per_tick = 0.30
+warmth_recovery_per_tick = 0.05
+nest_recovery_per_tick = 0.08
+injured_threshold_ratio = 0.45
+
+[world.tree]
+enabled = true
+count = 6
+spawn_radius_min = 18.0
+spawn_radius_max = 34.0
+trunk_radius = 2.2
+max_integrity = 12.0
+wood_yield = 2
+regrow_ticks = 180
+
+[world.worksite]
+enabled = true
+count = 1
+spawn_radius = 18.0
+interaction_radius = 10.0
+required_sticks = 6
+required_stones = 3
+assembly_rate = 0.06
+shelter_energy_bonus = 0.03
+
+[world.intervention]
+enabled = true
+initial_budget = 0.9
+max_budget = 1.8
+recharge_per_tick = 0.012
+stress_decay_per_tick = 0.01
+max_stress = 0.70
+cooldown_ticks = 28
+
+[world.progression]
+enabled = true
+first_fire_stick_threshold = 8
+worksite_unlock_deposit_threshold = 40
+worksite_unlock_stone_threshold = 4
+stone_unlock_deposit_threshold = 28
+heavy_unlock_deposit_threshold = 80
+second_fire_deposit_threshold = 120
+heavy_unlock_stone_threshold = 6
+second_fire_stone_threshold = 6
+stone_unlock_count = 6
+heavy_unlock_count = 2
+unlock_radius_min = 24.0
+unlock_radius_max = 42.0
+event_min_interval_ticks = 80
+event_max_interval_ticks = 160
+
+[population.protagonist]
+count = 32
+hidden_dim = 512
+memory_cells = 48
+action_dim = 13
+
+[population.background]
+forager_count = 24
+predator_count = 3
+ambient_count = 0
+hidden_dim = 32

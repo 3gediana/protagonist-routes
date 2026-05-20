@@ -1,0 +1,92 @@
+[runtime]
+mode = "headless"
+random_seed = 42
+log_level = "info"
+
+[world]
+size = [120.0, 120.0]
+
+[world.resources]
+count = 10
+amount = 20.0
+respawn_ticks = 28
+dynamic = true
+regen_rate = 0.06
+
+[world.terrain]
+enabled = true
+height_scale = 40.0
+slope_resistance = 0.6
+cave_density = 0.05
+cave_shelter_factor = 0.5
+seed = 42
+grid_resolution = 96
+perlin_frequency = 4.0
+perlin_persistence = 0.5
+perlin_octaves = 4
+
+[world.signal]
+enabled = true
+channels = 2
+decay_rate = 0.08
+diffusion_rate = 0.04
+grid_resolution = 64
+perception_radius = 14.0
+emit_cost = 0.04
+backprop_factor = 1.2
+backprop_window = 4
+
+[population]
+size = 40
+input_dim = 5
+output_dim = 2
+
+[evolution]
+generations = 60
+episode_ticks = 180
+
+[evolution.selection]
+elite_ratio = 0.25
+tournament_size = 3
+
+[evolution.mutation]
+weight_perturb_rate = 0.80
+weight_reset_rate = 0.05
+add_node_rate = 0.06
+add_connection_rate = 0.10
+toggle_connection_rate = 0.01
+add_modulatory_rate = 0.02
+weight_perturb_sigma = 0.5
+
+[evolution.speciation]
+compatibility_threshold = 3.0
+c1_excess = 1.0
+c2_disjoint = 1.0
+c3_weight = 0.4
+
+[brain]
+type = "neat"
+
+[brain.ctrnn]
+tau_min = 0.1
+tau_max = 5.0
+
+[reward]
+survival_weight = 1.0
+food_weight = 10.0
+intrinsic_weight = 1.5
+
+[energy]
+initial = 15.0
+base_metabolism = 0.02
+decision_cost = 0.02
+movement_cost_factor = 0.03
+death_threshold = 0.0
+
+[agent]
+max_speed = 1.8
+eat_radius = 3.5
+exploration_grid_size = 16
+
+[output]
+runs_dir = "data/runs/comm_research_v2"

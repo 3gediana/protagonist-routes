@@ -33,11 +33,16 @@ const char* toString(EventType type) {
         case EventType::DecisionTriggered:      return "DecisionTriggered";
 
         case EventType::TerrainGenerated:       return "TerrainGenerated";
+        case EventType::TerrainModified:        return "TerrainModified";
         case EventType::AgentEnteredCave:       return "AgentEnteredCave";
         case EventType::AgentLeftCave:          return "AgentLeftCave";
 
         case EventType::AgentEmittedSignal:     return "AgentEmittedSignal";
         case EventType::AgentAttacked:          return "AgentAttacked";
+        case EventType::AgentFled:              return "AgentFled";
+        case EventType::ObjectPickedUp:         return "ObjectPickedUp";
+        case EventType::ObjectDropped:          return "ObjectDropped";
+        case EventType::MatingOccurred:         return "MatingOccurred";
         case EventType::InterventionTriggered:  return "InterventionTriggered";
 
         case EventType::UniverseForked:         return "UniverseForked";

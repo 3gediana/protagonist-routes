@@ -2,6 +2,7 @@
 
 #include "core/interfaces/IWorldLayer.h"
 #include "core/types/Vec2.h"
+#include "core/world/layers/signal/SignalEmitHistory.h"
 
 #include <cstddef>
 #include <vector>
@@ -24,7 +25,11 @@ public:
     void tick(IWorld& world, float dt) override;
 
     void emit(Vec2 position, const std::vector<float>& signal);
+    void emitWithHistory(AgentId source, Vec2 position, const std::vector<float>& signal, std::size_t tick);
     std::vector<float> sample(Vec2 position, float radius) const;
+
+    SignalEmitHistory& history() { return history_; }
+    const SignalEmitHistory& history() const { return history_; }
 
     std::size_t channels() const { return channels_; }
     float decayRate() const { return decay_rate_; }
@@ -41,6 +46,7 @@ private:
     float decay_rate_;
     float diffusion_rate_;
     std::vector<std::vector<float>> field_;
+    SignalEmitHistory history_;
 };
 
 }  // namespace neuro

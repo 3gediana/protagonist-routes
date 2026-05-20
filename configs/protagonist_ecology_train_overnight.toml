@@ -1,0 +1,289 @@
+# Overnight full-ecosystem training: 250 agents on 600x600 map.
+# 8 species (1 protagonist + 7 background) with independent NEAT co-evolution.
+# Real corpse system: dead agents leave meat resources for scavengers/predators.
+# Aerial scavenger (vulture) bypasses terrain slope.
+
+[runtime]
+random_seed = 4242
+log_level = "info"
+preview_ticks = 1
+world_role = "train"
+scenario_name = "ecosystem_overnight"
+
+[output]
+runs_dir = "data/runs/protagonist_overnight"
+
+# ============================================================================
+# World: 600 x 600 — large enough for distinct biomes, hunt zones, refuges.
+# Resource and feature counts scaled ~9x relative to 200x200 baseline.
+# ============================================================================
+[world]
+size = [600.0, 600.0]
+
+[world.resources]
+count = 720
+amount = 18.0
+respawn_ticks = 14
+dynamic = true
+regen_rate = 0.20
+terrain_adjustment_enabled = true
+
+[world.terrain]
+enabled = true
+height_scale = 30.0
+slope_resistance = 0.38
+cave_density = 0.06
+cave_shelter_factor = 0.50
+min_velocity_factor = 0.18
+seed = 4242
+grid_resolution = 256
+perlin_frequency = 3.8
+perlin_persistence = 0.48
+perlin_octaves = 4
+
+[world.signal]
+enabled = true
+channels = 2
+grid_resolution = 96
+decay_rate = 0.05
+diffusion_rate = 0.08
+
+[world.objects]
+enabled = true
+count = 360
+damping = 0.9
+
+[world.base]
+enabled = true
+center_x = 200.0
+center_y = 300.0
+radius = 22.0
+stockpile_radius = 14.0
+nest_radius = 12.0
+stockpile_offset = 16.0
+nest_offset = -14.0
+
+[world.nursery]
+enabled = true
+deposit_energy_bonus = 8.0
+deposit_fitness_bonus = 3.0
+stockpile_snap_radius = 6.0
+
+[world.nursery_supply]
+enabled = true
+min_nearby_sticks = 12
+replenish_batch = 6
+near_radius = 20.0
+spawn_radius = 12.0
+cooldown_ticks = 25
+
+[world.campfire]
+enabled = true
+count = 4
+spawn_radius = 22.0
+warmth_radius = 12.0
+danger_radius = 4.0
+warmth_energy_bonus = 0.05
+danger_damage = 0.45
+
+[world.water]
+enabled = true
+source_count = 6
+spawn_radius_min = 60.0
+spawn_radius_max = 220.0
+source_radius = 6.0
+drink_radius = 4.0
+drink_rate = 26.0
+
+[world.survival]
+enabled = true
+max_health = 100.0
+max_hydration = 100.0
+initial_health_ratio = 1.0
+initial_hydration_ratio = 0.72
+hydration_decay_per_tick = 0.055
+dehydration_threshold_ratio = 0.30
+dehydration_damage_per_tick = 0.16
+fire_health_damage_per_tick = 0.45
+warmth_recovery_per_tick = 0.06
+nest_recovery_per_tick = 0.10
+injured_threshold_ratio = 0.45
+
+[world.tree]
+enabled = true
+count = 80
+spawn_radius_min = 40.0
+spawn_radius_max = 280.0
+trunk_radius = 2.5
+max_integrity = 16.0
+wood_yield = 3
+regrow_ticks = 240
+
+[world.worksite]
+enabled = true
+count = 6
+spawn_radius = 70.0
+interaction_radius = 12.0
+required_sticks = 4
+required_stones = 2
+assembly_rate = 0.15
+shelter_energy_bonus = 0.04
+
+[world.intervention]
+enabled = true
+initial_budget = 1.6
+max_budget = 3.2
+recharge_per_tick = 0.022
+stress_decay_per_tick = 0.01
+max_stress = 0.85
+cooldown_ticks = 22
+
+[world.progression]
+enabled = true
+first_fire_stick_threshold = 5
+worksite_unlock_deposit_threshold = 12
+worksite_unlock_stone_threshold = 2
+stone_unlock_deposit_threshold = 8
+heavy_unlock_deposit_threshold = 20
+second_fire_deposit_threshold = 28
+heavy_unlock_stone_threshold = 3
+second_fire_stone_threshold = 4
+stone_unlock_count = 16
+heavy_unlock_count = 8
+unlock_radius_min = 60.0
+unlock_radius_max = 180.0
+event_min_interval_ticks = 30
+event_max_interval_ticks = 100
+
+[world.day_night]
+enabled = true
+day_length_ticks = 1200.0
+initial_time = 0.0
+
+[world.season]
+enabled = true
+ticks_per_season = 4800
+start_tick = 0
+
+[world.disease]
+enabled = true
+infection_radius = 4.0
+infection_prob = 0.012
+infection_duration = 280.0
+death_prob = 0.025
+initial_infection_rate = 0.04
+
+# ============================================================================
+# Population: 250 agents total
+# Protagonist 30 (12%) — humans
+# Plant-eaters 92 (36.8%) — Large herbivore + Small forager
+# Carnivores  42 (16.8%) — Apex + Pack + Ambush
+# Scavengers  26 (10.4%) — Vultures (aerial)
+# Omnivores   60 (24.0%) — Boars
+# ============================================================================
+[population.protagonist]
+count = 30
+hidden_dim = 512
+memory_cells = 48
+action_dim = 13
+
+[population.background]
+hidden_dim = 32
+
+[[population.background.species]]
+archetype = "large_herbivore"
+count = 50
+
+[[population.background.species]]
+archetype = "small_forager"
+count = 42
+
+[[population.background.species]]
+archetype = "apex_predator"
+count = 8
+
+[[population.background.species]]
+archetype = "pack_hunter"
+count = 20
+
+[[population.background.species]]
+archetype = "ambush_predator"
+count = 14
+
+[[population.background.species]]
+archetype = "scavenger"
+count = 26
+
+[[population.background.species]]
+archetype = "omnivore"
+count = 60
+
+# ============================================================================
+# Evolution: long, deep training
+# 300 generations × 1800 ticks × 3 episodes ≈ overnight on 8-core CPU.
+# ============================================================================
+[evolution]
+generations = 300
+episode_ticks = 1800
+episodes_per_generation = 3
+checkpoint_every = 25
+
+[evolution.neat]
+add_node_rate = 0.04
+add_connection_rate = 0.10
+toggle_connection_rate = 0.02
+add_modulatory_rate = 0.005
+compatibility_threshold = 3.0
+
+[evolution.selection]
+elite_ratio = 0.12
+tournament_size = 5
+
+[evolution.mutation]
+weight_perturb_rate = 0.85
+weight_reset_rate = 0.05
+weight_perturb_sigma = 0.40
+
+# ============================================================================
+# Reward: heavily incentivize cooperation, communication, and long-horizon goals.
+# ============================================================================
+[reward]
+survival_weight = 1.0
+food_weight = 10.0
+intrinsic_weight = 4.0
+combat_weight = 1.0
+cooperation_weight = 8.0
+communication_weight = 5.0
+worksite_proximity_reward = 0.06
+worksite_completion_reward = 100.0
+social_proximity_reward = 0.014
+social_proximity_radius = 7.0
+signal_emit_reward = 0.05
+signal_emit_companion_radius = 14.0
+signal_co_attendance_reward = 0.8
+signal_co_attendance_radius = 9.0
+signal_co_attendance_window = 60
+joint_hunt_reward = 12.0
+joint_hunt_radius = 12.0
+
+# Background species reward weights
+[reward.prey]
+survival_weight = 0.6
+food_weight = 4.0
+social_weight = 0.012
+retaliation_weight = 2.5
+death_penalty = 1.5
+social_radius = 6.0
+
+[reward.predator]
+survival_weight = 0.4
+kill_weight = 8.0
+attack_weight = 1.0
+social_weight = 0.010
+death_penalty = 1.5
+social_radius = 8.0
+
+[combat]
+attack_reward = 1.5
+kill_bonus = 8.0
+death_penalty = 4.0

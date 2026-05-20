@@ -3,6 +3,7 @@
 #include "core/interfaces/IAgent.h"
 
 #include "core/pathogen/Pathogen.h"
+#include "core/world/layers/object/ObjectLayer.h"
 #include <memory>
 #include <span>
 #include <unordered_set>
@@ -56,10 +57,14 @@ public:
     void incrementAge();
 
     void noteFoodEaten(float amount);
+    void notePlantFood(float amount);
+    void noteMeatFood(float amount);
     void noteExplorationCell(std::size_t cell_index);
     void noteDamageDealt(float amount);
     void noteKill();
     float foodEatenThisTick() const;
+    float plantFoodThisTick() const;
+    float meatFoodThisTick() const;
     bool discoveredNewCellThisTick() const;
     std::size_t visitedCellCount() const;
     float damageDealt() const;
@@ -89,6 +94,25 @@ public:
     bool isPredator() const;
     void setPredator(bool v);
 
+    // Carried object (F-TOOL)
+    ObjectId carriedObject() const { return carried_object_id_; }
+    void setCarriedObject(ObjectId id) { carried_object_id_ = id; }
+    bool isCarrying() const { return carried_object_id_ != 0; }
+
+    bool hasModulatory() const { return has_modulatory_; }
+    void setHasModulatory(bool v) { has_modulatory_ = v; }
+
+    // Behavioral differentiation genes (evolvable)
+    // habitat_pref: 0=lowland, 1=highland — reward for being in preferred terrain
+    // activity_period: 0=nocturnal, 1=diurnal — energy regen varies with time of day
+    // diet_pref: 0=herbivore, 1=carnivore — affects food/predation reward balance
+    float habitatPreference() const { return habitat_pref_; }
+    void setHabitatPreference(float v) { habitat_pref_ = v; }
+    float activityPeriod() const { return activity_period_; }
+    void setActivityPeriod(float v) { activity_period_ = v; }
+    float dietPreference() const { return diet_pref_; }
+    void setDietPreference(float v) { diet_pref_ = v; }
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -104,6 +128,8 @@ private:
     Tick next_decision_tick_;
     std::vector<float> last_outputs_;
     float food_eaten_this_tick_;
+    float plant_food_this_tick_;
+    float meat_food_this_tick_;
     bool discovered_new_cell_this_tick_;
     std::size_t exploration_grid_size_;
     std::unordered_set<std::size_t> visited_cells_;
@@ -117,6 +143,11 @@ private:
     std::unique_ptr<Pathogen> pathogen_;
     std::vector<PathogenGenome::StrainSignature> immune_memory_;
     bool is_predator_;
+    bool has_modulatory_ = false;
+    ObjectId carried_object_id_ = 0;  // 0 = not carrying
+    float habitat_pref_ = 0.5f;
+    float activity_period_ = 0.5f;
+    float diet_pref_ = 0.5f;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };

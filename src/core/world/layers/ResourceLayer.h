@@ -21,6 +21,8 @@ public:
         float regen_rate;
         bool available;
         std::size_t respawn_ticks_remaining;
+        bool is_meat = false;       // false = plant, true = corpse meat
+        bool is_transient = false;  // transient corpses won't respawn after consumption
     };
 
     struct NearestResource {
@@ -30,12 +32,18 @@ public:
         float distance;
     };
 
+    struct ConsumeResult {
+        float amount{0.0f};
+        bool is_meat{false};
+    };
+
     ResourceLayer(std::size_t resource_count,
                   float resource_amount,
                   std::size_t respawn_ticks,
                   std::uint32_t seed,
                   bool dynamic = false,
-                  float regen_rate = 0.0f);
+                  float regen_rate = 0.0f,
+                  bool terrain_adjustment_enabled = true);
 
     const char* layerName() const override;
     void onAttach(IWorld& world) override;
@@ -44,7 +52,12 @@ public:
 
     std::optional<NearestResource> nearestAvailable(Vec2 position) const;
     float tryConsume(Vec2 position, float radius, IWorld& world);
+    ConsumeResult tryConsumeTyped(Vec2 position, float radius, IWorld& world);
     const std::vector<Resource>& resources() const;
+
+    // Spawn a transient meat resource at the given position (used for corpses).
+    // Decays naturally: not regenerated after consumption, removed after lifetime expires.
+    void addCorpse(Vec2 position, float amount, IWorld& world);
 
 private:
     Vec2 randomPosition(Vec2 world_size);
@@ -56,6 +69,7 @@ private:
     std::size_t respawn_ticks_;
     bool dynamic_;
     float regen_rate_;
+    bool terrain_adjustment_enabled_;
     std::mt19937 rng_;
     Vec2 world_size_;
     std::vector<Resource> resources_;

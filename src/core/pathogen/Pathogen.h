@@ -27,6 +27,17 @@ public:
     float spreadRate() const { return spread_rate_; }
     float immuneEvasion() const { return immune_evasion_; }
 
+    // Combined virulence metric (higher = more dangerous)
+    double virulence() const {
+        return static_cast<double>(infection_speed_) * 0.4
+             + static_cast<double>(spread_rate_) * 0.3
+             + static_cast<double>(immune_evasion_) * 0.3;
+    }
+
+    const PathogenGenome::StrainSignature& strainSignature() const {
+        return genome_.strain();
+    }
+
     // Genome access
     PathogenGenome& genome() { return genome_; }
     const PathogenGenome& genome() const { return genome_; }

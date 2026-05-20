@@ -44,6 +44,8 @@ void ModuleMetricsObserver::resetAccumulators() {
     infected_speed_ticks_ = 0;
     healthy_infected_dist_sum_ = 0.0;
     healthy_dist_ticks_ = 0;
+    food_eaten_sum_ = 0.0;
+    food_agent_samples_ = 0;
     tick_count_ = 0;
     pathogen_speed_sum_ = 0.0;
     pathogen_spread_sum_ = 0.0;
@@ -105,6 +107,11 @@ void ModuleMetricsObserver::onTick(IWorld& world) {
             }
         }
 
+        if (concrete != nullptr) {
+            food_eaten_sum_ += concrete->foodEatenThisTick();
+            ++food_agent_samples_;
+        }
+
         infos.push_back({agent->position(), is_inf, is_pred});
     }
 
@@ -141,7 +148,6 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
     double damage_sum = 0.0;
     std::size_t kill_sum = 0;
     std::size_t predator_kill_sum = 0;
-    double food_eaten_sum = 0.0;
 
     for (const auto* agent : agents) {
         if (!agent->alive()) continue;
@@ -158,13 +164,12 @@ void ModuleMetricsObserver::onDetach(IWorld& world) {
             }
             damage_sum += concrete->damageDealt();
             kill_sum += concrete->kills();
-            food_eaten_sum += concrete->foodEatenThisTick();
             if (!concrete->immuneMemory().empty()) ++immune_count;
         }
     }
 
     const double avg_energy = alive > 0 ? energy_sum / alive : 0.0;
-    const double avg_food = alive > 0 ? food_eaten_sum / alive : 0.0;
+    const double avg_food = food_agent_samples_ > 0 ? food_eaten_sum_ / food_agent_samples_ : 0.0;
 
     // Use tick-accumulated behavioral metrics
     // speed_sum_ accumulates per-agent speed each sample tick

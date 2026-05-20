@@ -52,12 +52,19 @@ enum class EventType : std::uint16_t {
     TerrainGenerated,           // a fresh terrain instance ready
     AgentEnteredCave,
     AgentLeftCave,
+    TerrainModified,
 
     // ====================== F-COMM ========================================
     AgentEmittedSignal,
 
     // ====================== F-FIGHT =======================================
     AgentAttacked,
+    AgentFled,
+    ObjectPickedUp,
+    ObjectDropped,
+
+    // ====================== F-MATE ========================================
+    MatingOccurred,             // two agents mated (spatial partner selection)
 
     // ====================== F-GOD =========================================
     InterventionTriggered,

@@ -49,12 +49,21 @@ struct DecisionTriggered  { AgentId id; Tick tick; };
 struct TerrainGenerated   { std::uint64_t seed; };
 struct AgentEnteredCave   { AgentId id; Vec2 pos; };
 struct AgentLeftCave      { AgentId id; Vec2 pos; };
+struct TerrainModified    { AgentId id; Vec2 pos; float dig; float build; };
 
 // ---- F-COMM ----
 struct AgentEmittedSignal { AgentId id; Vec2 pos; std::uint8_t channel; float intensity; };
 
 // ---- F-FIGHT ----
 struct AgentAttacked      { AgentId attacker; AgentId victim; float damage; };
+struct AgentFled          { AgentId id; Vec2 from; Vec2 to; float intensity; };
+
+// ---- F-TOOL ----
+struct ObjectPickedUp     { AgentId id; std::uint64_t object_id; };
+struct ObjectDropped      { AgentId id; std::uint64_t object_id; };
+
+// ---- F-MATE ----
+struct MatingOccurred     { AgentId initiator; AgentId partner; };
 
 // ---- F-GOD ----
 struct InterventionTriggered { std::string kind; std::string user; };

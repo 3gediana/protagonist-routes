@@ -83,7 +83,8 @@ NeatEvolution::NeatEvolution(double elite_ratio,
 
 std::vector<std::unique_ptr<IGenome>> NeatEvolution::reproduce(
     const std::vector<EvaluatedIndividual>& evaluated,
-    const std::vector<IGenome*>& current_genomes) {
+    const std::vector<IGenome*>& current_genomes,
+    const std::vector<std::pair<GenomeId, GenomeId>>* mating_pairs) {
     if (evaluated.empty() || current_genomes.empty()) {
         return {};
     }
@@ -93,6 +94,17 @@ std::vector<std::unique_ptr<IGenome>> NeatEvolution::reproduce(
     auto species_states = buildSpeciesStates(evaluated, current_genomes);
     if (species_states.empty()) {
         return {};
+    }
+
+    std::unordered_multimap<GenomeId, GenomeId> mate_lookup;
+    if (mating_pairs != nullptr) {
+        for (const auto& [lhs, rhs] : *mating_pairs) {
+            if (!lhs || !rhs || lhs == rhs) {
+                continue;
+            }
+            mate_lookup.emplace(lhs, rhs);
+            mate_lookup.emplace(rhs, lhs);
+        }
     }
 
     GenomeId max_id = kInvalidGenomeId;
@@ -119,6 +131,42 @@ std::vector<std::unique_ptr<IGenome>> NeatEvolution::reproduce(
         const EvaluatedIndividual* best = &members[index_dist(rng_)];
         for (std::size_t i = 1; i < tournament_size_; ++i) {
             const EvaluatedIndividual* candidate = &members[index_dist(rng_)];
+            if (betterIndividual(*candidate, *best)) {
+                best = candidate;
+            }
+        }
+        return *best;
+    };
+
+    auto select_partner = [&](const EvaluatedIndividual& primary,
+                              const std::vector<EvaluatedIndividual>& members) -> const EvaluatedIndividual& {
+        if (mate_lookup.empty() || !std::bernoulli_distribution(0.75)(rng_)) {
+            return select_parent(members);
+        }
+
+        const auto range = mate_lookup.equal_range(primary.genome_id);
+        if (range.first == range.second) {
+            return select_parent(members);
+        }
+
+        std::vector<const EvaluatedIndividual*> candidates;
+        for (auto it = range.first; it != range.second; ++it) {
+            for (const auto& member : members) {
+                if (member.genome_id == it->second && member.genome_id != primary.genome_id) {
+                    candidates.push_back(&member);
+                    break;
+                }
+            }
+        }
+
+        if (candidates.empty()) {
+            return select_parent(members);
+        }
+
+        std::uniform_int_distribution<std::size_t> index_dist(0, candidates.size() - 1);
+        const EvaluatedIndividual* best = candidates[index_dist(rng_)];
+        for (std::size_t i = 1; i < tournament_size_; ++i) {
+            const EvaluatedIndividual* candidate = candidates[index_dist(rng_)];
             if (betterIndividual(*candidate, *best)) {
                 best = candidate;
             }
@@ -153,7 +201,7 @@ std::vector<std::unique_ptr<IGenome>> NeatEvolution::reproduce(
 
         for (std::size_t produced = elite_count; produced < species_state.spawn_count; ++produced) {
             const auto& parent_a_eval = select_parent(species_state.members);
-            const auto& parent_b_eval = select_parent(species_state.members);
+            const auto& parent_b_eval = select_partner(parent_a_eval, species_state.members);
             const auto* parent_a = findGenome(current_genomes, parent_a_eval.genome_id);
             const auto* parent_b = findGenome(current_genomes, parent_b_eval.genome_id);
             if (parent_a == nullptr || parent_b == nullptr) {
@@ -464,9 +512,15 @@ NeatGenome NeatEvolution::crossover(const NeatGenome& a,
 
     const float child_interval = pick_half(rng_) ? primary->decisionInterval() : secondary->decisionInterval();
     const float child_immunity = pick_half(rng_) ? primary->immunityGainRate() : secondary->immunityGainRate();
+    const float child_habitat = pick_half(rng_) ? primary->habitatPreference() : secondary->habitatPreference();
+    const float child_activity = pick_half(rng_) ? primary->activityPeriod() : secondary->activityPeriod();
+    const float child_diet = pick_half(rng_) ? primary->dietPreference() : secondary->dietPreference();
 
     auto child = NeatGenome(child_id, primary->inputDim(), primary->outputDim(), std::move(child_nodes), std::move(child_connections), child_interval);
     child.setImmunityGainRate(child_immunity);
+    child.setHabitatPreference(child_habitat);
+    child.setActivityPeriod(child_activity);
+    child.setDietPreference(child_diet);
     return child;
 }
 
@@ -475,6 +529,7 @@ void NeatEvolution::mutate(NeatGenome& genome) {
     mutateNodeParameters(genome);
     mutateDecisionInterval(genome);
     mutateImmunityGainRate(genome);
+    mutateBehavioralGenes(genome);
 
     std::bernoulli_distribution add_connection(add_connection_rate_);
     std::bernoulli_distribution add_node(add_node_rate_);
@@ -693,6 +748,26 @@ void NeatEvolution::mutateImmunityGainRate(NeatGenome& genome) {
         const float new_rate = genome.immunityGainRate() + perturb_dist(rng_);
         genome.setImmunityGainRate(new_rate);
     }
+}
+
+void NeatEvolution::mutateBehavioralGenes(NeatGenome& genome) {
+    std::bernoulli_distribution perturb(weight_perturb_rate_);
+    std::normal_distribution<float> perturb_dist(0.0f, 0.05f);
+    std::uniform_real_distribution<float> reset_dist(0.0f, 1.0f);
+
+    auto mutate_gene = [&](float current, auto setter, float lo, float hi) {
+        float val = current;
+        if (std::bernoulli_distribution(weight_reset_rate_)(rng_)) {
+            val = reset_dist(rng_);
+        } else if (perturb(rng_)) {
+            val = std::clamp(current + perturb_dist(rng_), lo, hi);
+        }
+        setter(val);
+    };
+
+    mutate_gene(genome.habitatPreference(), [&](float v) { genome.setHabitatPreference(v); }, 0.0f, 1.0f);
+    mutate_gene(genome.activityPeriod(), [&](float v) { genome.setActivityPeriod(v); }, 0.0f, 1.0f);
+    mutate_gene(genome.dietPreference(), [&](float v) { genome.setDietPreference(v); }, 0.0f, 1.0f);
 }
 
 }  // namespace neuro

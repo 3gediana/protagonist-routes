@@ -36,6 +36,9 @@ public:
 
     const std::vector<HeavyResource>& resources() const { return resources_; }
 
+    std::size_t generationCompletedCount() const { return gen_completed_; }
+    void resetGenerationCount() { gen_completed_ = 0; }
+
 private:
     std::size_t count_;
     float amount_;
@@ -45,6 +48,7 @@ private:
     std::mt19937 rng_;
     Vec2 world_size_;
     std::vector<HeavyResource> resources_;
+    std::size_t gen_completed_ = 0;
 };
 
 }  // namespace neuro

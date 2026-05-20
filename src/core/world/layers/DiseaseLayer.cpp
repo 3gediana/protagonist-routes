@@ -88,6 +88,7 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
             const auto strain = pathogen->genome().strain();
             agent->setInfected(false);
             agent->addImmuneMemory(strain);
+            agent->setImmune(true);
             ++recoveries_;
             continue;
         }
@@ -131,6 +132,7 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
                     }
 
                     other->setInfected(true);
+                    other->setImmune(false);
                     other->attachPathogen(std::make_unique<Pathogen>(std::move(child)));
                 }
             }
@@ -140,6 +142,7 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
 
 void DiseaseLayer::infectAgent(Agent* agent) {
     agent->setInfected(true);
+    agent->setImmune(false);
     PathogenGenome genome(static_cast<std::uint32_t>(rng_()));
     agent->attachPathogen(std::make_unique<Pathogen>(std::move(genome)));
 }

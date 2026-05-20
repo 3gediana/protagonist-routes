@@ -183,14 +183,32 @@ std::vector<double> Nsga2Evolution::computeCrowdingDistance(
 }
 
 // --- Reproduce using NSGA-II selection ---
-
 std::vector<std::unique_ptr<IGenome>> Nsga2Evolution::reproduce(
     const std::vector<EvaluatedIndividual>& evaluated,
-    const std::vector<IGenome*>& current_genomes) {
+    const std::vector<IGenome*>& current_genomes,
+    const std::vector<std::pair<GenomeId, GenomeId>>* mating_pairs) {
 
-    if (evaluated.empty()) return {};
+    if (evaluated.empty() || current_genomes.empty()) return {};
 
     const std::size_t target_size = current_genomes.size();
+    GenomeId max_id = kInvalidGenomeId;
+    for (const IGenome* genome : current_genomes) {
+        if (genome != nullptr && genome->id().value > max_id.value) {
+            max_id = genome->id();
+        }
+    }
+
+    std::unordered_multimap<GenomeId, GenomeId> mate_lookup;
+    if (mating_pairs != nullptr) {
+        for (const auto& [lhs, rhs] : *mating_pairs) {
+            if (!lhs || !rhs || lhs == rhs) {
+                continue;
+            }
+            mate_lookup.emplace(lhs, rhs);
+            mate_lookup.emplace(rhs, lhs);
+        }
+    }
+
     auto fronts = nonDominatedSort(evaluated);
 
     std::vector<std::size_t> sorted_indices(evaluated.size());
@@ -210,7 +228,11 @@ std::vector<std::unique_ptr<IGenome>> Nsga2Evolution::reproduce(
         const auto& eval = evaluated[sorted_indices[i]];
         const auto* genome = findGenome(current_genomes, eval.genome_id);
         if (genome) {
-            next_gen.push_back(genome->clone());
+            auto child = genome->clone();
+            if (auto* neat = dynamic_cast<NeatGenome*>(child.get())) {
+                neat->setId(GenomeId{++max_id.value});
+            }
+            next_gen.push_back(std::move(child));
         }
     }
 
@@ -230,8 +252,40 @@ std::vector<std::unique_ptr<IGenome>> Nsga2Evolution::reproduce(
             return best;
         };
 
+        auto select_partner_idx = [&](std::size_t primary_idx) -> std::size_t {
+            if (mate_lookup.empty() || !std::bernoulli_distribution(0.75)(rng_)) {
+                return nsga2_tournament(idx_dist(rng_));
+            }
+
+            std::vector<std::size_t> candidates;
+            const auto range = mate_lookup.equal_range(evaluated[primary_idx].genome_id);
+            for (auto it = range.first; it != range.second; ++it) {
+                for (std::size_t idx = 0; idx < evaluated.size(); ++idx) {
+                    if (idx != primary_idx && evaluated[idx].genome_id == it->second) {
+                        candidates.push_back(idx);
+                    }
+                }
+            }
+
+            if (candidates.empty()) {
+                return nsga2_tournament(idx_dist(rng_));
+            }
+
+            std::uniform_int_distribution<std::size_t> candidate_dist(0, candidates.size() - 1);
+            std::size_t best = candidates[candidate_dist(rng_)];
+            for (std::size_t t = 1; t < tournament_size_; ++t) {
+                std::size_t challenger = candidates[candidate_dist(rng_)];
+                if (fronts[challenger].rank < fronts[best].rank ||
+                    (fronts[challenger].rank == fronts[best].rank &&
+                     fronts[challenger].crowding > fronts[best].crowding)) {
+                    best = challenger;
+                }
+            }
+            return best;
+        };
+
         std::size_t parent1_idx = nsga2_tournament(idx_dist(rng_));
-        std::size_t parent2_idx = nsga2_tournament(idx_dist(rng_));
+        std::size_t parent2_idx = select_partner_idx(parent1_idx);
 
         const auto& eval1 = evaluated[parent1_idx];
         const auto& eval2 = evaluated[parent2_idx];
@@ -242,12 +296,16 @@ std::vector<std::unique_ptr<IGenome>> Nsga2Evolution::reproduce(
             const auto* ng1 = dynamic_cast<const NeatGenome*>(g1);
             const auto* ng2 = dynamic_cast<const NeatGenome*>(g2);
             if (ng1 && ng2) {
-                GenomeId child_id = static_cast<GenomeId>(next_gen.size() + 1);
+                GenomeId child_id{++max_id.value};
                 auto child = crossover(*ng1, *ng2, eval1, eval2, child_id);
                 mutate(child);
                 next_gen.push_back(std::make_unique<NeatGenome>(std::move(child)));
             } else {
-                next_gen.push_back(g1->clone());
+                auto child = g1->clone();
+                if (auto* neat = dynamic_cast<NeatGenome*>(child.get())) {
+                    neat->setId(GenomeId{++max_id.value});
+                }
+                next_gen.push_back(std::move(child));
             }
         }
     }
@@ -309,9 +367,20 @@ NeatGenome Nsga2Evolution::crossover(const NeatGenome& a, const NeatGenome& b,
     // Inherit nodes from primary
     std::vector<NodeGene> child_nodes = primary->nodes();
 
-    return NeatGenome(child_id, a.inputDim(), a.outputDim(),
-                      std::move(child_nodes), std::move(child_connections),
-                      a.decisionInterval());
+    const float child_interval = pick_half(rng_) ? a.decisionInterval() : b.decisionInterval();
+    const float child_immunity = pick_half(rng_) ? a.immunityGainRate() : b.immunityGainRate();
+    const float child_habitat = pick_half(rng_) ? a.habitatPreference() : b.habitatPreference();
+    const float child_activity = pick_half(rng_) ? a.activityPeriod() : b.activityPeriod();
+    const float child_diet = pick_half(rng_) ? a.dietPreference() : b.dietPreference();
+
+    auto child = NeatGenome(child_id, a.inputDim(), a.outputDim(),
+                            std::move(child_nodes), std::move(child_connections),
+                            child_interval);
+    child.setImmunityGainRate(child_immunity);
+    child.setHabitatPreference(child_habitat);
+    child.setActivityPeriod(child_activity);
+    child.setDietPreference(child_diet);
+    return child;
 }
 
 void Nsga2Evolution::mutate(NeatGenome& genome) {
@@ -319,6 +388,7 @@ void Nsga2Evolution::mutate(NeatGenome& genome) {
     mutateNodeParameters(genome);
     mutateDecisionInterval(genome);
     mutateImmunityGainRate(genome);
+    mutateBehavioralGenes(genome);
     addConnectionMutation(genome);
     addNodeMutation(genome);
     toggleConnectionMutation(genome);
@@ -467,6 +537,26 @@ void Nsga2Evolution::mutateImmunityGainRate(NeatGenome& genome) {
         float rate = genome.immunityGainRate() + perturb_dist(rng_);
         genome.setImmunityGainRate(std::clamp(rate, 0.01f, 0.5f));
     }
+}
+
+void Nsga2Evolution::mutateBehavioralGenes(NeatGenome& genome) {
+    std::bernoulli_distribution perturb(weight_perturb_rate_);
+    std::normal_distribution<float> perturb_dist(0.0f, 0.05f);
+    std::uniform_real_distribution<float> reset_dist(0.0f, 1.0f);
+
+    auto mutate_gene = [&](float current, auto setter) {
+        float value = current;
+        if (std::bernoulli_distribution(weight_reset_rate_)(rng_)) {
+            value = reset_dist(rng_);
+        } else if (perturb(rng_)) {
+            value = std::clamp(current + perturb_dist(rng_), 0.0f, 1.0f);
+        }
+        setter(value);
+    };
+
+    mutate_gene(genome.habitatPreference(), [&](float value) { genome.setHabitatPreference(value); });
+    mutate_gene(genome.activityPeriod(), [&](float value) { genome.setActivityPeriod(value); });
+    mutate_gene(genome.dietPreference(), [&](float value) { genome.setDietPreference(value); });
 }
 
 void Nsga2Evolution::writeParetoFront(const std::vector<EvaluatedIndividual>& evaluated,

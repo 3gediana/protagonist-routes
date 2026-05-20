@@ -78,13 +78,15 @@ void HeavyResourceLayer::tick(IWorld& world, float dt) {
                     if (dx * dx + dy * dy <= collect_radius_ * collect_radius_) {
                         auto* concrete = dynamic_cast<Agent*>(agent);
                         if (concrete) {
-                            concrete->setEnergy(concrete->energy() + share);
-                            concrete->noteFoodEaten(share);
+                            const float gained = share * (1.15f - 0.3f * concrete->dietPreference());
+                            concrete->setEnergy(concrete->energy() + gained);
+                            concrete->notePlantFood(gained);
                         }
                     }
                 }
                 resource.available = false;
                 resource.ticks_with_workers = 0;
+                ++gen_completed_;
             }
         } else {
             resource.ticks_with_workers = 0;

@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 using neuro::Agent;
 using neuro::FixedTopologyBrain;
 using neuro::FixedTopologyGenome;
@@ -52,5 +54,10 @@ TEST(Rewards, IntrinsicRewardDetectsNewCell) {
     agent.noteExplorationCell(7);
     IntrinsicReward reward(5.0);
     EXPECT_DOUBLE_EQ(reward.evaluate(agent, world, 1.0f), 1.0);
+
+    agent.beginTick();
+    agent.noteExplorationCell(9);
+    EXPECT_NEAR(reward.evaluate(agent, world, 1.0f), 1.0 / std::sqrt(2.0), 1e-9);
+
     EXPECT_DOUBLE_EQ(reward.weight(), 5.0);
 }

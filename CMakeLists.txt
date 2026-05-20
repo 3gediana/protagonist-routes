@@ -39,6 +39,7 @@ include(Dependencies)
 # Subdirectories
 # ============================================================================
 add_subdirectory(src)
+add_subdirectory(routes/protagonist_ecology)
 
 if(NEURAL_ECO_BUILD_TESTS)
     enable_testing()

@@ -4,6 +4,7 @@
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/ResourceLayer.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace neuro {
@@ -18,31 +19,43 @@ void FoodScentPerception::sense(const IAgent& agent, const IWorld& world, std::s
         return;
     }
 
-    const auto nearest = resources->nearestAvailable(agent.position());
-    if (!nearest.has_value()) {
+    const auto& all_resources = resources->resources();
+    if (all_resources.empty()) {
         output[0] = 0.0f;
         output[1] = 0.0f;
         return;
     }
 
-    // Output: coarse direction to food (dx, dy normalized to [-1,1])
-    // This is a "scent gradient" — tells you which direction food is,
-    // but not exactly where. Agents need signals for precise navigation.
-    const float dx = nearest->position.x - agent.position().x;
-    const float dy = nearest->position.y - agent.position().y;
-    const float dist = std::sqrt(dx * dx + dy * dy);
+    constexpr float kSmellRadius = 50.0f;
+    constexpr float kLocalRadius = 16.0f;
 
-    if (dist < 0.001f) {
-        output[0] = 0.0f;
-        output[1] = 0.0f;
-        return;
+    float nearest_proximity = 0.0f;
+    float local_density = 0.0f;
+
+    for (const auto& resource : all_resources) {
+        if (!resource.available) {
+            continue;
+        }
+
+        const float dx = resource.position.x - agent.position().x;
+        const float dy = resource.position.y - agent.position().y;
+        const float dist_sq = dx * dx + dy * dy;
+        const float dist = std::sqrt(dist_sq);
+        if (dist > kSmellRadius) {
+            continue;
+        }
+
+        const float proximity = std::clamp(1.0f - dist / kSmellRadius, 0.0f, 1.0f);
+        nearest_proximity = std::max(nearest_proximity, proximity);
+
+        if (dist <= kLocalRadius) {
+            const float local_weight = std::clamp(1.0f - dist / kLocalRadius, 0.0f, 1.0f);
+            local_density += local_weight;
+        }
     }
 
-    // Normalize direction to [-1, 1], scale by proximity (closer = stronger scent)
-    const float max_range = 50.0f;
-    const float strength = std::clamp(1.0f - dist / max_range, 0.0f, 1.0f);
-    output[0] = (dx / dist) * strength;
-    output[1] = (dy / dist) * strength;
+    output[0] = nearest_proximity;
+    output[1] = 1.0f - std::exp(-0.75f * local_density);
 }
 
 const char* FoodScentPerception::name() const {

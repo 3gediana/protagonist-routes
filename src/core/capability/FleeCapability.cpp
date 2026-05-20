@@ -1,5 +1,7 @@
 #include "core/capability/FleeCapability.h"
 #include "core/agent/Agent.h"
+#include "core/events/EventBus.h"
+#include "core/events/EventPayloads.h"
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
@@ -69,6 +71,8 @@ void FleeCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
 
     // Apply flee velocity boost on top of normal movement
     Vec2 flee_velocity = flee_dir * boost;
+    const Vec2 previous_position = agent.position();
+    const float previous_energy = concrete->energy();
     Vec2 new_pos = agent.position() + flee_velocity * dt;
 
     // Clamp to world bounds
@@ -78,6 +82,15 @@ void FleeCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
 
     agent.setPosition(new_pos);
     concrete->setEnergy(concrete->energy() - flee_cost_ * flee_intensity * dt);
+    world.eventBus().publish(events::Event{events::EventType::AgentMoved,
+                                           events::AgentMoved{agent.id(), previous_position, new_pos},
+                                           world.currentTick()});
+    world.eventBus().publish(events::Event{events::EventType::AgentFled,
+                                           events::AgentFled{agent.id(), previous_position, new_pos, flee_intensity},
+                                           world.currentTick()});
+    world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
+                                           events::AgentEnergyChanged{agent.id(), previous_energy, concrete->energy()},
+                                           world.currentTick()});
 }
 
 const char* FleeCapability::name() const {

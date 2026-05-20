@@ -39,6 +39,8 @@ private:
     std::size_t infected_speed_ticks_{0};
     double healthy_infected_dist_sum_{0.0};
     std::size_t healthy_dist_ticks_{0};
+    double food_eaten_sum_{0.0};
+    std::size_t food_agent_samples_{0};
     std::size_t tick_count_{0};
 
     // Pathogen behavioral accumulators

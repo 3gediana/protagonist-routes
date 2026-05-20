@@ -35,7 +35,8 @@ public:
 
     std::vector<std::unique_ptr<IGenome>> reproduce(
         const std::vector<EvaluatedIndividual>& evaluated,
-        const std::vector<IGenome*>& current_genomes) override;
+        const std::vector<IGenome*>& current_genomes,
+        const std::vector<std::pair<GenomeId, GenomeId>>* mating_pairs = nullptr) override;
 
     const char* name() const override;
 
@@ -70,6 +71,7 @@ private:
     void addModulatoryNodeMutation(NeatGenome& genome);
     void mutateDecisionInterval(NeatGenome& genome);
     void mutateImmunityGainRate(NeatGenome& genome);
+    void mutateBehavioralGenes(NeatGenome& genome);
 
     double elite_ratio_;
     std::size_t tournament_size_;

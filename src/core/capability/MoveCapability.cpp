@@ -18,11 +18,13 @@ namespace neuro {
 MoveCapability::MoveCapability(float max_speed,
                                float decision_cost,
                                float movement_cost_factor,
-                               std::size_t exploration_grid_size)
+                               std::size_t exploration_grid_size,
+                               bool aerial)
     : max_speed_(max_speed),
       decision_cost_(decision_cost),
       movement_cost_factor_(movement_cost_factor),
-      exploration_grid_size_(exploration_grid_size) {}
+      exploration_grid_size_(exploration_grid_size),
+      aerial_(aerial) {}
 
 std::size_t MoveCapability::consumedOutputs() const {
     return 2;
@@ -67,7 +69,8 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
         velocity = velocity * light_factor;
     }
 
-    if (terrain != nullptr) {
+    if (terrain != nullptr && !aerial_) {
+        // Ground-bound agents are slowed by slope and benefit from cave shelter.
         const Vec2 slope = terrain->slopeAt(previous_position.x, previous_position.y);
         const float slope_mag = std::sqrt(slope.x * slope.x + slope.y * slope.y);
         const float terrain_factor = std::max(terrain->minVelocityFactor(),
@@ -87,6 +90,10 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
             }
             terrain_cost_factor *= shelter;
         }
+    } else if (terrain != nullptr && aerial_) {
+        // Aerial agents (e.g. vultures) glide over terrain: small base cost surcharge
+        // representing flight metabolism, but no slope penalty.
+        terrain_cost_factor *= 1.15f;
     }
 
     Vec2 next_position = previous_position + velocity * dt;

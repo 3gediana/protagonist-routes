@@ -1,0 +1,94 @@
+#include "capability/ThrowCarriedObjectCapability.h"
+
+#include "brain/ProtagonistBrain.h"
+#include "core/agent/Agent.h"
+#include "core/interfaces/IWorld.h"
+#include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/object/ObjectLayer.h"
+
+#include <cmath>
+
+namespace neuro::routes::protagonist {
+
+ThrowCarriedObjectCapability::ThrowCarriedObjectCapability(float throw_speed,
+                                                           float throw_radius,
+                                                           float stone_damage,
+                                                           float spear_damage,
+                                                           float energy_cost)
+    : throw_speed_(throw_speed),
+      throw_radius_(throw_radius),
+      stone_damage_(stone_damage),
+      spear_damage_(spear_damage),
+      energy_cost_(energy_cost) {}
+
+void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) {
+    if (outputs.size() < 2) {
+        return;
+    }
+
+    const float mag_sq = outputs[0] * outputs[0] + outputs[1] * outputs[1];
+    if (mag_sq < 0.25f) {
+        return;
+    }
+
+    auto* concrete = dynamic_cast<Agent*>(&agent);
+    auto* objects = world.getLayer<ObjectLayer>();
+    auto* agents = world.getLayer<AgentLayer>();
+    if (concrete == nullptr || objects == nullptr || agents == nullptr || !concrete->isCarrying()) {
+        return;
+    }
+
+    auto* carried = objects->findById(concrete->carriedObject());
+    if (carried == nullptr) {
+        concrete->setCarriedObject(0);
+        return;
+    }
+    if (carried->type != ObjectType::Stone && carried->type != ObjectType::Spear) {
+        return;
+    }
+    throw_attempts.fetch_add(1, std::memory_order_relaxed);
+
+    const float mag = std::sqrt(mag_sq);
+    const Vec2 dir{outputs[0] / mag, outputs[1] / mag};
+    const float damage = carried->type == ObjectType::Spear ? spear_damage_ : stone_damage_;
+
+    Agent* best_target = nullptr;
+    float best_dist = throw_radius_;
+    for (auto* other : agents->agents()) {
+        if (other == nullptr || other == concrete || !other->alive()) {
+            continue;
+        }
+        const Vec2 delta = other->position() - concrete->position();
+        const float dist = delta.length();
+        if (dist <= 0.0001f || dist > throw_radius_) {
+            continue;
+        }
+        const Vec2 delta_dir = delta / dist;
+        const float alignment = delta_dir.x * dir.x + delta_dir.y * dir.y;
+        if (alignment < 0.55f) {
+            continue;
+        }
+        if (best_target == nullptr || dist < best_dist) {
+            best_target = other;
+            best_dist = dist;
+        }
+    }
+
+    carried->carried = false;
+    carried->velocity = agent.velocity() + dir * throw_speed_;
+    carried->pos = best_target != nullptr ? best_target->position() : agent.position() + dir * 2.0f;
+    concrete->setCarriedObject(0);
+    concrete->setEnergy(concrete->energy() - energy_cost_ * dt);
+
+    if (best_target != nullptr) {
+        best_target->setEnergy(best_target->energy() - damage * dt);
+        concrete->noteDamageDealt(damage * dt);
+        if (best_target->energy() <= 0.0f) {
+            best_target->kill(carried->type == ObjectType::Spear ? "thrown_spear" : "thrown_stone");
+            concrete->noteKill();
+        }
+        throw_hits.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+}  // namespace neuro::routes::protagonist

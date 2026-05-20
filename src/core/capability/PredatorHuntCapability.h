@@ -2,6 +2,7 @@
 
 #include "core/interfaces/IAgentCapability.h"
 
+#include <atomic>
 #include <cstddef>
 
 namespace neuro {
@@ -19,6 +20,12 @@ private:
     float damage_;
     float energy_gain_;
     float cost_;
+
+public:
+    static inline std::atomic<std::size_t> hunt_attempts{0};
+    static inline std::atomic<std::size_t> hunt_successes{0};
+
+    static void resetCounters() { hunt_attempts.store(0); hunt_successes.store(0); }
 };
 
 }  // namespace neuro

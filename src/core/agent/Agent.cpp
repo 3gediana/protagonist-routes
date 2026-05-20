@@ -29,6 +29,8 @@ Agent::Agent(AgentId id,
       decision_interval_(decision_interval),
       next_decision_tick_(0),
       food_eaten_this_tick_(0.0f),
+      plant_food_this_tick_(0.0f),
+      meat_food_this_tick_(0.0f),
       discovered_new_cell_this_tick_(false),
       exploration_grid_size_(exploration_grid_size),
       damage_dealt_(0.0f),
@@ -87,6 +89,8 @@ void Agent::addCapability(std::unique_ptr<IAgentCapability> capability) {
 
 void Agent::beginTick() {
     food_eaten_this_tick_ = 0.0f;
+    plant_food_this_tick_ = 0.0f;
+    meat_food_this_tick_ = 0.0f;
     discovered_new_cell_this_tick_ = false;
 }
 
@@ -142,6 +146,16 @@ void Agent::noteFoodEaten(float amount) {
     food_eaten_this_tick_ += 1.0f;
 }
 
+void Agent::notePlantFood(float amount) {
+    noteFoodEaten(amount);
+    plant_food_this_tick_ += 1.0f;
+}
+
+void Agent::noteMeatFood(float amount) {
+    noteFoodEaten(amount);
+    meat_food_this_tick_ += 1.0f;
+}
+
 void Agent::noteExplorationCell(std::size_t cell_index) {
     auto [_, inserted] = visited_cells_.insert(cell_index);
     discovered_new_cell_this_tick_ = discovered_new_cell_this_tick_ || inserted;
@@ -149,6 +163,14 @@ void Agent::noteExplorationCell(std::size_t cell_index) {
 
 float Agent::foodEatenThisTick() const {
     return food_eaten_this_tick_;
+}
+
+float Agent::plantFoodThisTick() const {
+    return plant_food_this_tick_;
+}
+
+float Agent::meatFoodThisTick() const {
+    return meat_food_this_tick_;
 }
 
 bool Agent::discoveredNewCellThisTick() const {
@@ -181,11 +203,16 @@ bool Agent::infected() const {
 
 void Agent::setInfected(bool v) {
     infected_ = v;
-    if (!v) {
+    if (v) {
+        immune_ = false;
         infection_progress_ = 0.0f;
         immunity_progress_ = 0.0f;
-        pathogen_.reset();
+        return;
     }
+    infection_progress_ = 0.0f;
+    immunity_progress_ = 0.0f;
+    pathogen_.reset();
+    immune_ = !immune_memory_.empty();
 }
 
 float Agent::infectionProgress() const {
@@ -201,12 +228,12 @@ float Agent::immunityProgress() const {
 }
 
 void Agent::advanceImmunity(float dt) {
-    immunity_progress_ += immunity_gain_rate_ * dt;
+    immunity_progress_ += dt;
     if (immunity_progress_ > 1.0f) immunity_progress_ = 1.0f;
 }
 
 bool Agent::immune() const {
-    return immune_;
+    return immune_ || (!infected_ && !immune_memory_.empty());
 }
 
 void Agent::setImmune(bool v) {
@@ -227,6 +254,12 @@ Pathogen* Agent::pathogen() const {
 
 void Agent::attachPathogen(std::unique_ptr<Pathogen> p) {
     pathogen_ = std::move(p);
+    if (pathogen_) {
+        infected_ = true;
+        immune_ = false;
+        infection_progress_ = 0.0f;
+        immunity_progress_ = 0.0f;
+    }
 }
 
 const std::vector<PathogenGenome::StrainSignature>& Agent::immuneMemory() const {
@@ -234,7 +267,14 @@ const std::vector<PathogenGenome::StrainSignature>& Agent::immuneMemory() const 
 }
 
 void Agent::addImmuneMemory(const PathogenGenome::StrainSignature& strain) {
+    for (const auto& existing : immune_memory_) {
+        if (existing == strain) {
+            immune_ = true;
+            return;
+        }
+    }
     immune_memory_.push_back(strain);
+    immune_ = true;
 }
 
 bool Agent::hasImmunityToStrain(const PathogenGenome::StrainSignature& strain, float threshold) const {

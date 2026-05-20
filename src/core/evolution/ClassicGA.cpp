@@ -24,7 +24,9 @@ ClassicGA::ClassicGA(double elite_ratio,
 
 std::vector<std::unique_ptr<IGenome>> ClassicGA::reproduce(
     const std::vector<EvaluatedIndividual>& evaluated,
-    const std::vector<IGenome*>& current_genomes) {
+    const std::vector<IGenome*>& current_genomes,
+    const std::vector<std::pair<GenomeId, GenomeId>>* mating_pairs) {
+    (void)mating_pairs;
     if (evaluated.empty() || current_genomes.empty()) {
         return {};
     }

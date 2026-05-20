@@ -25,6 +25,16 @@ public:
     std::vector<float> currentWeights() const;
     void setWeights(const std::vector<float>& weights);
 
+    std::size_t nodeCount() const { return node_evals_.size(); }
+    std::size_t connectionCount() const { return connection_count_; }
+    std::size_t hiddenCount() const {
+        std::size_t h = 0;
+        for (const auto& n : node_evals_) {
+            if (!n.is_input && !n.is_output) ++h;
+        }
+        return h;
+    }
+
 private:
     struct NodeEval {
         bool is_input{false};

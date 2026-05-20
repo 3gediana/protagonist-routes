@@ -54,6 +54,21 @@ public:
     float immunityGainRate() const;
     void setImmunityGainRate(float rate);
 
+    // Behavioral differentiation genes (evolvable via mutation)
+    float habitatPreference() const { return habitat_pref_; }
+    void setHabitatPreference(float v) { habitat_pref_ = v; }
+    float activityPeriod() const { return activity_period_; }
+    void setActivityPeriod(float v) { activity_period_ = v; }
+    float dietPreference() const { return diet_pref_; }
+    void setDietPreference(float v) { diet_pref_ = v; }
+
+    bool hasModulatoryNodes() const {
+        for (const auto& n : nodes_) {
+            if (n.type == NodeGeneType::Modulatory) return true;
+        }
+        return false;
+    }
+
     static std::unique_ptr<NeatGenome> minimal(GenomeId id,
                                                std::size_t input_dim,
                                                std::size_t output_dim,
@@ -72,6 +87,9 @@ private:
     std::vector<ConnectionGene> connections_;
     float decision_interval_;
     float immunity_gain_rate_ = 0.05f;
+    float habitat_pref_ = 0.5f;
+    float activity_period_ = 0.5f;
+    float diet_pref_ = 0.5f;
 };
 
 }  // namespace neuro

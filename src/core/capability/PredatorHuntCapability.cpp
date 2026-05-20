@@ -5,6 +5,7 @@
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/TimeOfDayLayer.h"
+#include "core/world/layers/terrain/TerrainLayer.h"
 
 #include <cmath>
 #include <random>
@@ -20,6 +21,7 @@ std::size_t PredatorHuntCapability::consumedOutputs() const {
 
 void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) {
     if (outputs.empty() || outputs[0] < 0.3f) return;
+    hunt_attempts.fetch_add(1, std::memory_order_relaxed);
 
     auto* concrete = dynamic_cast<Agent*>(&agent);
     if (concrete == nullptr) return;
@@ -55,12 +57,24 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
             const bool prey_infected = other_concrete->infected();
             const float base_damage = prey_infected ? damage_ * 0.5f : damage_;
             const float base_gain = prey_infected ? energy_gain_ * 0.3f : energy_gain_;
-            const float actual_damage = base_damage * time_damage_mult * dt;
-            const float actual_gain = base_gain * time_damage_mult * dt;
+
+            // Cave shelter: prey in caves take 70% less damage
+            float shelter_mult = 1.0f;
+            const auto* terrain = world.getLayer<TerrainLayer>();
+            if (terrain && terrain->inCave(other->position().x, other->position().y)) {
+                shelter_mult = 0.3f;
+            }
+
+            const float actual_damage = base_damage * time_damage_mult * shelter_mult * dt;
+            float actual_gain = base_gain * time_damage_mult * dt;
+            actual_gain *= 0.85f + 0.3f * concrete->dietPreference();
 
             other->setEnergy(other->energy() - actual_damage);
             concrete->setEnergy(concrete->energy() + actual_gain);
             concrete->noteDamageDealt(actual_damage);
+            if (actual_gain > 0.0f) {
+                concrete->noteMeatFood(actual_gain);
+            }
 
             // Predator can catch disease from infected prey (unless immune to that strain)
             if (prey_infected) {
@@ -84,6 +98,7 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
             if (other->energy() <= 0.0f) {
                 other->kill("predation");
                 concrete->noteKill();
+                hunt_successes.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }

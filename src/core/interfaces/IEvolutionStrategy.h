@@ -18,6 +18,7 @@
 #include "core/types/Aliases.h"
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace neuro {
@@ -50,7 +51,8 @@ public:
     // of selected parents, possibly mutated).
     virtual std::vector<std::unique_ptr<IGenome>> reproduce(
         const std::vector<EvaluatedIndividual>& evaluated,
-        const std::vector<IGenome*>& current_genomes) = 0;
+        const std::vector<IGenome*>& current_genomes,
+        const std::vector<std::pair<GenomeId, GenomeId>>* mating_pairs = nullptr) = 0;
 
     // Strategy name (for logging).
     virtual const char* name() const = 0;

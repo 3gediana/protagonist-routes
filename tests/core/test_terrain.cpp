@@ -11,6 +11,7 @@
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 
+#include <array>
 #include <random>
 
 TEST(HeightField, BilinearInterpolationAtGridPoint) {
@@ -72,4 +73,31 @@ TEST(TerrainLayer, SlopeQueryReturnsVec2) {
 TEST(TerrainPerception, DimIs5) {
     neuro::TerrainPerception tp(30.0f);
     EXPECT_EQ(tp.dim(), 5u);
+}
+
+TEST(TerrainPerception, UsesLiveTerrainHeightScaleForNormalization) {
+    neuro::World2D world(neuro::WorldId{2}, {80.0f, 80.0f});
+    neuro::TerrainParams params;
+    params.seed = 42;
+    params.grid_resolution = 8;
+    params.height_scale = 60.0f;
+    world.addLayer(std::make_unique<neuro::TerrainLayer>(neuro::Vec2{80.0f, 80.0f}, params));
+
+    auto* terrain = world.getLayer<neuro::TerrainLayer>();
+    ASSERT_NE(terrain, nullptr);
+    for (std::size_t y = 0; y < terrain->heightFieldMut().height(); ++y) {
+        for (std::size_t x = 0; x < terrain->heightFieldMut().width(); ++x) {
+            terrain->heightFieldMut().at(x, y) = 30.0f;
+        }
+    }
+
+    neuro::FixedTopologyGenome genome(neuro::GenomeId{3}, 5, 10, 2);
+    auto brain = std::make_unique<neuro::FixedTopologyBrain>(genome);
+    neuro::Agent agent(neuro::AgentId{3}, neuro::GenomeId{3}, std::move(brain), {20.0f, 20.0f}, 10.0f);
+    neuro::TerrainPerception perception(30.0f);
+    std::array<float, neuro::TerrainPerception::kDim> output{};
+
+    perception.sense(agent, world, std::span<float>(output.data(), output.size()));
+
+    EXPECT_NEAR(output[0], 0.5f, 1e-6f);
 }

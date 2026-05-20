@@ -1,5 +1,363 @@
 # experience_log.md · 实验与调参记录
 
+## 2026-05-20 · protagonist runtime 接入真实训练闭环
+
+### 背景
+
+前面虽然已经把 `camp_building / preview_xlong` 环境调到训练前可用，但 `routes/protagonist_ecology/runtime/ProtagonistEcologyRuntime.cpp` 仍然只有 preview tick 循环，**并不能真的多代训练**。
+
+### 真正补上的东西
+
+1. **新增可进化 protagonist 基因表示**
+   - `brain/ProtagonistGenome.h/.cpp`
+   - 覆盖 protagonist dense+memory 脑的全部参数：
+     - input→hidden
+     - hidden bias
+     - hidden→action
+     - action bias
+     - hidden→memory candidate / gate
+     - memory candidate / gate bias
+
+2. **新增 protagonist 专用 GA**
+   - `runtime/ProtagonistEvolution.h/.cpp`
+   - 复用现有 `EliteSelection + TournamentSelection`
+   - 支持 elite 保留、双亲交叉、权重扰动与重置
+
+3. **`ProtagonistBrain` 支持从 genome 构造**
+   - 不再只能随机初始化
+   - 训练时 agent 现在真正由 genome 驱动
+
+4. **`BootstrapPopulation` 支持训练 population 装配**
+   - 原先只会随机造 protagonist 脑
+   - 现在可把一组显式 protagonist genomes 装配进 world
+   - preview 和 training 共用一套 protagonist 身体/感知/能力接口
+
+5. **`ProtagonistEcologyRuntime` 变成双模式**
+   - 默认无 `evolution.generations`：继续 preview 模式
+   - 存在 `evolution.generations`：进入训练模式
+   - 训练模式会：
+     - 创建初始 protagonist population
+     - 按代创建 protagonist world
+     - 运行 episode ticks
+     - 计算 protagonist fitness
+     - 输出 `fitness.csv` 和 `evolution.csv`
+     - 调用 `ProtagonistEvolution` 繁殖下一代
+
+### 训练奖励当前版本
+
+先走一套**最小可用**的 protagonist reward 组合：
+
+- 存活 tick reward
+- 食物 reward（沿用 plant/meat + diet match 思路）
+- exploration/intrinsic reward
+- damage / kill / death penalty
+- 物流 deposit bonus 仍由 world 内已有 `addFitness()` 提供
+
+这套 reward 现在足够让训练循环先跑起来，但还不是最终版 survival curriculum reward。
+
+### Smoke 验证
+
+新增：`configs/protagonist_ecology_train_smoke.toml`
+
+运行结果：
+
+- 3 代 smoke training 成功完成
+- 输出目录：`data/runs/protagonist_smoke/20260520-113857/`
+- 产出文件：
+  - `fitness.csv`
+  - `evolution.csv`
+
+样例：
+
+- gen0: avg `218.957`, best `912.195`
+- gen1: avg `126.502`, best `632.319`
+- gen2: avg `139.496`, best `662.906`
+
+注意：这只是“训练闭环真的在工作”的证明，**不是训练效果已经稳定/优秀**。
+
+### 额外新增
+
+新增正式可启动但**还没实际运行**的训练配置：
+
+- `configs/protagonist_ecology_train_camp_building_evolve.toml`
+
+它是给用户亲自启动首轮正式训练用的入口。
+
+### 当前限制
+
+当前训练 runtime 还没补这些增强项：
+
+- best genome 导出
+- snapshot/checkpoint/resume
+- 更细的 protagonist-specific 行为指标
+- train→eval 自动串联验证
+- 更贴近“原始人生存课程”的 reward 分阶段设计
+
+### 当前结论
+
+- **环境已训练前可用**
+- **训练循环已真正接通**
+- **可以开始第一轮正式训练**
+- 但更稳妥的做法仍是：先由用户亲自启动第一轮正式训练，再根据曲线和日志继续调 reward / curriculum
+
+## 2026-05-20 · protagonist camp-building 环境整备到训练前可用
+
+### 目标
+
+在**不启动正式训练**的前提下，把 protagonist 的 `camp_building / preview_xlong` 环境调到足够稳，避免之后一开训就把环境问题误当模型问题。
+
+### 查到的几类真根因
+
+1. **工地解锁有鸡生蛋**
+   - 原逻辑要求工地解锁前已经有 `stock_stone >= threshold`
+   - 但石头本身又来自 progression stone phase
+   - 结果某些局面会出现：工地还没开，石头链也没真正喂到工地
+
+2. **progression 过于随机**
+   - 某些关键事件走 intervention queue + cooldown，导致该开的时候没立刻开
+   - 对训练前环境验证不友好
+
+3. **做矛会抢工地稀缺石头**
+   - 系统刚进入 primitive tool 第二步后，stone 会被 `CraftSpearCapability` 消耗
+   - 工地仍缺 stone 时，建造链会被工具链反向饿死
+
+4. **工地交付门槛太高**
+   - 之前必须 agent 自己把材料带到 site 内，再恰好触发 drop/松手
+   - 这更像“等模型学会一个精细动作”，不适合训练前环境脚手架验证
+
+### 本次环境修正
+
+1. **工地解锁条件修正**
+   - `NurseryProgressionLayer` 中，工地解锁不再死卡“当前 stock_stone”
+   - stone phase 已开启也可视为 worksite stone prerequisite 已满足
+
+2. **关键 progression 改成更确定性**
+   - first fire / worksite unlock / second fire 直接执行
+   - stone / heavy stone 仍通过 director 投放，但时机更确定
+
+3. **石头投放偏向激活工地**
+   - `InterventionDirectorLayer::ScatterStone` 现在会优先把 stone 刷在激活且未满足 stone 需求的工地附近
+   - 工地首次解锁时还会额外补一枚 support stone
+
+4. **做矛为工地保留 stone**
+   - `CraftSpearCapability` 先统计 active incomplete worksites 的缺 stone 数
+   - 若当前总可用 stone 只够工地需求，则禁止做矛
+
+5. **工地自动接收携带材料**
+   - `WorksiteLayer` 新增 carried-material delivery hook
+   - agent 只要把 `Stick / Stone` 带进 active site 半径内，就自动记为交付
+   - 不再强依赖 agent 额外学会在 site 内精准 `drop`
+
+### 验证结果
+
+使用：`configs/protagonist_ecology_preview_xlong.toml`
+
+多 seed 抽查：
+
+- seed `42`：`active_worksites=1`, `completed_worksites=1`
+- seed `91`：`active_worksites=1`, `completed_worksites=1`
+- seed `123`：`active_worksites=1`, `completed_worksites=1`
+
+说明现在工地主闭环已经不是单 seed 偶然现象。
+
+### 当前判断
+
+- 这套环境现在已经达到**训练前可用**
+- 还没开始正式训练，是按用户要求停住的
+- 后面如果训练效果差，优先先怀疑模型/奖励/训练循环，而不是再优先怀疑工地环境本身
+
+## 2026-05-20 · protagonist 训练路线：primitive tool 第二步 + 优先级回正
+
+### 本次真正完成的东西
+
+- `Spear` 加入 `ObjectType`
+- 新增 `CarriedObjectPerception`
+- 新增 `CraftSpearCapability`
+- 新增 `ThrowCarriedObjectCapability`
+- `NurseryLogisticsLayer` 增加 `consumeStockpiledObject(ObjectType)`
+- protagonist `action_dim` 从 `10` 扩到 `13`
+- 训练路线补了两类与工具链强相关的感知：
+  - `StockpilePerception`
+  - `WeaponPerception`
+- `SandboxStatusLayer` 新增工具链诊断：
+  - `stock_spear`
+  - `craft_attempts / craft_successes`
+  - `throw_attempts / throw_hits`
+  - `carry_spear`
+
+### 验证结果
+
+使用：`configs/protagonist_ecology_train_camp_building.toml`
+
+- 构建：`neural-eco-protagonist` **通过**
+- 运行：**通过**
+- 关键现象：日志中已出现**非零**
+  - `craft_successes`
+  - `throw_hits`
+
+这说明 protagonist 训练世界里，工具链已经从“接口存在”变成“行为真的发生”。
+
+### 中途走偏的地方
+
+中途一度去做了 `live / prod` 世界边界、专门 live 配置和相关世界初始化实验。
+
+这件事本身不算错，但**优先级错了**：
+
+- 当前真正关键路径不是 production world
+- 而是 **训练世界先把能力链学出来**
+
+用户已经明确纠正：
+
+- 先别管生产世界
+- 先把训练世界和训练链条做扎实
+
+因此后续原则已经改回：
+
+- **不再继续 live/prod 方向扩展**
+- 只盯 `routes/protagonist_ecology/` 的训练世界
+
+### 当前判断
+
+现在 protagonist 路线最重要的不是再加新世界，而是提高 `curriculum_camp_building` 里的闭环稳定性：
+
+- 木材获取
+- 石头流通
+- 做矛
+- 投掷
+- 营火/工地链条
+
+先把这条链弄到适合真正训练，再谈后面的 test/prod。
+
+## 2026-05-19 · 核心假指标修复 + 机制闭环加固
+
+### 目的
+把几类“能跑但不可信”的核心问题一次收口：
+
+- `ComprehensiveMetrics` 的假指标（`action_entropy / alive_ratio / immune_ratio / spatial_entropy / 行为MI`）
+- `immune_` 与 `immune_memory` 不同步
+- `MatingOccurred` 只发事件、不参与繁殖
+- `dietPreference` 有记录但不进真实生态收益
+
+### 关键修复
+
+1. **行为统计改为事件驱动**
+   - 给 `Flee / Tool / Terrain / Signal / Mate` 补齐事件
+   - `ComprehensiveMetrics` 不再用“速度方向”冒充行为，而是按 tick 聚合真实动作 bitmask
+   - `signal_action_mi / terrain_behavior_mi / infection_behavior_mi` 改为真实 joint count 计算
+
+2. **活体口径修复**
+   - `alive_ratio` 改为真实 `alive / total`
+   - `immune_ratio` 改为基于真实免疫状态/记忆
+   - `spatial_entropy` 改为按 `world.size()` 动态分桶，不再假定 200×200 世界
+
+3. **免疫状态机修复**
+   - 感染时清 active immune
+   - 恢复时写入 `immune_memory` 并同步 `immune_`
+   - 修正 `advanceImmunity()` 双重乘以 `immunity_gain_rate` 的隐蔽 bug
+
+4. **交配闭环修复**
+   - `MateCapability` 改为 typed payload
+   - runtime 每代收集真实 mating agent pair → genome pair
+   - `NeatEvolution / Nsga2Evolution` 用真实配对记录偏置第二亲本选择，没记录时回退 tournament
+   - 顺手堵上 coevo 中 predator/prey 角色交叉配对风险
+
+5. **饮食分化落地**
+   - 植物摄食、重资源采集、捕食能量收益都按 `dietPreference` 调整
+   - `FoodReward / CombatReward` 改为与 plant/meat intake 匹配程度挂钩
+   - 保留 `FoodReward` 对旧 `noteFoodEaten()` 调用方式的兼容 fallback，避免旧测试/旧逻辑断裂
+
+6. **NSGA-II 补齐半套实现**
+   - 行为基因继承/变异补齐
+   - genome id 改为真实递增，避免 child id 复用
+
+### 验证结果
+
+#### 编译与测试
+
+- Release 构建：**通过**
+- `ctest -C Release --output-on-failure`：**59/59 全通过**
+
+#### 短回归配置
+
+- 新增：`configs/core_regression_short.toml`
+- 覆盖：`coevo + disease + signal + tool + mate + terrain_mod + NSGA-II`
+- 运行：4 代 × 60 tick，`neural-eco.exe --mode headless --config .\configs\core_regression_short.toml`
+- 结果：**正常结束，rc=0**
+
+#### 指标抽查（`data/runs/core_regression_short/20260519-184546/comprehensive/`）
+
+| 指标 | 现象 | 说明 |
+|---|---|---|
+| `alive_ratio` | 0.79 ~ 0.88 | 不再恒等于 1 |
+| `immune_ratio` | 0.63 ~ 0.89 | 不再恒等于 0 |
+| `action_entropy` | 1.56 ~ 1.97 | 不再恒等于 0，且随代变化 |
+| `signal_action_mi` | 0.07 ~ 0.18 | 已有真实非零耦合 |
+| `infection_behavior_mi` | 0.12 ~ 0.31 | 说明感染状态开始影响行为统计 |
+
+### 当前判断
+
+- 这些问题本质上属于“**表面有 feature，底层没闭环**”，现在已经从根上补齐
+- 现阶段数据终于可以当作**真实分析材料**，而不是答辩时一眼会穿帮的假统计
+- 下一步不该急着继续堆 feature，而应做 **50~100 代中长跑回归**，看这些修复在长跑中是否稳定成立
+
+## 2026-05-19 · disease arms-race 统计断链修复
+
+### 症状
+- `module_metrics.csv` 里 `max_infected / infection_deaths / recoveries / pathogen_*` 持续非零
+- 但 `comprehensive/disease_arms_race.csv` 在长跑 coevo 回归里会整列变成 0
+- 表现为“疾病机制在跑，但 comprehensive 疾病曲线像没开一样”
+
+### 根因
+- `ModuleMetricsObserver` 的疾病链路是 **按 tick 累积**，统计的是整代内发生过什么
+- `ComprehensiveMetrics` 的 disease arms-race 原实现却只看 **GenerationEnded 时刻的代末快照**
+- 当 infection_duration 远小于一整代的 episode ticks 时，经常出现“代内感染/恢复/死亡都很活跃，但代末已经清零”的情况
+- 于是 `avg_virulence / strain_count / infection_rate` 会被错误写成 0
+
+### 修复
+- 在 `ComprehensiveMetrics::onTickEnded()` 中新增 disease 相关 per-tick 累积：virulence、max virulence、immunity rate、immune memory、alive sample、infected sample、strain counts
+- `onGenerationEnded()` 优先输出“整代 tick 累积汇总”；只有在没有 tick 样本时才回退旧快照逻辑
+- 新增 `tests/core/test_comprehensive_metrics.cpp`，覆盖“代内感染、代末恢复”场景，防止以后再回归成全 0
+
+### 验证
+- Release 重编译通过
+- `test_core` 全量：**60/60 通过**
+- 单测 `ComprehensiveMetrics.DiseaseStatsCaptureWithinGenerationInfections`：**通过**
+- 重链 `build/bin/Release/neural-eco.exe` 后运行 `configs/core_regression_short.toml`：
+  - `gen 0~3` 的 `disease_arms_race.csv` 已恢复连续非零
+  - 例如 `gen 0`：`avg_virulence=0.64683`, `strain_count=62`, `infection_rate=0.49395`
+
+### 经验
+- 修 observer 指标时，先看**统计口径**，再看模块是否真的坏了
+- 改了 `core` / `runtime_headless` 后，不能只重编 `test_core`；做 headless 验证前必须重链 `neural-eco.exe`
+- 对长期 episode 的生态指标，代末快照很容易撒谎；凡是“过程型机制”，优先考虑 **tick 累积 + 代末汇总**
+
+## 2026-05-19 · Emergence Audit 全指标实现 + F-COMM 调参
+
+### 目的
+实现 EmergenceAuditor 的全部涌现指标，跑对照实验，生成审计报告。
+
+### 关键结果
+
+| 实验 | 结果 |
+|------|------|
+| F-LEARN: Darwin vs Lamarck (200代×3seed) | Lamarck 最终 fitness 158.1 vs Darwin 80.7，**Lamarck ~2x 优势** |
+| F-NOVELTY: on vs off (200代×3seed) | Novelty ON 最终 fitness 1456.6 vs OFF 79.3，**Novelty 巨大优势** |
+| F-COMM: 默认参数 (100代) | signal_behavior_mi_avg ≈ 0.07，**远低于 0.3 阈值** |
+| F-COMM: backprop_factor=0.5, window=40, emit_cost=0.15 (200代) | MI ≈ 0.11，**仍低于 0.3** |
+
+### 分析
+- **F-LEARN**: Lamarckian 权重继承提供累积优势，支持 F-LEARN 模块有效性
+- **F-NOVELTY**: Novelty reward 在 coevo 模式下效果极其显著（18x 差异），说明探索压力对 coevo 至关重要
+- **F-COMM**: 互信息 MI 始终低于 0.3 阈值。原因可能是：
+  1. 200 代不足以让通信语义涌现
+  2. signal backprop reward 的信号太弱（receiver reward 变化小）
+  3. 4 个 channel 太多，难以分化出有意义的语义
+  4. 需要更长的 episode 或更大的 population
+
+### 调参建议
+- F-COMM 第二轮：尝试 population_size=40, channels=2, backprop_factor=0.8
+- 考虑增加"信号引导觅食"的直接奖励（receiver 跟随信号找到食物时额外奖励 source）
+
 ## 2026-05-18 · M1 首次真实多代验证
 
 ### 目的
