@@ -498,6 +498,15 @@ void evaluatePopulation(World2D& world,
     tick_emits.reserve(64);
     std::vector<AttackEventInfo> tick_attacks;
     tick_attacks.reserve(64);
+    // CT-2/CT-3 structured action events collected per tick. The memory write
+    // loop reads these to populate episodic memory with chop/build/deposit
+    // experiences for each participating agent.
+    std::vector<events::ChopCompleted> tick_chop_completed;
+    tick_chop_completed.reserve(16);
+    std::vector<events::BuildCompleted> tick_build_completed;
+    tick_build_completed.reserve(8);
+    std::vector<events::WorksiteMaterialDeposited> tick_deposits;
+    tick_deposits.reserve(32);
     std::unordered_map<AgentId, float> previous_damage;
     std::unordered_map<AgentId, std::size_t> previous_kills;
     std::unordered_set<AgentId> alive_last_tick;
@@ -553,6 +562,22 @@ void evaluatePopulation(World2D& world,
             }
         }) : 0u;
 
+    auto subscribe_chop_completed = world.eventBus().subscribe(
+        events::EventType::ChopCompleted,
+        [&](const events::Event& event) {
+            tick_chop_completed.push_back(event.payloadAs<events::ChopCompleted>());
+        });
+    auto subscribe_build_completed = world.eventBus().subscribe(
+        events::EventType::BuildCompleted,
+        [&](const events::Event& event) {
+            tick_build_completed.push_back(event.payloadAs<events::BuildCompleted>());
+        });
+    auto subscribe_material_deposited = world.eventBus().subscribe(
+        events::EventType::WorksiteMaterialDeposited,
+        [&](const events::Event& event) {
+            tick_deposits.push_back(event.payloadAs<events::WorksiteMaterialDeposited>());
+        });
+
     const SimTimeSeconds effective_substep_dt = std::max<SimTimeSeconds>(1.0e-3, params.substep_dt);
     SimTimeSeconds elapsed_seconds = 0.0;
     while (elapsed_seconds + 1.0e-9 < params.episode_duration_seconds) {
@@ -565,6 +590,9 @@ void evaluatePopulation(World2D& world,
         const float dt = static_cast<float>(dt_seconds);
         tick_emits.clear();
         tick_attacks.clear();
+        tick_chop_completed.clear();
+        tick_build_completed.clear();
+        tick_deposits.clear();
         world.tick(dt);
         elapsed_seconds += dt_seconds;
         bool any_alive = false;
@@ -811,6 +839,48 @@ void evaluatePopulation(World2D& world,
                         if (attack.victim == agent->id()) {
                             record_episode(attack.attacker_pos, "was_attacked", std::clamp(attack.damage, 0.2f, 1.0f));
                         }
+                    }
+                    // CT-2/CT-3 structured action episodes. The salience model:
+                    // - chopped_tree: salience scales with session duration so a
+                    //   long, hard chop is more memorable than a quick one.
+                    // - built_worksite: top contributors get higher salience.
+                    // - deposited_material: low salience but still useful for
+                    //   reconstructing logistics chains in episodic queries.
+                    // - signal_emitted: low salience; co-attendance reward path
+                    //   already exercises social memory separately.
+                    for (const auto& chop : tick_chop_completed) {
+                        if (chop.chopper != agent->id()) continue;
+                        const float salience = std::clamp(0.4f + 0.1f * static_cast<float>(chop.duration_seconds), 0.4f, 1.0f);
+                        record_episode(chop.tree_pos, "chopped_tree", salience);
+                    }
+                    for (const auto& build : tick_build_completed) {
+                        bool participated = false;
+                        std::size_t rank = 0;
+                        for (std::size_t i = 0; i < build.contributors.size(); ++i) {
+                            if (build.contributors[i] == agent->id()) {
+                                participated = true;
+                                rank = i;
+                                break;
+                            }
+                        }
+                        if (!participated) continue;
+                        // Top contributor: 1.0; falls off ~10% per rank.
+                        const float salience = std::clamp(1.0f - 0.10f * static_cast<float>(rank), 0.30f, 1.0f);
+                        record_episode(build.site_pos, "built_worksite", salience);
+                    }
+                    for (const auto& deposit : tick_deposits) {
+                        if (deposit.depositor != agent->id()) continue;
+                        const char* kind = deposit.material_type == static_cast<std::uint8_t>(ObjectType::Stone)
+                            ? "deposited_stone"
+                            : "deposited_stick";
+                        record_episode(agent_pos, kind, 0.30f);
+                    }
+                    // Signal emission as low-salience episodic marker (so memory
+                    // can recall "where did I last try to shout?").
+                    for (const auto& emit : tick_emits) {
+                        if (emit.id != agent->id()) continue;
+                        record_episode(emit.pos, "signal_emitted", 0.20f);
+                        break;
                     }
 
                     // 3. Social Sightings (Record other living companions and predators)
