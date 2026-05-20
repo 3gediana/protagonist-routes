@@ -14,6 +14,7 @@ target_link_libraries(test_core
     PRIVATE
         neural_eco::core
         neural_eco_runtime_headless
+        neural_eco::route_protagonist
         GTest::gtest_main
 )
 

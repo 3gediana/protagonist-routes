@@ -412,6 +412,11 @@ void TraceRecorder::writeEvent(const events::Event& event) {
                 if (i != 0) event_trace_ << ',';
                 event_trace_ << payload.contributors[i].value;
             }
+            event_trace_ << "],\"contribution_seconds\":[";
+            for (std::size_t i = 0; i < payload.contribution_seconds.size(); ++i) {
+                if (i != 0) event_trace_ << ',';
+                event_trace_ << payload.contribution_seconds[i];
+            }
             event_trace_ << ']';
             break;
         }

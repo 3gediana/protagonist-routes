@@ -83,7 +83,10 @@ struct ChopStarted        { AgentId chopper; std::size_t tree_id; Vec2 tree_pos;
 struct ChopCompleted      { AgentId chopper; std::size_t tree_id; Vec2 tree_pos; double started_at_seconds; double duration_seconds; std::size_t wood_yield; };
 struct ChopAbandoned      { AgentId chopper; std::size_t tree_id; double started_at_seconds; double duration_seconds; float remaining_integrity; };
 struct BuildStarted       { AgentId builder; std::size_t worksite_id; Vec2 site_pos; double started_at_seconds; };
-struct BuildCompleted     { std::size_t worksite_id; Vec2 site_pos; std::vector<AgentId> contributors; double started_at_seconds; double duration_seconds; };
+// contributors[i] and contribution_seconds[i] form a 1-to-1 mapping sorted by
+// descending contribution_seconds, so consumers can do share-of-total credit
+// assignment without re-querying the worksite (which may already be reset).
+struct BuildCompleted     { std::size_t worksite_id; Vec2 site_pos; std::vector<AgentId> contributors; std::vector<float> contribution_seconds; double started_at_seconds; double duration_seconds; };
 struct WorksiteMaterialDeposited { AgentId depositor; std::size_t worksite_id; std::uint8_t material_type; double time_seconds; };
 
 }  // namespace neuro::events

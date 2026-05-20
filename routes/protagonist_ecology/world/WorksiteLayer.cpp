@@ -323,9 +323,12 @@ void WorksiteLayer::progressConstruction(IWorld& world, float dt) {
                 return a.second > b.second;
             });
             std::vector<AgentId> contributors;
+            std::vector<float> contribution_seconds;
             contributors.reserve(sorted.size());
-            for (const auto& [aid, _] : sorted) {
+            contribution_seconds.reserve(sorted.size());
+            for (const auto& [aid, secs] : sorted) {
                 contributors.push_back(aid);
+                contribution_seconds.push_back(secs);
             }
             const double duration = site.build_started_at_seconds >= 0.0
                                         ? now - site.build_started_at_seconds
@@ -336,6 +339,7 @@ void WorksiteLayer::progressConstruction(IWorld& world, float dt) {
                     site.id,
                     site.position,
                     std::move(contributors),
+                    std::move(contribution_seconds),
                     site.build_started_at_seconds,
                     duration},
                 now_tick,

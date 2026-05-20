@@ -948,17 +948,53 @@ void evaluatePopulation(World2D& world,
                     }
                 }
 
-                if (completed_this_tick > 0 && inside_active_worksite) {
-                    reward += params.cooperation_weight * static_cast<double>(params.worksite_completion_reward);
+                // P3 ContributionLedger: distribute the worksite completion
+                // reward by *time-weighted contribution share* instead of the
+                // old "everyone-in-radius-at-the-moment-of-completion gets the
+                // full reward". Free riders (contribution below threshold) get
+                // exactly zero, so a passer-by who happens to walk through the
+                // site at completion time no longer gets paid.
+                //
+                // Total payout per BuildCompleted is held at
+                // worksite_completion_reward (the same nominal scale as
+                // before), redistributed across legitimate contributors.
+                // Cooperation social memory is also written between the agent
+                // and *each other ledger contributor* (not radius peers),
+                // weighted by their share, so social memory tracks who
+                // actually built together.
+                constexpr float kBuildCreditMinSeconds = 0.5f;
+                for (const auto& build : tick_build_completed) {
+                    int my_index = -1;
+                    for (std::size_t i = 0; i < build.contributors.size(); ++i) {
+                        if (build.contributors[i] == agent->id()) {
+                            my_index = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                    if (my_index < 0) continue;
+                    if (build.contribution_seconds.size() <= static_cast<std::size_t>(my_index)) continue;
+                    const float my_secs = build.contribution_seconds[static_cast<std::size_t>(my_index)];
+                    if (my_secs < kBuildCreditMinSeconds) continue;
+
+                    float total_secs = 0.0f;
+                    for (float s : build.contribution_seconds) {
+                        if (s >= kBuildCreditMinSeconds) total_secs += s;
+                    }
+                    if (total_secs <= 0.0f) continue;
+                    const float my_share = my_secs / total_secs;
+                    reward += params.cooperation_weight
+                              * static_cast<double>(params.worksite_completion_reward)
+                              * static_cast<double>(my_share);
+
                     if (params.social_memory_writes_enabled) {
                         if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
-                            for (const auto* peer : alive_protagonists) {
-                                if (peer == nullptr || peer == concrete) {
-                                    continue;
-                                }
-                                if (Vec2::distanceSquared(concrete->position(), peer->position()) <= params.social_proximity_radius * params.social_proximity_radius) {
-                                    protagonist_brain->socialMemory().rewardCooperation(peer->id(), 0.20f);
-                                }
+                            for (std::size_t j = 0; j < build.contributors.size(); ++j) {
+                                if (static_cast<int>(j) == my_index) continue;
+                                if (build.contribution_seconds[j] < kBuildCreditMinSeconds) continue;
+                                const float peer_share = build.contribution_seconds[j] / total_secs;
+                                protagonist_brain->socialMemory().rewardCooperation(
+                                    build.contributors[j],
+                                    0.20f * peer_share);
                             }
                         }
                     }
