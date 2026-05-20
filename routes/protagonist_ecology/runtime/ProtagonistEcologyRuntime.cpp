@@ -44,6 +44,7 @@
 #include "world/WorksiteLayer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -65,6 +66,9 @@ namespace {
 struct TrainingParams {
     std::size_t generations{0};
     std::size_t episode_ticks{0};
+    SimTimeSeconds episode_duration_seconds{0.0};
+    SimTimeSeconds substep_dt{0.1};
+    std::size_t max_substeps_per_advance{16};
     std::size_t episodes_per_generation{3};
     std::size_t num_threads{0};  // 0 = auto-detect
     double survival_weight{1.0};
@@ -84,7 +88,7 @@ struct TrainingParams {
     float signal_emit_companion_radius{12.0f};
     float signal_co_attendance_reward{0.6f};
     float signal_co_attendance_radius{8.0f};
-    std::size_t signal_co_attendance_window{40};
+    SimTimeSeconds signal_co_attendance_window_seconds{40.0};
     float joint_hunt_reward{8.0f};
     float joint_hunt_radius{10.0f};
     std::size_t checkpoint_every{0};
@@ -132,7 +136,7 @@ struct BehaviorAccumulator {
     std::size_t signal_emits{0};
     std::size_t signal_co_attendance{0};
     std::size_t worksite_completion_events{0};
-    std::size_t cooperative_co_presence_ticks{0};
+    double cooperative_co_presence_seconds{0.0};
     std::size_t survived_protagonists{0};
     std::size_t total_protagonists{0};
 };
@@ -165,6 +169,11 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     TrainingParams params;
     params.generations = config.getOr<std::size_t>("evolution.generations", 0);
     params.episode_ticks = config.getOr<std::size_t>("evolution.episode_ticks", 0);
+    params.episode_duration_seconds = config.getOr<double>("simulation.time.episode_duration_seconds",
+                                                           config.getOr<double>("evolution.episode_duration_seconds",
+                                                                                params.episode_ticks > 0 ? static_cast<double>(params.episode_ticks) : params.episode_duration_seconds));
+    params.substep_dt = config.getOr<double>("simulation.time.substep_dt", params.substep_dt);
+    params.max_substeps_per_advance = config.getOr<std::size_t>("simulation.time.max_substeps_per_advance", params.max_substeps_per_advance);
     params.episodes_per_generation = config.getOr<std::size_t>("evolution.episodes_per_generation", params.episodes_per_generation);
     params.num_threads = config.getOr<std::size_t>("evolution.num_threads", params.num_threads);
     params.survival_weight = config.getOr<double>("reward.survival_weight", params.survival_weight);
@@ -181,7 +190,8 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.signal_emit_companion_radius = config.getOr<float>("reward.signal_emit_companion_radius", params.signal_emit_companion_radius);
     params.signal_co_attendance_reward = config.getOr<float>("reward.signal_co_attendance_reward", params.signal_co_attendance_reward);
     params.signal_co_attendance_radius = config.getOr<float>("reward.signal_co_attendance_radius", params.signal_co_attendance_radius);
-    params.signal_co_attendance_window = config.getOr<std::size_t>("reward.signal_co_attendance_window", params.signal_co_attendance_window);
+    params.signal_co_attendance_window_seconds = config.getOr<double>("reward.signal_co_attendance_window_seconds",
+                                                                      config.getOr<double>("reward.signal_co_attendance_window", params.signal_co_attendance_window_seconds));
     params.joint_hunt_reward = config.getOr<float>("reward.joint_hunt_reward", params.joint_hunt_reward);
     params.joint_hunt_radius = config.getOr<float>("reward.joint_hunt_radius", params.joint_hunt_radius);
     params.checkpoint_every = config.getOr<std::size_t>("evolution.checkpoint_every", params.checkpoint_every);
@@ -427,7 +437,7 @@ void evaluatePopulation(World2D& world,
     const std::size_t worksite_completion_baseline = worksite_layer != nullptr ? worksite_layer->completedSiteCount() : 0;
     std::size_t worksite_completion_running = worksite_completion_baseline;
     struct SignalEmitInfo {
-        std::size_t tick{0};
+        SimTimeSeconds time_seconds{0.0};
         Vec2 position{};
     };
     std::unordered_map<AgentId, SignalEmitInfo> last_signal_emit;
@@ -445,7 +455,7 @@ void evaluatePopulation(World2D& world,
         events::EventType::AgentEmittedSignal,
         [&](const events::Event& event) {
             const auto& payload = event.payloadAs<events::AgentEmittedSignal>();
-            last_signal_emit[payload.id] = SignalEmitInfo{event.tick(), payload.pos};
+            last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), payload.pos};
             tick_emits.push_back(payload);
         }) : 0u;
 
@@ -465,13 +475,19 @@ void evaluatePopulation(World2D& world,
             }
         }) : 0u;
 
-    for (std::size_t tick = 0; tick < params.episode_ticks; ++tick) {
+    const SimTimeSeconds effective_substep_dt = std::max<SimTimeSeconds>(1.0e-3, params.substep_dt);
+    SimTimeSeconds elapsed_seconds = 0.0;
+    while (elapsed_seconds + 1.0e-9 < params.episode_duration_seconds) {
         if (stop_requested.load()) {
             break;
         }
 
+        const SimTimeSeconds remaining_seconds = params.episode_duration_seconds - elapsed_seconds;
+        const SimTimeSeconds dt_seconds = std::min(effective_substep_dt, remaining_seconds);
+        const float dt = static_cast<float>(dt_seconds);
         tick_emits.clear();
-        world.tick(1.0f);
+        world.tick(dt);
+        elapsed_seconds += dt_seconds;
         bool any_alive = false;
 
         std::size_t completed_this_tick = 0;
@@ -509,7 +525,7 @@ void evaluatePopulation(World2D& world,
             const bool alive_now = concrete->alive();
             if (alive_now) {
                 any_alive = true;
-                reward += params.survival_weight * 0.01;
+                reward += params.survival_weight * 0.01 * static_cast<double>(dt_seconds);
                 reward += params.food_weight * evaluateFoodReward(*concrete, world);
                 reward += params.intrinsic_weight * evaluateIntrinsicReward(*concrete);
                 alive_last_tick.insert(agent->id());
@@ -536,6 +552,7 @@ void evaluatePopulation(World2D& world,
                 if (brain != nullptr) {
                     const auto agent_pos = concrete->position();
                     const auto current_world_tick = world.currentTick();
+                    const auto current_world_time = world.currentTimeSeconds();
 
                     // 1. Spatial Memory Sightings (Visual radius approx 24.0 - 36.0)
                     if (water_layer != nullptr) {
@@ -586,20 +603,20 @@ void evaluatePopulation(World2D& world,
 
                     // 2. Episodic Memory Key Events
                     if (concrete->foodEatenThisTick() > 0.0f) {
-                        brain->episodicMemory().recordEvent(current_world_tick, agent_pos, "ate_food", 0.5f);
+                        brain->episodicMemory().recordEvent(current_world_tick, current_world_time, agent_pos, "ate_food", 0.5f);
                     }
                     if (damage_delta > 0.0f) {
-                        brain->episodicMemory().recordEvent(current_world_tick, agent_pos, "attacked_enemy", 0.8f);
+                        brain->episodicMemory().recordEvent(current_world_tick, current_world_time, agent_pos, "attacked_enemy", 0.8f);
                     }
                     if (kill_delta > 0) {
-                        brain->episodicMemory().recordEvent(current_world_tick, agent_pos, "killed_prey", 0.9f);
+                        brain->episodicMemory().recordEvent(current_world_tick, current_world_time, agent_pos, "killed_prey", 0.9f);
                     }
 
                     // 3. Social Sightings (Record other living companions and predators)
                     for (const auto* peer : alive_protagonists) {
                         if (peer != nullptr && peer != concrete) {
                             if (Vec2::distanceSquared(agent_pos, peer->position()) <= 24.0f * 24.0f) {
-                                brain->socialMemory().recordSighting(peer->id(), peer->position(), current_world_tick, false);
+                                brain->socialMemory().recordSighting(peer->id(), peer->position(), current_world_tick, current_world_time, false);
                             }
                         }
                     }
@@ -624,7 +641,7 @@ void evaluatePopulation(World2D& world,
                     }
                 }
                 if (inside_active_worksite) {
-                    reward += params.cooperation_weight * static_cast<double>(params.worksite_proximity_reward);
+                    reward += params.cooperation_weight * static_cast<double>(params.worksite_proximity_reward) * static_cast<double>(dt_seconds);
                 }
 
                 if (completed_this_tick > 0 && inside_active_worksite) {
@@ -642,9 +659,9 @@ void evaluatePopulation(World2D& world,
                     }
                 }
                 if (neighbours >= 1) {
-                    reward += params.cooperation_weight * static_cast<double>(params.social_proximity_reward) * static_cast<double>(neighbours);
+                    reward += params.cooperation_weight * static_cast<double>(params.social_proximity_reward) * static_cast<double>(neighbours) * static_cast<double>(dt_seconds);
                     if (neighbours >= 2) {
-                        ++behavior.cooperative_co_presence_ticks;
+                        behavior.cooperative_co_presence_seconds += dt_seconds;
                     }
                 }
 
@@ -672,9 +689,9 @@ void evaluatePopulation(World2D& world,
 
                     const auto signal_emit_it = last_signal_emit.find(agent->id());
                     if (signal_emit_it != last_signal_emit.end()) {
-                        const std::size_t emitted_at = signal_emit_it->second.tick;
-                        const std::size_t now_tick = world.currentTick();
-                        if (now_tick > emitted_at && now_tick - emitted_at <= params.signal_co_attendance_window) {
+                        const SimTimeSeconds emitted_at = signal_emit_it->second.time_seconds;
+                        const SimTimeSeconds now_time = world.currentTimeSeconds();
+                        if (now_time > emitted_at && now_time - emitted_at <= params.signal_co_attendance_window_seconds) {
                             for (const auto* peer : alive_protagonists) {
                                 if (peer == nullptr || peer == concrete) {
                                     continue;
@@ -728,20 +745,20 @@ void evaluatePopulation(World2D& world,
 
                 // Per-archetype survival + base food
                 if (is_herbivore) {
-                    bg_reward += params.prey_survival_weight * 0.005;
+                    bg_reward += params.prey_survival_weight * 0.005 * static_cast<double>(dt_seconds);
                     bg_reward += params.prey_food_weight * static_cast<double>(concrete->foodEatenThisTick());
                     if (archetype == SpeciesArchetype::SmallForager) {
                         // Small foragers are valued more on plant intake (scaled down survival)
                         bg_reward += params.prey_food_weight * 0.5 * static_cast<double>(concrete->plantFoodThisTick());
                     }
                 } else if (is_predator) {
-                    bg_reward += params.predator_survival_weight * 0.005;
+                    bg_reward += params.predator_survival_weight * 0.005 * static_cast<double>(dt_seconds);
                 } else if (is_scavenger) {
-                    bg_reward += params.prey_survival_weight * 0.004;
+                    bg_reward += params.prey_survival_weight * 0.004 * static_cast<double>(dt_seconds);
                     bg_reward += params.prey_food_weight * 0.6 * static_cast<double>(concrete->foodEatenThisTick());
                     bg_reward += params.predator_kill_weight * 0.05 * static_cast<double>(concrete->meatFoodThisTick());
                 } else if (is_omnivore) {
-                    bg_reward += params.prey_survival_weight * 0.005;
+                    bg_reward += params.prey_survival_weight * 0.005 * static_cast<double>(dt_seconds);
                     bg_reward += params.prey_food_weight * 0.7 * static_cast<double>(concrete->plantFoodThisTick());
                     bg_reward += params.predator_kill_weight * 0.3 * static_cast<double>(concrete->meatFoodThisTick());
                 }
@@ -808,7 +825,7 @@ void evaluatePopulation(World2D& world,
                 }
                 if (same_neighbours > 0) {
                     const double social_w = is_predator ? params.predator_social_weight : params.prey_social_weight;
-                    bg_reward += social_w * static_cast<double>(same_neighbours);
+                    bg_reward += social_w * static_cast<double>(same_neighbours) * static_cast<double>(dt_seconds);
                 }
             } else if (bg_alive_last_tick.contains(agent->id())) {
                 bg_reward -= is_predator ? params.predator_death_penalty : params.prey_death_penalty;
@@ -1006,11 +1023,19 @@ int ProtagonistEcologyRuntime::run() {
     }
 
     const auto route = ProtagonistEcologyConfig::fromConfig(config_);
-    for (std::size_t tick = 0; tick < route.preview_ticks && !stop_requested_.load(); ++tick) {
-        world_->tick(1.0f);
+    const SimTimeSeconds preview_dt = std::max<SimTimeSeconds>(1.0e-3, route.sim_time.substep_dt);
+    for (SimTimeSeconds elapsed = 0.0;
+         elapsed + 1.0e-9 < route.sim_time.preview_duration_seconds && !stop_requested_.load(); ) {
+        const SimTimeSeconds dt = std::min(preview_dt, route.sim_time.preview_duration_seconds - elapsed);
+        world_->tick(static_cast<float>(dt));
+        elapsed += dt;
     }
 
-    LOG_INFO("ProtagonistEcologyRuntime: scenario {} ({}) ticked {} step(s)", route.scenario_name, route.world_role, route.preview_ticks);
+    LOG_INFO("ProtagonistEcologyRuntime: scenario {} ({}) advanced {} seconds with substep_dt={}",
+             route.scenario_name,
+             route.world_role,
+             route.sim_time.preview_duration_seconds,
+             route.sim_time.substep_dt);
 
     running_.store(false);
     return 0;
@@ -1019,8 +1044,11 @@ int ProtagonistEcologyRuntime::run() {
 int ProtagonistEcologyRuntime::runTraining() {
     const auto route = ProtagonistEcologyConfig::fromConfig(config_);
     const auto params = loadTrainingParams(config_);
-    if (params.generations == 0 || params.episode_ticks == 0) {
-        LOG_ERROR("ProtagonistEcologyRuntime: invalid training params generations={} episode_ticks={}", params.generations, params.episode_ticks);
+    if (params.generations == 0 || params.episode_duration_seconds <= 0.0 || params.substep_dt <= 0.0) {
+        LOG_ERROR("ProtagonistEcologyRuntime: invalid training params generations={} episode_duration_seconds={} substep_dt={}",
+                  params.generations,
+                  params.episode_duration_seconds,
+                  params.substep_dt);
         return 1;
     }
     const std::size_t episodes_per_generation = std::max<std::size_t>(params.episodes_per_generation, 1);
@@ -1164,7 +1192,7 @@ int ProtagonistEcologyRuntime::runTraining() {
     behavior_csv << "generation,episodes,total_protagonists,survived_protagonists,deposits_total,deposits_stick,deposits_stone,"
                  << "completed_worksites,worksite_completion_events,active_fires,chop_attempts,chop_successes,"
                  << "craft_attempts,craft_successes,throw_attempts,throw_hits,hunt_attempts,hunt_successes,"
-                 << "signal_emits,signal_co_attendance,cooperative_co_presence_ticks\n";
+                 << "signal_emits,signal_co_attendance,cooperative_co_presence_seconds\n";
 
     std::ofstream species_csv(run_dir / "species_metrics.csv", std::ios::out | std::ios::trunc);
     if (!species_csv.is_open()) {
@@ -1241,7 +1269,8 @@ int ProtagonistEcologyRuntime::runTraining() {
                 world->eventBus().publish(events::Event{
                     events::EventType::GenerationStarted,
                     events::GenerationStarted{static_cast<Generation>(generation)},
-                    world->currentTick()});
+                    world->currentTick(),
+                    world->currentTimeSeconds()});
                 world->eventBus().flush();
 
                 auto background_view = build_species_view();
@@ -1283,7 +1312,7 @@ int ProtagonistEcologyRuntime::runTraining() {
             behavior.harvested_trees += r.behavior.harvested_trees;
             behavior.signal_emits += r.behavior.signal_emits;
             behavior.signal_co_attendance += r.behavior.signal_co_attendance;
-            behavior.cooperative_co_presence_ticks += r.behavior.cooperative_co_presence_ticks;
+            behavior.cooperative_co_presence_seconds += r.behavior.cooperative_co_presence_seconds;
             behavior.survived_protagonists += r.behavior.survived_protagonists;
             behavior.total_protagonists += r.behavior.total_protagonists;
         }
@@ -1364,7 +1393,7 @@ int ProtagonistEcologyRuntime::runTraining() {
                      << behavior.hunt_successes << ','
                      << behavior.signal_emits << ','
                      << behavior.signal_co_attendance << ','
-                     << behavior.cooperative_co_presence_ticks << '\n';
+                     << behavior.cooperative_co_presence_seconds << '\n';
         behavior_csv.flush();
 
         // ---- write species_metrics.csv (one row per species) ----

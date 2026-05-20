@@ -40,6 +40,7 @@ public:
     virtual float     energy()    const = 0;
     virtual void      setEnergy(float e) = 0;
     virtual Tick      age()       const = 0;       // ticks since birth
+    virtual SimTimeSeconds ageSeconds() const = 0;
 
     // Status
     virtual bool      alive()     const = 0;

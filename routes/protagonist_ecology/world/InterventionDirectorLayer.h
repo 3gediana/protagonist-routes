@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/interfaces/IWorldLayer.h"
+#include "core/types/Aliases.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -43,7 +44,7 @@ public:
                               float recharge_per_tick,
                               float stress_decay_per_tick,
                               float max_stress,
-                              std::size_t cooldown_ticks,
+                              SimTimeSeconds cooldown_seconds,
                               std::uint32_t seed);
 
     const char* layerName() const override { return kName; }
@@ -71,8 +72,8 @@ private:
     float stress_ = 0.0f;
     float stress_decay_per_tick_;
     float max_stress_;
-    std::size_t cooldown_ticks_;
-    std::uint64_t last_execution_tick_ = 0;
+    SimTimeSeconds cooldown_seconds_;
+    SimTimeSeconds last_execution_time_seconds_ = -1.0;
     std::deque<Request> pending_;
     std::mt19937 rng_;
 };

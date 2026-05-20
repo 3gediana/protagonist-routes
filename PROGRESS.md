@@ -9,10 +9,10 @@
 | 项 | 值 |
 |---|---|
 | **最后更新** | 2026-05-20 |
-| **当前阶段** | 🟩 Baseline M0-M5 完成 + 12 Modules MVP + protagonist 8-物种全生态联合演化训练流水线就绪 |
+| **当前阶段** | 🟩 Baseline M0-M5 完成 + 12 Modules MVP + protagonist 8-物种全生态联合演化训练流水线就绪 + continuous-time 主链已接通 |
 | **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 100% (Baseline + MVP + Protagonist Research & Trace基座完成) |
-| **最近会话摘要** | protagonist 路线的 Trace/Resume 基座已保持完成态；本轮先把 Memory V2 半成品修回可编译、可运行状态：修复 `SpatialMemoryBank.cpp` 与 `MemoryCognitionPerception` 的接口错误，`neural-eco-protagonist` 重新构建成功，并再次用 `configs/protagonist_ecology_train_smoke.toml` 跑通 smoke。随后按用户新优先级完成连续时间方向的外部调研并写出 `routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md`，然后直接落地 CT-0：新增 `SimTimeSeconds`、为 `Event` 加入 `timeSeconds()`、为 `IWorld` / `World2D` 加入 `currentTimeSeconds()`、让 `TickStarted` / `TickEnded` 带秒级时间戳，并把 protagonist `TraceRecorder` 升级成双时间戳输出。CT-0 已重新构建并 smoke 验证通过。 |
-| **下一步建议** | 既然 CT-0 已经落地，下一步建议继续实现 `CONTINUOUS_TIME_WORLD_DESIGN.md` 的 CT-1：让 protagonist runtime 从 `episode_ticks` 迁到 `episode_duration_seconds + substep_dt`，并加入 legacy tick / continuous mode 兼容读取。等 runtime 真正 seconds 化后，再迁移 move / drink / eat / signal 等首批连续动作。 |
+| **最近会话摘要** | 本轮把 protagonist continuous-time 主链从 CT-0 推进到可运行的 CT-1~CT-4 核心状态：`ProtagonistEcologyConfig` 已支持 `simulation.time.preview_duration_seconds / episode_duration_seconds / substep_dt` 与 legacy tick 键兼容读取；preview/training runtime 已改成 `seconds + substep_dt` 驱动；关键 reward/social/signal 时间窗已改成 seconds；`NurserySupplyLayer / NurseryProgressionLayer / InterventionDirectorLayer / TreeLayer` 与核心 `Resource/DayNight/Season` 时间层统一到 seconds；`Episodic/Social/Goal` memory 与 `TraceRecorder` 升级为双时间戳；`ProtagonistBrain` 进一步改为随 `dt` 泄漏积分的连续隐藏/动作态。Release 已重编通过，`test_core` 70/70 全过，`configs/protagonist_ecology_train_smoke.toml` 再次跑通。 |
+| **下一步建议** | 继续做 CT 收尾：清理剩余 legacy tick 命名/日志口径与 protagonist route 文档说明，补 `docs/experience_log.md` 的连续时间迁移经验，然后执行 git commit/tag；若继续训练前验证，建议再加一份 protagonist 专用 seconds 回归配置。 |
 
 ---
 
@@ -308,6 +308,7 @@
 格式：`- [状态] 任务描述（来源：日期 / 用户原话简述）`
 
 - [~] 搭建 spectacle-first 并行路线骨架 `routes/protagonist_ecology/`，保留旧项目主线并准备主角大脑/保育箱新路线（来源：2026-05-19 / 用户要求另开文件夹保留两个项目）
+- [~] 将 protagonist 路线从 tick 主语义迁到 continuous-time：runtime 采用 `episode_duration_seconds + substep_dt`，关键冷却/时间窗/记忆/trace 改用 seconds，并保持旧 tick 配置兼容（来源：2026-05-20 / 用户要求持续推进 continuous-time refactor CT-1~CT-4）
 - [x] 将 `routes/protagonist_ecology/` 从骨架推进到可运行训练路线：完成 train/eval 角色分离、主角生存状态与喝水机制、主角 hunt/flee 课程钩子、3 个 eval 世界与 3 个 curriculum train 世界（来源：2026-05-20 / 用户要求先把测试集与训练集逐步做出来，并朝“原始人行为”推进）
 - [x] 将 protagonist 工具前置链推进到 primitive tool 第二步：完成 `Spear` / 做矛 / 投掷石头与长矛 / 库存与武器感知 / action_dim 扩展，并验证 `curriculum_camp_building` 出现非零 craft/throw 行为（来源：2026-05-20 / 用户要求继续实现原始人工具链，不要停下来）
 - [x] 将 protagonist `camp_building / preview_xlong` 环境调到可作为训练前基线：修复工地解锁与石头供给断链，加入工地自动接收携带材料，并完成 `preview_xlong` 的多 seed（42/91/123）稳定性抽查，均出现 `completed_worksites=1`（来源：2026-05-20 / 用户要求先把环境调好，再由自己参与训练过程）
@@ -341,6 +342,7 @@
 | 2026-05-20 | 第 18 次会话：8 物种联合演化接入 EvaluationPool 并完成中规模试训 | 修复 `neural-eco-protagonist` 链接错误：route 库使用 `EvaluationPool` 但未链接 `neural_eco::runtime_headless`；多 episode 评估改为线程池并行任务，episode-local fitness/species/behavior 在主线程合并；Release 构建与 EvaluationPool 单测通过；smoke 多线程跑通；中规模 `protagonist_ecology_train_camp_building_evolve.toml` 120 代完整跑通，行为总量 `builds=218 / craft=2021 / throw_hits=843 / hunts=4509 / signal_co_attendance=82864`，最终 checkpoint 正常保存；新增 `runtime.protagonist_genome_path`，可把 best genome 加载进 eval/preview 世界并已短跑验证 | 可启动 overnight；也可继续补 eval 行为 CSV / replay trace |
 | 2026-05-20 | 第 19 次会话：完成 protagonist 世界理解与复杂行为长期方案文档 | 新增 `routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`；结合当前代码/训练现状与论文调研，系统提出记忆区扩容与分区、空间/事件/社会/目标记忆、世界模型、因果奖励、通信语义任务、合作信用分配、MAP-Elites/POET 开放式课程、完整 replay trace、checkpoint resume、层级目标与 3D replay 面板路线 | 下一步从 TraceRecorder + resume checkpoint 开始落地，为后续 Memory V2 和复杂行为验证打基础 |
 | 2026-05-20 | 第 20 次会话：高标准落地 Phase 1 Trace / Resume 基础设施 | 新建并打通 `TraceRecorder.h/cpp`，支持按 `[trace]` 选项按 episode 独立输出 `event_trace.jsonl`、`agent_trace.csv`、`world_trace.csv`、`replay_manifest.json`；实现 `checkpoint_manifest.json`，且打通 `runtime.resume_checkpoint_path` 支持完美 resume 主角 population，已跑通并验证了基因段代际继承；归档了用户提出的“连续时间世界框架”问题 | 下一步建议进入 Memory V2：设计 Working/Spatial/Episodic/Social/Goal 专门记忆区并接入 ProtagonistBrain |
+| 2026-05-20 | 第 21 次会话：把 protagonist continuous-time 主链推进到可编译、可验证状态 | `ProtagonistEcologyConfig` / `ProtagonistEcologyRuntime` 已支持 `episode_duration_seconds + substep_dt` 与 legacy tick 兼容；preview/training runtime 改为 seconds substep；主角关键 reward/social/signal 时间窗、Supply/Progression/Intervention/Tree 与核心 `Resource/DayNight/Season` 时间层改为 seconds；`Episodic/Social/Goal` memory 与 `TraceRecorder` 升级为双时间戳；`ProtagonistBrain` 增加 dt 泄漏积分；Release 重编通过，`test_core` 70/70 全过，`protagonist_ecology_train_smoke.toml` 再次跑通 | 下一步继续收尾剩余 legacy tick 口径、补 experience_log 与 route 文档，然后执行 commit/tag |
 
 ---
 
@@ -387,7 +389,7 @@
  3. `git tag` 尚未执行；代码、构建、测试状态已就绪，可在后续有 git 写操作时补打 `baseline-M0-done` ~ `baseline-M5-done`
  4. M1 当前卡点已从“实现”转为“验收与调参”——已完成 5 seed × 100 代默认配置测量，平均倍率 `2.256x`
  5. 文档里的具体数值（tick、种群规模、reward 权重、倍率目标）都只应视为**示例/起始猜测**，后续以真实实验结果为准
- 6. `FoodReward` 已修正为按“吃到的食物个数”计 reward；修正前后的 fitness 绝对值不能直接横向比较
+ 6. `FoodReward` 已修正为按“吃到的食物总量”计 reward；修正前后的 fitness 绝对值不能直接横向比较
  7. `ComprehensiveMetrics` 现已改为**事件驱动行为统计 + 活体口径**；`action_entropy / immune_ratio / alive_ratio` 已经可用于真实分析
  8. 新增短回归配置：`configs/core_regression_short.toml`，覆盖 coevo + disease + signal + tool + mate + terrain_mod + NSGA-II，适合快速验收核心闭环
  9. 修 `core` / `runtime_headless` 库后，**不要只重编 `test_core`**；要重链 `build/bin/Release/neural-eco.exe` 再做 headless 回归，否则可能拿旧 exe 误判结果

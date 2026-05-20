@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/interfaces/IWorldLayer.h"
+#include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 
 #include <cstddef>
@@ -26,7 +27,7 @@ struct TreeResource {
     float trunk_radius;
     std::size_t wood_yield;
     bool available;
-    std::size_t regrow_ticks_remaining;
+    SimTimeSeconds regrow_seconds_remaining;
 };
 
 class TreeLayer final : public IWorldLayer {
@@ -39,7 +40,7 @@ public:
               float trunk_radius,
               float max_integrity,
               std::size_t wood_yield,
-              std::size_t regrow_ticks);
+              SimTimeSeconds regrow_seconds);
 
     const char* layerName() const override { return kName; }
     void onAttach(IWorld& world) override;
@@ -64,7 +65,7 @@ private:
     float trunk_radius_;
     float max_integrity_;
     std::size_t wood_yield_;
-    std::size_t regrow_ticks_;
+    SimTimeSeconds regrow_seconds_;
     std::mt19937 rng_;
     std::vector<TreeResource> trees_;
     std::size_t harvested_count_ = 0;

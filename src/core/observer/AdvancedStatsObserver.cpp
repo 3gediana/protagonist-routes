@@ -137,7 +137,7 @@ void AdvancedStatsObserver::onGenerationEnded(Generation generation) {
             species_counts[sid.value] += 1.0;
         }
         fitnesses.push_back(agent->fitness());
-        total_age += static_cast<double>(agent->age());
+        total_age += static_cast<double>(agent->ageSeconds());
         total_exploration += static_cast<double>(agent->visitedCellCount());
         agent_count++;
 

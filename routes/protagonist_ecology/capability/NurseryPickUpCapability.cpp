@@ -110,7 +110,8 @@ void NurseryPickUpCapability::apply(IAgent& agent, IWorld& world, std::span<cons
     concrete->setEnergy(concrete->energy() - energy_cost_);
     world.eventBus().publish(events::Event{events::EventType::ObjectPickedUp,
                                            events::ObjectPickedUp{agent.id(), obj->id},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 }  // namespace neuro::routes::protagonist

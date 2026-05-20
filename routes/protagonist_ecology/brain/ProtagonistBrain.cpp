@@ -15,6 +15,12 @@ float activate(float x) {
     return std::tanh(x);
 }
 
+float integrationAlpha(float dt, float tau) {
+    const float safe_dt = std::max(dt, 1.0e-4f);
+    const float safe_tau = std::max(tau, 1.0e-4f);
+    return std::clamp(safe_dt / safe_tau, 0.0f, 1.0f);
+}
+
 void fillRandom(std::vector<float>& data, std::mt19937& rng, float scale = 0.35f) {
     std::normal_distribution<float> dist(0.0f, scale);
     for (float& value : data) {
@@ -97,6 +103,9 @@ std::span<const float> ProtagonistBrain::forward(std::span<const float> inputs, 
         throw std::invalid_argument("ProtagonistBrain input dim mismatch");
     }
 
+    const float hidden_alpha = integrationAlpha(dt, 0.25f);
+    const float action_alpha = integrationAlpha(dt, 0.12f);
+
     // Step V2 memory banks
     spatial_memory_.tick(dt);
     social_memory_.tick(dt);
@@ -107,20 +116,24 @@ std::span<const float> ProtagonistBrain::forward(std::span<const float> inputs, 
     const auto mem_values = memory_.values();
     std::copy(mem_values.begin(), mem_values.end(), full_input.begin() + static_cast<std::ptrdiff_t>(external_input_dim_));
 
+    std::vector<float> hidden_target(hidden_dim_, 0.0f);
     for (std::size_t h = 0; h < hidden_dim_; ++h) {
         float sum = hidden_bias_[h];
         for (std::size_t i = 0; i < total_input_dim_; ++i) {
             sum += full_input[i] * in_hidden_weights_[i * hidden_dim_ + h];
         }
-        hidden_[h] = activate(sum);
+        hidden_target[h] = activate(sum);
+        hidden_[h] += hidden_alpha * (hidden_target[h] - hidden_[h]);
     }
 
+    std::vector<float> output_target(action_dim_, 0.0f);
     for (std::size_t o = 0; o < action_dim_; ++o) {
         float sum = action_bias_[o];
         for (std::size_t h = 0; h < hidden_dim_; ++h) {
             sum += hidden_[h] * hidden_action_weights_[h * action_dim_ + o];
         }
-        outputs_[o] = activate(sum);
+        output_target[o] = activate(sum);
+        outputs_[o] += action_alpha * (output_target[o] - outputs_[o]);
     }
 
     std::vector<float> candidates(memory_.cellCount(), 0.0f);

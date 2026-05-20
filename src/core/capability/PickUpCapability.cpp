@@ -50,7 +50,8 @@ void PickUpCapability::apply(IAgent& agent, IWorld& world, std::span<const float
     concrete->setEnergy(concrete->energy() - energy_cost_);
     world.eventBus().publish(events::Event{events::EventType::ObjectPickedUp,
                                            events::ObjectPickedUp{agent.id(), obj->id},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 const char* PickUpCapability::name() const { return "pick_up"; }

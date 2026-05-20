@@ -54,9 +54,10 @@ void MateCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
 
     // Record mating event for evolution system
     // Payload: pair of agent IDs (initiator, partner)
-    world.eventBus().publish(events::EventType::MatingOccurred,
-        events::MatingOccurred{agent.id(), partner->id()},
-        world.currentTick());
+    world.eventBus().publish(events::Event{events::EventType::MatingOccurred,
+                                           events::MatingOccurred{agent.id(), partner->id()},
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 }  // namespace neuro

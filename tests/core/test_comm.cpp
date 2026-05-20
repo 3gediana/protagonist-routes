@@ -83,14 +83,14 @@ TEST(Comm, SignalBackpropUsesRewardTimePositionAndTick) {
     agent_layer->addAgent(std::move(receiver), world);
 
     neuro::SignalEmitHistory history(16);
-    history.record(source_a_ptr->id(), 0, {10.0f, 10.0f}, 0, 1.0f);
-    history.record(source_b_ptr->id(), 0, {80.0f, 80.0f}, 9, 1.0f);
+    history.record(source_a_ptr->id(), 0, {10.0f, 10.0f}, 0, 0.0, 1.0f);
+    history.record(source_b_ptr->id(), 0, {80.0f, 80.0f}, 9, 9.0, 1.0f);
 
     neuro::SignalBackpropReward backprop(history, 1.0f, 3, 6.0f);
-    backprop.recordReceiverReward(receiver_ptr->id(), {10.0f, 10.0f}, 4.0, 1);
+    backprop.recordReceiverReward(receiver_ptr->id(), {10.0f, 10.0f}, 4.0, 1.0);
 
     receiver_ptr->setPosition({80.0f, 80.0f});
-    backprop.applyBackprop(world, 9);
+    backprop.applyBackprop(world, 9.0);
 
     EXPECT_NEAR(source_a_ptr->fitness(), 4.0, 1e-9);
     EXPECT_DOUBLE_EQ(source_b_ptr->fitness(), 0.0);
@@ -111,11 +111,11 @@ TEST(Comm, FoodRewardIgnoresSelfSignalAndRewardsOtherSignal) {
     const double baseline = reward.evaluate(*agent, world, 1.0f);
 
     signal->history().clear();
-    signal->emitWithHistory(agent->id(), agent->position(), std::vector<float>{1.0f, 0.0f}, world.currentTick());
+    signal->emitWithHistory(agent->id(), agent->position(), std::vector<float>{1.0f, 0.0f}, world.currentTick(), world.currentTimeSeconds());
     const double self_signal_reward = reward.evaluate(*agent, world, 1.0f);
 
     signal->history().clear();
-    signal->emitWithHistory(neuro::AgentId{99}, agent->position(), std::vector<float>{1.0f, 0.0f}, world.currentTick());
+    signal->emitWithHistory(neuro::AgentId{99}, agent->position(), std::vector<float>{1.0f, 0.0f}, world.currentTick(), world.currentTimeSeconds());
     const double other_signal_reward = reward.evaluate(*agent, world, 1.0f);
 
     EXPECT_DOUBLE_EQ(self_signal_reward, baseline);

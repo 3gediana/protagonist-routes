@@ -43,10 +43,12 @@ void EatCapability::apply(IAgent& agent, IWorld& world, std::span<const float>, 
     agent.setEnergy(previous_energy + gained);
     world.eventBus().publish(events::Event{events::EventType::AgentAteFood,
                                            events::AgentAteFood{agent.id(), agent.position(), gained},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
     world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
                                            events::AgentEnergyChanged{agent.id(), previous_energy, agent.energy()},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 
     if (concrete != nullptr) {
         if (consume.is_meat) {

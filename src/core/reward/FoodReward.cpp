@@ -27,7 +27,7 @@ double FoodReward::evaluate(const IAgent& agent, const IWorld& world, float) con
         if (base > 0.0) {
             const auto* signal = world.getLayer<SignalLayer>();
             if (signal) {
-                const auto emit_records = signal->history().query(agent.position(), 10.0f, 4, world.currentTick());
+                const auto emit_records = signal->history().query(agent.position(), 10.0f, 4.0, world.currentTimeSeconds());
                 float signal_strength = 0.0f;
                 for (const auto& emit : emit_records) {
                     if (emit.source != agent.id()) {

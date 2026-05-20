@@ -11,6 +11,7 @@ namespace neuro::routes::protagonist {
 
 struct EpisodicEvent {
     Tick tick{0};
+    SimTimeSeconds time_seconds{0.0};
     Vec2 pos{0.0f, 0.0f};
     std::string type;
     float salience{1.0f};  // Importance of event
@@ -21,7 +22,7 @@ public:
     explicit EpisodicMemoryBank(std::size_t max_events);
 
     void reset();
-    void recordEvent(Tick tick, Vec2 pos, const std::string& type, float salience);
+    void recordEvent(Tick tick, SimTimeSeconds time_seconds, Vec2 pos, const std::string& type, float salience);
 
     // Get top salient events
     std::vector<EpisodicEvent> topSalient(std::size_t count) const;

@@ -34,7 +34,8 @@ void DropCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     concrete->setEnergy(concrete->energy() - energy_cost_);
     world.eventBus().publish(events::Event{events::EventType::ObjectDropped,
                                            events::ObjectDropped{agent.id(), obj->id},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 const char* DropCapability::name() const { return "drop"; }

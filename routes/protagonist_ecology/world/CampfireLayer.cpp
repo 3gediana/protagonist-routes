@@ -71,14 +71,16 @@ void CampfireLayer::tick(IWorld& world, float dt) {
             agent->setEnergy(next);
             world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
                                                    events::AgentEnergyChanged{agent->id(), previous, next},
-                                                   world.currentTick()});
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
         }
 
         if (agent->energy() <= 0.0f && agent->alive()) {
             agent->kill("campfire_burn");
             world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                    events::AgentDied{agent->id(), "campfire_burn"},
-                                                   world.currentTick()});
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
         }
     }
 }

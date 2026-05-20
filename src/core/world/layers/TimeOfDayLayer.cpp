@@ -6,8 +6,8 @@
 
 namespace neuro {
 
-TimeOfDayLayer::TimeOfDayLayer(float day_length_ticks, float initial_time)
-    : day_length_ticks_(day_length_ticks > 0.0f ? day_length_ticks : 600.0f),
+TimeOfDayLayer::TimeOfDayLayer(SimTimeSeconds day_length_seconds, float initial_time)
+    : day_length_seconds_(day_length_seconds > 0.0 ? day_length_seconds : 600.0),
       t_(initial_time) {}
 
 void TimeOfDayLayer::onAttach(IWorld& world) {
@@ -16,7 +16,7 @@ void TimeOfDayLayer::onAttach(IWorld& world) {
 
 void TimeOfDayLayer::tick(IWorld& world, float dt) {
     (void)world;
-    t_ += dt / day_length_ticks_;
+    t_ += static_cast<float>(static_cast<SimTimeSeconds>(dt) / day_length_seconds_);
     if (t_ >= 1.0f) {
         t_ -= 1.0f;
     }

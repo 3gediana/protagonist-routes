@@ -25,14 +25,14 @@ TreeLayer::TreeLayer(std::size_t tree_count,
                      float trunk_radius,
                      float max_integrity,
                      std::size_t wood_yield,
-                     std::size_t regrow_ticks)
+                     SimTimeSeconds regrow_seconds)
     : tree_count_(tree_count),
       spawn_radius_min_(std::max(1.0f, spawn_radius_min)),
       spawn_radius_max_(std::max(spawn_radius_min_, spawn_radius_max)),
       trunk_radius_(std::max(0.5f, trunk_radius)),
       max_integrity_(std::max(1.0f, max_integrity)),
       wood_yield_(std::max<std::size_t>(1, wood_yield)),
-      regrow_ticks_(std::max<std::size_t>(1, regrow_ticks)),
+      regrow_seconds_(std::max<SimTimeSeconds>(0.0, regrow_seconds)),
       rng_(1337u) {}
 
 void TreeLayer::onAttach(IWorld& world) {
@@ -44,13 +44,12 @@ void TreeLayer::onAttach(IWorld& world) {
 
 void TreeLayer::tick(IWorld& world, float dt) {
     (void)world;
-    (void)dt;
     for (auto& tree : trees_) {
-        if (tree.available || tree.regrow_ticks_remaining == 0) {
+        if (tree.available || tree.regrow_seconds_remaining <= 0.0) {
             continue;
         }
-        --tree.regrow_ticks_remaining;
-        if (tree.regrow_ticks_remaining == 0) {
+        tree.regrow_seconds_remaining = std::max<SimTimeSeconds>(0.0, tree.regrow_seconds_remaining - static_cast<SimTimeSeconds>(dt));
+        if (tree.regrow_seconds_remaining <= 0.0) {
             tree.available = true;
             tree.integrity = tree.max_integrity;
         }
@@ -114,7 +113,7 @@ bool TreeLayer::chopNearest(Vec2 position, float chop_radius, float damage, IWor
     }
 
     best->available = false;
-    best->regrow_ticks_remaining = regrow_ticks_;
+    best->regrow_seconds_remaining = regrow_seconds_;
     ++harvested_count_;
 
     if (objects_ != nullptr) {

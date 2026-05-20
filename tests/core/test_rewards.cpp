@@ -40,7 +40,7 @@ TEST(Rewards, FoodRewardReadsAgentTickState) {
     agent.noteFoodEaten(3.5f);
     agent.noteFoodEaten(8.0f);
     FoodReward reward(10.0);
-    EXPECT_DOUBLE_EQ(reward.evaluate(agent, world, 1.0f), 2.0);
+    EXPECT_DOUBLE_EQ(reward.evaluate(agent, world, 1.0f), 11.5);
     EXPECT_DOUBLE_EQ(reward.weight(), 10.0);
 }
 

@@ -11,12 +11,12 @@ GoalMemory::GoalMemory() {
 void GoalMemory::reset() {
     state_.current_goal = GoalType::Explore;
     state_.commitment = 1.0f;
-    state_.elapsed_ticks = 0.0f;
+    state_.elapsed_seconds = 0.0f;
     state_.completion_progress = 0.0f;
 }
 
 void GoalMemory::tick(float dt) {
-    state_.elapsed_ticks += dt;
+    state_.elapsed_seconds += dt;
     // Goal commitment naturally decays unless reinforced by positive outcomes
     state_.commitment = std::max(0.0f, state_.commitment - 0.015f * dt);
 }
@@ -25,7 +25,7 @@ void GoalMemory::setGoal(GoalType goal, float commitment_reinforce) {
     if (state_.current_goal != goal) {
         state_.current_goal = goal;
         state_.commitment = std::clamp(commitment_reinforce, 0.0f, 1.0f);
-        state_.elapsed_ticks = 0.0f;
+        state_.elapsed_seconds = 0.0f;
         state_.completion_progress = 0.0f;
     } else {
         reinforceCommitment(commitment_reinforce);

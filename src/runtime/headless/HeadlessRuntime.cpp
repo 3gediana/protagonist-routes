@@ -666,7 +666,7 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
     world->addLayer(std::make_unique<ResourceLayer>(
         resource_count,
         resource_amount,
-        params.resource_respawn_ticks,
+        static_cast<SimTimeSeconds>(params.resource_respawn_ticks),
         params.random_seed + generation + 1,
         params.dynamic_resources && stage1,
         params.resource_regen_rate,
@@ -676,10 +676,10 @@ std::unique_ptr<World2D> createWorld(const RuntimeParams& params, Generation gen
         world->addLayer(std::make_unique<TerrainLayer>(params.world_size, terrain_params));
     }
     if (params.day_night_enabled) {
-        world->addLayer(std::make_unique<TimeOfDayLayer>(params.day_length_ticks));
+        world->addLayer(std::make_unique<TimeOfDayLayer>(static_cast<SimTimeSeconds>(params.day_length_ticks)));
     }
     if (params.season_enabled) {
-        world->addLayer(std::make_unique<SeasonLayer>(params.ticks_per_season));
+        world->addLayer(std::make_unique<SeasonLayer>(static_cast<SimTimeSeconds>(params.ticks_per_season)));
     }
     if (params.disease_enabled) {
         world->addLayer(std::make_unique<DiseaseLayer>(
@@ -774,7 +774,7 @@ void populateWorld(World2D& world,
             agent->setSpeciesId(it->second);
         }
         if (has_modulatory) agent->setHasModulatory(true);
-        agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
+        agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, static_cast<SimTimeSeconds>(params.episode_ticks)));
         // When signal is enabled, replace direct food perception with coarse scent
         // Literature: "if individuals can directly perceive targets, communication won't evolve" (Rawal & Miikkulainen 2014)
         // FoodScentPerception gives rough direction; SignalPerception gives precise location
@@ -899,12 +899,12 @@ void evaluatePopulation(World2D& world,
             double reward_delta = agent->fitness() - reward_before;
 
             if (backprop && reward_delta > 0.0) {
-                backprop->recordReceiverReward(agent->id(), agent->position(), reward_delta, world.currentTick());
+                backprop->recordReceiverReward(agent->id(), agent->position(), reward_delta, world.currentTimeSeconds());
             }
         }
 
         if (backprop) {
-            backprop->applyBackprop(world, world.currentTick());
+            backprop->applyBackprop(world, world.currentTimeSeconds());
             backprop->reset();
         }
 
@@ -964,7 +964,7 @@ std::vector<EvaluatedIndividual> collectEvaluated(
         // Multi-objective for NSGA-II: [survival, foraging, exploration]
         if (nsga2_enabled) {
             const auto* concrete = dynamic_cast<const Agent*>(agent);
-            double survival = static_cast<double>(agent->age());
+            double survival = static_cast<double>(agent->ageSeconds());
             // Foraging: use fitness as proxy (dominated by food reward)
             double foraging = agent->fitness();
             double exploration = concrete ? static_cast<double>(concrete->visitedCellCount()) : 0.0;
@@ -1217,7 +1217,7 @@ int runCoevolution(const RuntimeParams& params,
             }
             agent->setPredator(true);
             // Add perceptions and capabilities (same as populateWorld)
-            agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
+            agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, static_cast<SimTimeSeconds>(params.episode_ticks)));
             if (!params.signal_enabled) {
                 agent->addPerception(std::make_unique<NearestFoodPerception>());
             } else {
@@ -1268,7 +1268,7 @@ int runCoevolution(const RuntimeParams& params,
                 agent->setSpeciesId(it->second);
             }
             agent->setPredator(false);
-            agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, params.episode_ticks));
+            agent->addPerception(std::make_unique<SelfPerception>(params.initial_energy, static_cast<SimTimeSeconds>(params.episode_ticks)));
             if (!params.signal_enabled) {
                 agent->addPerception(std::make_unique<NearestFoodPerception>());
             } else {
@@ -1311,7 +1311,7 @@ int runCoevolution(const RuntimeParams& params,
             if (sig_layer) {
                 backprop = std::make_unique<SignalBackpropReward>(
                     sig_layer->history(), params.signal_backprop_factor,
-                    params.signal_backprop_window, params.signal_perception_radius);
+                    static_cast<SimTimeSeconds>(params.signal_backprop_window), params.signal_perception_radius);
                 backprop_ptr = backprop.get();
             }
         }
@@ -1554,7 +1554,7 @@ int HeadlessRuntime::run() {
                 if (sig_layer) {
                     backprop = std::make_unique<SignalBackpropReward>(
                         sig_layer->history(), params.signal_backprop_factor,
-                        params.signal_backprop_window, params.signal_perception_radius);
+                        static_cast<SimTimeSeconds>(params.signal_backprop_window), params.signal_perception_radius);
                     backprop_ptr = backprop.get();
                 }
             }

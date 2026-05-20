@@ -1,10 +1,15 @@
 #include "core/agent/Agent.h"
 
+#include "core/events/Event.h"
+#include "core/events/EventBus.h"
+#include "core/events/EventPayloads.h"
 #include "core/interfaces/IBrain.h"
 #include "core/interfaces/IAgentCapability.h"
 #include "core/interfaces/IPerception.h"
 #include "core/interfaces/IWorld.h"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace neuro {
@@ -23,11 +28,11 @@ Agent::Agent(AgentId id,
       position_(position),
       velocity_(0.0f, 0.0f),
       energy_(energy),
-      age_(0),
+      age_seconds_(0.0),
       alive_(true),
       fitness_(0.0),
-      decision_interval_(decision_interval),
-      next_decision_tick_(0),
+      decision_interval_(std::max(0.0f, decision_interval)),
+      next_decision_time_seconds_(0.0),
       food_eaten_this_tick_(0.0f),
       plant_food_this_tick_(0.0f),
       meat_food_this_tick_(0.0f),
@@ -56,7 +61,8 @@ void Agent::setPosition(Vec2 p) { position_ = p; }
 void Agent::setVelocity(Vec2 v) { velocity_ = v; }
 float Agent::energy() const { return energy_; }
 void Agent::setEnergy(float e) { energy_ = e; }
-Tick Agent::age() const { return age_; }
+Tick Agent::age() const { return age_seconds_ <= 0.0 ? Tick{0} : static_cast<Tick>(std::floor(age_seconds_)); }
+SimTimeSeconds Agent::ageSeconds() const { return age_seconds_; }
 bool Agent::alive() const { return alive_; }
 IBrain& Agent::brain() { return *brain_; }
 const IBrain& Agent::brain() const { return *brain_; }
@@ -69,10 +75,17 @@ void Agent::kill(const char*) {
 }
 
 float Agent::decisionInterval() const { return decision_interval_; }
-Tick Agent::nextDecisionTick() const { return next_decision_tick_; }
-void Agent::setNextDecisionTick(Tick tick) { next_decision_tick_ = tick; }
+Tick Agent::nextDecisionTick() const {
+    return next_decision_time_seconds_ <= 0.0 ? Tick{0} : static_cast<Tick>(std::floor(next_decision_time_seconds_));
+}
+void Agent::setNextDecisionTick(Tick tick) { next_decision_time_seconds_ = static_cast<SimTimeSeconds>(tick); }
 bool Agent::shouldDecide(Tick current_tick) const {
-    return current_tick >= next_decision_tick_;
+    return shouldDecideAt(static_cast<SimTimeSeconds>(current_tick));
+}
+SimTimeSeconds Agent::nextDecisionTimeSeconds() const { return next_decision_time_seconds_; }
+void Agent::setNextDecisionTimeSeconds(SimTimeSeconds time_seconds) { next_decision_time_seconds_ = std::max<SimTimeSeconds>(0.0, time_seconds); }
+bool Agent::shouldDecideAt(SimTimeSeconds current_time_seconds) const {
+    return current_time_seconds + 1.0e-9 >= next_decision_time_seconds_;
 }
 
 void Agent::setSpeciesId(SpeciesId species_id) {
@@ -97,7 +110,7 @@ void Agent::beginTick() {
 void Agent::step(IWorld& world, float dt) {
     if (!alive_) return;
 
-    if (shouldDecide(world.currentTick())) {
+    if (shouldDecideAt(world.currentTimeSeconds())) {
         std::size_t input_dim = 0;
         for (const auto& perception : perceptions_) {
             input_dim += perception->dim();
@@ -116,7 +129,11 @@ void Agent::step(IWorld& world, float dt) {
         }
         auto output_span = brain_->forward(inputs, dt);
         last_outputs_.assign(output_span.begin(), output_span.end());
-        next_decision_tick_ = world.currentTick() + static_cast<Tick>(decision_interval_);
+        next_decision_time_seconds_ = world.currentTimeSeconds() + static_cast<SimTimeSeconds>(decision_interval_);
+        world.eventBus().publish(events::Event{events::EventType::DecisionTriggered,
+                                               events::DecisionTriggered{ id_, world.currentTick() },
+                                               world.currentTick(),
+                                               world.currentTimeSeconds()});
     }
 
     if (!last_outputs_.empty()) {
@@ -137,23 +154,22 @@ void Agent::step(IWorld& world, float dt) {
     }
 }
 
-void Agent::incrementAge() {
-    ++age_;
+void Agent::incrementAge(float dt) {
+    age_seconds_ += static_cast<SimTimeSeconds>(std::max(0.0f, dt));
 }
 
 void Agent::noteFoodEaten(float amount) {
-    (void)amount;
-    food_eaten_this_tick_ += 1.0f;
+    food_eaten_this_tick_ += std::max(0.0f, amount);
 }
 
 void Agent::notePlantFood(float amount) {
     noteFoodEaten(amount);
-    plant_food_this_tick_ += 1.0f;
+    plant_food_this_tick_ += std::max(0.0f, amount);
 }
 
 void Agent::noteMeatFood(float amount) {
     noteFoodEaten(amount);
-    meat_food_this_tick_ += 1.0f;
+    meat_food_this_tick_ += std::max(0.0f, amount);
 }
 
 void Agent::noteExplorationCell(std::size_t cell_index) {

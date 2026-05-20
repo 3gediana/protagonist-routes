@@ -90,7 +90,8 @@ void SurvivalStatusLayer::tick(IWorld& world, float dt) {
             agent->kill("survival_status_depleted");
             world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                    events::AgentDied{agent->id(), "survival_status_depleted"},
-                                                   world.currentTick()});
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
         }
     }
 }

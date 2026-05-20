@@ -1,6 +1,7 @@
 #include "runtime/ProtagonistEcologyConfig.h"
 
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 namespace neuro::routes::protagonist {
@@ -15,6 +16,14 @@ std::string normalizeRole(std::string role) {
         return "live";
     }
     return role;
+}
+
+SimTimeSeconds getDurationCompat(const config::Config& config,
+                                 const char* seconds_key,
+                                 const char* legacy_ticks_key,
+                                 SimTimeSeconds default_value) {
+    return config.getOr<double>(seconds_key,
+                                config.getOr<double>(legacy_ticks_key, default_value));
 }
 
 }  // namespace
@@ -39,13 +48,18 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
 
     ProtagonistEcologyConfig out{};
     out.random_seed = static_cast<std::uint32_t>(config.getOr<int>("runtime.random_seed", 42));
-    out.preview_ticks = config.getOr<std::size_t>("runtime.preview_ticks", 1);
     out.world_role = normalizeRole(config.getOr<std::string>("runtime.world_role", out.world_role));
     out.scenario_name = config.getOr<std::string>("runtime.scenario_name", out.scenario_name);
     if (!out.isTrainRole() && !out.isEvalRole() && !out.isLiveRole()) {
         throw std::runtime_error("runtime.world_role must be one of: train, eval, live");
     }
     out.world_size = Vec2{static_cast<float>(world_size[0]), static_cast<float>(world_size[1])};
+    out.sim_time.substep_dt = config.getOr<double>("simulation.time.substep_dt", out.sim_time.substep_dt);
+    out.sim_time.max_substeps_per_advance = config.getOr<std::size_t>("simulation.time.max_substeps_per_advance", out.sim_time.max_substeps_per_advance);
+    out.sim_time.preview_duration_seconds = getDurationCompat(config,
+                                                              "simulation.time.preview_duration_seconds",
+                                                              "runtime.preview_ticks",
+                                                              out.sim_time.preview_duration_seconds);
 
     out.terrain_enabled = config.getOr<bool>("world.terrain.enabled", true);
     out.terrain.height_scale = config.getOr<float>("world.terrain.height_scale", out.terrain.height_scale);
@@ -61,7 +75,10 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
 
     out.resources.count = config.getOr<std::size_t>("world.resources.count", out.resources.count);
     out.resources.amount = config.getOr<float>("world.resources.amount", out.resources.amount);
-    out.resources.respawn_ticks = config.getOr<std::size_t>("world.resources.respawn_ticks", out.resources.respawn_ticks);
+    out.resources.respawn_seconds = getDurationCompat(config,
+                                                      "world.resources.respawn_seconds",
+                                                      "world.resources.respawn_ticks",
+                                                      out.resources.respawn_seconds);
     out.resources.dynamic = config.getOr<bool>("world.resources.dynamic", out.resources.dynamic);
     out.resources.regen_rate = config.getOr<float>("world.resources.regen_rate", out.resources.regen_rate);
     out.resources.terrain_adjustment_enabled = config.getOr<bool>("world.resources.terrain_adjustment_enabled", out.resources.terrain_adjustment_enabled);
@@ -89,7 +106,10 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.nursery_supply.replenish_batch = config.getOr<std::size_t>("world.nursery_supply.replenish_batch", out.nursery_supply.replenish_batch);
     out.nursery_supply.near_radius = config.getOr<float>("world.nursery_supply.near_radius", out.nursery_supply.near_radius);
     out.nursery_supply.spawn_radius = config.getOr<float>("world.nursery_supply.spawn_radius", out.nursery_supply.spawn_radius);
-    out.nursery_supply.cooldown_ticks = config.getOr<std::size_t>("world.nursery_supply.cooldown_ticks", out.nursery_supply.cooldown_ticks);
+    out.nursery_supply.cooldown_seconds = getDurationCompat(config,
+                                                            "world.nursery_supply.cooldown_seconds",
+                                                            "world.nursery_supply.cooldown_ticks",
+                                                            out.nursery_supply.cooldown_seconds);
 
     out.campfire.enabled = config.getOr<bool>("world.campfire.enabled", out.campfire.enabled);
     out.campfire.count = config.getOr<std::size_t>("world.campfire.count", out.campfire.count);
@@ -127,7 +147,10 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.tree.trunk_radius = config.getOr<float>("world.tree.trunk_radius", out.tree.trunk_radius);
     out.tree.max_integrity = config.getOr<float>("world.tree.max_integrity", out.tree.max_integrity);
     out.tree.wood_yield = config.getOr<std::size_t>("world.tree.wood_yield", out.tree.wood_yield);
-    out.tree.regrow_ticks = config.getOr<std::size_t>("world.tree.regrow_ticks", out.tree.regrow_ticks);
+    out.tree.regrow_seconds = getDurationCompat(config,
+                                                "world.tree.regrow_seconds",
+                                                "world.tree.regrow_ticks",
+                                                out.tree.regrow_seconds);
 
     out.worksite.enabled = config.getOr<bool>("world.worksite.enabled", out.worksite.enabled);
     out.worksite.count = config.getOr<std::size_t>("world.worksite.count", out.worksite.count);
@@ -144,7 +167,10 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.intervention.recharge_per_tick = config.getOr<float>("world.intervention.recharge_per_tick", out.intervention.recharge_per_tick);
     out.intervention.stress_decay_per_tick = config.getOr<float>("world.intervention.stress_decay_per_tick", out.intervention.stress_decay_per_tick);
     out.intervention.max_stress = config.getOr<float>("world.intervention.max_stress", out.intervention.max_stress);
-    out.intervention.cooldown_ticks = config.getOr<std::size_t>("world.intervention.cooldown_ticks", out.intervention.cooldown_ticks);
+    out.intervention.cooldown_seconds = getDurationCompat(config,
+                                                          "world.intervention.cooldown_seconds",
+                                                          "world.intervention.cooldown_ticks",
+                                                          out.intervention.cooldown_seconds);
 
     out.progression.enabled = config.getOr<bool>("world.progression.enabled", out.progression.enabled);
     out.progression.first_fire_stick_threshold = config.getOr<std::size_t>("world.progression.first_fire_stick_threshold", out.progression.first_fire_stick_threshold);
@@ -159,16 +185,31 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.progression.heavy_unlock_count = config.getOr<std::size_t>("world.progression.heavy_unlock_count", out.progression.heavy_unlock_count);
     out.progression.unlock_radius_min = config.getOr<float>("world.progression.unlock_radius_min", out.progression.unlock_radius_min);
     out.progression.unlock_radius_max = config.getOr<float>("world.progression.unlock_radius_max", out.progression.unlock_radius_max);
-    out.progression.event_min_interval_ticks = config.getOr<std::size_t>("world.progression.event_min_interval_ticks", out.progression.event_min_interval_ticks);
-    out.progression.event_max_interval_ticks = config.getOr<std::size_t>("world.progression.event_max_interval_ticks", out.progression.event_max_interval_ticks);
+    out.progression.event_min_interval_seconds = getDurationCompat(config,
+                                                                  "world.progression.event_min_interval_seconds",
+                                                                  "world.progression.event_min_interval_ticks",
+                                                                  out.progression.event_min_interval_seconds);
+    out.progression.event_max_interval_seconds = getDurationCompat(config,
+                                                                  "world.progression.event_max_interval_seconds",
+                                                                  "world.progression.event_max_interval_ticks",
+                                                                  out.progression.event_max_interval_seconds);
 
     out.day_night.enabled = config.getOr<bool>("world.day_night.enabled", out.day_night.enabled);
-    out.day_night.day_length_ticks = config.getOr<float>("world.day_night.day_length_ticks", out.day_night.day_length_ticks);
+    out.day_night.day_length_seconds = getDurationCompat(config,
+                                                         "world.day_night.day_length_seconds",
+                                                         "world.day_night.day_length_ticks",
+                                                         out.day_night.day_length_seconds);
     out.day_night.initial_time = config.getOr<float>("world.day_night.initial_time", out.day_night.initial_time);
 
     out.season.enabled = config.getOr<bool>("world.season.enabled", out.season.enabled);
-    out.season.ticks_per_season = config.getOr<std::size_t>("world.season.ticks_per_season", out.season.ticks_per_season);
-    out.season.start_tick = config.getOr<std::size_t>("world.season.start_tick", out.season.start_tick);
+    out.season.season_length_seconds = getDurationCompat(config,
+                                                         "world.season.season_length_seconds",
+                                                         "world.season.ticks_per_season",
+                                                         out.season.season_length_seconds);
+    out.season.start_time_seconds = getDurationCompat(config,
+                                                      "world.season.start_time_seconds",
+                                                      "world.season.start_tick",
+                                                      out.season.start_time_seconds);
 
     out.disease.enabled = config.getOr<bool>("world.disease.enabled", out.disease.enabled);
     out.disease.infection_radius = config.getOr<float>("world.disease.infection_radius", out.disease.infection_radius);

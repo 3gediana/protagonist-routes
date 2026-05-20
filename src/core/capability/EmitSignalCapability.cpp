@@ -39,13 +39,14 @@ void EmitSignalCapability::apply(IAgent& agent, IWorld& world, std::span<const f
     }
 
     if (any_active) {
-        signal_layer->emitWithHistory(agent.id(), agent.position(), signal, world.currentTick());
+        signal_layer->emitWithHistory(agent.id(), agent.position(), signal, world.currentTick(), world.currentTimeSeconds());
         concrete->setEnergy(concrete->energy() - energy_cost_ * emitted_intensity * dt);
         for (std::size_t i = 0; i < channels_ && i < signal.size(); ++i) {
             if (signal[i] > 0.1f) {
                 world.eventBus().publish(events::Event{events::EventType::AgentEmittedSignal,
                                                        events::AgentEmittedSignal{agent.id(), agent.position(), static_cast<std::uint8_t>(i), signal[i]},
-                                                       world.currentTick()});
+                                                       world.currentTick(),
+                                                       world.currentTimeSeconds()});
             }
         }
     }
@@ -55,11 +56,12 @@ void EmitSignalCapability::apply(IAgent& agent, IWorld& world, std::span<const f
     if (concrete->infected() && channels_ > 0) {
         std::vector<float> distress(channels_, 0.0f);
         distress[channels_ - 1] = concrete->infectionProgress() * 2.0f;  // intensity = infection severity
-        signal_layer->emitWithHistory(agent.id(), agent.position(), distress, world.currentTick());
+        signal_layer->emitWithHistory(agent.id(), agent.position(), distress, world.currentTick(), world.currentTimeSeconds());
         if (distress[channels_ - 1] > 0.01f) {
             world.eventBus().publish(events::Event{events::EventType::AgentEmittedSignal,
                                                    events::AgentEmittedSignal{agent.id(), agent.position(), static_cast<std::uint8_t>(channels_ - 1), distress[channels_ - 1]},
-                                                   world.currentTick()});
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
         }
         // No extra cost for distress signal (it's involuntary)
     }

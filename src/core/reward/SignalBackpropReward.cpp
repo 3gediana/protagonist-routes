@@ -13,21 +13,24 @@ namespace neuro {
 
 SignalBackpropReward::SignalBackpropReward(SignalEmitHistory& history,
                                            float backprop_factor,
-                                           std::size_t backprop_window,
+                                           SimTimeSeconds backprop_window_seconds,
                                            float signal_perception_radius)
     : history_(history),
       backprop_factor_(backprop_factor),
-      backprop_window_(backprop_window),
+      backprop_window_seconds_(backprop_window_seconds),
       signal_perception_radius_(signal_perception_radius) {}
 
-void SignalBackpropReward::recordReceiverReward(AgentId receiver, Vec2 receiver_position, double reward_delta, std::size_t tick) {
+void SignalBackpropReward::recordReceiverReward(AgentId receiver,
+                                                Vec2 receiver_position,
+                                                double reward_delta,
+                                                SimTimeSeconds time_seconds) {
     if (reward_delta > 0.0) {
-        reward_buffer_.push_back({receiver, receiver_position, reward_delta, tick});
+        reward_buffer_.push_back({receiver, receiver_position, reward_delta, time_seconds});
     }
 }
 
-void SignalBackpropReward::applyBackprop(IWorld& world, std::size_t current_tick) {
-    (void)current_tick;
+void SignalBackpropReward::applyBackprop(IWorld& world, SimTimeSeconds current_time_seconds) {
+    (void)current_time_seconds;
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) return;
 
@@ -46,7 +49,7 @@ void SignalBackpropReward::applyBackprop(IWorld& world, std::size_t current_tick
 
     for (const auto& rec : reward_buffer_) {
         auto emit_records = history_.query(rec.position, signal_perception_radius_,
-                                           backprop_window_, rec.tick);
+                                           backprop_window_seconds_, rec.time_seconds);
 
         double total_weight = 0.0;
         std::vector<double> emit_weights;
@@ -57,8 +60,8 @@ void SignalBackpropReward::applyBackprop(IWorld& world, std::size_t current_tick
             const float dy = emit.pos.y - rec.position.y;
             const float distance = std::sqrt(dx * dx + dy * dy);
             const float distance_factor = std::max(0.0f, 1.0f - distance / std::max(signal_perception_radius_, 0.001f));
-            const float recency_factor = 1.0f - static_cast<float>(rec.tick - emit.tick) /
-                static_cast<float>(std::max<std::size_t>(backprop_window_, 1));
+            const float recency_factor = 1.0f - static_cast<float>(rec.time_seconds - emit.time_seconds) /
+                static_cast<float>(std::max<SimTimeSeconds>(backprop_window_seconds_, 1.0e-6));
             const double weight = static_cast<double>(std::max(emit.intensity, 0.0f)) *
                 static_cast<double>(std::max(distance_factor, 0.0f)) *
                 static_cast<double>(std::max(recency_factor, 0.0f));

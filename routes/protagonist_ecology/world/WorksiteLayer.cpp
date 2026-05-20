@@ -277,7 +277,8 @@ void WorksiteLayer::progressConstruction(IWorld& world, float dt) {
                     agent->setEnergy(next);
                     world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
                                                            events::AgentEnergyChanged{agent->id(), previous, next},
-                                                           world.currentTick()});
+                                                           world.currentTick(),
+                                                           world.currentTimeSeconds()});
                 }
             }
         }

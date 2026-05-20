@@ -128,7 +128,7 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
     world->addLayer(std::make_unique<ResourceLayer>(
         config.resources.count,
         config.resources.amount,
-        config.resources.respawn_ticks,
+        config.resources.respawn_seconds,
         config.random_seed + 1,
         config.resources.dynamic,
         config.resources.regen_rate,
@@ -167,7 +167,7 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.tree.trunk_radius,
             config.tree.max_integrity,
             config.tree.wood_yield,
-            config.tree.regrow_ticks));
+            config.tree.regrow_seconds));
     }
 
     if (config.signal.enabled) {
@@ -235,7 +235,7 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.intervention.recharge_per_tick,
             config.intervention.stress_decay_per_tick,
             config.intervention.max_stress,
-            config.intervention.cooldown_ticks,
+            config.intervention.cooldown_seconds,
             config.random_seed + 904));
     }
 
@@ -245,7 +245,7 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.nursery_supply.replenish_batch,
             config.nursery_supply.near_radius,
             config.nursery_supply.spawn_radius,
-            config.nursery_supply.cooldown_ticks,
+            config.nursery_supply.cooldown_seconds,
             config.random_seed + 905));
     }
 
@@ -271,8 +271,8 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.progression.heavy_unlock_count,
             config.progression.unlock_radius_min,
             config.progression.unlock_radius_max,
-            config.progression.event_min_interval_ticks,
-            config.progression.event_max_interval_ticks,
+            config.progression.event_min_interval_seconds,
+            config.progression.event_max_interval_seconds,
             config.random_seed + 902));
     }
 
@@ -287,14 +287,14 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
 
     if (config.day_night.enabled) {
         world->addLayer(std::make_unique<TimeOfDayLayer>(
-            config.day_night.day_length_ticks,
+            config.day_night.day_length_seconds,
             config.day_night.initial_time));
     }
 
     if (config.season.enabled) {
         world->addLayer(std::make_unique<SeasonLayer>(
-            config.season.ticks_per_season,
-            config.season.start_tick));
+            config.season.season_length_seconds,
+            config.season.start_time_seconds));
     }
 
     if (config.disease.enabled) {

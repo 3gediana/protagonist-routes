@@ -41,11 +41,15 @@ void SignalLayer::emit(Vec2 position, const std::vector<float>& signal) {
     }
 }
 
-void SignalLayer::emitWithHistory(AgentId source, Vec2 position, const std::vector<float>& signal, std::size_t tick) {
+void SignalLayer::emitWithHistory(AgentId source,
+                                  Vec2 position,
+                                  const std::vector<float>& signal,
+                                  Tick step_index,
+                                  SimTimeSeconds time_seconds) {
     emit(position, signal);
     for (std::size_t c = 0; c < channels_ && c < signal.size(); ++c) {
         if (signal[c] > 0.01f) {
-            history_.record(source, c, position, tick, signal[c]);
+            history_.record(source, c, position, step_index, time_seconds, signal[c]);
         }
     }
 }

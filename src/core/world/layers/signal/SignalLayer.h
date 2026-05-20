@@ -25,7 +25,7 @@ public:
     void tick(IWorld& world, float dt) override;
 
     void emit(Vec2 position, const std::vector<float>& signal);
-    void emitWithHistory(AgentId source, Vec2 position, const std::vector<float>& signal, std::size_t tick);
+    void emitWithHistory(AgentId source, Vec2 position, const std::vector<float>& signal, Tick step_index, SimTimeSeconds time_seconds);
     std::vector<float> sample(Vec2 position, float radius) const;
 
     SignalEmitHistory& history() { return history_; }

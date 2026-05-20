@@ -36,6 +36,7 @@ public:
     float energy() const override;
     void setEnergy(float e) override;
     Tick age() const override;
+    SimTimeSeconds ageSeconds() const override;
     bool alive() const override;
     void kill(const char* cause) override;
     IBrain& brain() override;
@@ -48,13 +49,16 @@ public:
     Tick nextDecisionTick() const;
     void setNextDecisionTick(Tick tick);
     bool shouldDecide(Tick current_tick) const;
+    SimTimeSeconds nextDecisionTimeSeconds() const;
+    void setNextDecisionTimeSeconds(SimTimeSeconds time_seconds);
+    bool shouldDecideAt(SimTimeSeconds current_time_seconds) const;
 
     void setSpeciesId(SpeciesId species_id);
     void addPerception(std::unique_ptr<IPerception> perception);
     void addCapability(std::unique_ptr<IAgentCapability> capability);
     void beginTick();
     void step(IWorld& world, float dt);
-    void incrementAge();
+    void incrementAge(float dt);
 
     void noteFoodEaten(float amount);
     void notePlantFood(float amount);
@@ -121,11 +125,11 @@ private:
     Vec2 position_;
     Vec2 velocity_;
     float energy_;
-    Tick age_;
+    SimTimeSeconds age_seconds_;
     bool alive_;
     double fitness_;
     float decision_interval_;
-    Tick next_decision_tick_;
+    SimTimeSeconds next_decision_time_seconds_;
     std::vector<float> last_outputs_;
     float food_eaten_this_tick_;
     float plant_food_this_tick_;

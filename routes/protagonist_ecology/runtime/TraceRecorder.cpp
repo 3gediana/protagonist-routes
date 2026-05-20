@@ -118,7 +118,7 @@ TraceRecorder::TraceRecorder(World2D& world,
     if (config_.agents_enabled) {
         agent_trace_.open(trace_dir_ / "agent_trace.csv", std::ios::out | std::ios::trunc);
         if (agent_trace_.is_open()) {
-            agent_trace_ << "tick,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_this_tick,plant_food_this_tick,meat_food_this_tick,visited_cells,damage_dealt,kills\n";
+            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills\n";
         }
     }
     if (config_.world_enabled) {
@@ -252,7 +252,8 @@ void TraceRecorder::writeEvent(const events::Event& event) {
         case events::EventType::DecisionTriggered: {
             const auto& payload = event.payloadAs<events::DecisionTriggered>();
             event_trace_ << ",\"agent_id\":" << payload.id.value
-                         << ",\"decision_tick\":" << payload.tick;
+                         << ",\"decision_tick\":" << payload.tick
+                         << ",\"decision_time_seconds\":" << event.timeSeconds();
             break;
         }
         case events::EventType::TerrainGenerated: {
@@ -364,7 +365,7 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
                      << vel.x << ',' << vel.y << ','
                      << (agent->alive() ? 1 : 0) << ','
                      << agent->energy() << ','
-                     << agent->age() << ','
+                     << agent->ageSeconds() << ','
                      << agent->fitness() << ','
                      << agent->carriedObject() << ','
                      << (agent->isCarrying() ? 1 : 0) << ','

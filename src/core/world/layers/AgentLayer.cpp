@@ -26,26 +26,28 @@ void AgentLayer::tick(IWorld& world, float dt) {
 
         agent->beginTick();
         agent->step(world, dt);
-        agent->incrementAge();
+        agent->incrementAge(dt);
 
         const float previous_energy = agent->energy();
         float metabolism = base_metabolism_;
         if (agent->infected()) {
             metabolism *= 2.0f;
         }
-        const float next_energy = previous_energy - metabolism;
+        const float next_energy = previous_energy - metabolism * dt;
         agent->setEnergy(next_energy);
         if (next_energy != previous_energy) {
             world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
                                                    events::AgentEnergyChanged{agent->id(), previous_energy, next_energy},
-                                                   world.currentTick()});
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
         }
 
         if (agent->energy() <= death_threshold_) {
             agent->kill("energy_depleted");
             world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                    events::AgentDied{agent->id(), "energy_depleted"},
-                                                   world.currentTick()});
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
         }
     }
 }
@@ -57,7 +59,8 @@ int AgentLayer::tickOrder() const {
 void AgentLayer::addAgent(std::unique_ptr<Agent> agent, IWorld& world) {
     world.eventBus().publish(events::Event{events::EventType::AgentBorn,
                                            events::AgentBorn{agent->id(), agent->genomeId(), agent->position()},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
     agents_.push_back(std::move(agent));
 }
 

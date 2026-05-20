@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/config/Config.h"
+#include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 #include "core/world/layers/terrain/TerrainGenerator.h"
 
@@ -14,7 +15,7 @@ namespace neuro::routes::protagonist {
 struct ResourceConfig {
     std::size_t count{80};
     float amount{18.0f};
-    std::size_t respawn_ticks{15};
+    SimTimeSeconds respawn_seconds{15.0};
     bool dynamic{true};
     float regen_rate{0.2f};
     bool terrain_adjustment_enabled{true};
@@ -57,7 +58,7 @@ struct NurserySupplyConfig {
     std::size_t replenish_batch{4};
     float near_radius{16.0f};
     float spawn_radius{10.0f};
-    std::size_t cooldown_ticks{25};
+    SimTimeSeconds cooldown_seconds{25.0};
 };
 
 struct CampfireConfig {
@@ -103,7 +104,7 @@ struct TreeConfig {
     float trunk_radius{2.4f};
     float max_integrity{16.0f};
     std::size_t wood_yield{3};
-    std::size_t regrow_ticks{240};
+    SimTimeSeconds regrow_seconds{240.0};
 };
 
 struct WorksiteConfig {
@@ -124,19 +125,19 @@ struct InterventionConfig {
     float recharge_per_tick{0.025f};
     float stress_decay_per_tick{0.01f};
     float max_stress{0.85f};
-    std::size_t cooldown_ticks{18};
+    SimTimeSeconds cooldown_seconds{18.0};
 };
 
 struct DayNightConfig {
     bool enabled{true};
-    float day_length_ticks{800.0f};
+    SimTimeSeconds day_length_seconds{800.0};
     float initial_time{0.0f};
 };
 
 struct SeasonConfig {
     bool enabled{true};
-    std::size_t ticks_per_season{2400};
-    std::size_t start_tick{0};
+    SimTimeSeconds season_length_seconds{2400.0};
+    SimTimeSeconds start_time_seconds{0.0};
 };
 
 struct DiseaseConfig {
@@ -162,8 +163,14 @@ struct ProgressionConfig {
     std::size_t heavy_unlock_count{6};
     float unlock_radius_min{24.0f};
     float unlock_radius_max{42.0f};
-    std::size_t event_min_interval_ticks{20};
-    std::size_t event_max_interval_ticks{80};
+    SimTimeSeconds event_min_interval_seconds{20.0};
+    SimTimeSeconds event_max_interval_seconds{80.0};
+};
+
+struct SimulationTimeConfig {
+    SimTimeSeconds substep_dt{0.1};
+    std::size_t max_substeps_per_advance{16};
+    SimTimeSeconds preview_duration_seconds{1.0};
 };
 
 struct ProtagonistBrainConfig {
@@ -188,10 +195,10 @@ struct BackgroundBrainConfig {
 
 struct ProtagonistEcologyConfig {
     std::uint32_t random_seed{42};
-    std::size_t preview_ticks{1};
     std::string world_role{"train"};
     std::string scenario_name{"bootstrap"};
     Vec2 world_size{200.0f, 200.0f};
+    SimulationTimeConfig sim_time{};
     bool terrain_enabled{true};
     TerrainParams terrain{};
     ResourceConfig resources{};

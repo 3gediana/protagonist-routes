@@ -52,14 +52,14 @@ InterventionDirectorLayer::InterventionDirectorLayer(float initial_budget,
                                                      float recharge_per_tick,
                                                      float stress_decay_per_tick,
                                                      float max_stress,
-                                                     std::size_t cooldown_ticks,
+                                                     SimTimeSeconds cooldown_seconds,
                                                      std::uint32_t seed)
     : budget_(initial_budget),
       max_budget_(max_budget),
       recharge_per_tick_(recharge_per_tick),
       stress_decay_per_tick_(stress_decay_per_tick),
       max_stress_(max_stress),
-      cooldown_ticks_(cooldown_ticks),
+      cooldown_seconds_(std::max<SimTimeSeconds>(0.0, cooldown_seconds)),
       rng_(seed == 0 ? std::random_device{}() : seed) {}
 
 void InterventionDirectorLayer::onAttach(IWorld& world) {
@@ -78,7 +78,8 @@ void InterventionDirectorLayer::tick(IWorld& world, float dt) {
         return;
     }
 
-    if (world.currentTick() < last_execution_tick_ + cooldown_ticks_) {
+    if (last_execution_time_seconds_ >= 0.0
+        && world.currentTimeSeconds() < last_execution_time_seconds_ + cooldown_seconds_) {
         return;
     }
 
@@ -91,10 +92,11 @@ void InterventionDirectorLayer::tick(IWorld& world, float dt) {
         pending_.pop_front();
         budget_ = std::max(0.0f, budget_ - request.cost);
         stress_ = std::min(max_stress_, stress_ + request.stress);
-        last_execution_tick_ = world.currentTick();
+        last_execution_time_seconds_ = world.currentTimeSeconds();
         world.eventBus().publish(events::Event{events::EventType::InterventionTriggered,
                                                events::InterventionTriggered{request.source, "director"},
-                                               world.currentTick()});
+                                               world.currentTick(),
+                                               world.currentTimeSeconds()});
     }
 }
 

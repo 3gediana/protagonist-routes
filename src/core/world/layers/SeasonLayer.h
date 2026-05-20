@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/interfaces/IWorldLayer.h"
+#include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 
 #include <cstddef>
@@ -13,7 +14,7 @@ class SeasonLayer final : public IWorldLayer {
 public:
     static constexpr const char* kName = "season";
 
-    SeasonLayer(std::size_t ticks_per_season, std::size_t start_tick = 0);
+    SeasonLayer(SimTimeSeconds season_length_seconds, SimTimeSeconds start_time_seconds = 0.0);
 
     const char* layerName() const override { return kName; }
     void onAttach(IWorld& world) override;
@@ -25,11 +26,11 @@ public:
     float seasonProgress() const;
     std::size_t seasonIndex() const;
 
-    std::size_t ticksPerSeason() const { return ticks_per_season_; }
+    SimTimeSeconds seasonLengthSeconds() const { return season_length_seconds_; }
 
 private:
-    std::size_t ticks_per_season_;
-    std::size_t tick_count_;
+    SimTimeSeconds season_length_seconds_;
+    SimTimeSeconds elapsed_seconds_;
 };
 
 }  // namespace neuro

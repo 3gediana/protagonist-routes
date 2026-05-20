@@ -52,7 +52,7 @@ void MemoryCognitionPerception::sense(const IAgent& agent, const IWorld& world, 
     const float goal_idx = static_cast<float>(goal.currentGoal()) / static_cast<float>(GoalType::Count);
     output[8] = std::clamp(goal_idx, 0.0f, 1.0f);
     output[9] = std::clamp(goal.commitment(), 0.0f, 1.0f);
-    output[10] = std::clamp(goal.elapsedTicks() / 100.0f, 0.0f, 1.0f); // Normalize elapsed ticks up to 100 ticks
+    output[10] = std::clamp(goal.elapsedSeconds() / 100.0f, 0.0f, 1.0f);
     output[11] = std::clamp(goal.completionProgress(), 0.0f, 1.0f);
 }
 

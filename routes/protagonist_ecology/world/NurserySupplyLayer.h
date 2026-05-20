@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/interfaces/IWorldLayer.h"
+#include "core/types/Aliases.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +24,7 @@ public:
                        std::size_t replenish_batch,
                        float near_radius,
                        float spawn_radius,
-                       std::size_t cooldown_ticks,
+                       SimTimeSeconds cooldown_seconds,
                        std::uint32_t seed);
 
     const char* layerName() const override { return kName; }
@@ -42,8 +43,8 @@ private:
     std::size_t replenish_batch_;
     float near_radius_;
     float spawn_radius_;
-    std::size_t cooldown_ticks_;
-    std::uint64_t last_replenish_tick_ = 0;
+    SimTimeSeconds cooldown_seconds_;
+    SimTimeSeconds last_replenish_time_seconds_ = -1.0;
     std::mt19937 rng_;
 };
 

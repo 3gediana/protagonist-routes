@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/interfaces/IWorldLayer.h"
+#include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 
 #include <cstddef>
@@ -20,7 +21,7 @@ public:
         float max_amount;
         float regen_rate;
         bool available;
-        std::size_t respawn_ticks_remaining;
+        SimTimeSeconds respawn_seconds_remaining;
         bool is_meat = false;       // false = plant, true = corpse meat
         bool is_transient = false;  // transient corpses won't respawn after consumption
     };
@@ -39,7 +40,7 @@ public:
 
     ResourceLayer(std::size_t resource_count,
                   float resource_amount,
-                  std::size_t respawn_ticks,
+                  SimTimeSeconds respawn_seconds,
                   std::uint32_t seed,
                   bool dynamic = false,
                   float regen_rate = 0.0f,
@@ -66,7 +67,7 @@ private:
 
     std::size_t resource_count_;
     float resource_amount_;
-    std::size_t respawn_ticks_;
+    SimTimeSeconds respawn_seconds_;
     bool dynamic_;
     float regen_rate_;
     bool terrain_adjustment_enabled_;

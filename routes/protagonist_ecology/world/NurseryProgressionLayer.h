@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/interfaces/IWorldLayer.h"
+#include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 
 #include <cstddef>
@@ -36,8 +37,8 @@ public:
                             std::size_t heavy_unlock_count,
                             float unlock_radius_min,
                             float unlock_radius_max,
-                            std::size_t event_min_interval_ticks,
-                            std::size_t event_max_interval_ticks,
+                            SimTimeSeconds event_min_interval_seconds,
+                            SimTimeSeconds event_max_interval_seconds,
                             std::uint32_t seed);
 
     const char* layerName() const override { return kName; }
@@ -58,7 +59,7 @@ private:
 
     bool hasPendingEvents() const;
     bool dispatchRandomPendingEvent();
-    std::uint64_t drawEventDelayTicks();
+    SimTimeSeconds drawEventDelaySeconds();
 
     BaseLayer* base_ = nullptr;
     ObjectLayer* objects_ = nullptr;
@@ -78,8 +79,8 @@ private:
     std::size_t heavy_unlock_count_;
     float unlock_radius_min_;
     float unlock_radius_max_;
-    std::size_t event_min_interval_ticks_;
-    std::size_t event_max_interval_ticks_;
+    SimTimeSeconds event_min_interval_seconds_;
+    SimTimeSeconds event_max_interval_seconds_;
     bool first_fire_ignited_ = false;
     bool worksite_unlocked_ = false;
     bool stone_unlocked_ = false;
@@ -87,7 +88,7 @@ private:
     bool second_fire_ignited_ = false;
     bool event_scheduled_ = false;
     Vec2 world_size_{};
-    std::uint64_t next_event_tick_ = 0;
+    SimTimeSeconds next_event_time_seconds_ = 0.0;
     std::mt19937 rng_;
 };
 

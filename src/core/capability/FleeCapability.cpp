@@ -84,13 +84,16 @@ void FleeCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     concrete->setEnergy(concrete->energy() - flee_cost_ * flee_intensity * dt);
     world.eventBus().publish(events::Event{events::EventType::AgentMoved,
                                            events::AgentMoved{agent.id(), previous_position, new_pos},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
     world.eventBus().publish(events::Event{events::EventType::AgentFled,
                                            events::AgentFled{agent.id(), previous_position, new_pos, flee_intensity},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
     world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
                                            events::AgentEnergyChanged{agent.id(), previous_energy, concrete->energy()},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 const char* FleeCapability::name() const {

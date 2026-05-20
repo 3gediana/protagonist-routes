@@ -12,7 +12,8 @@ struct EmitRecord {
     AgentId source;
     std::size_t channel;
     Vec2 pos;
-    std::size_t tick;
+    Tick step_index;
+    SimTimeSeconds time_seconds;
     float intensity;
 };
 
@@ -22,12 +23,12 @@ public:
 
     explicit SignalEmitHistory(std::size_t capacity = kDefaultCapacity);
 
-    void record(AgentId source, std::size_t channel, Vec2 pos, std::size_t tick, float intensity);
+    void record(AgentId source, std::size_t channel, Vec2 pos, Tick step_index, SimTimeSeconds time_seconds, float intensity);
 
     std::vector<EmitRecord> query(Vec2 receiver_pos,
                                    float radius,
-                                   std::size_t window_ticks,
-                                   std::size_t anchor_tick) const;
+                                   SimTimeSeconds window_seconds,
+                                   SimTimeSeconds anchor_time_seconds) const;
 
     void clear();
 

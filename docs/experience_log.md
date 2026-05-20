@@ -1,5 +1,103 @@
 # experience_log.md · 实验与调参记录
 
+## 2026-05-20 · protagonist continuous-time 主链迁移（CT-1 ~ CT-4 核心落地）
+
+### 本次目标
+
+把 protagonist 路线从“世界层虽然已有 `currentTimeSeconds()`，但 runtime / reward / route-local cooldown 仍主要按 tick 思考”的半连续状态，推进到**真正以 seconds 为主语义**的可运行状态。
+
+目标不是一次性做完所有长期收尾，而是先保证：
+
+- runtime 真正支持 `episode_duration_seconds + substep_dt`
+- world / route 里的关键 cooldown / event delay 统一到 seconds
+- protagonist memory / trace / social signal 时间窗不再强绑 tick
+- `ProtagonistBrain` 至少具备基本的 `dt` 积分动态，不再是每个子步纯覆盖输出
+- 整个系统仍然 **可编译、可跑 smoke、可过核心测试**
+
+### 这次真正改掉的主链
+
+1. **runtime 时间主语义切换**
+   - `routes/protagonist_ecology/runtime/ProtagonistEcologyConfig.*`
+   - `routes/protagonist_ecology/runtime/ProtagonistEcologyRuntime.cpp`
+   - 新增 / 接通：
+     - `simulation.time.preview_duration_seconds`
+     - `simulation.time.episode_duration_seconds`
+     - `simulation.time.substep_dt`
+     - `simulation.time.max_substeps_per_advance`
+   - 同时保留 legacy：
+     - `runtime.preview_ticks`
+     - `evolution.episode_ticks`
+     - 各类 `*_ticks`
+
+2. **route-local 时间层统一到 seconds**
+   - `NurserySupplyLayer`
+   - `NurseryProgressionLayer`
+   - `InterventionDirectorLayer`
+   - `TreeLayer`
+
+3. **核心世界时间层统一到 seconds**
+   - `ResourceLayer`
+   - `TimeOfDayLayer`
+   - `SeasonLayer`
+
+4. **memory / trace 双时间戳接通**
+   - `EpisodicMemoryBank`
+   - `SocialMemoryBank`
+   - `GoalMemory`
+   - `TraceRecorder`
+
+5. **brain 连续时间推进**
+   - `ProtagonistBrain::forward(inputs, dt)` 由“直接覆盖 hidden/output”改成“leaky integration”
+   - hidden / output 都按 `dt / tau` 的 alpha 做渐进积分
+
+### 迁移中最关键的经验
+
+1. **不能只改 runtime，不改 reward / cooldown / metrics**
+   - 如果 runtime 用 substep 了，但 reward 还是每子步固定加一次，奖励会被放大很多倍。
+   - 这次明确把 survival / social proximity / worksite proximity / background social shaping 等**持续型奖励**改成乘 `dt`。
+   - 而 kill / emit / signal co-attendance / completed worksite 这类**事件型奖励**则保留一次性加分。
+
+2. **MoveCapability 的能量成本必须乘 `dt`**
+   - 不然 substep 越小，单位真实时间内扣能越多。
+   - 这类 bug 非常隐蔽，因为系统仍然“能跑”，但生态会被连续时间改坏。
+
+3. **memory / trace 如果不一起改，会出现“runtime 连续、日志离散”的假连续时间**
+   - `TraceRecorder` 必须把 `time_seconds` 打进 event / agent 轨迹。
+   - `EpisodicMemory` / `SocialMemory` 至少要带 dual timestamp，否则后续做 causal replay / communication semantics 时会被 tick 粒度卡死。
+
+4. **配置兼容层值得保留**
+   - 现在旧配置仍可继续跑：seconds 键优先，缺失时回退到老 tick 键。
+   - 这样连续时间重构可以一边推进一边 smoke，而不用先一次性改完整个配置生态。
+
+### 验证结果
+
+1. **Release 重编通过**
+   - 同时重编：
+     - `neural-eco-protagonist`
+     - `neural-eco`
+     - `test_core`
+
+2. **核心测试通过**
+   - `build/bin/Release/test_core.exe`
+   - 结果：`70 / 70 passed`
+
+3. **protagonist route smoke 通过**
+   - 配置：`configs/protagonist_ecology_train_smoke.toml`
+   - 结果：训练 run 正常完成，输出目录正常生成
+
+### 当前仍未完全收尾的点
+
+- 还有一些 legacy tick 命名仍存在于配置键 / 日志字段 / 部分 headless 路径里
+- continuous-time 现在已经**接通主链**，但还没做专门的 protagonist seconds regression config
+- 还没把本次改动 commit/tag
+
+### 当前结论
+
+- **continuous-time 已不再只是底层接口准备，而是 protagonist runtime 真正跑在 seconds 语义上了**
+- **substep_dt 已经可以驱动 preview 和 training**
+- **核心测试与 protagonist smoke 都通过，说明这次迁移目前是稳定的**
+- 下一步应该从“继续大改”切到“收尾、固化、提交、补文档/经验”
+
 ## 2026-05-20 · protagonist runtime 接入真实训练闭环
 
 ### 背景

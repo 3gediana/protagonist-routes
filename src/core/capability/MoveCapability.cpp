@@ -104,7 +104,7 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     agent.setVelocity(velocity);
     agent.setPosition(next_position);
 
-    const float move_cost = (decision_cost_ + movement_cost_factor_ * velocity.length()) * terrain_cost_factor;
+    const float move_cost = (decision_cost_ + movement_cost_factor_ * velocity.length()) * terrain_cost_factor * dt;
 
     // Season affects metabolism: winter = 1.5x energy cost, summer = 0.9x
     const auto* season = world.getLayer<SeasonLayer>();
@@ -117,10 +117,12 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
 
     world.eventBus().publish(events::Event{events::EventType::AgentMoved,
                                            events::AgentMoved{agent.id(), previous_position, next_position},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
     world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
                                            events::AgentEnergyChanged{agent.id(), previous_energy, agent.energy()},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 
     if (auto* concrete = dynamic_cast<Agent*>(&agent)) {
         const float cell_width = world_size.x / static_cast<float>(exploration_grid_size_);

@@ -17,26 +17,26 @@ class SignalBackpropReward {
 public:
     SignalBackpropReward(SignalEmitHistory& history,
                          float backprop_factor,
-                         std::size_t backprop_window,
+                         SimTimeSeconds backprop_window_seconds,
                          float signal_perception_radius);
 
-    void recordReceiverReward(AgentId receiver, Vec2 receiver_position, double reward_delta, std::size_t tick);
+    void recordReceiverReward(AgentId receiver, Vec2 receiver_position, double reward_delta, SimTimeSeconds time_seconds);
 
-    void applyBackprop(IWorld& world, std::size_t current_tick);
+    void applyBackprop(IWorld& world, SimTimeSeconds current_time_seconds);
 
     void reset();
 
 private:
     SignalEmitHistory& history_;
     float backprop_factor_;
-    std::size_t backprop_window_;
+    SimTimeSeconds backprop_window_seconds_;
     float signal_perception_radius_;
 
     struct RewardRecord {
         AgentId receiver;
         Vec2 position;
         double reward_delta;
-        std::size_t tick;
+        SimTimeSeconds time_seconds;
     };
     std::vector<RewardRecord> reward_buffer_;
 };

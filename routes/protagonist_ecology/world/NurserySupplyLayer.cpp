@@ -44,13 +44,13 @@ NurserySupplyLayer::NurserySupplyLayer(std::size_t min_nearby_sticks,
                                        std::size_t replenish_batch,
                                        float near_radius,
                                        float spawn_radius,
-                                       std::size_t cooldown_ticks,
+                                       SimTimeSeconds cooldown_seconds,
                                        std::uint32_t seed)
     : min_nearby_sticks_(min_nearby_sticks),
       replenish_batch_(replenish_batch),
       near_radius_(near_radius),
       spawn_radius_(spawn_radius),
-      cooldown_ticks_(cooldown_ticks),
+      cooldown_seconds_(std::max<SimTimeSeconds>(0.0, cooldown_seconds)),
       rng_(seed == 0 ? std::random_device{}() : seed) {}
 
 void NurserySupplyLayer::onAttach(IWorld& world) {
@@ -66,14 +66,15 @@ void NurserySupplyLayer::tick(IWorld& world, float dt) {
     if (hasLooseStone()) {
         return;
     }
-    if (world.currentTick() < last_replenish_tick_ + cooldown_ticks_) {
+    if (last_replenish_time_seconds_ >= 0.0
+        && world.currentTimeSeconds() < last_replenish_time_seconds_ + cooldown_seconds_) {
         return;
     }
     if (nearbyLooseMaterials() >= min_nearby_sticks_) {
         return;
     }
     replenish(world);
-    last_replenish_tick_ = world.currentTick();
+    last_replenish_time_seconds_ = world.currentTimeSeconds();
 }
 
 bool NurserySupplyLayer::hasLooseStone() const {

@@ -20,11 +20,16 @@ void SocialMemoryBank::tick(float dt) {
     }
 }
 
-void SocialMemoryBank::recordSighting(AgentId peer_id, Vec2 pos, Tick tick, bool is_predator) {
+void SocialMemoryBank::recordSighting(AgentId peer_id,
+                                      Vec2 pos,
+                                      Tick tick,
+                                      SimTimeSeconds time_seconds,
+                                      bool is_predator) {
     auto it = relations_.find(peer_id);
     if (it != relations_.end()) {
         it->second.last_seen_pos = pos;
         it->second.last_seen_tick = tick;
+        it->second.last_seen_time_seconds = time_seconds;
         it->second.is_predator = is_predator;
     } else {
         // Eviction logic if we exceed capacity
@@ -32,13 +37,13 @@ void SocialMemoryBank::recordSighting(AgentId peer_id, Vec2 pos, Tick tick, bool
             // Find oldest seen peer and evict
             auto oldest_it = relations_.begin();
             for (auto map_it = relations_.begin(); map_it != relations_.end(); ++map_it) {
-                if (map_it->second.last_seen_tick < oldest_it->second.last_seen_tick) {
+                if (map_it->second.last_seen_time_seconds < oldest_it->second.last_seen_time_seconds) {
                     oldest_it = map_it;
                 }
             }
             relations_.erase(oldest_it);
         }
-        relations_.emplace(peer_id, SocialRelationship{peer_id, pos, tick, is_predator, 0.0f, 0.0f, 0.0f});
+        relations_.emplace(peer_id, SocialRelationship{peer_id, pos, tick, time_seconds, is_predator, 0.0f, 0.0f, 0.0f});
     }
 }
 

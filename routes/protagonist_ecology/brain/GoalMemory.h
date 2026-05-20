@@ -26,7 +26,7 @@ enum class GoalType : int {
 struct GoalMemoryState {
     GoalType current_goal{GoalType::Explore};
     float commitment{1.0f};             // 1.0 = fully committed, decays over time unless reinforced
-    float elapsed_ticks{0.0f};          // How long we spent on this goal
+    float elapsed_seconds{0.0f};        // How long we spent on this goal
     float completion_progress{0.0f};    // Evaluated progress
 };
 
@@ -43,7 +43,8 @@ public:
 
     GoalType currentGoal() const { return state_.current_goal; }
     float commitment() const { return state_.commitment; }
-    float elapsedTicks() const { return state_.elapsed_ticks; }
+    float elapsedSeconds() const { return state_.elapsed_seconds; }
+    float elapsedTicks() const { return state_.elapsed_seconds; }
     float completionProgress() const { return state_.completion_progress; }
 
     const GoalMemoryState& state() const { return state_; }

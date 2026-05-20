@@ -6,6 +6,7 @@
 #include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/world/layers/SeasonLayer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -13,14 +14,14 @@ namespace neuro {
 
 ResourceLayer::ResourceLayer(std::size_t resource_count,
                              float resource_amount,
-                             std::size_t respawn_ticks,
+                             SimTimeSeconds respawn_seconds,
                              std::uint32_t seed,
                              bool dynamic,
                              float regen_rate,
                              bool terrain_adjustment_enabled)
     : resource_count_(resource_count),
       resource_amount_(resource_amount),
-      respawn_ticks_(respawn_ticks),
+      respawn_seconds_(std::max<SimTimeSeconds>(0.0, respawn_seconds)),
       dynamic_(dynamic),
       regen_rate_(regen_rate),
       terrain_adjustment_enabled_(terrain_adjustment_enabled),
@@ -41,7 +42,8 @@ void ResourceLayer::onAttach(IWorld& world) {
         resources_.push_back(resource);
         world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                                events::ResourceSpawned{resource.position, resource.amount},
-                                               world.currentTick()});
+                                               world.currentTick(),
+                                               world.currentTimeSeconds()});
     }
 }
 
@@ -57,11 +59,11 @@ void ResourceLayer::tick(IWorld& world, float dt) {
         if (dynamic_ && resource.available && resource.amount < resource.max_amount) {
             resource.amount = std::min(resource.amount + resource.regen_rate * season_regen * dt, resource.max_amount);
         }
-        if (resource.available || resource.respawn_ticks_remaining == 0) {
+        if (resource.available || resource.respawn_seconds_remaining <= 0.0) {
             continue;
         }
-        --resource.respawn_ticks_remaining;
-        if (resource.respawn_ticks_remaining == 0) {
+        resource.respawn_seconds_remaining = std::max<SimTimeSeconds>(0.0, resource.respawn_seconds_remaining - static_cast<SimTimeSeconds>(dt));
+        if (resource.respawn_seconds_remaining <= 0.0) {
             respawnResource(resource, world);
         }
     }
@@ -117,24 +119,26 @@ ResourceLayer::ConsumeResult ResourceLayer::tryConsumeTyped(Vec2 position, float
     const bool was_meat = resource.is_meat;
 
     // Transient corpses are not regenerated after consumption.
-    const std::size_t respawn_after = resource.is_transient ? 0 : respawn_ticks_;
+    const SimTimeSeconds respawn_after = resource.is_transient ? 0.0 : respawn_seconds_;
 
     if (dynamic_) {
         const float consumed = resource.amount;
         resource.amount = 0.0f;
         resource.available = false;
-        resource.respawn_ticks_remaining = respawn_after;
+        resource.respawn_seconds_remaining = respawn_after;
         world.eventBus().publish(events::Event{events::EventType::ResourceConsumed,
                                                events::ResourceConsumed{resource.position},
-                                               world.currentTick()});
+                                               world.currentTick(),
+                                               world.currentTimeSeconds()});
         return ConsumeResult{consumed, was_meat};
     }
     const float consumed = resource.amount;
     resource.available = false;
-    resource.respawn_ticks_remaining = respawn_after;
+    resource.respawn_seconds_remaining = respawn_after;
     world.eventBus().publish(events::Event{events::EventType::ResourceConsumed,
                                            events::ResourceConsumed{resource.position},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
     return ConsumeResult{consumed, was_meat};
 }
 
@@ -146,13 +150,14 @@ void ResourceLayer::addCorpse(Vec2 position, float amount, IWorld& world) {
     corpse.max_amount = amount;
     corpse.regen_rate = 0.0f;
     corpse.available = true;
-    corpse.respawn_ticks_remaining = 0;
+    corpse.respawn_seconds_remaining = 0.0;
     corpse.is_meat = true;
     corpse.is_transient = true;
     resources_.push_back(corpse);
     world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                            events::ResourceSpawned{position, amount},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 const std::vector<ResourceLayer::Resource>& ResourceLayer::resources() const {
@@ -174,7 +179,8 @@ void ResourceLayer::respawnResource(Resource& resource, IWorld& world) {
     resource.available = true;
     world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                            events::ResourceSpawned{resource.position, resource.amount},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 float ResourceLayer::terrainAdjustedAmount(Vec2 position, IWorld& world) const {

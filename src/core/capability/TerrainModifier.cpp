@@ -80,7 +80,8 @@ void TerrainModifier::apply(IAgent& agent, IWorld& world, std::span<const float>
     agent.setEnergy(agent.energy() - cost);
     world.eventBus().publish(events::Event{events::EventType::TerrainModified,
                                            events::TerrainModified{agent.id(), pos, dig, build},
-                                           world.currentTick()});
+                                           world.currentTick(),
+                                           world.currentTimeSeconds()});
 }
 
 }  // namespace neuro

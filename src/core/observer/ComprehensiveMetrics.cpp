@@ -271,7 +271,7 @@ void ComprehensiveMetrics::onGenerationEnded(Generation generation) {
         double se=0,sa=0; std::size_t pred=0,inf=0,imm=0,car=0;
         std::vector<double> ens, fits;
         for (const Agent* a : sampled_agents) {
-            sp_cnt[a->speciesId()]++; se+=a->energy(); sa+=a->age();
+            sp_cnt[a->speciesId()]++; se+=a->energy(); sa+=a->ageSeconds();
             ens.push_back(a->energy()); fits.push_back(a->fitness());
             if(a->isPredator())++pred; if(a->infected())++inf; if(a->immune())++imm; if(a->isCarrying())++car;
         }

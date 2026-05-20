@@ -2,11 +2,14 @@
 
 #include "core/interfaces/IWorld.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace neuro {
 
-SeasonLayer::SeasonLayer(std::size_t ticks_per_season, std::size_t start_tick)
-    : ticks_per_season_(ticks_per_season > 0 ? ticks_per_season : 150),
-      tick_count_(start_tick) {}
+SeasonLayer::SeasonLayer(SimTimeSeconds season_length_seconds, SimTimeSeconds start_time_seconds)
+    : season_length_seconds_(season_length_seconds > 0.0 ? season_length_seconds : 150.0),
+      elapsed_seconds_(std::max<SimTimeSeconds>(0.0, start_time_seconds)) {}
 
 void SeasonLayer::onAttach(IWorld& world) {
     (void)world;
@@ -14,11 +17,11 @@ void SeasonLayer::onAttach(IWorld& world) {
 
 void SeasonLayer::tick(IWorld& world, float dt) {
     (void)world;
-    tick_count_ += static_cast<std::size_t>(dt);
+    elapsed_seconds_ += static_cast<SimTimeSeconds>(std::max(0.0f, dt));
 }
 
 SeasonType SeasonLayer::currentSeason() const {
-    const std::size_t season_index = (tick_count_ / ticks_per_season_) % 4;
+    const std::size_t season_index = seasonIndex();
     return static_cast<SeasonType>(season_index);
 }
 
@@ -43,11 +46,12 @@ float SeasonLayer::metabolismFactor() const {
 }
 
 float SeasonLayer::seasonProgress() const {
-    return static_cast<float>(tick_count_ % ticks_per_season_) / static_cast<float>(ticks_per_season_);
+    const auto phase = std::fmod(elapsed_seconds_, season_length_seconds_);
+    return static_cast<float>(phase / season_length_seconds_);
 }
 
 std::size_t SeasonLayer::seasonIndex() const {
-    return (tick_count_ / ticks_per_season_) % 4;
+    return static_cast<std::size_t>(elapsed_seconds_ / season_length_seconds_) % 4;
 }
 
 }  // namespace neuro

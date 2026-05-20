@@ -13,7 +13,11 @@ void EpisodicMemoryBank::reset() {
     events_.clear();
 }
 
-void EpisodicMemoryBank::recordEvent(Tick tick, Vec2 pos, const std::string& type, float salience) {
+void EpisodicMemoryBank::recordEvent(Tick tick,
+                                     SimTimeSeconds time_seconds,
+                                     Vec2 pos,
+                                     const std::string& type,
+                                     float salience) {
     // If memory is full, we evict the least salient event, unless the new event is even less salient.
     if (events_.size() >= max_events_) {
         auto least_salient_it = std::min_element(events_.begin(), events_.end(),
@@ -21,10 +25,10 @@ void EpisodicMemoryBank::recordEvent(Tick tick, Vec2 pos, const std::string& typ
                 return a.salience < b.salience;
             });
         if (least_salient_it != events_.end() && salience > least_salient_it->salience) {
-            *least_salient_it = EpisodicEvent{tick, pos, type, salience};
+            *least_salient_it = EpisodicEvent{tick, time_seconds, pos, type, salience};
         }
     } else {
-        events_.push_back(EpisodicEvent{tick, pos, type, salience});
+        events_.push_back(EpisodicEvent{tick, time_seconds, pos, type, salience});
     }
 }
 
@@ -49,7 +53,7 @@ std::vector<EpisodicEvent> EpisodicMemoryBank::recentOfType(const std::string& t
     }
     // Sort chronological descending (newest first)
     std::sort(matches.begin(), matches.end(), [](const EpisodicEvent& a, const EpisodicEvent& b) {
-        return a.tick > b.tick;
+        return a.time_seconds > b.time_seconds;
     });
     if (matches.size() > count) {
         matches.resize(count);

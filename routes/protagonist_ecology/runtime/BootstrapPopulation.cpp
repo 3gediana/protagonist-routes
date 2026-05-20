@@ -154,13 +154,13 @@ std::unique_ptr<IBrain> makeProtagonistBrain(const IGenome& genome,
         config.random_seed + static_cast<std::uint32_t>(id.value * 31));
 }
 
-std::unique_ptr<Agent> makeProtagonist(AgentId id,
+std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
                                        GenomeId genome_id,
-                                       const IGenome* genome,
+                                       const ProtagonistGenome* genome,
                                        const ProtagonistEcologyConfig& config,
                                        const BaseLayer* base_layer,
                                        std::mt19937& rng) {
-    constexpr Tick kMaxAge = 4000;
+    constexpr SimTimeSeconds kMaxAge = 4000.0;
     constexpr float kInitialEnergy = 120.0f;
     constexpr float kMoveCost = 0.01f;
     constexpr float kMovementFactor = 0.002f;
@@ -276,7 +276,7 @@ std::unique_ptr<Agent> makeProtagonist(AgentId id,
 
 std::size_t computeBackgroundSensoryDim(const ProtagonistEcologyConfig& config) {
     std::size_t dim = 0;
-    dim += SelfPerception(100.0f, 3000).dim();
+    dim += SelfPerception(100.0f, 3000.0).dim();
     dim += NearestFoodPerception().dim();
     dim += AgentSocialPerception::kDim;
     if (config.day_night.enabled) {
@@ -294,7 +294,7 @@ std::size_t computeBackgroundSensoryDim(const ProtagonistEcologyConfig& config) 
 void attachBackgroundCommonSensors(Agent& agent,
                                    const ProtagonistEcologyConfig& config,
                                    float initial_energy) {
-    agent.addPerception(std::make_unique<SelfPerception>(initial_energy, 3000));
+    agent.addPerception(std::make_unique<SelfPerception>(initial_energy, 3000.0));
     agent.addPerception(std::make_unique<NearestFoodPerception>());
     agent.addPerception(std::make_unique<AgentSocialPerception>(18.0f));
     if (config.day_night.enabled) {
@@ -447,7 +447,7 @@ std::unique_ptr<Agent> makeBackgroundForager(AgentId id,
         20,
         1.0f);
 
-    agent->addPerception(std::make_unique<SelfPerception>(kInitialEnergy, 3000));
+    agent->addPerception(std::make_unique<SelfPerception>(kInitialEnergy, 3000.0));
     agent->addPerception(std::make_unique<NearestFoodPerception>());
     agent->addCapability(std::make_unique<MoveCapability>(1.7f, 0.004f, 0.001f, 20));
     agent->addCapability(std::make_unique<EatCapability>(4.0f));
@@ -478,7 +478,7 @@ std::unique_ptr<Agent> makeBackgroundPredator(AgentId id,
         1.0f);
 
     agent->setPredator(true);
-    agent->addPerception(std::make_unique<SelfPerception>(kInitialEnergy, 3000));
+    agent->addPerception(std::make_unique<SelfPerception>(kInitialEnergy, 3000.0));
     agent->addPerception(std::make_unique<NearestFoodPerception>());
     agent->addCapability(std::make_unique<MoveCapability>(2.0f, 0.006f, 0.0012f, 20));
     agent->addCapability(std::make_unique<PredatorHuntCapability>(5.0f, 12.0f, 8.0f, 0.02f));
@@ -492,7 +492,12 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
                                             const ProtagonistEcologyConfig& config,
                                             std::mt19937& rng,
                                             const BaseLayer* base_layer) {
-    return makeProtagonist(id, genome.id(), &genome, config, base_layer, rng);
+    return makeProtagonistAgent(id,
+                                genome.id(),
+                                dynamic_cast<const ProtagonistGenome*>(&genome),
+                                config,
+                                base_layer,
+                                rng);
 }
 
 std::size_t backgroundSensoryDim(const ProtagonistEcologyConfig& config) {
@@ -583,7 +588,7 @@ void seedBootstrapPopulation(World2D& world,
         }
     } else {
         for (std::size_t i = 0; i < config.protagonist.count; ++i) {
-            auto agent = makeProtagonist(AgentId{next_agent_id++}, GenomeId{next_genome_id++}, nullptr, config, base_layer, rng);
+            auto agent = makeProtagonistAgent(AgentId{next_agent_id++}, GenomeId{next_genome_id++}, nullptr, config, base_layer, rng);
             agent_layer->addAgent(std::move(agent), world);
         }
     }

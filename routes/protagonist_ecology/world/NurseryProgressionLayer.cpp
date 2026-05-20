@@ -36,8 +36,8 @@ NurseryProgressionLayer::NurseryProgressionLayer(std::size_t first_fire_stick_th
                                                  std::size_t heavy_unlock_count,
                                                  float unlock_radius_min,
                                                  float unlock_radius_max,
-                                                 std::size_t event_min_interval_ticks,
-                                                 std::size_t event_max_interval_ticks,
+                                                 SimTimeSeconds event_min_interval_seconds,
+                                                 SimTimeSeconds event_max_interval_seconds,
                                                  std::uint32_t seed)
     : first_fire_stick_threshold_(first_fire_stick_threshold),
       worksite_unlock_deposit_threshold_(worksite_unlock_deposit_threshold),
@@ -51,11 +51,11 @@ NurseryProgressionLayer::NurseryProgressionLayer(std::size_t first_fire_stick_th
       heavy_unlock_count_(heavy_unlock_count),
       unlock_radius_min_(unlock_radius_min),
       unlock_radius_max_(std::max(unlock_radius_min, unlock_radius_max)),
-      event_min_interval_ticks_(event_min_interval_ticks),
-      event_max_interval_ticks_(std::max(event_min_interval_ticks, event_max_interval_ticks)),
+      event_min_interval_seconds_(std::max<SimTimeSeconds>(0.0, event_min_interval_seconds)),
+      event_max_interval_seconds_(std::max(event_min_interval_seconds_, event_max_interval_seconds)),
       rng_(seed == 0 ? std::random_device{}() : seed),
       event_scheduled_(false),
-      next_event_tick_(0) {}
+      next_event_time_seconds_(0.0) {}
 
 void NurseryProgressionLayer::onAttach(IWorld& world) {
     base_ = world.getLayer<BaseLayer>();
@@ -75,15 +75,15 @@ void NurseryProgressionLayer::tick(IWorld& world, float dt) {
     }
 
     if (!event_scheduled_ && hasPendingEvents()) {
-        next_event_tick_ = world.currentTick() + drawEventDelayTicks();
+        next_event_time_seconds_ = world.currentTimeSeconds() + drawEventDelaySeconds();
         event_scheduled_ = true;
     }
 
-    if (event_scheduled_ && world.currentTick() >= next_event_tick_) {
+    if (event_scheduled_ && world.currentTimeSeconds() >= next_event_time_seconds_) {
         event_scheduled_ = false;
         dispatchRandomPendingEvent();
         if (hasPendingEvents()) {
-            next_event_tick_ = world.currentTick() + drawEventDelayTicks();
+            next_event_time_seconds_ = world.currentTimeSeconds() + drawEventDelaySeconds();
             event_scheduled_ = true;
         }
     }
@@ -151,8 +151,8 @@ bool NurseryProgressionLayer::dispatchRandomPendingEvent() {
     return false;
 }
 
-std::uint64_t NurseryProgressionLayer::drawEventDelayTicks() {
-    std::uniform_int_distribution<std::uint64_t> delay_dist(event_min_interval_ticks_, event_max_interval_ticks_);
+SimTimeSeconds NurseryProgressionLayer::drawEventDelaySeconds() {
+    std::uniform_real_distribution<SimTimeSeconds> delay_dist(event_min_interval_seconds_, event_max_interval_seconds_);
     return delay_dist(rng_);
 }
 
