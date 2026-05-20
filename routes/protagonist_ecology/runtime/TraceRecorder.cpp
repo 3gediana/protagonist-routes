@@ -427,6 +427,15 @@ void TraceRecorder::writeEvent(const events::Event& event) {
                          << ",\"material_type\":" << static_cast<int>(payload.material_type);
             break;
         }
+        case events::EventType::CreditAssigned: {
+            const auto& payload = event.payloadAs<events::CreditAssigned>();
+            event_trace_ << ",\"recipient\":" << payload.recipient.value
+                         << ",\"source_kind\":" << static_cast<int>(payload.source_kind)
+                         << ",\"source_id\":" << payload.source_id
+                         << ",\"share\":" << payload.share
+                         << ",\"reward\":" << payload.reward;
+            break;
+        }
         default:
             break;
     }

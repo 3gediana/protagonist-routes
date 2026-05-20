@@ -83,6 +83,7 @@ enum class EventType : std::uint16_t {
     BuildStarted,               // agent began contributing build progress to a worksite
     BuildCompleted,             // worksite finished (with contributor list + duration)
     WorksiteMaterialDeposited,  // agent deposited a stick/stone at a worksite
+    CreditAssigned,             // ContributionLedger paid out reward to an agent (post-Stage 2)
 
     // ====================== sentinel ======================================
     Count,                      // keep last

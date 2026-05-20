@@ -1042,9 +1042,20 @@ void evaluatePopulation(World2D& world,
                     }
                     if (total_secs <= 0.0f) continue;
                     const float my_share = my_secs / total_secs;
-                    reward += params.cooperation_weight
-                              * static_cast<double>(params.worksite_completion_reward)
-                              * static_cast<double>(my_share);
+                    const double credit_reward = params.cooperation_weight
+                                                 * static_cast<double>(params.worksite_completion_reward)
+                                                 * static_cast<double>(my_share);
+                    reward += credit_reward;
+                    world.eventBus().publish(events::Event{
+                        events::EventType::CreditAssigned,
+                        events::CreditAssigned{
+                            agent->id(),
+                            /*source_kind=*/0u,    // 0 = worksite build
+                            static_cast<std::uint64_t>(build.worksite_id),
+                            my_share,
+                            static_cast<float>(credit_reward)},
+                        world.currentTick(),
+                        world.currentTimeSeconds()});
 
                     if (params.social_memory_writes_enabled) {
                         if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
@@ -1150,9 +1161,20 @@ void evaluatePopulation(World2D& world,
                     if (total_damage <= 0.0f) continue;
                     const float my_share = my_it->second / total_damage;
                     if (my_share < kHuntCreditMinShare) continue;
-                    reward += params.cooperation_weight
-                              * static_cast<double>(params.joint_hunt_reward)
-                              * static_cast<double>(my_share);
+                    const double hunt_credit_reward = params.cooperation_weight
+                                                      * static_cast<double>(params.joint_hunt_reward)
+                                                      * static_cast<double>(my_share);
+                    reward += hunt_credit_reward;
+                    world.eventBus().publish(events::Event{
+                        events::EventType::CreditAssigned,
+                        events::CreditAssigned{
+                            agent->id(),
+                            /*source_kind=*/1u,    // 1 = hunt kill
+                            static_cast<std::uint64_t>(victim_id.value),
+                            my_share,
+                            static_cast<float>(hunt_credit_reward)},
+                        world.currentTick(),
+                        world.currentTimeSeconds()});
 
                     if (params.social_memory_writes_enabled) {
                         if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {

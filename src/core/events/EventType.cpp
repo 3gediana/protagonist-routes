@@ -54,6 +54,7 @@ const char* toString(EventType type) {
         case EventType::BuildStarted:              return "BuildStarted";
         case EventType::BuildCompleted:            return "BuildCompleted";
         case EventType::WorksiteMaterialDeposited: return "WorksiteMaterialDeposited";
+        case EventType::CreditAssigned:            return "CreditAssigned";
 
         case EventType::Count:                  return "Count";
     }
