@@ -815,28 +815,68 @@ void evaluatePopulation(World2D& world,
                     }
 
                     if (params.goal_manager_enabled) {
+                        // Stage 3 / P7: hierarchical-ish goal manager. We
+                        // still keep the rule-based switching (true
+                        // Manager/Worker brain heads are Phase B), but the
+                        // rule set now covers a richer chain so the brain
+                        // sees a goal_index distribution closer to the full
+                        // 13-class GoalType set. Higher-priority rules
+                        // short-circuit lower ones.
                         constexpr SimTimeSeconds kGoalRefreshSeconds = 6.0;
                         const bool should_refresh_goal = brain->goalMemory().elapsedSeconds() >= kGoalRefreshSeconds
                             || brain->goalMemory().commitment() <= 0.20f;
 
+                        // Inspect nearest active worksite material needs so the
+                        // manager can pick GatherStick / GatherStone / ChopTree
+                        // when supplies are short instead of always BuildWorksite.
+                        bool site_needs_sticks = false;
+                        bool site_needs_stones = false;
+                        if (worksite_layer != nullptr) {
+                            for (const auto& site : worksite_layer->sites()) {
+                                if (!site.active || site.completed) continue;
+                                if (Vec2::distanceSquared(agent_pos, site.position) > 32.0f * 32.0f) continue;
+                                if (site.stored_sticks < site.required_sticks) site_needs_sticks = true;
+                                if (site.stored_stones < site.required_stones) site_needs_stones = true;
+                            }
+                        }
+                        // Recent peer signal nearby -> chance to switch into
+                        // RespondSignal so listeners actually act on heard
+                        // signals.
+                        bool peer_signal_nearby = false;
+                        for (const auto& emit : tick_emits) {
+                            if (emit.id == agent->id()) continue;
+                            if (Vec2::distanceSquared(agent_pos, emit.pos) <= params.signal_emit_companion_radius * params.signal_emit_companion_radius) {
+                                peer_signal_nearby = true;
+                                break;
+                            }
+                        }
+
+                        const auto set_if_new = [&](GoalType g, float commitment) {
+                            if (should_refresh_goal || brain->goalMemory().currentGoal() != g) {
+                                brain->goalMemory().setGoal(g, commitment);
+                            }
+                        };
+
                         if (predator_nearby || health_ratio <= 0.30f) {
+                            // Flee is highest-priority and overrides commitment.
                             brain->goalMemory().setGoal(GoalType::Flee, 1.0f);
+                        } else if (predator_nearby && alive_protagonists.size() >= 2) {
+                            // Predator seen but health OK -> warn the group.
+                            set_if_new(GoalType::EmitSignal, 0.80f);
                         } else if (hydration_ratio <= 0.40f) {
-                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::FindWater) {
-                                brain->goalMemory().setGoal(GoalType::FindWater, 0.95f);
-                            }
+                            set_if_new(GoalType::FindWater, 0.95f);
                         } else if (worksite_nearby && concrete->isCarrying()) {
-                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::BuildWorksite) {
-                                brain->goalMemory().setGoal(GoalType::BuildWorksite, 0.85f);
-                            }
+                            set_if_new(GoalType::BuildWorksite, 0.85f);
+                        } else if (site_needs_sticks && !concrete->isCarrying()) {
+                            set_if_new(GoalType::GatherStick, 0.70f);
+                        } else if (site_needs_stones && !concrete->isCarrying()) {
+                            set_if_new(GoalType::GatherStone, 0.70f);
+                        } else if (peer_signal_nearby && should_refresh_goal) {
+                            set_if_new(GoalType::RespondSignal, 0.60f);
                         } else if (fire_nearby && health_ratio <= 0.70f) {
-                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::RestNearFire) {
-                                brain->goalMemory().setGoal(GoalType::RestNearFire, 0.70f);
-                            }
+                            set_if_new(GoalType::RestNearFire, 0.70f);
                         } else if (concrete->energy() <= 70.0f) {
-                            if (should_refresh_goal || brain->goalMemory().currentGoal() != GoalType::FindFood) {
-                                brain->goalMemory().setGoal(GoalType::FindFood, 0.75f);
-                            }
+                            set_if_new(GoalType::FindFood, 0.75f);
                         } else if (should_refresh_goal) {
                             brain->goalMemory().setGoal(GoalType::Explore, 0.55f);
                         }
