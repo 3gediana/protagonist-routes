@@ -18,13 +18,15 @@ public:
     Event() = default;
 
     template <typename Payload>
-    Event(EventType type, Payload payload, Tick tick = 0)
-        : type_(type), payload_(std::move(payload)), tick_(tick) {}
+    Event(EventType type, Payload payload, Tick tick = 0, SimTimeSeconds time_seconds = 0.0)
+        : type_(type), payload_(std::move(payload)), tick_(tick), time_seconds_(time_seconds) {}
 
-    Event(EventType type, Tick tick = 0) : type_(type), tick_(tick) {}
+    Event(EventType type, Tick tick = 0, SimTimeSeconds time_seconds = 0.0)
+        : type_(type), tick_(tick), time_seconds_(time_seconds) {}
 
     EventType   type()    const noexcept { return type_; }
     Tick        tick()    const noexcept { return tick_; }
+    SimTimeSeconds timeSeconds() const noexcept { return time_seconds_; }
     const std::any& payload() const noexcept { return payload_; }
 
     // Type-safe payload access. Returns nullptr if cast fails.
@@ -43,6 +45,7 @@ private:
     EventType type_{EventType::None};
     std::any  payload_{};
     Tick      tick_{0};
+    SimTimeSeconds time_seconds_{0.0};
 };
 
 }  // namespace neuro::events

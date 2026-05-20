@@ -12,6 +12,7 @@ namespace neuro {
 World2D::World2D(WorldId id, Vec2 size)
     : id_(id),
       tick_(0),
+      time_seconds_(0.0),
       size_(size),
       bus_(std::make_unique<events::EventBus>()) {}
 
@@ -23,6 +24,10 @@ WorldId World2D::id() const {
 
 Tick World2D::currentTick() const {
     return tick_;
+}
+
+SimTimeSeconds World2D::currentTimeSeconds() const {
+    return time_seconds_;
 }
 
 Vec2 World2D::size() const {
@@ -62,7 +67,8 @@ const IWorldLayer* World2D::findLayer(const std::string& name) const {
 void World2D::tick(float dt) {
     bus_->publish(events::Event{events::EventType::TickStarted,
                                 events::TickStarted{tick_},
-                                tick_});
+                                tick_,
+                                time_seconds_});
     bus_->flush();
 
     for (auto& layer : layers_) {
@@ -71,8 +77,10 @@ void World2D::tick(float dt) {
 
     bus_->publish(events::Event{events::EventType::TickEnded,
                                 events::TickEnded{tick_},
-                                tick_});
+                                tick_,
+                                time_seconds_ + static_cast<SimTimeSeconds>(dt)});
     bus_->flush();
+    time_seconds_ += static_cast<SimTimeSeconds>(dt);
     ++tick_;
 }
 

@@ -11,9 +11,9 @@
 | 项 | 值 |
 |---|---|
 | 最后更新 | 2026-05-20 |
-| 当前阶段 | Phase 1 Trace/Resume 完成 + 连续时间世界框架前置规划 |
-| 当前主线 | 先落连续时间 CT-0 / CT-1 底座，再回头深化 Memory V2 / credit / CTRNN |
-| 最新用户新增问题 | 当前 tick 调度式世界不够像连续时间；已完成 `CONTINUOUS_TIME_WORLD_DESIGN.md` 规划，下一步开始接口落地 |
+| 当前阶段 | Phase 1 Trace/Resume 完成 + 连续时间世界 CT-0 完成 |
+| 当前主线 | 继续实现 CT-1：runtime 从 `episode_ticks` 迁到 `episode_duration_seconds` |
+| 最新用户新增问题 | 当前 tick 调度式世界不够像连续时间；已完成 CT-0 接口兼容层与 trace 双时间戳，下一步进入 runtime seconds 化 |
 
 ---
 
@@ -85,6 +85,19 @@
   - 事件同时记录 `time_seconds` + `step_index`
   - 动作、reward、trace 改按持续时间表达
 
+### 6. CT-0 · 时间接口兼容层
+
+- 已新增 `SimTimeSeconds`
+- 已为 `Event` 增加 `timeSeconds()`
+- 已为 `IWorld` / `World2D` 增加 `currentTimeSeconds()`
+- `World2D` 已维护 `time_seconds_`，并在 `tick(dt)` 中持续推进
+- `TickStarted` / `TickEnded` 事件已同时带 tick 与秒级时间
+- `TraceRecorder` 已输出双时间戳：
+  - `event_trace.jsonl` 增加 `time_seconds`
+  - `agent_trace.csv` 增加 `time_seconds`
+  - `world_trace.csv` 增加 `time_seconds`
+- 已完成重新构建与 protagonist smoke 验证
+
 ---
 
 ## 进行中
@@ -101,8 +114,8 @@
 
 当前准备按 `CONTINUOUS_TIME_WORLD_DESIGN.md` 推进：
 
-- CT-0：时间类型与兼容层
-- CT-1：runtime 从 `episode_ticks` 迁到 `episode_duration_seconds`
+- CT-0：时间类型与兼容层（已完成）
+- CT-1：runtime 从 `episode_ticks` 迁到 `episode_duration_seconds`（当前）
 - CT-2：首批 capability 连续持续时间化（move / drink / eat / signal）
 
 ---
@@ -179,7 +192,7 @@
 - [x] 连续时间世界设计文档：`CONTINUOUS_TIME_WORLD_DESIGN.md`
 - [ ] `Tick currentTick()` 与 `double currentTimeSeconds()` 的关系
 - [ ] `world.tick(dt)` 到 `world.advance(dt_seconds)` 的迁移策略
-- [ ] CT-0 时间类型与兼容层
+- [x] CT-0 时间类型与兼容层
 - [ ] CT-1 runtime seconds 化
 - [ ] CTRNN protagonist brain：连续神经状态 `dx/dt`
 - [ ] 连续动作强度：move/drink/eat/chop/build/signal 不再只是离散按钮
@@ -193,9 +206,9 @@
 
 ## 下一步
 
-1. 实现 CT-0：把 `time_seconds` 接进 `core/event/world` 接口并保留兼容层。
-2. 实现 CT-1：让 protagonist runtime 支持 `episode_duration_seconds` + `substep_dt`。
+1. 实现 CT-1：让 protagonist runtime 支持 `episode_duration_seconds` + `substep_dt`。
+2. 为 headless / protagonist runtime 增加 legacy tick 与 continuous mode 兼容读取。
 3. 迁移首批连续动作：move / drink / eat / signal。
-4. 更新 trace / replay 字段，确保连续时间信息不丢。
+4. 继续扩 trace / replay 字段，记录持续时间和决策时间。
 5. 在连续时间底座稳定后继续深化 Memory V2 与 credit / CTRNN。
 

@@ -11,8 +11,8 @@
 | **最后更新** | 2026-05-20 |
 | **当前阶段** | 🟩 Baseline M0-M5 完成 + 12 Modules MVP + protagonist 8-物种全生态联合演化训练流水线就绪 |
 | **整体进度** | ▰▰▰▰▰▰▰▰▰▰ 100% (Baseline + MVP + Protagonist Research & Trace基座完成) |
-| **最近会话摘要** | protagonist 路线的 Trace/Resume 基座已保持完成态；本轮继续把 Memory V2 半成品修回可编译、可运行状态：修复 `SpatialMemoryBank.cpp` 与 `MemoryCognitionPerception` 的接口错误，`neural-eco-protagonist` 重新构建成功，并再次用 `configs/protagonist_ecology_train_smoke.toml` 跑通 smoke。随后按用户新优先级完成连续时间方向的外部调研，并新建 `routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md`，明确后续采用 hybrid continuous-time 路线：真实时间 `seconds` + 子步积分 + 事件双时间戳（`time_seconds` / `step_index`）+ 连续动作持续时间模型。相关状态已同步更新到 protagonist route 专属 `PROGRESS.md`。 |
-| **下一步建议** | 既然用户已将连续时间框架前置，下一步建议先落 `CONTINUOUS_TIME_WORLD_DESIGN.md` 里的 CT-0 / CT-1：把 `time_seconds` 接进 `core/event/world` 接口，并让 protagonist runtime 从 `episode_ticks` 迁到 `episode_duration_seconds + substep_dt`。等统一时间语义稳定后，再继续深化 Memory V2、合作信用分配和 CTRNN protagonist brain。 |
+| **最近会话摘要** | protagonist 路线的 Trace/Resume 基座已保持完成态；本轮先把 Memory V2 半成品修回可编译、可运行状态：修复 `SpatialMemoryBank.cpp` 与 `MemoryCognitionPerception` 的接口错误，`neural-eco-protagonist` 重新构建成功，并再次用 `configs/protagonist_ecology_train_smoke.toml` 跑通 smoke。随后按用户新优先级完成连续时间方向的外部调研并写出 `routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md`，然后直接落地 CT-0：新增 `SimTimeSeconds`、为 `Event` 加入 `timeSeconds()`、为 `IWorld` / `World2D` 加入 `currentTimeSeconds()`、让 `TickStarted` / `TickEnded` 带秒级时间戳，并把 protagonist `TraceRecorder` 升级成双时间戳输出。CT-0 已重新构建并 smoke 验证通过。 |
+| **下一步建议** | 既然 CT-0 已经落地，下一步建议继续实现 `CONTINUOUS_TIME_WORLD_DESIGN.md` 的 CT-1：让 protagonist runtime 从 `episode_ticks` 迁到 `episode_duration_seconds + substep_dt`，并加入 legacy tick / continuous mode 兼容读取。等 runtime 真正 seconds 化后，再迁移 move / drink / eat / signal 等首批连续动作。 |
 
 ---
 

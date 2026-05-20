@@ -118,13 +118,13 @@ TraceRecorder::TraceRecorder(World2D& world,
     if (config_.agents_enabled) {
         agent_trace_.open(trace_dir_ / "agent_trace.csv", std::ios::out | std::ios::trunc);
         if (agent_trace_.is_open()) {
-            agent_trace_ << "tick,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_this_tick,plant_food_this_tick,meat_food_this_tick,visited_cells,damage_dealt,kills\n";
+            agent_trace_ << "tick,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_this_tick,plant_food_this_tick,meat_food_this_tick,visited_cells,damage_dealt,kills\n";
         }
     }
     if (config_.world_enabled) {
         world_trace_.open(trace_dir_ / "world_trace.csv", std::ios::out | std::ios::trunc);
         if (world_trace_.is_open()) {
-            world_trace_ << "tick,total_agents,living_agents,available_resources,loose_stones,loose_sticks,loose_spears,stockpiled_total,stockpiled_sticks,stockpiled_stones,active_fires,active_worksites,completed_worksites,avg_health_ratio,avg_hydration_ratio,dehydrated_agents,injured_agents\n";
+            world_trace_ << "tick,time_seconds,total_agents,living_agents,available_resources,loose_stones,loose_sticks,loose_spears,stockpiled_total,stockpiled_sticks,stockpiled_stones,active_fires,active_worksites,completed_worksites,avg_health_ratio,avg_hydration_ratio,dehydrated_agents,injured_agents\n";
         }
     }
 
@@ -181,6 +181,7 @@ void TraceRecorder::writeEvent(const events::Event& event) {
     }
 
     event_trace_ << "{\"tick\":" << event.tick()
+                 << ",\"time_seconds\":" << event.timeSeconds()
                  << ",\"type\":\"" << events::toString(event.type()) << "\"";
 
     switch (event.type()) {
@@ -355,6 +356,7 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
         const float health = survival != nullptr ? survival->healthRatio(agent->id()) : 1.0f;
         const float hydration = survival != nullptr ? survival->hydrationRatio(agent->id()) : 1.0f;
         agent_trace_ << world.currentTick() << ','
+                     << world.currentTimeSeconds() << ','
                      << agent->id().value << ','
                      << agent->genomeId().value << ','
                      << agent->speciesId().value << ','
@@ -391,6 +393,7 @@ void TraceRecorder::writeWorldSnapshot(World2D& world) {
     auto* survival = world.getLayer<SurvivalStatusLayer>();
 
     world_trace_ << world.currentTick() << ','
+                 << world.currentTimeSeconds() << ','
                  << (agents != nullptr ? agents->size() : 0) << ','
                  << (agents != nullptr ? agents->livingCount() : 0) << ','
                  << availableResourceCount(resources) << ','

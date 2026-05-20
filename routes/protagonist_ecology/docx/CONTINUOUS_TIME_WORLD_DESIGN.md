@@ -2,7 +2,7 @@
 
 > 位置：`routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md`
 >
-> 状态：规划初稿（2026-05-20）
+> 状态：规划初稿 + CT-0 已落地验证（2026-05-20）
 >
 > 作用：为 `routes/protagonist_ecology/` 以及其依赖的 `src/core/` / `src/runtime/` 提供连续时间世界的重构路线，不在这里直接实现大改，只先把方向、边界、迁移顺序和验收标准定清楚。
 

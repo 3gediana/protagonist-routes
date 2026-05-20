@@ -16,6 +16,7 @@ public:
 
     WorldId id() const override;
     Tick currentTick() const override;
+    SimTimeSeconds currentTimeSeconds() const override;
     Vec2 size() const override;
     events::EventBus& eventBus() override;
     void addLayer(std::unique_ptr<IWorldLayer> layer) override;
@@ -26,6 +27,7 @@ public:
 private:
     WorldId id_;
     Tick tick_;
+    SimTimeSeconds time_seconds_;
     Vec2 size_;
     std::unique_ptr<events::EventBus> bus_;
     std::vector<std::unique_ptr<IWorldLayer>> layers_;

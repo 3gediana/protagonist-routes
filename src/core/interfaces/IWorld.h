@@ -29,6 +29,7 @@ public:
     // ----- identity / clock -----------------------------------------------
     virtual WorldId id()         const = 0;
     virtual Tick    currentTick() const = 0;
+    virtual SimTimeSeconds currentTimeSeconds() const = 0;
 
     // ----- world bounds ---------------------------------------------------
     // Continuous floating-point world. Bounds are [0, size.x] x [0, size.y].

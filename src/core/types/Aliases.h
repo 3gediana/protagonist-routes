@@ -15,6 +15,7 @@
 namespace neuro {
 
 using Tick       = std::uint64_t;   // simulation time in discrete steps
+using SimTimeSeconds = double;      // simulation time in continuous seconds
 using Generation = std::uint32_t;   // evolution generation index
 
 // ---------------------------------------------------------------------------
