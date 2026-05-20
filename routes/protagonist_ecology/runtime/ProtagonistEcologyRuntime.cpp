@@ -507,6 +507,14 @@ void evaluatePopulation(World2D& world,
     tick_build_completed.reserve(8);
     std::vector<events::WorksiteMaterialDeposited> tick_deposits;
     tick_deposits.reserve(32);
+    // Stage 2 hunt credit: track cumulative damage each attacker dealt to
+    // each victim across the episode. When a victim dies (collected via the
+    // AgentDied subscriber's tick_deaths list), we look up this ledger and
+    // distribute joint_hunt_reward by damage share, so a bystander who
+    // happened to be near the kill but contributed no damage gets zero.
+    std::unordered_map<AgentId, std::unordered_map<AgentId, float>> hunt_damage_ledger;
+    std::vector<AgentId> tick_deaths;
+    tick_deaths.reserve(8);
     std::unordered_map<AgentId, float> previous_damage;
     std::unordered_map<AgentId, std::size_t> previous_kills;
     std::unordered_set<AgentId> alive_last_tick;
@@ -544,6 +552,17 @@ void evaluatePopulation(World2D& world,
                 }
             }
             tick_attacks.push_back(AttackEventInfo{payload.attacker, payload.victim, payload.damage, attacker_pos, victim_pos, attacker_is_predator});
+            hunt_damage_ledger[payload.victim][payload.attacker] += payload.damage;
+        });
+
+    // Separate subscriber for hunt credit. The existing subscribe_died below
+    // is conditional on resource_layer; this one always runs so the ledger
+    // stays accurate even when corpse spawn is disabled.
+    auto subscribe_died_for_hunt = world.eventBus().subscribe(
+        events::EventType::AgentDied,
+        [&](const events::Event& event) {
+            const auto& payload = event.payloadAs<events::AgentDied>();
+            tick_deaths.push_back(payload.id);
         });
 
     // Spawn corpse meat at death position when any agent dies.
@@ -593,6 +612,7 @@ void evaluatePopulation(World2D& world,
         tick_chop_completed.clear();
         tick_build_completed.clear();
         tick_deposits.clear();
+        tick_deaths.clear();
         world.tick(dt);
         elapsed_seconds += dt_seconds;
         bool any_alive = false;
@@ -1069,19 +1089,39 @@ void evaluatePopulation(World2D& world,
                     }
                 }
 
-                if (kill_delta > 0) {
-                    for (const auto* peer : alive_protagonists) {
-                        if (peer == nullptr || peer == concrete) {
-                            continue;
-                        }
-                        if (Vec2::distanceSquared(concrete->position(), peer->position()) <= params.joint_hunt_radius * params.joint_hunt_radius) {
-                            reward += params.cooperation_weight * static_cast<double>(params.joint_hunt_reward);
-                            if (params.social_memory_writes_enabled) {
-                                if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
-                                    protagonist_brain->socialMemory().rewardCooperation(peer->id(), 0.25f);
-                                }
+                // Stage 2 hunt credit: walk this tick's deaths. For each
+                // dying victim, the cumulative damage ledger names every
+                // attacker. Joint_hunt_reward is split by damage share. A
+                // bystander who never landed a hit gets zero; a finisher
+                // who only landed the last 5% gets only 5% of the reward.
+                //
+                // Threshold: skip attackers with < 1% of the total damage
+                // (these are usually scratches from unrelated incidents).
+                constexpr float kHuntCreditMinShare = 0.01f;
+                for (AgentId victim_id : tick_deaths) {
+                    auto ledger_it = hunt_damage_ledger.find(victim_id);
+                    if (ledger_it == hunt_damage_ledger.end()) continue;
+                    const auto& damage_map = ledger_it->second;
+                    auto my_it = damage_map.find(agent->id());
+                    if (my_it == damage_map.end()) continue;
+
+                    float total_damage = 0.0f;
+                    for (const auto& [_, d] : damage_map) total_damage += d;
+                    if (total_damage <= 0.0f) continue;
+                    const float my_share = my_it->second / total_damage;
+                    if (my_share < kHuntCreditMinShare) continue;
+                    reward += params.cooperation_weight
+                              * static_cast<double>(params.joint_hunt_reward)
+                              * static_cast<double>(my_share);
+
+                    if (params.social_memory_writes_enabled) {
+                        if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
+                            for (const auto& [other_id, other_dmg] : damage_map) {
+                                if (other_id == agent->id()) continue;
+                                const float peer_share = other_dmg / total_damage;
+                                if (peer_share < kHuntCreditMinShare) continue;
+                                protagonist_brain->socialMemory().rewardCooperation(other_id, 0.25f * peer_share);
                             }
-                            break;
                         }
                     }
                 }
