@@ -11,8 +11,8 @@
 | 项 | 值 |
 |---|---|
 | 最后更新 | 2026-05-21 |
-| 当前阶段 | Phase 1 Trace/Resume 完整收口 + 连续时间世界 CT-1/CT-2A 完成 + **Stage 0 (CT-2B/CT-3) 结构化动作事件完成** + 记忆系统总设计与 Phase A 接线计划完成 + mixed compute 第一轮工程化 |
-| 当前主线 | Memory Phase A 仍是路线主线，但 compute 承接底座已开始落地：CPU 已从 episode 级推进到 per-world agent decision 级；如继续 GPU 线，下一步先补齐本机完整 CUDA toolkit / nvcc，再验证 protagonist dense inference 真正上卡 |
+| 当前阶段 | Phase 1 Trace/Resume + CT-1/CT-2A 完成 + **Stage 0 结构化动作事件完成** + **Stage 1 Memory Phase A 完成（含 ablation 基础设施验收）** + mixed compute 第一轮工程化 |
+| 当前主线 | Stage 2 · P3 因果奖励 / 合作信用（EventLineageTracker + ContributionLedger）。Stage 0 已经把 `WorksiteLayer.per_agent_contribution_seconds` + BuildCompleted contributors 做到位，数据源就绪，下一步是把这套数据真正接到 reward 路由 |
 | 最新用户新增问题 | 用户已明确：记忆系统不能单独做成“大头娃娃”，必须和主行为控制脑同步扩容；优先先把主角记忆系统设计完整、系统化，让 agent 真能记住世界、事件、同伴、目标与因果链，再规划 protagonist 参数上 GPU，同时把 CPU 并行利用率吃满 |
 
 ---
@@ -163,7 +163,36 @@
 
 **已主动延后**：CT-Step 4（EventQueue / DueAction）当前没有真实消费者，决定推到 Stage 1（Memory Phase A 的 goal expiry / episodic decay 会真正需要它），避免过度工程
 
-### 8. mixed compute 第一轮工程化
+### 8. Stage 1 · Memory Phase A 收口（2026-05-21）
+
+按 `MEMORY_PHASE_A_EXECUTION_PLAN.md` 完成 Phase A 的 6 个验收项。在大重构 commit `c7f1665` 中很多 Phase A 部件其实已经接好了，本会话主要做以下三件事：
+
+**已落地（本会话补完）**：
+
+- 把 Stage 0 的 6 个结构化事件接进 EpisodicMemoryBank：在 runtime 评估循环新增 3 个 tick 收集器（`tick_chop_completed` / `tick_build_completed` / `tick_deposits`），通过 EventBus 订阅在每个 substep 收集，然后在已有的 per-agent memory 写入循环里转写成 `chopped_tree / built_worksite / deposited_stick / deposited_stone / signal_emitted` 这 5 类 episodic 事件，含 salience 模型（chop 按时长，build 按贡献排名）
+- 增加 TraceRecorder 对全部 6 个新事件的 payload 序列化，使 `event_trace.jsonl` 字段完整（之前只能看到 `{"type":"ChopCompleted"}` 没有 chopper / duration / wood_yield）
+- 新增 memory ablation smoke harness：`scripts/protagonist_memory_ablation.py` 一次跑完 baseline + 4 个 ablation（spatial/episodic/social/goal），自动生成对照表并保留各自 trace 目录，验证 4 个 `population.protagonist.*_enabled` 开关都可读、可执行、可观测
+- 写 `MEMORY_ABLATION_SMOKE_RESULT.md` 诚实记录首轮结果：4 开关都让 fitness 和行为指标显著移动（基础设施验收 PASS），但 ablation 反而 fitness 更高的反直觉现象需要长训才能反转，**不能当成"记忆有害"的科学结论**
+
+**Phase A 验收清单（全 PASS）**：
+
+| 验收项 | 状态 | 证据 |
+|---|---|---|
+| Spatial / Episodic / Social / Goal 都进入真实决策闭环 | ✅ | `MemoryCognitionPerception` 44 维全部从 4 个 banks 读出 |
+| `MemoryCognitionPerception` 扩到能承载 Memory V2 | ✅ | 9 个 spatial 槽 16 维 + episodic 6 维 + social 8 维 + goal 4 维 + DNC 8 维 |
+| goal 不再是默认 `Explore` 常驻 | ✅ | rule-based GoalManager: Flee/FindWater/BuildWorksite/RestNearFire/FindFood/Explore |
+| social 分数不再长期全 0 | ✅ | smoke trace: social_best_coop 1595/9000 行非零；comm 1597 行；hostility 162 行 |
+| spatial 通道不再混槽 | ✅ | 9 个独立 cell 字段（water/food/tree/stone/stick/danger/base/fire/worksite）独立写入与查询 |
+| 一组最小 memory ablation 对照结果 | ✅ | 5 变体 smoke 表 + smoke 结果文档 |
+| smoke / train continues to work | ✅ | 73/73 tests + protagonist smoke 全程绿 |
+
+**已主动延后到 Phase B**（不是 Phase A 必需）：
+
+- DNC-forcing micro-task（设计一个只有用 DNC 检索才能拿 reward 的环境）
+- `WorkingMemoryBank` 多时间尺度化
+- `ProtagonistGenomeV2` 编码更大脑结构
+
+### 9. mixed compute 第一轮工程化
 
 - 已把 `Agent::step()` 拆成 `decide / publishDecisionEvent / applyCapabilities` 三相，保证重计算与世界写入分离
 - 已给 `AgentLayer` 新增持久化 decision executor，支持 route 通过 `compute.agent_decision_threads` 做 per-world agent decision 并行
