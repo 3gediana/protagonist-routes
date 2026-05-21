@@ -2,12 +2,15 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     capability/ChopTreeCapability.cpp
     capability/CraftSpearCapability.cpp
     capability/DrinkWaterCapability.cpp
+    capability/GoalActionAssistCapability.cpp
+    capability/GoalAwareDropCapability.cpp
     capability/NurseryPickUpCapability.cpp
     capability/ProtagonistHuntCapability.cpp
     capability/ThrowCarriedObjectCapability.cpp
     brain/MemoryBank.cpp
     brain/DNCMemory.cpp
     brain/ProtagonistDenseGpu.cpp
+    brain/ProtagonistBrainV3Components.cpp
     brain/SpatialMemoryBank.cpp
     brain/EpisodicMemoryBank.cpp
     brain/SocialMemoryBank.cpp
@@ -19,6 +22,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     perception/CarriedObjectPerception.cpp
     perception/DangerPerception.cpp
     perception/MemoryCognitionPerception.cpp
+    perception/MemoryTrialPerception.cpp
     perception/ObjectLogisticsPerception.cpp
     perception/StockpilePerception.cpp
     perception/SurvivalStatePerception.cpp
@@ -27,6 +31,8 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     perception/WeaponPerception.cpp
     perception/WorksitePerception.cpp
     runtime/BootstrapPopulation.cpp
+    runtime/GoalManager.cpp
+    runtime/MemoryAblationEval.cpp
     runtime/ProtagonistEcologyConfig.cpp
     runtime/ProtagonistEvolution.cpp
     runtime/ProtagonistEcologyRuntime.cpp
@@ -35,6 +41,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     world/BaseLayer.cpp
     world/CampfireLayer.cpp
     world/InterventionDirectorLayer.cpp
+    world/MemoryTrialLayer.cpp
     world/NurseryLogisticsLayer.cpp
     world/NurseryProgressionLayer.cpp
     world/NurserySupplyLayer.cpp
@@ -49,12 +56,15 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     capability/ChopTreeCapability.h
     capability/CraftSpearCapability.h
     capability/DrinkWaterCapability.h
+    capability/GoalActionAssistCapability.h
+    capability/GoalAwareDropCapability.h
     capability/NurseryPickUpCapability.h
     capability/ProtagonistHuntCapability.h
     capability/ThrowCarriedObjectCapability.h
     brain/MemoryBank.h
     brain/DNCMemory.h
     brain/ProtagonistDenseGpu.h
+    brain/ProtagonistBrainV3Components.h
     brain/SpatialMemoryBank.h
     brain/EpisodicMemoryBank.h
     brain/SocialMemoryBank.h
@@ -66,6 +76,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     perception/CarriedObjectPerception.h
     perception/DangerPerception.h
     perception/MemoryCognitionPerception.h
+    perception/MemoryTrialPerception.h
     perception/ObjectLogisticsPerception.h
     perception/StockpilePerception.h
     perception/SurvivalStatePerception.h
@@ -74,6 +85,8 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     perception/WeaponPerception.h
     perception/WorksitePerception.h
     runtime/BootstrapPopulation.h
+    runtime/GoalManager.h
+    runtime/MemoryAblationEval.h
     runtime/ProtagonistEcologyConfig.h
     runtime/ProtagonistEvolution.h
     runtime/ProtagonistEcologyRuntime.h
@@ -82,6 +95,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     world/BaseLayer.h
     world/CampfireLayer.h
     world/InterventionDirectorLayer.h
+    world/MemoryTrialLayer.h
     world/NurseryLogisticsLayer.h
     world/NurseryProgressionLayer.h
     world/NurserySupplyLayer.h

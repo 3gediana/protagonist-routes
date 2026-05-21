@@ -8,7 +8,7 @@ namespace neuro {
 
 class EmitSignalCapability final : public IAgentCapability {
 public:
-    EmitSignalCapability(std::size_t channels, float energy_cost);
+    EmitSignalCapability(std::size_t channels, float energy_cost, bool enabled = true);
 
     std::size_t consumedOutputs() const override;
     void apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) override;
@@ -19,6 +19,7 @@ public:
 private:
     std::size_t channels_;
     float energy_cost_;
+    bool enabled_;
 };
 
 }  // namespace neuro

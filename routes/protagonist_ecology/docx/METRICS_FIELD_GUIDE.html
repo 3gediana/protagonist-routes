@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neural Eco 指标说明</title>
+  <style>
+    :root {
+      --bg: #f4f4f1;
+      --panel: #ffffff;
+      --line: #d8ddd9;
+      --text: #1e2226;
+      --muted: #66707a;
+      --accent: #445b73;
+      --soft: #eef3f7;
+      --warn: #8b5b14;
+      --bad: #8a4040;
+      --good: #2f6b45;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+    }
+    .page {
+      width: min(1180px, calc(100vw - 24px));
+      margin: 20px auto 36px;
+    }
+    .hero, .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 16px;
+    }
+    h1, h2, h3 { margin: 0 0 10px; }
+    h1 { font-size: clamp(28px, 4vw, 38px); line-height: 1.2; }
+    h2 { font-size: 24px; }
+    p, li { color: var(--muted); }
+    code {
+      background: #f3f5f6;
+      border-radius: 8px;
+      padding: 2px 7px;
+      color: #243140;
+    }
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .nav a, .tag {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      background: #fff;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fafaf8;
+    }
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--soft);
+      padding: 12px 14px;
+      border-radius: 0 12px 12px 0;
+      margin-top: 14px;
+      color: #324252;
+    }
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: #fff8eb;
+      color: #6f4c14;
+    }
+    .callout.bad {
+      border-left-color: var(--bad);
+      background: #fbefef;
+      color: #6f3131;
+    }
+    details {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+    summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 12px 14px;
+      font-weight: 700;
+      background: #fcfcfb;
+    }
+    summary::-webkit-details-marker { display: none; }
+    .detail-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--line);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      min-width: 760px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      margin-top: 10px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: #f6f7f5;
+      color: #414b55;
+    }
+    tr:last-child td { border-bottom: none; }
+    .ok { color: var(--good); }
+    .warn-text { color: var(--warn); }
+    .bad-text { color: var(--bad); }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding-top: 6px;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .page { width: min(100vw - 16px, 1180px); }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>Neural Eco · 指标与判读说明</h1>
+      <p>这页专门回答 3 个问题：<strong>这个字段是什么、它怎么统计出来、它能不能用来判断某个行为真的发生了</strong>。内容基于当前代码里真实存在的输出字段整理。</p>
+      <div class="nav">
+        <a href="#rules">怎么看</a>
+        <a href="#map">文件地图</a>
+        <a href="#train">训练指标</a>
+        <a href="#behavior">主角行为</a>
+        <a href="#memory">记忆与 Ablation</a>
+        <a href="#eco">生态模块</a>
+        <a href="#research">研究型统计</a>
+        <a href="#params">关键参数</a>
+        <a href="#recipes">判读模板</a>
+      </div>
+      <div class="callout">
+        <strong>先记一句：</strong> 想判断“行为有没有发生”，优先看真实事件计数；想判断“系统是不是更复杂了”，再看互信息、熵、多样性这些研究统计。
+      </div>
+    </section>
+
+    <section id="rules" class="section">
+      <h2>1. 先学会怎么看</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>先分 4 类</h3>
+          <ul>
+            <li><strong>训练主指标：</strong> 例如 <code>avg_fitness</code>。</li>
+            <li><strong>行为事件指标：</strong> 例如 <code>drank_water_events</code>。</li>
+            <li><strong>研究解释指标：</strong> 例如 <code>signal_action_mi</code>。</li>
+            <li><strong>性能指标：</strong> 例如 <code>total_ms</code>。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>最稳的阅读顺序</h3>
+          <ul>
+            <li>先看任务主指标有没有动。</li>
+            <li>再看配套指标是否一起支持这个解释。</li>
+            <li>最后才看总 fitness。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout warn">
+        <strong>别只看 fitness：</strong> fitness 是混合总分。它变好了，不一定代表你关心的那个行为真的变强了。
+      </div>
+    </section>
+
+    <section id="map" class="section">
+      <h2>2. 输出文件地图</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>文件</th>
+              <th>用途</th>
+              <th>最适合回答的问题</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>fitness.csv</code></td><td>代际适应度基础表</td><td>训练总分有没有上去</td></tr>
+            <tr><td><code>evolution.csv</code></td><td>主角 + 背景物种代际表现</td><td>是不是只有主角在涨，还是生态一起动</td></tr>
+            <tr><td><code>protagonist_behaviors.csv</code></td><td>主角行为核心表</td><td>主角到底做了什么</td></tr>
+            <tr><td><code>memory_ablation_results.csv</code></td><td>记忆开关对照实验</td><td>关掉哪类记忆后哪个任务最受伤</td></tr>
+            <tr><td><code>module_metrics.csv</code></td><td>生态模块统计</td><td>世界模块是否真的在运作</td></tr>
+            <tr><td><code>advanced_stats.csv</code></td><td>群体层统计</td><td>多样性、探索、复杂度是否变化</td></tr>
+            <tr><td><code>emergence_audit.csv</code></td><td>涌现现象审计</td><td>信号、协作、军备竞赛有没有苗头</td></tr>
+            <tr><td><code>comprehensive/*.csv</code></td><td>研究型细分统计包</td><td>信息论、多样性、物种画像</td></tr>
+            <tr><td><code>perf.csv</code></td><td>性能耗时表</td><td>程序有没有跑慢</td></tr>
+            <tr><td><code>species.jsonl / phylo_tree.jsonl</code></td><td>物种快照 / 系谱事件</td><td>物种是怎么生灭分化的</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="train" class="section">
+      <h2>3. 训练主指标</h2>
+
+      <details open>
+        <summary><code>fitness.csv</code> · 最基础总分</summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>含义</th><th>怎么判断</th></tr></thead>
+              <tbody>
+                <tr><td><code>generation</code></td><td>第几代</td><td>横轴</td></tr>
+                <tr><td><code>min_fitness</code></td><td>本代最低分</td><td>看底部是不是还在大面积翻车</td></tr>
+                <tr><td><code>avg_fitness</code></td><td>本代平均分</td><td class="ok">最适合看整体训练是否前进</td></tr>
+                <tr><td><code>best_fitness</code></td><td>本代最高分</td><td>看天花板，但容易被单个幸运个体拉高</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary><code>evolution.csv</code> · 主角与背景物种一起看</summary>
+        <div class="detail-body">
+          <p>表头是 <code>generation,min_fitness,avg_fitness,best_fitness</code>，后面还会拼接每个背景物种的 <code>_avg</code> 和 <code>_best</code>。</p>
+          <p>如果主角越来越强，但背景物种全崩，说明可能不是“生态更聪明”，而是环境被打穿了。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary><code>perf.csv</code> · 这是性能表，不是行为表</summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>含义</th><th>用途</th></tr></thead>
+              <tbody>
+                <tr><td><code>total_ms</code></td><td>一整代总耗时</td><td>看总运行成本</td></tr>
+                <tr><td><code>eval_ms</code></td><td>评估阶段耗时</td><td>看行为仿真有多贵</td></tr>
+                <tr><td><code>repro_ms</code></td><td>繁殖阶段耗时</td><td>看进化更新有多贵</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section id="behavior" class="section">
+      <h2>4. 主角行为指标</h2>
+      <div class="callout">
+        <strong>这是当前 route 最关键的一张表：</strong> <code>protagonist_behaviors.csv</code>。
+      </div>
+      <div class="callout bad">
+        <strong>注意：</strong> 这张表里有的是“事件次数”，有的是“最终状态”，有的是“DNC 摘要平均值”。不要把它们当成同一种数直接横比。
+      </div>
+
+      <details open>
+        <summary>生存与资源闭环</summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
+              <tbody>
+                <tr><td><code>episodes</code></td><td>本代评估 episode 数</td><td>比较 run 前先确认一致</td></tr>
+                <tr><td><code>total_protagonists</code></td><td>合并所有 episode 的主角总数</td><td>分母</td></tr>
+                <tr><td><code>survived_protagonists</code></td><td>最后活下来的主角数</td><td class="ok">先看能不能活到最后</td></tr>
+                <tr><td><code>drank_water_events</code></td><td>真实喝水事件数</td><td class="ok">判断“会不会回水源”的硬指标</td></tr>
+                <tr><td><code>deposits_total</code></td><td>总交付次数</td><td>看有没有把资源搬到目标位置</td></tr>
+                <tr><td><code>deposits_stick</code></td><td>木棍交付次数</td><td>看材料链细分</td></tr>
+                <tr><td><code>deposits_stone</code></td><td>石头交付次数</td><td>看材料链细分</td></tr>
+                <tr><td><code>completed_worksites</code></td><td>episode 结束时最终完成的工地数</td><td>偏结果</td></tr>
+                <tr><td><code>worksite_completion_events</code></td><td>运行过程中新增完成工地事件数</td><td class="ok">更适合证明建造闭环真的发生过</td></tr>
+                <tr><td><code>active_fires</code></td><td>当前活跃营火数量</td><td>看聚落设施结果，不等于点火事件次数</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>采集、制造、攻击、狩猎</summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
+              <tbody>
+                <tr><td><code>chop_attempts</code></td><td>尝试砍树</td><td>说明开始尝试</td></tr>
+                <tr><td><code>chop_successes</code></td><td>成功砍树</td><td class="ok">成功比尝试更重要</td></tr>
+                <tr><td><code>craft_attempts</code></td><td>尝试制作</td><td>看是否进入工具链</td></tr>
+                <tr><td><code>craft_successes</code></td><td>成功制作</td><td>说明制造闭环通了</td></tr>
+                <tr><td><code>throw_attempts</code></td><td>尝试投掷</td><td>只说明动手了</td></tr>
+                <tr><td><code>throw_hits</code></td><td>投掷命中</td><td class="ok">比 attempt 更像真正战术行为</td></tr>
+                <tr><td><code>hunt_attempts</code></td><td>尝试狩猎</td><td>看是否进入追击链</td></tr>
+                <tr><td><code>hunt_successes</code></td><td>成功狩猎</td><td class="ok">判断会不会真正完成捕猎</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>信号与合作</summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
+              <tbody>
+                <tr><td><code>signal_emits</code></td><td>当前实现更接近“被记录到的 emitter 数”</td><td class="warn-text">不完全等于所有发信号事件总数</td></tr>
+                <tr><td><code>signal_response_events</code></td><td>主角以 <code>RespondSignal</code> 为目标并在时窗内到达信号附近的响应事件</td><td class="ok">判断“真的响应了信号”的关键字段</td></tr>
+                <tr><td><code>signal_co_attendance</code></td><td>在时窗内进入信号会合区域的累计次数</td><td>看是否围绕信号聚集</td></tr>
+                <tr><td><code>cooperative_co_presence_seconds</code></td><td>多人共同在场的累计秒数</td><td>说明同地协同停留，但不等于任务有效完成</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>最稳的说法：</strong> 想证明信号有用，优先看 <code>signal_response_events</code>，再用 <code>signal_co_attendance</code> 和研究统计里的互信息补强。</p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>DNC 摘要字段</summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
+              <tbody>
+                <tr><td><code>dnc_usage_mean_avg</code></td><td>平均槽位使用率</td><td>看“记忆板整体用了多少”</td></tr>
+                <tr><td><code>dnc_write_peak_avg</code></td><td>写入权重峰值</td><td>看写时会不会强聚焦某槽位</td></tr>
+                <tr><td><code>dnc_read_peak_avg</code></td><td>读取权重峰值</td><td>看读时会不会强聚焦某槽位</td></tr>
+                <tr><td><code>dnc_precedence_peak_avg</code></td><td>时间链接前序峰值</td><td>看顺序记忆链条热点</td></tr>
+                <tr><td><code>dnc_samples</code></td><td>摘要采样次数</td><td>样本量</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout bad">
+            <strong>最重要提醒：</strong> DNC 数值高，不等于记忆真的帮了任务。它只能说明“记忆系统在活动”，真正的证据要看 ablation 后任务主指标是否下降。
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section id="memory" class="section">
+      <h2>5. 记忆 / DNC / Ablation</h2>
+
+      <details open>
+        <summary><code>memory_ablation_results.csv</code> 怎么看</summary>
+        <div class="detail-body">
+          <p>这张表是当前最关键的记忆验证表。它会按 <code>task</code> 和 <code>variant</code> 输出各项平均结果。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>含义</th><th>用途</th></tr></thead>
+              <tbody>
+                <tr><td><code>task</code></td><td>任务名</td><td>当前有哪些固定任务</td></tr>
+                <tr><td><code>variant</code></td><td><code>baseline / no_spatial / no_episodic / no_social / no_goal</code></td><td>关掉哪类记忆后的对照组</td></tr>
+                <tr><td><code>primary_metric</code></td><td>该任务最重要的主指标值</td><td class="ok">第一优先级</td></tr>
+                <tr><td><code>primary_metric_name</code></td><td>主指标字段名</td><td>告诉你这任务先看什么</td></tr>
+                <tr><td><code>avg_fitness / best_fitness</code></td><td>总分</td><td>辅助，不是第一优先级</td></tr>
+                <tr><td><code>survived_avg</code></td><td>平均存活数</td><td>看危险规避类任务</td></tr>
+                <tr><td><code>avg_health_ratio / avg_hydration_ratio</code></td><td>平均健康 / 水分比例</td><td>看生存状态是否同步改善</td></tr>
+                <tr><td><code>drank_water_events_avg</code></td><td>平均喝水事件</td><td>回水任务核心字段</td></tr>
+                <tr><td><code>deposits_avg / worksite_completion_events_avg</code></td><td>平均交付 / 工地完成事件</td><td>回工地与建造任务关键字段</td></tr>
+                <tr><td><code>signal_emit_events_avg / signal_response_events_avg / signal_co_attendance_avg</code></td><td>平均信号事件、响应、会合</td><td>看信号是否真的有作用</td></tr>
+                <tr><td><code>dnc_usage_mean_avg / dnc_read_peak_avg</code></td><td>DNC 活动摘要</td><td>只做辅助解释</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>各任务的主指标怎么配</summary>
+        <div class="detail-body">
+          <ul>
+            <li><strong>WaterReturn：</strong> 先看 <code>drank_water_events</code></li>
+            <li><strong>DangerAvoidance：</strong> 先看 <code>survived</code></li>
+            <li><strong>WorksiteReturn：</strong> 先看 <code>worksite_completion_events</code></li>
+            <li><strong>SignalResponse：</strong> 先看 <code>signal_response_events</code></li>
+          </ul>
+          <p>所以比较 baseline 和 ablation 时，<strong>先看对应任务自己的主指标，再看 fitness</strong>。</p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>为什么短 smoke 里“关掉记忆反而更高分”不能说记忆有害</summary>
+        <div class="detail-body">
+          <p>短训里记忆输入维度很多，而 NEAT 还没学会利用它时，这些输入更像噪声，所以早期可能出现“关掉记忆反而更容易采样”的情况。</p>
+          <p>这说明短 smoke 更适合做<strong>接线验收</strong>，不适合直接下“记忆有害/有益”的科研结论。</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="eco" class="section">
+      <h2>6. 生态模块指标</h2>
+
+      <details open>
+        <summary><code>module_metrics.csv</code></summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段组</th><th>代表什么</th><th>怎么判断</th></tr></thead>
+              <tbody>
+                <tr><td><code>alive_count, predator_count, prey_count, immune_count</code></td><td>存活人口和角色结构</td><td>先看生态是不是还活着、是否单边崩盘</td></tr>
+                <tr><td><code>avg_energy, avg_speed, avg_infected_speed, avg_food_eaten</code></td><td>能量、移动、感染后运动、进食</td><td>看资源和疾病压力是否真的影响行为</td></tr>
+                <tr><td><code>total_damage_dealt, total_kills, predator_kills</code></td><td>攻击造成的真实结果</td><td>区分“打了很多”与“真杀死了很多”</td></tr>
+                <tr><td><code>max_infected, infection_deaths, recoveries, healthy_infected_dist</code></td><td>疾病传播与恢复</td><td>看病原体是否真实施压</td></tr>
+                <tr><td><code>resource_available_count, avg_resource_amount</code></td><td>资源剩余量</td><td>避免把资源枯竭误读成行为退化</td></tr>
+                <tr><td><code>min_light, max_light, min_season, max_season, current_season</code></td><td>昼夜与季节上下文</td><td>解释环境难度变化</td></tr>
+                <tr><td><code>signal_field_energy</code></td><td>信号场总能量</td><td>看信号层是否被实际使用</td></tr>
+                <tr><td><code>heavy_resources_available, heavy_workers_avg</code></td><td>重资源与协作工人数</td><td>看多人协作工作是否被参与</td></tr>
+                <tr><td><code>avg_complexity</code></td><td>脑结构平均复杂度</td><td>偏结构，不是直接行为证据</td></tr>
+                <tr><td><code>pathogen_avg_speed, pathogen_avg_spread, pathogen_avg_evasion, pathogen_avg_gen</code></td><td>病原体平均属性</td><td>看病原体本身是否在演化</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section id="research" class="section">
+      <h2>7. 研究型统计</h2>
+      <div class="callout warn">
+        <strong>这部分容易误读：</strong> 很多字段是“解释系统结构”的，不是“证明某个行为已经学会”的硬证据。
+      </div>
+
+      <details open>
+        <summary><code>advanced_stats.csv</code></summary>
+        <div class="detail-body">
+          <ul>
+            <li><code>shannon_diversity</code>：物种分布多样性。</li>
+            <li><code>fitness_variance</code>：强弱差距有多大。</li>
+            <li><code>avg_age</code>：平均年龄。</li>
+            <li><code>avg_exploration</code>：平均访问格子数，近似看探索范围。</li>
+            <li><code>behavior_complexity</code>：简化动作序列复杂度，越高表示不那么重复。</li>
+            <li><code>species_count</code>：物种数。</li>
+            <li><code>alive_ratio</code>：存活比例。</li>
+          </ul>
+        </div>
+      </details>
+
+      <details open>
+        <summary><code>emergence_audit.csv</code></summary>
+        <div class="detail-body">
+          <ul>
+            <li><code>signal_behavior_mi_avg</code>：信号与动作的平均互信息。</li>
+            <li><code>modulatory_usage_ratio</code>：有调制能力的活体比例。</li>
+            <li><code>modulatory_corr</code>：当前实现是 proxy，不是直接神经调制激活。</li>
+            <li><code>pred_prey_fitness_corr</code>：捕食者和猎物 fitness 相关性，粗看红皇后。</li>
+            <li><code>heavy_tasks_completed</code>：重任务完成数。</li>
+            <li><code>host_immunity_pathogen_virulence_corr</code>：宿主免疫与感染暴露 proxy 的相关性。</li>
+            <li><code>species_dig_preference_var</code>：当前还是 proxy，不能当直接“挖掘偏好方差”。</li>
+            <li><code>cave_occupancy_ratio</code>：洞穴占用比例。</li>
+            <li><code>hunt_success_rate</code>：捕猎成功率。</li>
+          </ul>
+        </div>
+      </details>
+
+      <details>
+        <summary><code>comprehensive/*.csv</code> 核心文件</summary>
+        <div class="detail-body">
+          <ul>
+            <li><code>oee_complexity.csv</code>：节点数、连接数、隐藏节点、结构多样性。</li>
+            <li><code>population_stats.csv</code>：空间熵、行为熵、fitness 熵、能量方差、感染比例等。</li>
+            <li><code>info_theory.csv</code>：<code>signal_action_mi</code>、<code>terrain_behavior_mi</code>、<code>infection_behavior_mi</code>。</li>
+            <li><code>coevo_stats.csv</code>：捕食-猎物 fitness、<code>red_queen_corr</code>、<code>hunt_success_rate</code>。</li>
+            <li><code>disease_arms_race.csv</code>：毒力、菌株数、免疫率、免疫记忆大小、感染率。</li>
+            <li><code>species_profile.csv</code>：每个物种的平均位置、能量、感染比例、洞穴比例、脑结构、偏好参数。</li>
+          </ul>
+        </div>
+      </details>
+
+      <details>
+        <summary>物种快照与系谱</summary>
+        <div class="detail-body">
+          <p><code>species.jsonl</code> 会记录每代的 <code>species_count</code>，以及每个物种的 <code>members</code>、<code>living</code>、<code>avg_fitness</code>、<code>best_fitness</code>。</p>
+          <p><code>phylo_tree.jsonl</code> 会记录 <code>species_born</code>、<code>species_alive</code>、<code>species_extinct</code> 事件，用来重建谱系。</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="params" class="section">
+      <h2>8. 关键参数：为什么同一个指标不能乱比</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>参数</th><th>会影响什么</th><th>为什么重要</th></tr></thead>
+          <tbody>
+            <tr><td><code>episodes_per_generation</code></td><td>统计稳定性</td><td>episode 数不同，均值可比性就会变差</td></tr>
+            <tr><td><code>episode_duration_seconds</code></td><td>行为次数上限</td><td>时长不同，<code>drank_water_events</code>、<code>deposits_total</code> 等不能直接横比</td></tr>
+            <tr><td><code>substep_dt</code></td><td>连续时间步长</td><td>会影响积分、事件密度和共同在场时间累积</td></tr>
+            <tr><td><code>signal_co_attendance_radius</code></td><td>会合判定半径</td><td>半径越大，越容易被算进响应/会合</td></tr>
+            <tr><td><code>signal_co_attendance_window_seconds</code></td><td>响应判定时间窗</td><td>时间窗越长，<code>signal_response_events</code> 越容易成立</td></tr>
+            <tr><td><code>worksite_completion_reward</code></td><td>建造动机强度</td><td>奖励越大，系统越可能优先学建造闭环</td></tr>
+            <tr><td><code>social_proximity_radius</code></td><td>合作邻近判定</td><td>会影响 <code>cooperative_co_presence_seconds</code> 的增长速度</td></tr>
+            <tr><td><code>joint_hunt_radius</code></td><td>围猎判定范围</td><td>会改变联合捕猎被奖励的难易度</td></tr>
+            <tr><td><code>memory ... enabled</code></td><td>某类记忆是否参与</td><td>ablation 比较时最关键</td></tr>
+            <tr><td><code>compute.agent_decision_threads</code></td><td>运行速度</td><td>主要影响性能，不直接改变行为定义</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="recipes" class="section">
+      <h2>9. 实战判读模板</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>会不会回水</h3>
+          <p><strong>主看：</strong> <code>drank_water_events</code></p>
+          <p><strong>辅助：</strong> <code>avg_hydration_ratio</code> 上升，<code>dehydrated_avg</code> 下降，<code>survived_protagonists</code> 上升。</p>
+        </div>
+        <div class="card">
+          <h3>会不会建工地</h3>
+          <p><strong>先看：</strong> <code>deposits_total</code></p>
+          <p><strong>再确认：</strong> <code>worksite_completion_events</code>、<code>completed_worksites</code>。</p>
+        </div>
+        <div class="card">
+          <h3>信号有没有用</h3>
+          <p><strong>主看：</strong> <code>signal_response_events</code></p>
+          <p><strong>辅助：</strong> <code>signal_co_attendance</code>、<code>signal_action_mi</code>、ablation 分离。</p>
+        </div>
+        <div class="card">
+          <h3>狩猎是否学会</h3>
+          <p><strong>主看：</strong> <code>hunt_successes</code> 或 <code>hunt_success_rate</code></p>
+          <p><strong>不要只看：</strong> <code>hunt_attempts</code>。</p>
+        </div>
+        <div class="card">
+          <h3>记忆是否真的有用</h3>
+          <p><strong>黄金标准：</strong> baseline 与 ablation 的任务主指标明显分离。</p>
+          <p><strong>DNC 数值：</strong> 只能做辅助证据。</p>
+        </div>
+        <div class="card">
+          <h3>训练是否整体变好</h3>
+          <p><strong>同时满足：</strong> <code>avg_fitness</code> 稳定上升、关键行为持续非零、存活不崩、不是单代偶然峰值。</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      建议阅读顺序：先看“主角行为指标”和“记忆 / Ablation”，再看研究型统计。
+    </footer>
+  </div>
+</body>
+</html>

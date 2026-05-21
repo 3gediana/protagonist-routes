@@ -9,7 +9,7 @@ namespace neuro::routes::protagonist {
 
 class ProtagonistHuntCapability final : public IAgentCapability {
 public:
-    ProtagonistHuntCapability(float hunt_radius, float damage, float energy_gain, float cost);
+    ProtagonistHuntCapability(float hunt_radius, float damage, float energy_gain, float cost, bool enabled = true);
 
     std::size_t consumedOutputs() const override { return 1; }
     void apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) override;
@@ -28,6 +28,7 @@ private:
     float damage_;
     float energy_gain_;
     float cost_;
+    bool enabled_;
 };
 
 }  // namespace neuro::routes::protagonist

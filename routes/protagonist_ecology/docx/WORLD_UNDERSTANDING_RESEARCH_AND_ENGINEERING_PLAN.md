@@ -2,7 +2,7 @@
 
 > 位置：`routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
 >
-> 范围：只服务 `routes/protagonist_ecology/` 这条并行路线。
+> 范围：只服务 `routes/protagonist_ecology/` 这个当前项目。
 >
 > 目标：不是 MVP，不是“先随便做个能跑的”。这份文档面向长期、系统、可持续训练的完整方案：让主角群体从“能刷行为奖励”逐步走向“能在世界中形成记忆、地点概念、因果链、协作、信号语义、泛化能力和复杂生态行为”。
 
@@ -238,40 +238,57 @@ checkpoint_gen119 = 24 protagonist genomes
 - 输出：`fitness.csv`、`evolution.csv`、`species_metrics.csv`、`protagonist_behaviors.csv`
 - 存档：`best_genome_*`、`checkpoint_genN/genome_*.bin`
 - eval 加载：`runtime.protagonist_genome_path`
+- Trace / Resume：`event_trace.jsonl`、`agent_trace.csv`、`world_trace.csv`、`replay_manifest.json`、`checkpoint_state.toml`
+- continuous-time：`episode_duration_seconds + substep_dt`
+- 标准 DNC 主链：`DNCMemory` 已接入 protagonist brain / genome / evolution / runtime
+- Memory Phase A：`Spatial / Episodic / Social / Goal` 四类显式 memory 已进入主角闭环
+- `MemoryCognitionPerception` 已扩到 44 维，并带 DNC 活动摘要
+- worksite / hunt credit 已有 partial 实装（但不是完整 EventLineage）
+- world model 数据集脚本与 offline MAP-Elites 脚本/Archive 已有第一版
+- DNC-forcing micro-task 已完成最小 build/test/smoke 验证
+- `ProtagonistBrainV3` 最小壳层已落地，并开始把 body/working summaries 折回现有 learnable path
+- CUDA build 路径已可编译运行，但当前 camp-building 训练总耗时尚未证明优于 CPU
 
 ### 2.2 当前大脑结构
 
 当前 `ProtagonistBrain` 本质是：
 
 ```text
-external inputs + memory vector
-    -> hidden layer
+external observations
+ + MemoryCognitionPerception(44 dims)
+ + DNC read vectors
+    -> dense controller trunk
     -> action outputs
-    -> memory candidate/gate update
+    -> DNC interface decode
 ```
 
-当前 `MemoryBank` 是：
+同时它已经不再只是“一个大 dense 块”：
 
 ```text
-std::vector<float> values_;
-update(candidates, write_gates, decay)
+ObservationEncoder
+MemoryQueryEncoder
+BodyStateMemory
+WorkingMemoryBank
+BehaviorFusionTrunk
+MotorCore
+ActionHeads
+InterfaceHead
 ```
 
 优点：
 
-- 简单
-- 可序列化
-- 可进化
-- 已经能产生基础行为链
+- 仍保持旧 genome / DNC / dense GPU 兼容面
+- `BodyStateMemory.summary()` 已折叠回 observation slice
+- `WorkingMemoryBank.summary()` 已折叠回 memory-query slice
+- `WorkingMemoryBank.summary()` 还会继续调制 `motor_target`
+- 因此 body / working memory 已经开始进入现有 learnable path，而不再只是旁路状态对象
 
 不足：
 
-- memory 是一维向量，没有空间地址。
-- memory 没有事件类型。
-- memory 没有同伴 identity。
-- memory 没有目标/计划区。
-- memory 的读写完全隐式，难以分析。
-- memory 容量目前偏小，且没有专门分区。
+- `ProtagonistBrainV3` 目前仍是**结构拆壳优先**，不是完整的新参数面
+- `ProtagonistGenomeV2` 还没做，Manager/Worker 双脑头还没做
+- working/body memory 还不是独立参数化的主路径
+- DNC micro-task 当前只完成了最小验证，不能证明“大脑已经学会系统性用记忆”
 
 ### 2.3 当前奖励结构
 

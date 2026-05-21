@@ -1,5 +1,7 @@
 # AGENTS.md · AI 助手开发导航
 
+> **最后更新**：2026-05-21
+
 > **重要：这份文档是给 AI 助手看的，不是给人看的。**
 > 用户不会读这份文档。如果你是 AI 助手第一次进入这个项目，**请完整读完本文件再开始任何工作**。
 
@@ -14,6 +16,15 @@
 **核心定位**：用 NEAT + CTRNN 等机制实现一个"真实存在于系统的"神经进化数字生态系统
 
 **一句话项目目标**：在连续 2D 浮点世界 + 真实 2.5D 地形上，让一群带可进化神经网络的"生物"通过自然选择演化出趋食、避险、地形适应、原始通信、合作等行为，并提供丰富的可视化与实时干预。
+
+### 当前工作根与项目重心
+
+- **仓库根目录 / 默认工作根**：`D:\claude-code\c++`
+- **当前开发项目**：`routes/protagonist_ecology/`
+- 顶层 `src/ / docs/ / configs/ / tests/` 是这个项目继续使用的**共享底座、配置库、测试区和全仓记录**
+- `routes/protagonist_ecology/` 才是当前所有机制设计、排查、训练/eval、记忆/大脑/世界系统工作的默认落点；其 `brain/ capability/ perception/ runtime/ world/ docx/` 构成当前研发主体
+- 根目录早期 baseline / modules 文档只作为共享底座和历史参考；除非用户明确要求，不要把开发注意力切回那里
+- 因此：**新会话默认先在仓库根目录确认全局状态，再把阅读、排查和修改聚焦到 `routes/protagonist_ecology/`**
 
 ---
 
@@ -78,53 +89,82 @@
 
 ## 2 · 项目当前状态
 
-**最后更新**：2026-05-20
+**最后更新**：2026-05-21
 
 ```
-阶段：🟩 Baseline M0-M5 全部完成 + 12 Modules MVP + protagonist 联合演化训练流水线就绪 + continuous-time 主链已接通 + protagonist memory board 标准 DNC 已接入
-进度：baseline M0 ✅ / M1 ✅⛳⛳ / M2 ⏸ / M3 ✅✅⛳ / M4 ✅✅⛳ / M5 ✅✅⛳
-      modules  12 个 MVP ✅⛳⛳ / F-DISEASE 升级为病原体-宿主军备竞赛 ✅✅ / protagonist memory DNC ✅ / 其余 📋
+阶段：🟩 `routes/protagonist_ecology/` 是当前开发项目；根目录 M0-M5 与 modules 作为共享底座继续服务它
+进度：共享底座 M0-M5 + 12 Modules MVP 已可复用
+      protagonist ecology：共同训练 / checkpoint-resume / trace / continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层 / mixed compute 已接通
+      但按 `WORLD_UNDERSTANDING...` 长蓝图口径：只有 Phase 1 Trace/Resume 完整；Phase 2/3/5/6/7 仍是 partial；Phase 4/8 仍未真正开始
 ```
 
-**已完成**：所有顶层文档 + ADR + baseline 阶段卡 + 全部 module 卡；M0 脚手架；M1 核心系统（固定拓扑 brain、世界层、GA、reward、CSV 记录、headless 代际循环）；M3 核心与收尾（NeatGenome / Speciation / NeatBrain / NeatEvolution / `brain.type = neat` headless 接入 / `evolution.csv` / `species_log.jsonl` / `run_m3_acceptance.py` / 5 seed × 100/200 代验证）；M4 多线程（EvaluationPool 线程池 / PerformanceObserver / 异步决策周期 / 能量系统）；M5 地形（TerrainLayer / HeightField / CaveMask / TerrainPerception / 地形物理 hook）；12 模块 MVP（F-FIGHT / F-PRED / F-DISEASE / F-COMM / F-COOP / F-RESOURCE / F-DAY / F-SEASON / F-NEUROMOD / F-LEARN / F-NOVELTY / F-CURRICULUM）；F-DISEASE 深度升级（PathogenGenome 31 权重 NN / Pathogen 实体 / 抗原漂移 strain-based immunity / 宿主 immunity_gain_rate 可进化 / 跨物种传播 / pathogen evolution metrics）；protagonist route 的 Trace/Resume 基础设施；protagonist standard DNC 记忆主链（`DNCMemory` + `ProtagonistBrain/Genome/Evolution/Runtime` 接入）
+**共享底座已完成**：顶层文档 + ADR + baseline 阶段卡 + module 卡；M0~M5 机制底座；12 个模块 MVP；F-DISEASE 病原体-宿主军备竞赛升级；headless 训练、多线程、真实地形、事件/奖励/观察体系都已就位。这些是 `routes/protagonist_ecology/` 当前项目可复用的基础，不是新的开发重心。
 
-**下一步**：继续 protagonist memory board 第二层：把 `MemoryCognitionPerception`、reward、curriculum 和 trace 改成真正依赖 DNC 检索的训练环境，再回头推进 CT-2/CT-3 的 `chop / build / worksite` 持续进度语义。
+**当前项目真实状态**：
+
+- 共享底座仍在仓库根目录，但**当前主要开发区是 `routes/protagonist_ecology/`**
+- protagonist route 已有：共同训练、checkpoint/resume、continuous-time、标准 DNC、Memory Phase A、DNC micro-task、BrainV3 最小壳层、mixed compute
+- 但不要高估完成度：当前路线是**“少量完整 + 多项 partial”**，不是整张长期蓝图都做完了
+- 最新固定任务 memory ablation 已经能完整跑出结果；`worksite_return` 在 full run 中恢复到 baseline / `no_episodic` / `no_social` 可完成，而 `no_spatial` / `no_goal` 仍为 0，说明最近这轮 logistics fix 已真实生效
+
+**下一步默认优先级**：不要继续盲目堆新底座。优先从 `routes/protagonist_ecology/docx/` 长蓝图里已半落地的方向中真正收口一个 phase，优先候选是：
+
+1. `memory ablation` 的解释与专项验证继续收口
+2. `Memory V2` 的更强证据链
+3. `ContributionLedger / communication semantics`
 
 ---
 
-## 3 · 文档导航（按重要性 + 阅读顺序）
+## 3 · 文档导航与索引（按重要性 + 阅读顺序）
 
-### 🔴 第 1 优先级 · 进入项目必读（每次新会话都要）
+### 先分清两层文档
+
+| 层级 | 位置 | 作用 |
+|---|---|---|
+| **根仓库文档** | `D:\claude-code\c++\...` | 记录全仓规则、共享底座、总进度 |
+| **当前项目 route 文档** | `routes/protagonist_ecology/docx/...` | 记录 protagonist 当前路线的真实状态、长期蓝图与专项计划 |
+
+### 🔴 第 1 优先级 · 新会话默认必读
 
 | 顺序 | 文件 | 作用 | 必读时机 |
 |---|---|---|---|
-| 1 | `AGENTS.md`（本文件） | 你的协作手册 | **每次新会话** |
-| 2 | `PROGRESS.md` | **项目当前进度** —— 知道做到哪了、下一步该做什么 | **每次新会话** |
-| 3 | `docs/ROADMAP.md` | 整体开发路径 + 工作哲学 | **每次新会话** |
-| 4 | `docs/ARCHITECTURE.md` | 架构 + 接口 + 扩展点 | **每次新会话** |
+| 1 | `AGENTS.md`（本文件） | 协作手册 + 当前项目规则 | **每次新会话** |
+| 2 | `PROGRESS.md` | **全仓总进度**；知道共享底座、最近会话和总任务位置 | **每次新会话** |
+| 3 | `routes/protagonist_ecology/docx/PROGRESS.md` | **当前项目 route 进度**；比顶层 PROGRESS 更接近现在真正要做的事 | **每次接 protagonist 线** |
+| 4 | `routes/protagonist_ecology/docx/STATUS.md` | route 级 handoff / 现状校准 / 代码区速查 | **每次接 protagonist 线** |
+| 5 | `docs/ROADMAP.md` | 全仓开发路径、阶段顺序和重构哲学 | **每次新会话** |
+| 6 | `docs/ARCHITECTURE.md` | core / viz / runtime 三层与扩展点边界 | **每次新会话** |
 
-读完这 4 份你就能上手。**最关键的是 PROGRESS.md**，它告诉你前面会话做了什么、停在哪。
+### 🟡 第 2 优先级 · 当前项目 route 专用索引
 
-### 🟡 第 2 优先级 · 开始具体阶段前必读
-
-| 文件 | 作用 | 时机 |
+| 文件 | 这份文档现在最重要的用途 | 什么时候读 |
 |---|---|---|
-| `docs/DESIGN_DECISIONS.md` | ADR 索引 | 设计决策有歧义时 |
-| `docs/adr/0001~0004` | 关键决策 | 涉及对应主题时 |
-| `docs/baseline/M{N}.md` | 当前阶段详细 | **进入该阶段开发前** |
-| `docs/GLOSSARY.md` | 术语表 | 看到不熟悉的术语时 |
+| `routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md` | **当前项目总蓝图**；判断 Phase 完成度的最高口径，别再高估已完成部分 | 判断路线优先级、决定下一阶段前 |
+| `routes/protagonist_ecology/docx/MEMORY_SYSTEM_MASTERPLAN.md` | protagonist 记忆系统总设计；说明为什么 memory 不能只加容量，要和主脑一起扩 | 动 Memory / Brain / DNC / cognition 前 |
+| `routes/protagonist_ecology/docx/MEMORY_PHASE_A_EXECUTION_PLAN.md` | 说明 Memory Phase A 哪些已经接活、哪些仍是 partial | 动 memory ablation / Memory V2 证据链前 |
+| `routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md` | continuous-time 世界设计与 CT-0/1/2/3 语义 | 动 `dt`、持续动作、事件时间语义前 |
+| `routes/protagonist_ecology/docx/COMPUTE_SCALING_GPU_CPU_PLAN.md` | CPU/GPU 路线与 mixed compute 边界 | 动 CUDA / profiling / dense GPU 前 |
+| `routes/protagonist_ecology/docx/MEMORY_ABLATION_SMOKE_RESULT.md` | 早期 ablation smoke 的诚实结论；可看 wiring，但不能把 smoke 反常结果当最终科学结论 | 动 ablation 解释、补长训前 |
+| `routes/protagonist_ecology/docx/FINAL_STATE_VISION.md` | route 最终观感目标 | 需要校准“我们最终想看到什么”时 |
+| `routes/protagonist_ecology/docx/MODULE_DEVELOPMENT_PLAN.md` | protagonist route 自己的模块推进图 | 做 route 内新增机制前 |
 
 ### 🟢 第 3 优先级 · 按需查阅
 
 | 文件 | 作用 |
 |---|---|
+| `docs/DESIGN_DECISIONS.md` | ADR 索引 |
+| `docs/adr/0001~0006*.md` | 关键决策 |
+| `docs/baseline/M{N}_*.md` | baseline 某阶段细节 |
 | `docs/modules/README.md` | 模块库索引 |
-| `docs/modules/F-{XXX}.md` | 具体模块卡（基线完成后才读） |
+| `docs/modules/F-{XXX}_*.md` | 具体模块卡 |
+| `docs/GLOSSARY.md` | 术语表 |
+| `docs/experience_log.md` | 调参、构建链、失败/成功经验 |
 | `README.md` | 项目对外介绍（**给用户看的**，AI 不重要） |
 
 ### 不要读
 
-- 用户不会创建任何文档供你读。所有上下文都在上面三档里。
+- 不要忽略 `routes/protagonist_ecology/docx/` 里的 route 文档，然后只看顶层文档就开始写代码
+- 用户不会额外维护一套你没见过的文档体系；**核心上下文就集中在上面的根仓库文档 + 当前项目 route 文档**
 
 ---
 
@@ -134,13 +174,14 @@
 
 ```
 1. 读 AGENTS.md（本文件）
-2. 读 PROGRESS.md ★★★ —— 立刻知道当前在哪、上次会话停在哪、下一步做什么
-3. 读 docs/ROADMAP.md（理解整体节奏）
-4. 读 docs/ARCHITECTURE.md（保持架构清晰）
-5. 检查 git log 和 git tag（验证 PROGRESS.md 与实际进度一致）
-6. 读当前阶段的文档：docs/baseline/M{N}.md（阶段开发时）或对应 module 卡（模块开发时）
-7. 读 docs/experience_log.md（如存在）—— 上次会话的调参经验
-8. 询问用户："上次我们停在 XXX（来自 PROGRESS.md），现在继续从这里？还是有新想法？"
+2. 读顶层 PROGRESS.md ★★★ —— 先确认全仓总进度
+3. 读 `routes/protagonist_ecology/docx/PROGRESS.md` ★★★ —— 当前项目真正停在哪
+4. 读 `routes/protagonist_ecology/docx/STATUS.md` —— 校准 route 真实完成度与 handoff
+5. 读 docs/ROADMAP.md（理解整体节奏）
+6. 读 docs/ARCHITECTURE.md（保持架构清晰）
+7. 检查 git status / git log / git tag（验证文档与实际代码一致）
+8. 按当前任务补读 route 专项文档：memory / CT / compute / ablation
+9. 再开始动手；默认当前项目就是 `routes/protagonist_ecology/`
 ```
 
 ### 每次会话结束前必做
@@ -148,9 +189,11 @@
 ```
 1. 在 PROGRESS.md 把本次完成的任务打勾 [x]
 2. 更新 PROGRESS.md 顶部的"最后更新"日期、"最近会话摘要"、"下一步建议"
-3. 在 PROGRESS.md "会话历史"表追加一行
-4. 如果完成阶段验收，写 git tag
-5. 如果踩到坑或调参有经验，写入 docs/experience_log.md（首次需创建）
+3. 如果本次主要工作发生在 `routes/protagonist_ecology/`，同步更新 `routes/protagonist_ecology/docx/PROGRESS.md`
+4. 如果 route 的真实完成度口径有变化，同步更新 `routes/protagonist_ecology/docx/STATUS.md` 或对应专项文档
+5. 在 PROGRESS.md "会话历史"表追加一行
+6. 如果完成阶段验收，写 git tag
+7. 如果踩到坑或调参有经验，写入 docs/experience_log.md（首次需创建）
 ```
 
 ### 进入新的 baseline 阶段前
@@ -202,6 +245,8 @@
 ### 必须做
 
 - ✅ 每次新会话先读这份文档 + ROADMAP + ARCHITECTURE
+- ✅ 默认把 `routes/protagonist_ecology/` 当作当前开发项目；除非用户明确要求，不要把注意力转回根目录早期阶段任务
+- ✅ 同时维护两层视角：顶层 `PROGRESS.md` 看共享底座和全仓记录，route `docx/PROGRESS.md + STATUS.md` 看当前项目
 - ✅ 代码用英文，文档用中文
 - ✅ UI 字符串走 i18n，**绝不硬编码**（详见 ADR-0003）
 - ✅ 严守 core / viz / runtime 三层分离（详见 ARCHITECTURE）
@@ -237,7 +282,12 @@
 
 ### 进度表（最重要）
 
-`docs/ROADMAP.md` 第 8 节"进度追踪"。
+分两层看：
+
+1. **全仓总进度**：`PROGRESS.md`
+2. **当前项目 route 进度**：`routes/protagonist_ecology/docx/PROGRESS.md`
+
+`docs/ROADMAP.md` 第 8 节是 baseline / 全仓阶段进度表。
 状态符号约定：⬜ / ✅⛳⛳ MVP / ✅✅⛳ 完整 / ✅✅✅ 完美 / ⚠️ 降级。
 
 ### 完成标记
@@ -252,6 +302,11 @@ git tag                 # 列出所有完成 tag
 ### 决策历史
 
 `docs/adr/` 目录，按编号递增。
+
+### 当前项目真实状态与交接
+
+- `routes/protagonist_ecology/docx/STATUS.md`
+- `routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
 
 ### 调参与实验经验
 
@@ -275,6 +330,10 @@ git tag                 # 列出所有完成 tag
 6. **F-FORK 完整快照**要包含 EventBus 状态和 RNG 状态，否则不能完美恢复
 7. **每个 NEAT 物种 ID 永远递增不复用**，否则物种树会画错
 8. **Compatibility 阈值默认调到产生 3-10 个物种**，不是数字越大越好
+9. **当前项目的真实口径**：`routes/protagonist_ecology/` 只有 Phase 1 Trace/Resume 真正完整；不要把其余 partial 写成“已经做完”
+10. **CUDA build 可运行 ≠ GPU 已经带来训练提速**；当前最多只能说 GPU 路径接通
+11. **正式长训 / overnight / 大规模 ablation 仍然是用户决策权**，不要自己悄悄开正式训练
+12. **当前固定任务 memory ablation 已经能跑通并验证 worksite fix**，后续重点应转向解释和收口，而不是再重复证明“入口能不能跑”
 
 ---
 

@@ -2,7 +2,7 @@
 
 > 位置：`routes/protagonist_ecology/docx/MEMORY_SYSTEM_MASTERPLAN.md`
 >
-> 范围：只服务 `routes/protagonist_ecology/` 这条主线。
+> 范围：只服务 `routes/protagonist_ecology/` 这个当前项目。
 >
 > 目标：把当前零散的 Memory V2 脚手架，升级成一套**完整、系统、可训练、可分析、可扩展**的主角记忆系统，让主角不再只是“看到刺激就反应”，而是真正能在脑中维持对世界、事件、同伴、目标与因果链的持续表征。
 
@@ -76,12 +76,12 @@ external observations + working memory vector
 | 组件 | 当前状态 | 主要问题 |
 |---|---|---|
 | `MemoryBank` | 真闭环 | 只是无结构向量短期记忆 |
-| `SpatialMemoryBank` | 部分接线 | 只有 coarse global map；写入通道不完整；语义有混槽 |
-| `EpisodicMemoryBank` | 写入存在 | 基本还是 write-only，没有真正进入决策闭环 |
-| `SocialMemoryBank` | sighting 可写 | cooperation / hostility / communication 分数几乎未接通训练逻辑，也未读回 brain |
-| `GoalMemory` | 类型定义完整 | `setGoal()` 当前没有真正形成闭环，目标大多停在默认状态 |
-| `MemoryCognitionPerception` | 已存在 | 只有 12 维，信息量严重不够 |
-| `ProtagonistBrain` | 已有记忆门控 | 记忆区与行为控制主干没有同步系统扩容 |
+| `SpatialMemoryBank` | 已接入真实闭环 | 9 个语义槽已拆开，runtime 主要对象类型都在写；但仍缺更深任务化使用 |
+| `EpisodicMemoryBank` | 已进入基础决策闭环 | 结构化事件已写入且能经 `MemoryCognitionPerception` 读回，但 query 深度还浅 |
+| `SocialMemoryBank` | 已进入基础决策闭环 | cooperation / communication / hostility 已有真实写入与 readback，但还没有通信语义任务和专门指标 |
+| `GoalMemory` | 已有最小闭环 | runtime 里的 rule-based 选择逻辑会持续刷新 goal，但还不是层级 Goal System |
+| `MemoryCognitionPerception` | 已存在且已扩维 | 当前是 44 维，已能承载 Spatial / Episodic / Social / Goal / DNC 摘要 |
+| `ProtagonistBrain` | 已开始结构化扩容 | `BrainV3` 最小壳层已落地，但参数面仍兼容旧 genome，不是完整新脑结构 |
 
 ### 1.3 当前代码中的具体缺口
 
@@ -103,45 +103,58 @@ external observations + working memory vector
 - 不知道哪些槽存水源，哪些槽存风险，哪些槽存近期动作上下文
 - 更像“可进化 latent scratchpad”，而不是可解释记忆系统
 
-#### 1.3.2 Spatial memory 只接了一半，而且当前写入有语义混槽
+#### 1.3.2 Spatial memory 不再混槽，但还没有被用到足够深
 
 当前 `SpatialMemoryBank` 已有：
 
 - 32 x 32 global grid
-- `water_seen / food_seen / tree_seen / object_seen / danger_seen / base_seen / last_visit_age`
+- `water_seen / food_seen / tree_seen / stone_seen / stick_seen / danger_seen / base_seen / fire_seen / worksite_seen / last_visit_age`
 - 最近目标查询函数
 
-但当前 runtime 真正写入的主要只有：
+当前 runtime 已稳定写入的主要有：
 
 - 水源
+- 树
 - 基地
-- 工地/篝火却被写到了 `base_seen`
+- 篝火
+- 工地
+- 石头 / 木棍物体
 - 资源
-- 物体
+- 危险个体
 
-所以现在存在两个问题：
+所以现在比旧版状态更进一步：
 
-- **写入通道不完整**：很多字段定义了但没有系统写入
-- **语义混槽**：`campfire / worksite / base` 目前混进同一个“基地样”槽位，后面一定会妨碍行为分化
+- **语义混槽问题已经解决**：`campfire / worksite / base` 已分开写
+- 但 **任务化使用仍不足**：当前更多是“可查询记忆”，还不是稳定驱动复杂地点策略的核心
 
-#### 1.3.3 Episodic memory 基本还是 write-only
+#### 1.3.3 Episodic memory 已经不是纯 write-only，但还远不够强
 
 当前 episodic 主要记录：
 
 - `ate_food`
 - `attacked_enemy`
 - `killed_prey`
+- `chopped_tree`
+- `built_worksite`
+- `deposited_stick / deposited_stone`
+- `signal_emitted`
+- `drank_water`
+- `saw_predator`
 
-但现在没有真正把：
+而且现在已经能把：
 
 - `topSalient()`
 - `recentOfType()`
 
-返回给主角脑作为决策输入。
+通过 `MemoryCognitionPerception` 返回给主角脑作为**基础读回输入**。
 
-也就是说现在 episodic 更像“脑内日志”，不是“能被利用的事件记忆”。
+但它仍然存在明显限制：
 
-#### 1.3.4 Social memory 还是初级脚手架
+- 读回维度仍然很克制
+- query 还没有专门围绕“建造链 / 信号链 / 因果链”设计
+- 现在只能说“episodic 已进入基础决策闭环”，还不能说“已经形成强事件记忆策略”
+
+#### 1.3.4 Social memory 已接活，但还没有进入“语义通信阶段”
 
 当前 social memory 已有：
 
@@ -152,59 +165,66 @@ external observations + working memory vector
 - `mostCooperative()`
 - `mostHostile()`
 
-但现实状态是：
+但现实状态已经比旧版更进一步：
 
-- 真正稳定在写的是 `recordSighting()`
-- cooperation / communication / hostility 还没和 route 的实际事件链全面接通
-- query 结果没有进入决策主干
+- `recordSighting()`、`rewardCooperation()`、`rewardCommunication()`、`recordHostility()` 都有真实事件链写入
+- `MemoryCognitionPerception` 会把“最佳盟友 / 最近捕食者 / cooperation / communication / hostility”摘要读回 brain
+- `TraceRecorder` 也已经能看到 social score 的非零轨迹
 
-所以现在 social memory 还不能支撑：
+它现在能开始支撑：
 
-- 信任某个同伴
-- 远离某个高风险敌人
-- 记住谁常响应信号
-- 记住谁一起建造/围猎更靠谱
+- 记住谁更像盟友
+- 记住最近高风险敌人
+- 让 cooperation / communication / hostility 分数进入决策输入
 
-#### 1.3.5 Goal memory 目前基本是“假闭环”
+但它仍然**不能**支撑完整的通信语义研究，因为：
+
+- 还没有 scout-worker / danger-warning / build-request 这类专门任务
+- 还没有互信息 / ablation / listener shift 这类指标
+
+#### 1.3.5 Goal memory 已经不是“假闭环”，但还只是前层规则系统
 
 `GoalMemory` 类型和枚举本身设计得不差，但现在有一个硬事实：
 
-- `setGoal()` 没有真正成为训练中的主循环逻辑
-- `MemoryCognitionPerception` 却已经把 goal 输出给 brain
+- runtime 中已经有一套 rule-based goal refresh 逻辑
+- 它当前稳定会在 `Flee / FindWater / BuildWorksite / GatherStick / GatherStone / RespondSignal / RestNearFire / FindFood / Explore` 之间切换
+- 代码里已经放了 `EmitSignal` 分支，但由于当前 `predator_nearby` 会先被 `Flee` 分支截走，`EmitSignal` 还不能算稳定可达的现行 goal
+- `MemoryCognitionPerception` 已把当前 goal / commitment / elapsed / progress 输出给 brain
 
-结果就是：
+所以现在不能再说它“基本无效”，更准确的说法是：
 
-- goal 看起来存在
-- 但大部分时间没有真正承担“低频持续目标”角色
-- 当前输出很可能只是默认 `Explore` 的弱信号
+- 它已经承担了一个**低频、规则驱动的目标层**
+- 但这还不是长期计划式的 Manager/Worker 双脑头
+- 也还没有 goal progress metrics 与 long-chain eval
 
-#### 1.3.6 当前主角脑已经不小，但扩容是局部的，不是系统的
+#### 1.3.6 当前主角脑已经不小，但扩容仍是“兼容面优先”
 
-在当前 smoke 配置里：
+在当前 camp-building 主训练配置里：
 
-- sensory dim = 96
+- sensory dim = 128
 - hidden dim = 512
 - memory cells = 48
 - action dim = 13
-- protagonist controller 参数量约在 `130k` 量级
+- protagonist controller 参数量约在 `355k` 量级
 
 这说明：
 
 - 主角脑已经不是小玩具
-- 但它目前的增长仍主要体现在 dense trunk，而不是“整套 cognition architecture 升级”
+- 但它当前的升级策略仍然是：**先结构拆壳、再考虑参数面扩容**
+- 也就是说，`BrainV3` 现在是代码结构语言已经出现，但 `GenomeV2 / Manager-Worker / world-model latent` 这些还没真正落地
 
 ### 1.4 当前并行模式对算力利用也不够满
 
-当前 `EvaluationPool` 在 protagonist route 中主要是：
+当前 protagonist route 的并行不再只是旧版的 episode 级：
 
-- **按 episode 并行**
-- 一个 episode = 一个整世界任务
-- 常见 `episodes_per_generation = 2~3`
+- 外层仍有 **按 episode 并行** 的 `EvaluationPool`
+- 内层已经新增 **per-world agent decision threads**
+- `compute.agent_decision_threads` 会和外层 episode 并行联动调度
 
-这意味着在 16C/32T 机器上：
+这意味着现在的真实判断应当是：
 
-- 很多时候实际上只跑了 2~3 个并行任务
-- CPU 远没有真正吃满
+- CPU 并行基础设施已经明显比“只跑 2~3 个 episode”更深一步
+- 但它是否**真的把机器吃满**，还需要 profile，而不能只凭架构推断
 
 这件事很重要，因为它意味着：
 
@@ -275,7 +295,7 @@ external observations + working memory vector
 
 而不是在 `runtime` 某一大段循环里临时 if/else 塞写入。
 
-### 2.6 必须兼容 continuous-time 主线
+### 2.6 必须兼容 continuous-time 项目底座
 
 后续所有记忆：
 
@@ -910,10 +930,11 @@ ObservationEncoder
 ### 5.3.1 当前档
 
 ```text
-sensory_dim ≈ 96
+sensory_dim ≈ 128
 hidden_dim = 512
 memory_cells = 48
-params ≈ 130k
+read_heads = 4
+params ≈ 355k
 ```
 
 ### 5.3.2 第一阶段：记忆闭环版
@@ -1269,7 +1290,7 @@ passerby_reward_ratio
 
 ## 10.3 CPU 并行必须同时升级
 
-当前 route 只是 episode 级并行，远远吃不满 16C/32T。
+当前 route 已不再只是 episode 级并行：外层有 episode/world 副本并行，内层已有 agent decision threads；但是否真正吃满 16C/32T，仍要看 profiling 与具体配置。
 
 后续应规划：
 

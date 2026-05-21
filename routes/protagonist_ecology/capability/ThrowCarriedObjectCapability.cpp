@@ -12,6 +12,30 @@
 
 namespace neuro::routes::protagonist {
 
+namespace {
+
+bool shouldHoldStoneForLogistics(const Agent& agent, const MovableObject& object) {
+    if (object.type != ObjectType::Stone) {
+        return false;
+    }
+
+    const auto* brain = dynamic_cast<const ProtagonistBrain*>(&agent.brain());
+    if (brain == nullptr) {
+        return false;
+    }
+
+    switch (brain->goalMemory().currentGoal()) {
+        case GoalType::GatherStick:
+        case GoalType::GatherStone:
+        case GoalType::BuildWorksite:
+            return true;
+        default:
+            return false;
+    }
+}
+
+}  // namespace
+
 ThrowCarriedObjectCapability::ThrowCarriedObjectCapability(float throw_speed,
                                                            float throw_radius,
                                                            float stone_damage,
@@ -43,6 +67,9 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
     auto* carried = objects->findById(concrete->carriedObject());
     if (carried == nullptr) {
         concrete->setCarriedObject(0);
+        return;
+    }
+    if (shouldHoldStoneForLogistics(*concrete, *carried)) {
         return;
     }
     if (carried->type != ObjectType::Stone && carried->type != ObjectType::Spear) {

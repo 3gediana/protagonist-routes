@@ -1,6 +1,6 @@
 # Protagonist Ecology · 路线进度追踪
 
-> 这份文档只记录 `routes/protagonist_ecology/` 并行路线自己的问题、解决记录和下一步。
+> 这份文档只记录 `routes/protagonist_ecology/` 这个当前项目自己的问题、解决记录和下一步。
 >
 > 顶层 `PROGRESS.md` 继续记录整个仓库总进度；这里记录主角生态路线的长期研究工程推进。
 
@@ -11,15 +11,15 @@
 | 项 | 值 |
 |---|---|
 | 最后更新 | 2026-05-21 |
-| 当前阶段 | Phase 1 Trace/Resume + CT-1/CT-2A 完成 + **Stage 0 结构化动作事件完成** + **Stage 1 Memory Phase A 完成（含 ablation 基础设施验收）** + mixed compute 第一轮工程化 |
-| 当前主线 | Stage 2 · P3 因果奖励 / 合作信用（EventLineageTracker + ContributionLedger）。Stage 0 已经把 `WorksiteLayer.per_agent_contribution_seconds` + BuildCompleted contributors 做到位，数据源就绪，下一步是把这套数据真正接到 reward 路由 |
-| 最新用户新增问题 | 用户已明确：记忆系统不能单独做成“大头娃娃”，必须和主行为控制脑同步扩容；优先先把主角记忆系统设计完整、系统化，让 agent 真能记住世界、事件、同伴、目标与因果链，再规划 protagonist 参数上 GPU，同时把 CPU 并行利用率吃满 |
+| 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；底座侧已接通 continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层 / mixed compute，**但这些不等于长蓝图已经完成** |
+| 当前项目优先级 | 当前优先级已从“先同步过时文档”推进到“基于 fixed-task memory ablation full run 结果继续收口 partial phase”：最近这轮 worksite logistics fix 已被 full run 证实有效，现阶段最重要的不是继续堆 `BrainV3` 壳层，而是顺着结果继续解释剩余分离不够干净的任务，并从 `Memory V2 / ContributionLedger / communication semantics` 中真正收口一条线 |
+| 最新用户新增问题 | 用户当前需要一份**能直接打开的单页 HTML 指标说明**：按模块把真实输出指标、字段含义、判读方式与常见误区讲清楚，尤其要解释记忆 / DNC / memory ablation 相关字段，并避免把事件计数、结果状态和代理指标混成一类。 |
 
 ---
 
 ## 已完成
 
-### 1. protagonist 并行路线最终愿景
+### 1. protagonist 当前项目最终愿景
 
 - 已写：`FINAL_STATE_VISION.md`
 - 目标：原始聚落沙盒世界，不是随机点生态箱。
@@ -28,7 +28,7 @@
 ### 2. protagonist 模块发展计划
 
 - 已写：`MODULE_DEVELOPMENT_PLAN.md`
-- 目标：把主角路线当成同仓库内独立项目推进。
+- 目标：围绕当前项目按模块化方式推进。
 
 ### 3. 世界理解与复杂行为长期研究工程方案
 
@@ -61,10 +61,11 @@
 - 已写：`MEMORY_PHASE_A_EXECUTION_PLAN.md`
 - 已完成对当前 protagonist Memory V2 的实况审计：
   - `MemoryBank` 是真闭环，但仍是无结构短期记忆
-  - `SpatialMemoryBank` 只有部分写入，且存在 `base / fire / worksite` 混槽
-  - `EpisodicMemoryBank` / `SocialMemoryBank` 当前仍偏 write-only
-  - `GoalMemory` 类型齐全，但缺真正的 goal selection/update 闭环
-  - `MemoryCognitionPerception` 当前只有 12 维，信息量明显不足
+  - `SpatialMemoryBank` 已拆成 `water / food / tree / stone / stick / danger / base / fire / worksite` 9 个独立语义槽，runtime 写入已覆盖这些主要对象类型
+  - `EpisodicMemoryBank` 已接入结构化 `chopped_tree / built_worksite / deposited_* / signal_emitted / drank_water / saw_predator` 等事件，并通过 `MemoryCognitionPerception` 做基础 readback；但 query 深度仍浅
+  - `SocialMemoryBank` 已不只是 sighting：cooperation / communication / hostility 已有真实写入与 readback，但还没有通信语义任务与专门指标
+  - `GoalMemory` 已由 runtime 里的 rule-based 选择逻辑持续刷新，不再长期停在默认 `Explore`；但还不是 Manager/Worker 层级系统
+  - `MemoryCognitionPerception` 已扩到 44 维，并纳入 DNC 摘要
 - 已形成路线级结论：
   - 不能只把 memory 做大，主行为控制脑也必须同步变大
   - 先把现有 Memory V2 真接活，再做 `ProtagonistBrainV3`
@@ -203,7 +204,65 @@
 - 已给 `ProtagonistBrain` 接入可选 `ProtagonistDenseGpu` backend，并在 CMake 中加入可选 CUDA `.cu` 编译路径
 - 已修正 route runtime 的 protagonist brain probe 输入维度统计，统一复用 `protagonistSensoryDim()`，避免参数量低报
 - 已完成 `neural-eco-protagonist` / `neural-eco` Release 重编与 `protagonist_ecology_bootstrap.toml` 非训练 preview 验证
-- 当前环境结论：本机 `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8` / `v12.4` 目录仅有 `extras/`，`where.exe nvcc` 为空；GPU backend 代码已落地，但当前 build 仍未真正激活 CUDA 路径
+- 当前环境结论（已按最新基准重标定）：
+  - 普通 `build/` 仍是 CPU fallback，`CMAKE_CUDA_COMPILER=NOTFOUND`
+  - `build_cuda/` 由 `D:\NVIDIA\CUDA\v12.8\bin\nvcc.exe` 构建，可执行文件在补上 CUDA bin 到 PATH 后可运行
+  - 但 camp-building 1 generation 基准里，当前 CUDA build **没有带来训练总耗时优势**，所以现阶段只能说“CUDA build 路径可运行”，不能说“GPU 已经显著加速训练”
+
+### 10. fixed-task memory ablation runtime 已修好并完成 full run（2026-05-21）
+
+- 已确认当前 fixed-task memory ablation 不再只是“入口可运行”，而是已经完成：
+  - 真实 genome/checkpoint 加载
+  - 1-episode traceprobe
+  - 4-episode fixed run
+- 第一次 traceprobe 发现：
+  - `water_return` 已修好
+  - `worksite_return` 仍为 0
+- 根因不是 `WorksiteLayer` 本体坏掉，而是：
+  - `GoalActionAssistCapability` 帮 agent 直接 pickup stick/stone
+  - 旧 `DropCapability` 还能在同 tick 把刚拿到的材料立刻丢掉
+  - `ThrowCarriedObjectCapability` 也会打断 stone logistics
+  - `WorksiteReturn` 任务还允许 nursery logistics 干扰材料流向
+- 已落地修法：
+  - `GoalActionAssistCapability` 在 `GatherStick / GatherStone / BuildWorksite` 下携带材料时优先回 remembered worksite，没有 worksite 再退回 remembered base
+  - 新增 `GoalAwareDropCapability`，在 logistics/build goal 下不让普通 drop 路径把 stick/stone 立刻放掉
+  - `ThrowCarriedObjectCapability` 在 logistics/build goal 下抑制 stone throw
+  - `MemoryAblationEval.cpp` 为 `WorksiteReturn` 关闭 `nursery.enabled`
+- 已完成 focused 回归测试、重新编译、traceprobe 与 full run 验证
+- 4-episode full run 关键结果（`data/runs/protagonist_memory_ablation_fixed/20260521-212657`）：
+  - `water_return`：baseline / `no_episodic` / `no_social` = `162`，`no_spatial` = `67.5`，`no_goal` = `0`
+  - `worksite_return`：baseline / `no_episodic` / `no_social` = `0.5`，`no_spatial` / `no_goal` = `0`
+  - `signal_response`：baseline = `15.5`，`no_goal` = `0`，其余变体仍有 `12.25~13`
+  - `danger_avoidance`：`no_episodic` 明显变差（`survived 8 -> 6.25`）
+- 当前判断：
+  - recent worksite bug 已真实修好
+  - `no_goal` 仍是最稳定的强 ablation
+  - `no_spatial` 在 `worksite_return` 上很干净，但在 `water_return` / `signal_response` 上还不够强
+  - 后续重点应转向解释与任务 tightening，而不是再证明入口能不能跑
+
+### 11. 指标说明单页已补齐（2026-05-21）
+
+- 已逐个核对当前真实存在的指标输出与口径：
+  - `fitness.csv`
+  - `evolution.csv`
+  - `protagonist_behaviors.csv`
+  - `memory_ablation_results.csv`
+  - `module_metrics.csv`
+  - `advanced_stats.csv`
+  - `emergence_audit.csv`
+  - `comprehensive/*.csv`
+- 已新增可直接双击打开的单页说明：`METRICS_FIELD_GUIDE.html`
+- 页面内容已按模块整理：
+  - 训练主指标
+  - 主角行为指标
+  - 记忆 / DNC / Ablation
+  - 生态模块指标
+  - 研究型统计
+  - 关键参数与实战判读模板
+- 这次特别澄清了几类最容易误读的字段：
+  - `signal_emits` vs `signal_emit_events_avg`
+  - `completed_worksites` vs `worksite_completion_events`
+  - DNC 摘要字段“只能辅助解释，不等于记忆已有效帮助任务”
 
 ---
 
@@ -217,7 +276,7 @@
 - 已重新跑通 protagonist smoke
 - 当前决策已更新：先不直接跳到完整 `ProtagonistBrainV3`，而是按 `MEMORY_PHASE_A_EXECUTION_PLAN.md` 先把现有 Memory V2 接活，再向更大脑结构推进
 
-### Phase CT · 连续时间世界底座（当前主线）
+### Phase CT · 连续时间世界底座（当前项目重点）
 
 当前准备按 `CONTINUOUS_TIME_WORLD_DESIGN.md` 推进：
 
@@ -228,6 +287,81 @@
   - 已完成：`EatCapability + ResourceLayer` 改为按 `eat_rate_per_second * dt` 的部分消耗/持续摄食
   - 已完成：`SurvivalStatusLayer / InterventionDirectorLayer` 残留 `per_tick` 口径切到 `per_second`，并保留 legacy 配置兼容读取
   - 待继续：`chop / build / worksite credit / event queue` 的更强连续化表达
+
+### Phase B · DNC-forcing micro-task（已完成最小验证，2026-05-21）
+
+- 已新增 route-local `MemoryTrialLayer`：episode 开头短暂给出 one-hot cue，随后把 protagonist 送到 choice hub，必须记住 cue 才能在 left/right 两个对称 target 中选对并拿到 fitness bonus
+- 已新增 `MemoryTrialPerception`：只在 cue phase 暴露 2 维提示，不复用 `SignalLayer`，避免 agent 自己发信号把任务污染
+- 已新增训练配置：`configs/protagonist_ecology_train_dnc_cue_choice.toml`
+- 已新增最小单测：`tests/route_protagonist/test_memory_trial_layer.cpp`
+- 已补 route config 回归测试：`tests/route_protagonist/test_protagonist_ecology_config.cpp`
+- 当前刻意保持：`memory_cognition_enabled = false`、background = 0、其它生态层基本关闭，先把任务收敛成“DNC 记住瞬时 cue → 延迟选边”的纯记忆基准
+- 已完成最小验证：Release 下 `test_core` / `neural-eco-protagonist` 重编通过；`MemoryTrialLayer.*` 3 个单测通过；短 smoke（2 代 × 1 episode）可运行并产出 `fitness.csv / evolution.csv`
+- 验证中顺手修复一处真实接线 bug：`ProtagonistEcologyConfig::fromConfig()` 之前漏读 `world.signal.*`，导致 `world.signal.enabled = false` 不生效、micro-task 配置会在 runtime 里触发 `action_dim` mismatch；现已补 parser 并加回归测试
+- 当前结果：短 smoke 的 `best_fitness = 24`、`min_fitness = -6`，与 `MemoryTrialLayer` 的 success/failure reward 对上，说明任务 reward 路径已真正接通；但这还不是“DNC 已学会任务”的结论
+- 尚未做：trace 指标专项解读，以及更长训练/ablation 去确认 DNC 是否真的在被用
+
+### Phase B+ · `ProtagonistBrainV3` 最小壳层（进行中，2026-05-21）
+
+当前约束已经明确：`total_input_dim_`、现有 6 组参数 buffer、`ProtagonistDenseGpu` 的矩阵布局、`ProtagonistEvolution` 的显式 crossover/mutate 接线，暂时都属于 **load-bearing compatibility surface**，所以这一步先做**结构拆壳**，不做 `GenomeV2/V3` 升级。
+
+**已落地**：
+
+- 新增 `brain/ProtagonistBrainV3Components.h` / `brain/ProtagonistBrainV3Components.cpp`
+- `ProtagonistBrain` 现在开始持有并经由这些组件组织前向：
+  - `ObservationEncoder`
+  - `MemoryQueryEncoder`
+  - `BodyStateMemory`
+  - `WorkingMemoryBank`
+  - `BehaviorFusionTrunk`
+  - `MotorCore`
+  - `ActionHeads`
+  - `InterfaceHead`
+- `forward()` / `reset()` 已切到新壳层组件，但仍复用：
+  - 原 `total_input_dim_ = external_input + dnc_read_vectors`
+  - 原 6 组权重 / bias buffer
+  - 原 DNC `decodeInterface()` 路径
+  - 原 optional dense GPU fallback 路径
+- 已开始把壳层记忆折叠回现有 learnable path：
+  - `BodyStateMemory.summary()` 现在会加到 observation slice
+  - `WorkingMemoryBank.summary()` 现在会加到 memory-query slice
+  - 因此两者已经能通过原 `in_hidden_weights_` 影响 controller 前向，而不需要先升级 genome buffer
+- 已继续把 working memory 往下游 action path 再接一层：
+  - `WorkingMemoryBank.summary()` 现在还会调制 `motor_target`
+  - 因此 working memory 不只影响 trunk input，也会继续影响 `MotorCore -> ActionHeads / InterfaceHead`
+- `routes/protagonist_ecology/CMakeLists.txt` 已把 `ProtagonistBrainV3Components.cpp` 接入 route 库
+- 已补最小壳层测试：`tests/route_protagonist/test_protagonist_brain_v3_shell.cpp`
+  - 只验证 `forward()` 能产出动作，并且 `WorkingMemoryBank / BodyStateMemory` 壳层对象存在
+  - 不对学习效果或行为结论做任何判断
+- 已补 learnable path 护栏测试：
+  - `ProtagonistBrain.FeedsBodyAndWorkingMemoryIntoLearnablePath`
+  - 用同 seed 的两份 brain 对照，只预热 body/working memory，要求动作输出发生变化
+  - `ProtagonistBrain.FeedsWorkingMemoryIntoLearnablePath`
+  - 只预热 working memory，要求动作输出也发生变化
+
+**当前状态**：
+
+- 这批 BrainV3 改动已完成**最小 build/test 验证**：
+  - Release 下 `test_core` / `neural-eco-protagonist` 重编通过
+  - `ProtagonistBrain.ExposesMinimalBrainV3ShellState` 通过
+  - `ProtagonistBrain.FeedsBodyAndWorkingMemoryIntoLearnablePath` 通过
+  - `ProtagonistBrain.FeedsWorkingMemoryIntoLearnablePath` 通过
+  - `MemoryTrialLayer.*` 与 `ProtagonistEcologyConfig.ParsesSignalSection` 关键回归保持通过
+- 此外已补一轮 **DNC cue-choice 短 smoke**：
+  - 使用裁短后的 `protagonist_ecology_train_dnc_cue_choice_brainv3_smoke.toml`
+  - 从 repo 根启动，产物落在 `data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-110925`
+  - `fitness.csv` 继续得到 `best_fitness = 24`、`min_fitness = -6`
+  - `protagonist_behaviors.csv` 中 DNC 指标继续非零
+- 在接入 learnable path 后又补跑一轮同配置短 smoke：
+  - 产物：`data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-111856`
+  - `Gen 1` 再次出现 `best_fitness = 24`
+  - `fitness.csv` 这次为 `gen0=-6, gen1 best=24`，说明短 smoke 仍通，但 route 当前并非严格逐 run 确定性
+- 在继续把 working memory 接到 `motor_target` 之后，又重跑一轮同配置短 smoke：
+  - 产物：`data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-113010`
+  - 结果仍是 `gen0=-6, gen1 best=24`
+  - 说明更深一层的兼容接线没有把任务链跑崩
+- 现阶段 `BodyStateMemory / WorkingMemoryBank` 虽已进入现有 learnable path，但仍不是独立参数化的新主路径
+- 当前可以认为“结构拆壳成立”，但还**不能**认为 `BrainV3` 已完成更深层行为升级
 
 ---
 
@@ -250,27 +384,27 @@
 
 - [x] 记忆系统总设计文档：`MEMORY_SYSTEM_MASTERPLAN.md`
 - [x] Memory Phase A 接线计划：`MEMORY_PHASE_A_EXECUTION_PLAN.md`
-- [ ] WorkingMemoryBank
+- [~] WorkingMemoryBank（BrainV3 壳层与最小验证已完成，且已通过输入折叠方式进入现有 learnable path；仍未独立参数化）
 - [x] SpatialMemoryBank
 - [x] EpisodicMemoryBank
 - [x] SocialMemoryBank
 - [x] GoalMemory
 - [x] MemoryCognitionPerception
 - [ ] ProtagonistGenomeV2
-- [ ] Spatial 语义拆槽与写入补全
-- [ ] MemoryCognitionPerception 扩维到 Phase A 版本
-- [ ] GoalManager 最小闭环
-- [ ] episodic/social query 真接回 brain
-- [ ] memory ablation eval
+- [x] Spatial 语义拆槽与写入补全
+- [x] MemoryCognitionPerception 扩维到 Phase A 版本
+- [x] GoalMemory 最小闭环（runtime rule-based goal refresh）
+- [~] episodic/social query 真接回 brain（已通过 `MemoryCognitionPerception` 做基础 readback，但 query 深度和专项任务仍弱）
+- [~] memory ablation eval（smoke harness、fixed-task C++ runtime、1-episode traceprobe 与 4-episode full run 都已完成，并确认 recent `worksite_return` fix 生效；当前剩余的是更强解释、trace 证据与任务分离收口）
 
 ### P3 · 因果奖励与合作信用
 
 - [ ] EventLineageTracker
-- [ ] ContributionLedger
-- [ ] worksite credit 重构
-- [ ] hunt credit 重构
+- [~] ContributionLedger（worksite/hunt 两条已落地，signal credit 与 lineage 仍缺）
+- [x] worksite credit 重构
+- [x] hunt credit 重构
 - [ ] signal credit 重构
-- [ ] 路过者不吃分验证
+- [x] 路过者不吃分验证
 
 ### P4 · 通信语义
 
@@ -282,15 +416,15 @@
 
 ### P5 · 开放式训练
 
-- [ ] BehaviorDescriptor
-- [ ] NoveltyArchive
-- [ ] MAP-Elites archive
+- [~] BehaviorDescriptor（现以 `BehaviorCharacterization` 形式存在）
+- [x] NoveltyArchive
+- [~] MAP-Elites archive（离线 archive / report 已有，尚未接入 reproduction）
 - [ ] EnvironmentGenome
 - [ ] POETCoordinator
 
 ### P6 · World Model
 
-- [ ] trace dataset builder
+- [~] trace dataset builder
 - [ ] observation-action predictor
 - [ ] prediction-error curiosity
 - [ ] world model latent input
@@ -319,7 +453,7 @@
 - [ ] reward 时间积分：按真实持续时间/强度结算
 - [ ] 旧 tick runtime 与 continuous runtime 并存对比
 
-当前决策：连续时间框架已前置为当前主线；优先落 CT-0 / CT-1，再继续深化 Memory V2 / credit / CTRNN。
+当前决策：连续时间框架已前置为当前项目重点；优先落 CT-0 / CT-1，再继续深化 Memory V2 / credit / CTRNN。
 
 ### P9 · Compute Scaling
 
@@ -328,17 +462,17 @@
 - [x] `AgentLayer` per-world agent decision 并行
 - [x] protagonist route outer episode pool 与 inner decision threads 联动调度
 - [x] `ProtagonistBrain` 可选 dense GPU backend + route 级 CUDA CMake 接线
-- [ ] 本机完整 CUDA toolkit / `nvcc` 可用性接通
-- [ ] protagonist dense GPU 路径真正编入并完成 smoke profiling
-- [ ] CPU/GPU dense forward 对照 profile 与日志
+- [x] 本机完整 CUDA toolkit / `nvcc` 可用性接通（portable 路径在 `D:\NVIDIA\CUDA\v12.8\`）
+- [~] protagonist dense GPU 路径真正编入并完成 smoke profiling（CUDA build 可运行，但 camp-building benchmark 未显示训练侧收益）
+- [~] CPU/GPU dense forward 对照 profile 与日志（已有 1-generation wall-clock 基准；仍缺更细粒度 dense-forward profiling）
 
 ---
 
 ## 下一步
 
-1. 按 `MEMORY_PHASE_A_EXECUTION_PLAN.md` 开始第一步：先拆 `SpatialMemoryBank` 语义槽，补全 `tree / danger / fire / worksite / stone / stick` 的分离写入。
-2. 随后扩 `MemoryCognitionPerception`，把当前 12 维 memory 输入升级到能承载 Spatial / Episodic / Social / Goal 的 Phase A 版本。
-3. 做一个最小 `GoalManager` 闭环，让 goal 不再长期停在默认 `Explore`。
-4. CT 线继续推进 `chop / build / worksite` 的持续进度语义，避免记忆系统建立在残余离散动作之上。
-5. 以 `COMPUTE_SCALING_GPU_CPU_PLAN.md` 为后续承接文档：记忆 Phase A 稳定后先补 profiling 与 CPU 并行升级，再启动 protagonist mixed GPU。
-6. 如果继续当前算力线，先在本机补齐完整 CUDA toolkit（至少 `nvcc + bin/include/lib`），再重新配置 CMake 验证 protagonist dense GPU 路径是否真正上卡。
+1. 先围绕 fixed-task memory ablation full run 继续追 `signal_response` 分离偏弱与 `water_return/no_spatial` 残余，不要只因为 `worksite_return` 修好就停下来。
+2. 把新的 `METRICS_FIELD_GUIDE.html` 当成解释层基座继续维护，优先补 communication / signal 指标的专项说明，并确保后续新字段不会和现有页面口径脱节。
+3. 在 `Memory V2 / ContributionLedger / communication semantics` 里选一条真正收口；从 ablation 结果看，当前最值得优先 tightening 的反而是 communication / signal 这条线。
+4. 回头补 `DNC-forcing micro-task` 的 trace / ablation 解读，区分“任务 wiring 通了”和“DNC 真的学会了”。
+5. CT 线继续推进 `chop / build / worksite` 的持续进度语义，避免后续高阶记忆建立在残余离散动作之上。
+6. mixed compute 线当前不要再把“CUDA build 可运行”误写成“GPU 已带来训练加速”；若继续 GPU 线，应直接做更细粒度 dense-forward profiling 或 agent-batch 化。

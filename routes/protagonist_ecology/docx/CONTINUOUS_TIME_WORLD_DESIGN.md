@@ -2,15 +2,31 @@
 
 > 位置：`routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md`
 >
-> 状态：规划初稿 + CT-0 已落地验证（2026-05-20）
+> 状态：设计文档；continuous-time 主链已落地到 route runtime / trace / memory（2026-05-21），但更强连续语义与部分 legacy tick 兼容仍待继续清理
 >
 > 作用：为 `routes/protagonist_ecology/` 以及其依赖的 `src/core/` / `src/runtime/` 提供连续时间世界的重构路线，不在这里直接实现大改，只先把方向、边界、迁移顺序和验收标准定清楚。
 
 ---
 
-## 0. 结论先行
+## 0. 状态同步（2026-05-21）
 
-当前系统虽然很多地方都传了 `dt`，但**真正的主时钟语义仍然是 `Tick`**：
+当前源码树里已经落地：
+
+- route runtime 使用 `episode_duration_seconds + substep_dt`
+- 事件、memory、trace 同时记录 `tick + time_seconds`
+- protagonist brain 前向已按 `dt` 做泄漏积分
+- 主角路线默认以 seconds 口径推进，而 `tick/step_index` 更多承担兼容、日志和可重复性角色
+
+当前仍未完全收口的部分：
+
+- 部分配置和兼容层仍保留 legacy tick 别名
+- `chop / build / worksite credit / event queue` 的更强连续化表达还可以继续推进
+
+下面第 1 节及之后保留的是**当时为什么必须做这次重构**的设计论证，不再等同于 2026-05-21 的字面现状。
+
+## 0.1 设计启动时的结论
+
+设计这次重构时，系统虽然很多地方都传了 `dt`，但**真正的主时钟语义仍然是 `Tick`**：
 
 - 世界主循环按 step 递增
 - 事件只带 `tick`
@@ -42,9 +58,9 @@ step 只保留为可重复性、日志和兼容层，不再是世界真时间。
 
 ---
 
-## 1. 为什么这件事现在必须前置
+## 1. 为什么这件事当时必须前置
 
-当前 protagonist 路线已经进入：
+设计这份方案时，protagonist 路线已经进入：
 
 - Trace / Resume 已完成
 - Memory V2 已开始接线

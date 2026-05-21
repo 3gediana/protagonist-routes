@@ -23,6 +23,7 @@ struct ResourceConfig {
 
 struct SignalConfig {
     bool enabled{true};
+    bool protagonist_emit_enabled{true};
     std::size_t channels{2};
     std::size_t grid_resolution{64};
     float decay_rate{0.05f};
@@ -79,6 +80,7 @@ struct WaterConfig {
     float source_radius{5.0f};
     float drink_radius{3.0f};
     float drink_rate{24.0f};
+    bool direction_requires_visibility{false};
 };
 
 struct SurvivalConfig {
@@ -116,6 +118,7 @@ struct WorksiteConfig {
     std::size_t required_stones{2};
     float assembly_rate{0.08f};
     float shelter_energy_bonus{0.03f};
+    bool direction_requires_visibility{false};
 };
 
 struct InterventionConfig {
@@ -147,6 +150,16 @@ struct DiseaseConfig {
     float infection_duration{260.0f};
     float death_prob{0.03f};
     float initial_infection_rate{0.04f};
+};
+
+struct MemoryTrialConfig {
+    bool enabled{false};
+    SimTimeSeconds cue_duration_seconds{2.0};
+    float cue_radius{10.0f};
+    SimTimeSeconds choice_deadline_seconds{18.0};
+    float target_radius{8.0f};
+    float success_fitness_bonus{24.0f};
+    float failure_fitness_penalty{6.0f};
 };
 
 struct ProgressionConfig {
@@ -190,6 +203,9 @@ struct ProtagonistBrainConfig {
     bool episodic_memory_writes_enabled{true};
     bool social_memory_writes_enabled{true};
     bool goal_manager_enabled{true};
+    bool goal_action_assist_enabled{false};
+    bool predator_warn_enabled{true};
+    bool hunt_enabled{true};
 };
 
 struct SpeciesSlotConfig {
@@ -230,6 +246,7 @@ struct ProtagonistEcologyConfig {
     DayNightConfig day_night{};
     SeasonConfig season{};
     DiseaseConfig disease{};
+    MemoryTrialConfig memory_trial{};
     ProtagonistBrainConfig protagonist{};
     BackgroundBrainConfig background{};
 

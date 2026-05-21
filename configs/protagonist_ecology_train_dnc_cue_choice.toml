@@ -1,0 +1,132 @@
+[runtime]
+random_seed = 97
+log_level = "info"
+preview_ticks = 1
+world_role = "train"
+scenario_name = "dnc_cue_choice_train"
+
+[output]
+runs_dir = "data/runs/protagonist_dnc_cue_choice"
+
+[world]
+size = [120.0, 120.0]
+
+[world.resources]
+count = 0
+amount = 0.0
+respawn_ticks = 9999
+dynamic = false
+regen_rate = 0.0
+terrain_adjustment_enabled = false
+
+[world.terrain]
+enabled = false
+
+[world.signal]
+enabled = false
+
+[world.objects]
+enabled = false
+
+[world.base]
+enabled = false
+
+[world.nursery]
+enabled = false
+
+[world.nursery_supply]
+enabled = false
+
+[world.campfire]
+enabled = false
+
+[world.water]
+enabled = false
+
+[world.survival]
+enabled = false
+
+[world.tree]
+enabled = false
+
+[world.worksite]
+enabled = false
+
+[world.intervention]
+enabled = false
+
+[world.progression]
+enabled = false
+
+[world.day_night]
+enabled = false
+
+[world.season]
+enabled = false
+
+[world.disease]
+enabled = false
+
+[world.memory_trial]
+enabled = true
+cue_duration_seconds = 2.0
+cue_radius = 10.0
+choice_deadline_seconds = 18.0
+target_radius = 8.0
+success_fitness_bonus = 24.0
+failure_fitness_penalty = 6.0
+
+[simulation.time]
+substep_dt = 0.1
+episode_duration_seconds = 24.0
+
+[population.protagonist]
+count = 24
+hidden_dim = 256
+memory_cells = 48
+memory_slots = 64
+read_heads = 4
+action_dim = 2
+memory_cognition_enabled = false
+spatial_memory_writes_enabled = false
+episodic_memory_writes_enabled = false
+social_memory_writes_enabled = false
+goal_manager_enabled = false
+
+[population.background]
+forager_count = 0
+predator_count = 0
+ambient_count = 0
+hidden_dim = 32
+
+[evolution]
+generations = 20
+episodes_per_generation = 2
+checkpoint_every = 0
+
+[evolution.selection]
+elite_ratio = 0.20
+tournament_size = 3
+
+[evolution.mutation]
+weight_perturb_rate = 0.80
+weight_reset_rate = 0.05
+weight_perturb_sigma = 0.40
+
+[reward]
+survival_weight = 0.0
+food_weight = 0.0
+intrinsic_weight = 0.0
+combat_weight = 0.0
+cooperation_weight = 0.0
+communication_weight = 0.0
+
+[trace]
+enabled = true
+events_enabled = true
+agents_enabled = true
+world_enabled = true
+agent_interval = 5
+world_interval = 5
+max_generations = 1
+max_episodes_per_generation = 1

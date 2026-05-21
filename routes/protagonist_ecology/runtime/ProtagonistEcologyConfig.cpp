@@ -93,6 +93,13 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.resources.regen_rate = config.getOr<float>("world.resources.regen_rate", out.resources.regen_rate);
     out.resources.terrain_adjustment_enabled = config.getOr<bool>("world.resources.terrain_adjustment_enabled", out.resources.terrain_adjustment_enabled);
 
+    out.signal.enabled = config.getOr<bool>("world.signal.enabled", out.signal.enabled);
+    out.signal.protagonist_emit_enabled = config.getOr<bool>("world.signal.protagonist_emit_enabled", out.signal.protagonist_emit_enabled);
+    out.signal.channels = config.getOr<std::size_t>("world.signal.channels", out.signal.channels);
+    out.signal.grid_resolution = config.getOr<std::size_t>("world.signal.grid_resolution", out.signal.grid_resolution);
+    out.signal.decay_rate = config.getOr<float>("world.signal.decay_rate", out.signal.decay_rate);
+    out.signal.diffusion_rate = config.getOr<float>("world.signal.diffusion_rate", out.signal.diffusion_rate);
+
     out.objects.enabled = config.getOr<bool>("world.objects.enabled", out.objects.enabled);
     out.objects.count = config.getOr<std::size_t>("world.objects.count", out.objects.count);
     out.objects.damping = config.getOr<float>("world.objects.damping", out.objects.damping);
@@ -136,6 +143,7 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.water.source_radius = config.getOr<float>("world.water.source_radius", out.water.source_radius);
     out.water.drink_radius = config.getOr<float>("world.water.drink_radius", out.water.drink_radius);
     out.water.drink_rate = config.getOr<float>("world.water.drink_rate", out.water.drink_rate);
+    out.water.direction_requires_visibility = config.getOr<bool>("world.water.direction_requires_visibility", out.water.direction_requires_visibility);
 
     out.survival.enabled = config.getOr<bool>("world.survival.enabled", out.survival.enabled);
     out.survival.max_health = config.getOr<float>("world.survival.max_health", out.survival.max_health);
@@ -185,6 +193,7 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.worksite.required_stones = config.getOr<std::size_t>("world.worksite.required_stones", out.worksite.required_stones);
     out.worksite.assembly_rate = config.getOr<float>("world.worksite.assembly_rate", out.worksite.assembly_rate);
     out.worksite.shelter_energy_bonus = config.getOr<float>("world.worksite.shelter_energy_bonus", out.worksite.shelter_energy_bonus);
+    out.worksite.direction_requires_visibility = config.getOr<bool>("world.worksite.direction_requires_visibility", out.worksite.direction_requires_visibility);
 
     out.intervention.enabled = config.getOr<bool>("world.intervention.enabled", out.intervention.enabled);
     out.intervention.initial_budget = config.getOr<float>("world.intervention.initial_budget", out.intervention.initial_budget);
@@ -249,6 +258,14 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.disease.death_prob = config.getOr<float>("world.disease.death_prob", out.disease.death_prob);
     out.disease.initial_infection_rate = config.getOr<float>("world.disease.initial_infection_rate", out.disease.initial_infection_rate);
 
+    out.memory_trial.enabled = config.getOr<bool>("world.memory_trial.enabled", out.memory_trial.enabled);
+    out.memory_trial.cue_duration_seconds = config.getOr<double>("world.memory_trial.cue_duration_seconds", out.memory_trial.cue_duration_seconds);
+    out.memory_trial.cue_radius = config.getOr<float>("world.memory_trial.cue_radius", out.memory_trial.cue_radius);
+    out.memory_trial.choice_deadline_seconds = config.getOr<double>("world.memory_trial.choice_deadline_seconds", out.memory_trial.choice_deadline_seconds);
+    out.memory_trial.target_radius = config.getOr<float>("world.memory_trial.target_radius", out.memory_trial.target_radius);
+    out.memory_trial.success_fitness_bonus = config.getOr<float>("world.memory_trial.success_fitness_bonus", out.memory_trial.success_fitness_bonus);
+    out.memory_trial.failure_fitness_penalty = config.getOr<float>("world.memory_trial.failure_fitness_penalty", out.memory_trial.failure_fitness_penalty);
+
     out.protagonist.count = config.getOr<std::size_t>("population.protagonist.count", out.protagonist.count);
     out.protagonist.hidden_dim = config.getOr<std::size_t>("population.protagonist.hidden_dim", out.protagonist.hidden_dim);
     out.protagonist.memory_cells = config.getOr<std::size_t>("population.protagonist.memory_cells", out.protagonist.memory_cells);
@@ -260,6 +277,9 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist.episodic_memory_writes_enabled = config.getOr<bool>("population.protagonist.episodic_memory_writes_enabled", out.protagonist.episodic_memory_writes_enabled);
     out.protagonist.social_memory_writes_enabled = config.getOr<bool>("population.protagonist.social_memory_writes_enabled", out.protagonist.social_memory_writes_enabled);
     out.protagonist.goal_manager_enabled = config.getOr<bool>("population.protagonist.goal_manager_enabled", out.protagonist.goal_manager_enabled);
+    out.protagonist.goal_action_assist_enabled = config.getOr<bool>("population.protagonist.goal_action_assist_enabled", out.protagonist.goal_action_assist_enabled);
+    out.protagonist.predator_warn_enabled = config.getOr<bool>("population.protagonist.predator_warn_enabled", out.protagonist.predator_warn_enabled);
+    out.protagonist.hunt_enabled = config.getOr<bool>("population.protagonist.hunt_enabled", out.protagonist.hunt_enabled);
 
     out.background.forager_count = config.getOr<std::size_t>("population.background.forager_count", out.background.forager_count);
     out.background.predator_count = config.getOr<std::size_t>("population.background.predator_count", out.background.predator_count);

@@ -5,6 +5,7 @@
 #include "brain/EpisodicMemoryBank.h"
 #include "brain/SocialMemoryBank.h"
 #include "brain/GoalMemory.h"
+#include "brain/ProtagonistBrainV3Components.h"
 #include "core/interfaces/IBrain.h"
 
 #include <memory>
@@ -67,6 +68,12 @@ public:
     GoalMemory& goalMemory() { return goal_memory_; }
     const GoalMemory& goalMemory() const { return goal_memory_; }
 
+    WorkingMemoryBank& workingMemory() { return working_memory_; }
+    const WorkingMemoryBank& workingMemory() const { return working_memory_; }
+
+    BodyStateMemory& bodyStateMemory() { return body_state_memory_; }
+    const BodyStateMemory& bodyStateMemory() const { return body_state_memory_; }
+
 private:
     std::size_t external_input_dim_;
     std::size_t total_input_dim_;
@@ -81,8 +88,14 @@ private:
     std::vector<float> action_bias_;
     std::vector<float> hidden_interface_weights_;
     std::vector<float> interface_bias_;
-    std::vector<float> hidden_;
-    std::vector<float> outputs_;
+    ObservationEncoder observation_encoder_;
+    MemoryQueryEncoder memory_query_encoder_;
+    BodyStateMemory body_state_memory_;
+    WorkingMemoryBank working_memory_;
+    BehaviorFusionTrunk behavior_fusion_trunk_;
+    MotorCore motor_core_;
+    ActionHeads action_heads_;
+    InterfaceHead interface_head_;
     std::unique_ptr<ProtagonistDenseGpu> dense_gpu_;
     DNCMemory dnc_memory_;
 

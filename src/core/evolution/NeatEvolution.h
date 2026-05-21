@@ -15,6 +15,7 @@ class NeatGenome;
 
 struct NeatEvolutionState {
     std::string rng_state;
+    InnovationTrackerState innovation_tracker_state;
     SpeciationState speciation_state;
 };
 

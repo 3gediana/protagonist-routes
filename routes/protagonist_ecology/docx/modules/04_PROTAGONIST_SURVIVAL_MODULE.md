@@ -73,7 +73,7 @@
 - `carry_load`
 - `home_affinity`
 
-这些状态不一定都放到通用 `Agent` 主线里，可以优先 route-local 扩展。
+这些状态不一定都放到通用 `Agent` 里，可以优先 route-local 扩展。
 
 ---
 

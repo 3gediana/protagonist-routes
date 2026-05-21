@@ -33,6 +33,8 @@
 #include "runtime/headless/EvaluationPool.h"
 #include "runtime/ProtagonistEvolution.h"
 #include "runtime/BootstrapPopulation.h"
+#include "runtime/GoalManager.h"
+#include "runtime/MemoryAblationEval.h"
 #include "runtime/ProtagonistEcologyConfig.h"
 #include "runtime/ProtagonistWorldFactory.h"
 #include "runtime/TraceRecorder.h"
@@ -48,10 +50,12 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -140,7 +144,9 @@ struct BehaviorAccumulator {
     std::size_t throw_hits{0};
     std::size_t hunt_attempts{0};
     std::size_t hunt_successes{0};
+    std::size_t drank_water_events{0};
     std::size_t signal_emits{0};
+    std::size_t signal_response_events{0};
     std::size_t signal_co_attendance{0};
     std::size_t worksite_completion_events{0};
     double cooperative_co_presence_seconds{0.0};
@@ -159,6 +165,82 @@ struct GenerationStats {
     double best_fitness{0.0};
 };
 
+struct MemoryAblationEpisodeProbe {
+    std::size_t protagonist_attack_events{0};
+    std::size_t protagonist_deaths{0};
+    std::size_t signal_emit_events{0};
+};
+
+struct MemoryAblationAggregate {
+    BehaviorAccumulator behavior{};
+    std::unordered_map<GenomeId, double> fitness_sum{};
+    double avg_health_ratio_sum{0.0};
+    double avg_hydration_ratio_sum{0.0};
+    std::size_t dehydrated_agents_sum{0};
+    std::size_t injured_agents_sum{0};
+    std::size_t protagonist_attack_events{0};
+    std::size_t protagonist_deaths{0};
+    std::size_t signal_emit_events{0};
+};
+
+struct MemoryAblationResultRow {
+    MemoryAblationTaskKind task{MemoryAblationTaskKind::WaterReturn};
+    std::string variant{};
+    double avg_fitness{0.0};
+    double best_fitness{0.0};
+    double survived_avg{0.0};
+    double avg_health_ratio{0.0};
+    double avg_hydration_ratio{0.0};
+    double drank_water_events_avg{0.0};
+    double dehydrated_avg{0.0};
+    double injured_avg{0.0};
+    double protagonist_attack_avg{0.0};
+    double protagonist_deaths_avg{0.0};
+    double deposits_avg{0.0};
+    double completed_worksites_avg{0.0};
+    double worksite_completion_events_avg{0.0};
+    double signal_emitters_avg{0.0};
+    double signal_emit_events_avg{0.0};
+    double signal_response_events_avg{0.0};
+    double signal_co_attendance_avg{0.0};
+    double dnc_usage_mean_avg{0.0};
+    double dnc_read_peak_avg{0.0};
+};
+
+struct ResolvedBackgroundSlot {
+    SpeciesArchetype archetype{SpeciesArchetype::LargeHerbivore};
+    std::size_t count{0};
+};
+
+struct TrainingCheckpointBackgroundEntry {
+    std::size_t slot_index{0};
+    SpeciesArchetype archetype{SpeciesArchetype::LargeHerbivore};
+    std::string directory{};
+    std::size_t population_count{0};
+};
+
+struct TrainingCheckpointState {
+    std::size_t evaluated_generation{0};
+    std::size_t resume_generation{0};
+    double best_fitness_seen{-std::numeric_limits<double>::infinity()};
+    ProtagonistEvolutionState protagonist_evolution_state{};
+    std::vector<TrainingCheckpointBackgroundEntry> background_species{};
+};
+
+struct LoadedTrainingCheckpoint {
+    struct BackgroundSpeciesState {
+        SpeciesArchetype archetype{SpeciesArchetype::LargeHerbivore};
+        NeatEvolutionState evolution_state{};
+        std::vector<std::unique_ptr<IGenome>> population{};
+    };
+
+    std::size_t start_generation{0};
+    double best_fitness_seen{-std::numeric_limits<double>::infinity()};
+    ProtagonistEvolutionState protagonist_evolution_state{};
+    std::vector<std::unique_ptr<IGenome>> protagonist_population{};
+    std::vector<BackgroundSpeciesState> background_species{};
+};
+
 std::string makeTimestamp() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
@@ -171,6 +253,54 @@ std::string makeTimestamp() {
     std::ostringstream oss;
     oss << std::put_time(&local_tm, "%Y%m%d-%H%M%S");
     return oss.str();
+}
+
+std::string describeProtagonistGenomeLoadFailure(const std::filesystem::path& genome_path,
+                                                 const char* prefix) {
+    constexpr std::uint32_t kProtagonistGenomeFileMagic = 0x50474E4D;  // 'PGNM'
+
+    std::ifstream stream(genome_path, std::ios::in | std::ios::binary);
+    if (!stream) {
+        return std::string(prefix) + genome_path.string();
+    }
+
+    std::uint32_t magic = 0;
+    std::uint32_t version = 0;
+    stream.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    stream.read(reinterpret_cast<char*>(&version), sizeof(version));
+    if (!stream) {
+        return std::string(prefix) + genome_path.string() + " (truncated protagonist genome header)";
+    }
+    if (magic != kProtagonistGenomeFileMagic) {
+        return std::string(prefix) + genome_path.string() + " (invalid protagonist genome magic)";
+    }
+    if (version == 1) {
+        std::uint64_t genome_id = 0;
+        std::uint64_t input_dim = 0;
+        std::uint64_t hidden_dim = 0;
+        std::uint64_t memory_cells = 0;
+        std::uint64_t action_dim = 0;
+        stream.read(reinterpret_cast<char*>(&genome_id), sizeof(genome_id));
+        stream.read(reinterpret_cast<char*>(&input_dim), sizeof(input_dim));
+        stream.read(reinterpret_cast<char*>(&hidden_dim), sizeof(hidden_dim));
+        stream.read(reinterpret_cast<char*>(&memory_cells), sizeof(memory_cells));
+        stream.read(reinterpret_cast<char*>(&action_dim), sizeof(action_dim));
+
+        std::ostringstream oss;
+        oss << prefix << genome_path.string()
+            << " (pre-DNC protagonist genome v1 is incompatible with the current DNC route";
+        if (stream) {
+            oss << "; stored input_dim=" << input_dim
+                << ", hidden_dim=" << hidden_dim
+                << ", memory_cells=" << memory_cells
+                << ", action_dim=" << action_dim;
+        }
+        oss << ')';
+        return oss.str();
+    }
+
+    return std::string(prefix) + genome_path.string()
+        + " (unsupported or corrupted protagonist genome version=" + std::to_string(version) + ')';
 }
 
 bool trainingEnabled(const config::Config& config) {
@@ -270,6 +400,133 @@ std::filesystem::path makeRunDir(const config::Config& config) {
     return run_dir;
 }
 
+TrainingParams configureMemoryAblationTaskParams(const config::Config& config,
+                                                 MemoryAblationTaskKind task) {
+    auto params = loadTrainingParams(config);
+    switch (task) {
+        case MemoryAblationTaskKind::WaterReturn:
+            params.survival_weight = 2.0;
+            params.food_weight = 0.0;
+            params.intrinsic_weight = 0.0;
+            params.combat_weight = 0.0;
+            params.cooperation_weight = 0.0;
+            params.communication_weight = 0.0;
+            params.worksite_proximity_reward = 0.0f;
+            params.worksite_completion_reward = 0.0f;
+            params.signal_emit_reward = 0.0f;
+            params.signal_co_attendance_reward = 0.0f;
+            params.joint_hunt_reward = 0.0f;
+            break;
+
+        case MemoryAblationTaskKind::DangerAvoidance:
+            params.survival_weight = 2.5;
+            params.food_weight = 0.5;
+            params.intrinsic_weight = 0.0;
+            params.combat_weight = 0.0;
+            params.cooperation_weight = 0.0;
+            params.communication_weight = 0.0;
+            params.worksite_proximity_reward = 0.0f;
+            params.worksite_completion_reward = 0.0f;
+            params.signal_emit_reward = 0.0f;
+            params.signal_co_attendance_reward = 0.0f;
+            params.joint_hunt_reward = 0.0f;
+            break;
+
+        case MemoryAblationTaskKind::WorksiteReturn:
+            params.survival_weight = 0.2;
+            params.food_weight = 0.0;
+            params.intrinsic_weight = 0.0;
+            params.combat_weight = 0.0;
+            params.cooperation_weight = 6.0;
+            params.communication_weight = 0.0;
+            params.worksite_proximity_reward = 0.08f;
+            params.worksite_completion_reward = 80.0f;
+            params.signal_emit_reward = 0.0f;
+            params.signal_co_attendance_reward = 0.0f;
+            params.joint_hunt_reward = 0.0f;
+            break;
+
+        case MemoryAblationTaskKind::SignalResponse:
+            params.survival_weight = 0.2;
+            params.food_weight = 4.0;
+            params.intrinsic_weight = 0.0;
+            params.combat_weight = 0.0;
+            params.cooperation_weight = 0.0;
+            params.communication_weight = 10.0;
+            params.worksite_proximity_reward = 0.0f;
+            params.worksite_completion_reward = 0.0f;
+            params.signal_emit_reward = 0.2f;
+            params.signal_emit_companion_radius = 30.0f;
+            params.signal_co_attendance_reward = 2.5f;
+            params.signal_co_attendance_radius = 10.0f;
+            params.signal_co_attendance_window_seconds = 30.0;
+            params.joint_hunt_reward = 0.0f;
+            break;
+    }
+    return params;
+}
+
+void applyMemoryAblationVariant(TrainingParams& params, const MemoryAblationVariant& variant) {
+    params.spatial_memory_writes_enabled = variant.spatial_memory_writes_enabled;
+    params.episodic_memory_writes_enabled = variant.episodic_memory_writes_enabled;
+    params.social_memory_writes_enabled = variant.social_memory_writes_enabled;
+    params.goal_manager_enabled = variant.goal_manager_enabled;
+}
+
+void mergeBehaviorAccumulator(BehaviorAccumulator& dst, const BehaviorAccumulator& src) {
+    dst.deposits_total += src.deposits_total;
+    dst.deposits_stick += src.deposits_stick;
+    dst.deposits_stone += src.deposits_stone;
+    dst.completed_worksites += src.completed_worksites;
+    dst.active_fires += src.active_fires;
+    dst.harvested_trees += src.harvested_trees;
+    dst.chop_attempts += src.chop_attempts;
+    dst.chop_successes += src.chop_successes;
+    dst.craft_attempts += src.craft_attempts;
+    dst.craft_successes += src.craft_successes;
+    dst.throw_attempts += src.throw_attempts;
+    dst.throw_hits += src.throw_hits;
+    dst.hunt_attempts += src.hunt_attempts;
+    dst.hunt_successes += src.hunt_successes;
+    dst.drank_water_events += src.drank_water_events;
+    dst.signal_emits += src.signal_emits;
+    dst.signal_response_events += src.signal_response_events;
+    dst.signal_co_attendance += src.signal_co_attendance;
+    dst.worksite_completion_events += src.worksite_completion_events;
+    dst.cooperative_co_presence_seconds += src.cooperative_co_presence_seconds;
+    dst.survived_protagonists += src.survived_protagonists;
+    dst.total_protagonists += src.total_protagonists;
+    dst.dnc_usage_mean_sum += src.dnc_usage_mean_sum;
+    dst.dnc_write_peak_sum += src.dnc_write_peak_sum;
+    dst.dnc_read_peak_sum += src.dnc_read_peak_sum;
+    dst.dnc_precedence_peak_sum += src.dnc_precedence_peak_sum;
+    dst.dnc_samples += src.dnc_samples;
+}
+
+double averagePerEpisode(double total, std::size_t episodes) {
+    return episodes == 0 ? 0.0 : total / static_cast<double>(episodes);
+}
+
+double primaryMetricValue(const MemoryAblationResultRow& row) {
+    switch (row.task) {
+        case MemoryAblationTaskKind::WaterReturn: return row.drank_water_events_avg;
+        case MemoryAblationTaskKind::DangerAvoidance: return row.survived_avg;
+        case MemoryAblationTaskKind::WorksiteReturn: return row.worksite_completion_events_avg;
+        case MemoryAblationTaskKind::SignalResponse: return row.signal_response_events_avg;
+    }
+    return 0.0;
+}
+
+std::string_view primaryMetricName(MemoryAblationTaskKind task) {
+    switch (task) {
+        case MemoryAblationTaskKind::WaterReturn: return "drank_water_events";
+        case MemoryAblationTaskKind::DangerAvoidance: return "survived";
+        case MemoryAblationTaskKind::WorksiteReturn: return "worksite_completion_events";
+        case MemoryAblationTaskKind::SignalResponse: return "signal_response_events";
+    }
+    return "metric";
+}
+
 std::string jsonEscape(std::string_view input) {
     std::string out;
     out.reserve(input.size() + 8);
@@ -284,6 +541,293 @@ std::string jsonEscape(std::string_view input) {
         }
     }
     return out;
+}
+
+std::vector<ResolvedBackgroundSlot> resolveBackgroundSlots(const ProtagonistEcologyConfig& route) {
+    std::vector<ResolvedBackgroundSlot> resolved_slots;
+    if (!route.background.slots.empty()) {
+        resolved_slots.reserve(route.background.slots.size());
+        for (const auto& slot : route.background.slots) {
+            resolved_slots.push_back({parseSpeciesArchetype(slot.archetype), slot.count});
+        }
+        return resolved_slots;
+    }
+
+    if (route.background.forager_count > 0) {
+        resolved_slots.push_back({SpeciesArchetype::SmallForager, route.background.forager_count});
+    }
+    if (route.background.predator_count > 0) {
+        resolved_slots.push_back({SpeciesArchetype::PackHunter, route.background.predator_count});
+    }
+    return resolved_slots;
+}
+
+std::vector<std::unique_ptr<IGenome>> loadProtagonistCheckpointPopulation(const ProtagonistEcologyConfig& route,
+                                                                          const std::filesystem::path& checkpoint_dir);
+
+void copyIfExists(const std::filesystem::path& from, const std::filesystem::path& to) {
+    if (!std::filesystem::exists(from) || !std::filesystem::is_regular_file(from)) {
+        return;
+    }
+    std::error_code ec;
+    if (to.has_parent_path()) {
+        std::filesystem::create_directories(to.parent_path(), ec);
+    }
+    std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
+}
+
+std::size_t saveNeatCheckpointPopulation(const std::vector<std::unique_ptr<IGenome>>& population,
+                                         const std::filesystem::path& checkpoint_dir,
+                                         std::vector<std::string>& saved_files) {
+    std::error_code ec;
+    std::filesystem::create_directories(checkpoint_dir, ec);
+    saved_files.clear();
+    saved_files.reserve(population.size());
+    std::size_t saved = 0;
+    for (const auto& genome : population) {
+        if (genome == nullptr) {
+            continue;
+        }
+        const auto* neat_genome = dynamic_cast<const NeatGenome*>(genome.get());
+        if (neat_genome == nullptr) {
+            continue;
+        }
+        const auto filename = std::string("genome_") + std::to_string(genome->id().value) + ".bin";
+        if (neat_genome->saveToFile(checkpoint_dir / filename)) {
+            ++saved;
+            saved_files.push_back(filename);
+        }
+    }
+    return saved;
+}
+
+std::vector<std::unique_ptr<IGenome>> loadBackgroundCheckpointPopulation(const ProtagonistEcologyConfig& route,
+                                                                         SpeciesArchetype archetype,
+                                                                         std::size_t expected_count,
+                                                                         const std::filesystem::path& checkpoint_dir) {
+    if (!std::filesystem::exists(checkpoint_dir) || !std::filesystem::is_directory(checkpoint_dir)) {
+        throw std::runtime_error("background checkpoint directory is not a directory: " + checkpoint_dir.string());
+    }
+
+    std::vector<std::filesystem::path> genome_paths;
+    for (const auto& entry : std::filesystem::directory_iterator(checkpoint_dir)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const auto filename = entry.path().filename().string();
+        if (filename.starts_with("genome_") && entry.path().extension() == ".bin") {
+            genome_paths.push_back(entry.path());
+        }
+    }
+    std::sort(genome_paths.begin(), genome_paths.end());
+
+    std::vector<std::unique_ptr<IGenome>> population;
+    population.reserve(genome_paths.size());
+    for (const auto& path : genome_paths) {
+        auto genome = NeatGenome::loadFromFile(path);
+        if (genome == nullptr) {
+            throw std::runtime_error("failed to load background checkpoint genome: " + path.string());
+        }
+        if (genome->inputDim() != backgroundSensoryDim(route)
+            || genome->outputDim() != backgroundOutputDim(archetype)) {
+            throw std::runtime_error("checkpoint background genome shape does not match current scenario: " + path.string());
+        }
+        population.push_back(std::move(genome));
+    }
+
+    if (population.empty()) {
+        throw std::runtime_error("background checkpoint contains no genome_*.bin files: " + checkpoint_dir.string());
+    }
+    if (expected_count > 0 && population.size() != expected_count) {
+        throw std::runtime_error("background checkpoint population count does not match configured scenario: " + checkpoint_dir.string());
+    }
+    return population;
+}
+
+void saveBackgroundEvolutionState(const NeatEvolutionState& state,
+                                  SpeciesArchetype archetype,
+                                  const std::filesystem::path& checkpoint_dir,
+                                  std::size_t population_count) {
+    std::error_code ec;
+    std::filesystem::create_directories(checkpoint_dir, ec);
+    std::ofstream meta(checkpoint_dir / "meta.toml", std::ios::out | std::ios::trunc);
+    if (!meta.is_open()) {
+        throw std::runtime_error("failed to write background checkpoint meta: " + (checkpoint_dir / "meta.toml").string());
+    }
+
+    std::vector<std::pair<SpeciesId, std::string>> representatives;
+    representatives.reserve(state.speciation_state.previous_species.size());
+    for (const auto& previous : state.speciation_state.previous_species) {
+        const auto filename = std::string("species_") + std::to_string(previous.id.value) + "_representative.bin";
+        if (!previous.representative.saveToFile(checkpoint_dir / filename)) {
+            throw std::runtime_error("failed to write background representative genome: " + (checkpoint_dir / filename).string());
+        }
+        representatives.push_back({previous.id, filename});
+    }
+
+    meta << "schema_version = 1\n";
+    meta << "archetype = \"" << jsonEscape(std::string(speciesArchetypeName(archetype))) << "\"\n";
+    meta << "population_count = " << population_count << "\n";
+    meta << "rng_state = \"" << jsonEscape(state.rng_state) << "\"\n";
+    meta << "innovation_next_value = " << state.innovation_tracker_state.next_innovation_value << "\n";
+    meta << "innovation_next_node_id = " << static_cast<std::uint64_t>(state.innovation_tracker_state.next_node_id) << "\n\n";
+    meta << "[speciation]\n";
+    meta << "compatibility_threshold = " << state.speciation_state.compatibility_threshold << "\n";
+    meta << "next_species_id = " << state.speciation_state.next_species_id.value << "\n";
+    for (const auto& [species_id, filename] : representatives) {
+        meta << "\n[[previous_species]]\n";
+        meta << "id = " << species_id.value << "\n";
+        meta << "representative_file = \"" << jsonEscape(filename) << "\"\n";
+    }
+}
+
+NeatEvolutionState loadBackgroundEvolutionState(const std::filesystem::path& checkpoint_dir) {
+    const auto meta_path = checkpoint_dir / "meta.toml";
+    const auto meta = config::Config::loadFromFile(meta_path);
+
+    NeatEvolutionState state;
+    state.rng_state = meta.getOr<std::string>("rng_state", "");
+    state.innovation_tracker_state.next_innovation_value =
+        static_cast<std::uint64_t>(meta.getOr<std::size_t>("innovation_next_value", 1));
+    state.innovation_tracker_state.next_node_id =
+        static_cast<NodeId>(meta.getOr<std::size_t>("innovation_next_node_id", 1));
+    state.speciation_state.compatibility_threshold =
+        meta.getOr<double>("speciation.compatibility_threshold", 3.0);
+    state.speciation_state.next_species_id =
+        SpeciesId{meta.getOr<std::size_t>("speciation.next_species_id", 1)};
+
+    if (auto previous_species = meta.raw().at_path("previous_species"); previous_species && previous_species.is_array()) {
+        if (const auto* arr = previous_species.as_array()) {
+            state.speciation_state.previous_species.reserve(arr->size());
+            for (const auto& element : *arr) {
+                const auto* previous_table = element.as_table();
+                if (previous_table == nullptr) {
+                    continue;
+                }
+                const auto species_id = SpeciesId{
+                    static_cast<std::uint64_t>((*previous_table)["id"].value<std::int64_t>().value_or(0))};
+                const auto filename = (*previous_table)["representative_file"].value<std::string>().value_or("");
+                if (!species_id || filename.empty()) {
+                    continue;
+                }
+                auto representative = NeatGenome::loadFromFile(checkpoint_dir / filename);
+                if (representative == nullptr) {
+                    throw std::runtime_error("failed to load background representative genome: " + (checkpoint_dir / filename).string());
+                }
+                state.speciation_state.previous_species.push_back(
+                    SpeciationPreviousSpeciesState{species_id, std::move(*representative)});
+            }
+        }
+    }
+
+    return state;
+}
+
+void saveTrainingCheckpointState(const std::filesystem::path& checkpoint_dir,
+                                 const TrainingCheckpointState& state) {
+    std::ofstream file(checkpoint_dir / "checkpoint_state.toml", std::ios::out | std::ios::trunc);
+    if (!file.is_open()) {
+        throw std::runtime_error("failed to write checkpoint_state.toml: " + (checkpoint_dir / "checkpoint_state.toml").string());
+    }
+
+    file << "schema_version = 1\n";
+    file << "evaluated_generation = " << state.evaluated_generation << "\n";
+    file << "resume_generation = " << state.resume_generation << "\n";
+    file << "best_fitness_seen = " << state.best_fitness_seen << "\n\n";
+    file << "[protagonist_evolution]\n";
+    file << "rng_state = \"" << jsonEscape(state.protagonist_evolution_state.rng_state) << "\"\n";
+    for (const auto& entry : state.background_species) {
+        file << "\n[[background_species]]\n";
+        file << "slot_index = " << entry.slot_index << "\n";
+        file << "archetype = \"" << jsonEscape(std::string(speciesArchetypeName(entry.archetype))) << "\"\n";
+        file << "directory = \"" << jsonEscape(entry.directory) << "\"\n";
+        file << "population_count = " << entry.population_count << "\n";
+    }
+}
+
+TrainingCheckpointState loadTrainingCheckpointState(const std::filesystem::path& checkpoint_dir) {
+    const auto config = config::Config::loadFromFile(checkpoint_dir / "checkpoint_state.toml");
+    TrainingCheckpointState state;
+    state.evaluated_generation = config.getOr<std::size_t>("evaluated_generation", 0);
+    state.resume_generation = config.getOr<std::size_t>("resume_generation", state.evaluated_generation);
+    state.best_fitness_seen = config.getOr<double>("best_fitness_seen", -std::numeric_limits<double>::infinity());
+    state.protagonist_evolution_state.rng_state = config.getOr<std::string>("protagonist_evolution.rng_state", "");
+
+    if (auto background_species = config.raw().at_path("background_species"); background_species && background_species.is_array()) {
+        if (const auto* arr = background_species.as_array()) {
+            state.background_species.reserve(arr->size());
+            for (const auto& element : *arr) {
+                const auto* table = element.as_table();
+                if (table == nullptr) {
+                    continue;
+                }
+                TrainingCheckpointBackgroundEntry entry;
+                entry.slot_index = static_cast<std::size_t>((*table)["slot_index"].value<std::int64_t>().value_or(0));
+                entry.population_count = static_cast<std::size_t>((*table)["population_count"].value<std::int64_t>().value_or(0));
+                entry.directory = (*table)["directory"].value<std::string>().value_or("");
+                entry.archetype = parseSpeciesArchetype((*table)["archetype"].value<std::string>().value_or("large_herbivore"));
+                if (!entry.directory.empty()) {
+                    state.background_species.push_back(std::move(entry));
+                }
+            }
+        }
+    }
+
+    return state;
+}
+
+std::optional<LoadedTrainingCheckpoint> tryLoadTrainingCheckpoint(const ProtagonistEcologyConfig& route,
+                                                                  const std::filesystem::path& checkpoint_dir,
+                                                                  const std::vector<ResolvedBackgroundSlot>& resolved_slots) {
+    const auto state_path = checkpoint_dir / "checkpoint_state.toml";
+    if (!std::filesystem::exists(state_path)) {
+        return std::nullopt;
+    }
+
+    auto checkpoint_state = loadTrainingCheckpointState(checkpoint_dir);
+    LoadedTrainingCheckpoint loaded;
+    loaded.start_generation = checkpoint_state.resume_generation;
+    loaded.best_fitness_seen = checkpoint_state.best_fitness_seen;
+    loaded.protagonist_evolution_state = std::move(checkpoint_state.protagonist_evolution_state);
+    loaded.protagonist_population = loadProtagonistCheckpointPopulation(route, checkpoint_dir);
+
+    const std::size_t expected_background_slots = std::count_if(
+        resolved_slots.begin(),
+        resolved_slots.end(),
+        [](const ResolvedBackgroundSlot& slot) { return slot.count > 0; });
+    if (checkpoint_state.background_species.size() != expected_background_slots) {
+        throw std::runtime_error("checkpoint background species slot count does not match current scenario");
+    }
+
+    loaded.background_species.reserve(expected_background_slots);
+    std::size_t expected_slot_index = 0;
+    for (const auto& slot : resolved_slots) {
+        if (slot.count == 0) {
+            ++expected_slot_index;
+            continue;
+        }
+        const auto entry_it = std::find_if(
+            checkpoint_state.background_species.begin(),
+            checkpoint_state.background_species.end(),
+            [&](const TrainingCheckpointBackgroundEntry& entry) {
+                return entry.slot_index == expected_slot_index;
+            });
+        if (entry_it == checkpoint_state.background_species.end()) {
+            throw std::runtime_error("checkpoint missing background species slot state");
+        }
+        if (entry_it->archetype != slot.archetype) {
+            throw std::runtime_error("checkpoint background species archetype does not match current scenario");
+        }
+        const auto species_dir = checkpoint_dir / entry_it->directory;
+        LoadedTrainingCheckpoint::BackgroundSpeciesState species_state;
+        species_state.archetype = slot.archetype;
+        species_state.population = loadBackgroundCheckpointPopulation(route, slot.archetype, slot.count, species_dir);
+        species_state.evolution_state = loadBackgroundEvolutionState(species_dir);
+        loaded.background_species.push_back(std::move(species_state));
+        ++expected_slot_index;
+    }
+
+    return loaded;
 }
 
 std::vector<std::unique_ptr<IGenome>> createInitialPopulation(const ProtagonistEcologyConfig& route) {
@@ -328,7 +872,8 @@ std::vector<std::unique_ptr<IGenome>> loadProtagonistCheckpointPopulation(const 
     for (const auto& path : genome_paths) {
         auto genome = ProtagonistGenome::loadFromFile(path);
         if (genome == nullptr) {
-            throw std::runtime_error("failed to load protagonist checkpoint genome: " + path.string());
+            throw std::runtime_error(describeProtagonistGenomeLoadFailure(path,
+                                                                         "failed to load protagonist checkpoint genome: "));
         }
         if (genome->inputDim() != protagonistSensoryDim(route)
             || genome->hiddenDim() != route.protagonist.hidden_dim
@@ -347,25 +892,12 @@ std::vector<std::unique_ptr<IGenome>> loadProtagonistCheckpointPopulation(const 
     return population;
 }
 
-std::vector<std::unique_ptr<IGenome>> createTrainingPopulationFromConfig(const config::Config& config,
-                                                                         const ProtagonistEcologyConfig& route) {
-    const auto checkpoint_path = config.getOr<std::string>("runtime.resume_checkpoint_path", "");
-    if (checkpoint_path.empty()) {
-        return createInitialPopulation(route);
-    }
-
-    auto population = loadProtagonistCheckpointPopulation(route, std::filesystem::path(checkpoint_path));
-    LOG_INFO("ProtagonistEcologyRuntime: resumed protagonist population count={} from {}",
-             population.size(),
-             checkpoint_path);
-    return population;
-}
-
 std::vector<std::unique_ptr<IGenome>> createPopulationFromGenomeFile(const ProtagonistEcologyConfig& route,
                                                                      const std::filesystem::path& genome_path) {
     auto loaded = ProtagonistGenome::loadFromFile(genome_path);
     if (loaded == nullptr) {
-        throw std::runtime_error("failed to load protagonist genome: " + genome_path.string());
+        throw std::runtime_error(describeProtagonistGenomeLoadFailure(genome_path,
+                                                                     "failed to load protagonist genome: "));
     }
 
     if (loaded->inputDim() != protagonistSensoryDim(route)
@@ -394,6 +926,22 @@ std::vector<std::unique_ptr<IGenome>> createConfiguredPreviewPopulation(const co
         return {};
     }
     return createPopulationFromGenomeFile(route, std::filesystem::path(genome_path));
+}
+
+std::vector<std::unique_ptr<IGenome>> createEvaluationPopulationFromConfig(const config::Config& config,
+                                                                           const ProtagonistEcologyConfig& route) {
+    const auto checkpoint_path = config.getOr<std::string>("runtime.resume_checkpoint_path", "");
+    if (!checkpoint_path.empty()) {
+        return loadProtagonistCheckpointPopulation(route, std::filesystem::path(checkpoint_path));
+    }
+
+    const auto genome_path = config.getOr<std::string>("runtime.protagonist_genome_path", "");
+    if (!genome_path.empty()) {
+        return createPopulationFromGenomeFile(route, std::filesystem::path(genome_path));
+    }
+
+    throw std::runtime_error(
+        "memory ablation requires runtime.resume_checkpoint_path or runtime.protagonist_genome_path");
 }
 
 std::vector<IGenome*> rawGenomePointers(std::vector<std::unique_ptr<IGenome>>& population) {
@@ -444,7 +992,40 @@ double evaluateIntrinsicReward(const Agent& agent) {
     return 1.0 / std::sqrt(visited_cells);
 }
 
+bool usesControlledSignalEmitter(const ProtagonistEcologyConfig& route) {
+    return route.isEvalRole() && route.scenario_name == "memory_ablation_signal_response";
+}
+
+Vec2 controlledSignalEmitterPosition(const ProtagonistEcologyConfig& route) {
+    return Vec2{
+        std::clamp(route.base.center.x - 26.0f, 0.0f, route.world_size.x),
+        std::clamp(route.base.center.y + 12.0f, 0.0f, route.world_size.y),
+    };
+}
+
+void emitControlledSignal(World2D& world, SignalLayer& signal_layer, const ProtagonistEcologyConfig& route) {
+    std::vector<float> signal(signal_layer.channels(), 0.0f);
+    if (signal.empty()) {
+        return;
+    }
+
+    const Vec2 emitter_pos = controlledSignalEmitterPosition(route);
+    signal[0] = 1.0f;
+    signal_layer.emitWithHistory(
+        kInvalidAgentId,
+        emitter_pos,
+        signal,
+        world.currentTick(),
+        world.currentTimeSeconds());
+    world.eventBus().publish(events::Event{
+        events::EventType::AgentEmittedSignal,
+        events::AgentEmittedSignal{kInvalidAgentId, emitter_pos, 0, signal[0]},
+        world.currentTick(),
+        world.currentTimeSeconds()});
+}
+
 void evaluatePopulation(World2D& world,
+                        const ProtagonistEcologyConfig& route,
                         const TrainingParams& params,
                         const std::vector<std::unique_ptr<IGenome>>& population,
                         const std::vector<BackgroundSpecies>& background_species,
@@ -463,6 +1044,8 @@ void evaluatePopulation(World2D& world,
     auto* survival_layer = world.getLayer<SurvivalStatusLayer>();
     auto* tree_layer = world.getLayer<TreeLayer>();
     auto* water_layer = world.getLayer<WaterLayer>();
+    const bool controlled_signal_emitter = signal_layer != nullptr && usesControlledSignalEmitter(route);
+    SimTimeSeconds next_controlled_signal_emit_seconds = 0.0;
 
     std::unordered_set<GenomeId> protagonist_ids;
     protagonist_ids.reserve(population.size());
@@ -484,6 +1067,7 @@ void evaluatePopulation(World2D& world,
     struct SignalEmitInfo {
         SimTimeSeconds time_seconds{0.0};
         Vec2 position{};
+        Tick tick{0};
     };
     struct AttackEventInfo {
         AgentId attacker{0};
@@ -518,6 +1102,7 @@ void evaluatePopulation(World2D& world,
     std::unordered_map<AgentId, float> previous_damage;
     std::unordered_map<AgentId, std::size_t> previous_kills;
     std::unordered_map<AgentId, float> previous_hydration;
+    std::unordered_map<AgentId, std::unordered_map<AgentId, Tick>> last_signal_response_tick;
     std::unordered_set<AgentId> alive_last_tick;
     // Stage 1 extension: track the predator-visible state per agent across
     // ticks so we can emit saw_predator on the rising edge (i.e. predator
@@ -533,7 +1118,7 @@ void evaluatePopulation(World2D& world,
         events::EventType::AgentEmittedSignal,
         [&](const events::Event& event) {
             const auto& payload = event.payloadAs<events::AgentEmittedSignal>();
-            last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), payload.pos};
+            last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), payload.pos, event.tick()};
             tick_emits.push_back(payload);
         }) : 0u;
 
@@ -551,7 +1136,9 @@ void evaluatePopulation(World2D& world,
                 if (actor->id() == payload.attacker) {
                     attacker_pos = actor->position();
                     const auto archetype_it = bg_archetype_by_id.find(actor->genomeId());
-                    attacker_is_predator = archetype_it != bg_archetype_by_id.end() && isPredatorArchetype(archetype_it->second);
+                    attacker_is_predator = archetype_it != bg_archetype_by_id.end()
+                        ? isPredatorArchetype(archetype_it->second)
+                        : actor->isPredator();
                 }
                 if (actor->id() == payload.victim) {
                     victim_pos = actor->position();
@@ -619,6 +1206,10 @@ void evaluatePopulation(World2D& world,
         tick_build_completed.clear();
         tick_deposits.clear();
         tick_deaths.clear();
+        while (controlled_signal_emitter && elapsed_seconds + 1.0e-9 >= next_controlled_signal_emit_seconds) {
+            emitControlledSignal(world, *signal_layer, route);
+            next_controlled_signal_emit_seconds += 6.0;
+        }
         world.tick(dt);
         elapsed_seconds += dt_seconds;
         bool any_alive = false;
@@ -803,7 +1394,11 @@ void evaluatePopulation(World2D& world,
                             continue;
                         }
                         const auto archetype_it = bg_archetype_by_id.find(other->genomeId());
-                        if (archetype_it == bg_archetype_by_id.end() || !isPredatorArchetype(archetype_it->second)) {
+                        if (archetype_it == bg_archetype_by_id.end()) {
+                            if (!other->isPredator()) {
+                                continue;
+                            }
+                        } else if (!isPredatorArchetype(archetype_it->second)) {
                             continue;
                         }
                         if (Vec2::distanceSquared(agent_pos, other->position()) <= 28.0f * 28.0f) {
@@ -828,9 +1423,10 @@ void evaluatePopulation(World2D& world,
                         // sees a goal_index distribution closer to the full
                         // 13-class GoalType set. Higher-priority rules
                         // short-circuit lower ones.
-                        constexpr SimTimeSeconds kGoalRefreshSeconds = 6.0;
-                        const bool should_refresh_goal = brain->goalMemory().elapsedSeconds() >= kGoalRefreshSeconds
-                            || brain->goalMemory().commitment() <= 0.20f;
+                        const auto goal_state = brain->goalMemory().state();
+                        const Vec2 remembered_worksite_target = brain->spatialMemory().findNearestWorksite(agent_pos, 0.15f);
+                        const bool remembered_worksite = remembered_worksite_target.x != 0.0f
+                                                     || remembered_worksite_target.y != 0.0f;
 
                         // Inspect nearest active worksite material needs so the
                         // manager can pick GatherStick / GatherStone / ChopTree
@@ -857,34 +1453,25 @@ void evaluatePopulation(World2D& world,
                             }
                         }
 
-                        const auto set_if_new = [&](GoalType g, float commitment) {
-                            if (should_refresh_goal || brain->goalMemory().currentGoal() != g) {
-                                brain->goalMemory().setGoal(g, commitment);
-                            }
+                        const GoalDecisionContext goal_context{
+                            .goal_state = goal_state,
+                            .health_ratio = health_ratio,
+                            .hydration_ratio = hydration_ratio,
+                            .energy = concrete->energy(),
+                            .predator_nearby = predator_nearby,
+                            .predator_warn_enabled = route.protagonist.predator_warn_enabled,
+                            .alive_protagonists = alive_protagonists.size(),
+                            .peer_signal_nearby = peer_signal_nearby,
+                            .fire_nearby = fire_nearby,
+                            .worksite_nearby = worksite_nearby,
+                            .remembered_worksite = remembered_worksite,
+                            .carrying = concrete->isCarrying(),
+                            .site_needs_sticks = site_needs_sticks,
+                            .site_needs_stones = site_needs_stones,
                         };
-
-                        if (predator_nearby || health_ratio <= 0.30f) {
-                            // Flee is highest-priority and overrides commitment.
-                            brain->goalMemory().setGoal(GoalType::Flee, 1.0f);
-                        } else if (predator_nearby && alive_protagonists.size() >= 2) {
-                            // Predator seen but health OK -> warn the group.
-                            set_if_new(GoalType::EmitSignal, 0.80f);
-                        } else if (hydration_ratio <= 0.40f) {
-                            set_if_new(GoalType::FindWater, 0.95f);
-                        } else if (worksite_nearby && concrete->isCarrying()) {
-                            set_if_new(GoalType::BuildWorksite, 0.85f);
-                        } else if (site_needs_sticks && !concrete->isCarrying()) {
-                            set_if_new(GoalType::GatherStick, 0.70f);
-                        } else if (site_needs_stones && !concrete->isCarrying()) {
-                            set_if_new(GoalType::GatherStone, 0.70f);
-                        } else if (peer_signal_nearby && should_refresh_goal) {
-                            set_if_new(GoalType::RespondSignal, 0.60f);
-                        } else if (fire_nearby && health_ratio <= 0.70f) {
-                            set_if_new(GoalType::RestNearFire, 0.70f);
-                        } else if (concrete->energy() <= 70.0f) {
-                            set_if_new(GoalType::FindFood, 0.75f);
-                        } else if (should_refresh_goal) {
-                            brain->goalMemory().setGoal(GoalType::Explore, 0.55f);
+                        const auto goal_decision = decideRuleBasedGoal(goal_context);
+                        if (goal_decision.action == GoalDecisionAction::SetGoal) {
+                            brain->goalMemory().setGoal(goal_decision.goal, goal_decision.commitment);
                         }
                     }
 
@@ -921,9 +1508,11 @@ void evaluatePopulation(World2D& world,
                     // metabolism noise. Salience 0.55 puts it slightly above
                     // ate_food because water is far scarcer.
                     {
-                        const float prev_hydr = previous_hydration[agent->id()];
-                        if (hydration_ratio > prev_hydr + 0.02f) {
+                        const auto prev_hydr_it = previous_hydration.find(agent->id());
+                        if (prev_hydr_it != previous_hydration.end()
+                            && hydration_ratio > prev_hydr_it->second + 0.02f) {
                             record_episode(agent_pos, "drank_water", 0.55f);
+                            ++behavior.drank_water_events;
                         }
                         previous_hydration[agent->id()] = hydration_ratio;
                     }
@@ -1017,6 +1606,32 @@ void evaluatePopulation(World2D& world,
                         if (completed_this_tick > 0 && brain->goalMemory().currentGoal() == GoalType::BuildWorksite) {
                             brain->goalMemory().reinforceCommitment(0.45f);
                             brain->goalMemory().progress(0.65f);
+                        }
+                    }
+
+                    if (brain->goalMemory().currentGoal() == GoalType::RespondSignal) {
+                        const SimTimeSeconds now_time = world.currentTimeSeconds();
+                        for (const auto& [emitter_id, emit] : last_signal_emit) {
+                            if (emitter_id == agent->id()) {
+                                continue;
+                            }
+                            if (emit.tick == 0
+                                || now_time <= emit.time_seconds
+                                || now_time - emit.time_seconds > params.signal_co_attendance_window_seconds) {
+                                continue;
+                            }
+                            if (Vec2::distanceSquared(agent_pos, emit.position)
+                                > params.signal_co_attendance_radius * params.signal_co_attendance_radius) {
+                                continue;
+                            }
+
+                            auto& last_response_tick = last_signal_response_tick[agent->id()][emitter_id];
+                            if (last_response_tick == emit.tick) {
+                                continue;
+                            }
+                            last_response_tick = emit.tick;
+                            ++behavior.signal_response_events;
+                            break;
                         }
                     }
                 }
@@ -1366,7 +1981,12 @@ void evaluatePopulation(World2D& world,
         world.eventBus().unsubscribe(subscribe_died);
     }
 
-    behavior.signal_emits += last_signal_emit.size();
+    behavior.signal_emits += static_cast<std::size_t>(std::count_if(
+        last_signal_emit.begin(),
+        last_signal_emit.end(),
+        [](const auto& entry) {
+            return entry.first != kInvalidAgentId;
+        }));
     if (logistics_layer != nullptr) {
         behavior.deposits_total += logistics_layer->totalDeposits();
         behavior.deposits_stick += logistics_layer->totalDeposits(ObjectType::Stick);
@@ -1535,6 +2155,12 @@ int ProtagonistEcologyRuntime::run() {
     running_.store(true);
     stop_requested_.store(false);
 
+    if (loadMemoryAblationSettings(config_).enabled) {
+        const int rc = runMemoryAblation();
+        running_.store(false);
+        return rc;
+    }
+
     if (trainingEnabled(config_)) {
         const int rc = runTraining();
         running_.store(false);
@@ -1561,6 +2187,273 @@ int ProtagonistEcologyRuntime::run() {
              route.sim_time.substep_dt);
 
     running_.store(false);
+    return 0;
+}
+
+int ProtagonistEcologyRuntime::runMemoryAblation() {
+    const auto settings = loadMemoryAblationSettings(config_);
+    auto base_route = ProtagonistEcologyConfig::fromConfig(config_);
+    if (!base_route.base.enabled || !base_route.objects.enabled || !base_route.tree.enabled
+        || !base_route.signal.enabled || !base_route.water.enabled
+        || !base_route.survival.enabled || !base_route.worksite.enabled) {
+        LOG_ERROR("ProtagonistEcologyRuntime: memory ablation requires base/object/tree/signal/water/survival/worksite to stay enabled in the base config");
+        return 1;
+    }
+
+    const std::size_t hw_threads = std::max<std::size_t>(1u, std::thread::hardware_concurrency());
+    const std::size_t available_threads = hw_threads > 1 ? hw_threads - 1 : 1;
+    const auto run_dir = makeRunDir(config_);
+
+    std::ofstream csv(run_dir / "memory_ablation_results.csv", std::ios::out | std::ios::trunc);
+    if (!csv.is_open()) {
+        LOG_ERROR("ProtagonistEcologyRuntime: failed to open memory ablation csv");
+        return 1;
+    }
+    csv << "task,variant,primary_metric,primary_metric_name,avg_fitness,best_fitness,survived_avg,avg_health_ratio,"
+           "avg_hydration_ratio,drank_water_events_avg,dehydrated_avg,injured_avg,protagonist_attack_avg,protagonist_deaths_avg,"
+           "deposits_avg,completed_worksites_avg,worksite_completion_events_avg,signal_emitters_avg,"
+           "signal_emit_events_avg,signal_response_events_avg,signal_co_attendance_avg,dnc_usage_mean_avg,dnc_read_peak_avg\n";
+
+    std::vector<MemoryAblationResultRow> rows;
+    rows.reserve(memoryAblationTasks().size() * memoryAblationVariants().size());
+
+    for (const auto task : memoryAblationTasks()) {
+        if (stop_requested_.load()) {
+            break;
+        }
+
+        auto task_route = configureMemoryAblationTask(base_route, task);
+        if (protagonistSensoryDim(task_route) != protagonistSensoryDim(base_route)
+            || task_route.protagonist.action_dim != base_route.protagonist.action_dim) {
+            LOG_ERROR("ProtagonistEcologyRuntime: memory ablation task {} changed protagonist shape; base config does not match checkpoint-compatible full route",
+                      memoryAblationTaskName(task));
+            return 1;
+        }
+        task_route.compute.agent_decision_threads = resolveAgentDecisionThreads(
+            task_route.compute.agent_decision_threads,
+            available_threads,
+            1);
+        auto population = createEvaluationPopulationFromConfig(config_, task_route);
+        std::unordered_set<GenomeId> protagonist_genome_ids;
+        protagonist_genome_ids.reserve(population.size());
+        for (const auto& genome : population) {
+            if (genome != nullptr) {
+                protagonist_genome_ids.insert(genome->id());
+            }
+        }
+
+        for (const auto& variant : memoryAblationVariants()) {
+            if (stop_requested_.load()) {
+                break;
+            }
+
+            auto params = configureMemoryAblationTaskParams(config_, task);
+            applyMemoryAblationVariant(params, variant);
+            MemoryAblationAggregate aggregate;
+
+            for (std::size_t episode = 0; episode < settings.episodes_per_task; ++episode) {
+                auto episode_route = task_route;
+                episode_route.random_seed = base_route.random_seed
+                    + static_cast<std::uint32_t>(static_cast<std::size_t>(task) * 1000u)
+                    + static_cast<std::uint32_t>(episode * 131u + 17u);
+
+                ChopTreeCapability::resetCounters();
+                CraftSpearCapability::resetCounters();
+                ProtagonistHuntCapability::resetCounters();
+                ThrowCarriedObjectCapability::resetCounters();
+
+                auto world = createBootstrapWorld(episode_route);
+                std::uint64_t next_agent_id = 1;
+                seedBootstrapPopulation(*world, episode_route, next_agent_id, &population);
+
+                auto* agent_layer = world->getLayer<AgentLayer>();
+                if (agent_layer == nullptr) {
+                    LOG_ERROR("ProtagonistEcologyRuntime: memory ablation world missing AgentLayer");
+                    return 1;
+                }
+
+                std::unordered_set<AgentId> protagonist_agent_ids;
+                protagonist_agent_ids.reserve(population.size());
+                for (const auto* agent : agent_layer->agents()) {
+                    if (agent != nullptr && protagonist_genome_ids.contains(agent->genomeId())) {
+                        protagonist_agent_ids.insert(agent->id());
+                    }
+                }
+
+                MemoryAblationEpisodeProbe probe;
+                const auto sub_attack = world->eventBus().subscribe(
+                    events::EventType::AgentAttacked,
+                    [&](const events::Event& event) {
+                        const auto& payload = event.payloadAs<events::AgentAttacked>();
+                        if (protagonist_agent_ids.contains(payload.victim)) {
+                            ++probe.protagonist_attack_events;
+                        }
+                    });
+                const auto sub_died = world->eventBus().subscribe(
+                    events::EventType::AgentDied,
+                    [&](const events::Event& event) {
+                        const auto& payload = event.payloadAs<events::AgentDied>();
+                        if (protagonist_agent_ids.contains(payload.id)) {
+                            ++probe.protagonist_deaths;
+                        }
+                    });
+                const auto sub_signal = world->eventBus().subscribe(
+                    events::EventType::AgentEmittedSignal,
+                    [&](const events::Event& event) {
+                        const auto& payload = event.payloadAs<events::AgentEmittedSignal>();
+                        if (protagonist_agent_ids.contains(payload.id)) {
+                            ++probe.signal_emit_events;
+                        }
+                    });
+
+                std::unique_ptr<TraceRecorder> trace_recorder;
+                if (settings.trace_enabled) {
+                    TraceRecorderConfig trace_config;
+                    trace_config.enabled = true;
+                    trace_config.events_enabled = true;
+                    trace_config.agents_enabled = true;
+                    trace_config.world_enabled = true;
+                    trace_config.agent_interval = 5;
+                    trace_config.world_interval = 5;
+                    trace_recorder = std::make_unique<TraceRecorder>(
+                        *world,
+                        run_dir / "trace" / std::string(memoryAblationTaskName(task)) / std::string(variant.name)
+                            / ("episode_" + std::to_string(episode)),
+                        episode_route,
+                        trace_config,
+                        0,
+                        episode);
+                }
+
+                BehaviorAccumulator episode_behavior;
+                const std::vector<BackgroundSpecies> no_background_species;
+                evaluatePopulation(*world,
+                                   episode_route,
+                                   params,
+                                   population,
+                                   no_background_species,
+                                   episode_behavior,
+                                   stop_requested_,
+                                   trace_recorder.get());
+                world->eventBus().unsubscribe(sub_signal);
+                world->eventBus().unsubscribe(sub_died);
+                world->eventBus().unsubscribe(sub_attack);
+
+                mergeBehaviorAccumulator(aggregate.behavior, episode_behavior);
+                aggregate.protagonist_attack_events += probe.protagonist_attack_events;
+                aggregate.protagonist_deaths += probe.protagonist_deaths;
+                aggregate.signal_emit_events += probe.signal_emit_events;
+                accumulateGenomeFitness(*world, population, aggregate.fitness_sum);
+
+                if (const auto* survival = world->getLayer<SurvivalStatusLayer>(); survival != nullptr) {
+                    aggregate.avg_health_ratio_sum += survival->averageHealthRatio();
+                    aggregate.avg_hydration_ratio_sum += survival->averageHydrationRatio();
+                    aggregate.dehydrated_agents_sum += survival->dehydratedCount();
+                    aggregate.injured_agents_sum += survival->injuredCount();
+                } else {
+                    aggregate.avg_health_ratio_sum += 1.0;
+                    aggregate.avg_hydration_ratio_sum += 1.0;
+                }
+            }
+
+            const auto evaluated = collectEvaluated(population, aggregate.fitness_sum, settings.episodes_per_task);
+            const auto stats = computeStats(evaluated);
+            MemoryAblationResultRow row;
+            row.task = task;
+            row.variant = std::string(variant.name);
+            row.avg_fitness = stats.avg_fitness;
+            row.best_fitness = stats.best_fitness;
+            row.survived_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.survived_protagonists), settings.episodes_per_task);
+            row.avg_health_ratio = averagePerEpisode(aggregate.avg_health_ratio_sum, settings.episodes_per_task);
+            row.avg_hydration_ratio = averagePerEpisode(aggregate.avg_hydration_ratio_sum, settings.episodes_per_task);
+            row.drank_water_events_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.drank_water_events), settings.episodes_per_task);
+            row.dehydrated_avg = averagePerEpisode(static_cast<double>(aggregate.dehydrated_agents_sum), settings.episodes_per_task);
+            row.injured_avg = averagePerEpisode(static_cast<double>(aggregate.injured_agents_sum), settings.episodes_per_task);
+            row.protagonist_attack_avg = averagePerEpisode(static_cast<double>(aggregate.protagonist_attack_events), settings.episodes_per_task);
+            row.protagonist_deaths_avg = averagePerEpisode(static_cast<double>(aggregate.protagonist_deaths), settings.episodes_per_task);
+            row.deposits_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.deposits_total), settings.episodes_per_task);
+            row.completed_worksites_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.completed_worksites), settings.episodes_per_task);
+            row.worksite_completion_events_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.worksite_completion_events), settings.episodes_per_task);
+            row.signal_emitters_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_emits), settings.episodes_per_task);
+            row.signal_emit_events_avg = averagePerEpisode(static_cast<double>(aggregate.signal_emit_events), settings.episodes_per_task);
+            row.signal_response_events_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_response_events), settings.episodes_per_task);
+            row.signal_co_attendance_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_co_attendance), settings.episodes_per_task);
+            row.dnc_usage_mean_avg = aggregate.behavior.dnc_samples > 0
+                ? aggregate.behavior.dnc_usage_mean_sum / static_cast<double>(aggregate.behavior.dnc_samples)
+                : 0.0;
+            row.dnc_read_peak_avg = aggregate.behavior.dnc_samples > 0
+                ? aggregate.behavior.dnc_read_peak_sum / static_cast<double>(aggregate.behavior.dnc_samples)
+                : 0.0;
+            rows.push_back(row);
+
+            csv << memoryAblationTaskName(row.task) << ','
+                << row.variant << ','
+                << primaryMetricValue(row) << ','
+                << primaryMetricName(row.task) << ','
+                << row.avg_fitness << ','
+                << row.best_fitness << ','
+                << row.survived_avg << ','
+                << row.avg_health_ratio << ','
+                << row.avg_hydration_ratio << ','
+                << row.drank_water_events_avg << ','
+                << row.dehydrated_avg << ','
+                << row.injured_avg << ','
+                << row.protagonist_attack_avg << ','
+                << row.protagonist_deaths_avg << ','
+                << row.deposits_avg << ','
+                << row.completed_worksites_avg << ','
+                << row.worksite_completion_events_avg << ','
+                << row.signal_emitters_avg << ','
+                << row.signal_emit_events_avg << ','
+                << row.signal_response_events_avg << ','
+                << row.signal_co_attendance_avg << ','
+                << row.dnc_usage_mean_avg << ','
+                << row.dnc_read_peak_avg << '\n';
+            csv.flush();
+        }
+    }
+
+    std::ofstream md(run_dir / "memory_ablation_summary.md", std::ios::out | std::ios::trunc);
+    if (md.is_open()) {
+        md << "## Memory Ablation Fixed-Task Summary\n\n";
+        md << "| task | variant | primary metric | delta vs baseline | avg fitness | survived | hydration | attacks | deposits | worksite events | signal co-attend |\n";
+        md << "|---|---|---|---|---|---|---|---|---|---|---|\n";
+        for (const auto task : memoryAblationTasks()) {
+            double baseline = 0.0;
+            bool have_baseline = false;
+            for (const auto& row : rows) {
+                if (row.task == task && row.variant == "baseline") {
+                    baseline = primaryMetricValue(row);
+                    have_baseline = true;
+                    break;
+                }
+            }
+            for (const auto& row : rows) {
+                if (row.task != task) {
+                    continue;
+                }
+                const double metric = primaryMetricValue(row);
+                const double delta = have_baseline ? metric - baseline : 0.0;
+                md << "| " << memoryAblationTaskName(row.task)
+                   << " | " << row.variant
+                   << " | " << primaryMetricName(row.task) << "=" << metric
+                   << " | " << (have_baseline ? delta : 0.0)
+                   << " | " << row.avg_fitness
+                   << " | " << row.survived_avg
+                   << " | " << row.avg_hydration_ratio
+                   << " | " << row.protagonist_attack_avg
+                   << " | " << row.deposits_avg
+                   << " | " << row.worksite_completion_events_avg
+                   << " | " << row.signal_co_attendance_avg
+                   << " |\n";
+            }
+        }
+        md << "\n";
+        md << "> trace_enabled=" << (settings.trace_enabled ? "true" : "false")
+           << ", episodes_per_task=" << settings.episodes_per_task << "\n";
+    }
+
+    LOG_INFO("ProtagonistEcologyRuntime: memory ablation run complete at {}", run_dir.string());
     return 0;
 }
 
@@ -1598,7 +2491,6 @@ int ProtagonistEcologyRuntime::runTraining() {
              route.compute.protagonist_dense_gpu_enabled);
 
     const auto trace_config = loadTraceRecorderConfig(config_);
-    auto population = createTrainingPopulationFromConfig(config_, route);
     ProtagonistEvolution evolution(
         params.elite_ratio,
         params.tournament_size,
@@ -1624,63 +2516,100 @@ int ProtagonistEcologyRuntime::runTraining() {
             route.random_seed + seed_offset);
     };
 
-    // ---------------- species slot resolution ----------------
-    // Resolve config slots into an ordered list with archetype + count.
-    struct ResolvedSlot {
-        SpeciesArchetype archetype;
-        std::size_t count;
-    };
-    std::vector<ResolvedSlot> resolved_slots;
-    if (!route.background.slots.empty()) {
-        resolved_slots.reserve(route.background.slots.size());
-        for (const auto& slot : route.background.slots) {
-            resolved_slots.push_back({parseSpeciesArchetype(slot.archetype), slot.count});
-        }
-    } else {
-        // Backward-compat: synthesize from forager_count + predator_count.
-        if (route.background.forager_count > 0) {
-            resolved_slots.push_back({SpeciesArchetype::SmallForager, route.background.forager_count});
-        }
-        if (route.background.predator_count > 0) {
-            resolved_slots.push_back({SpeciesArchetype::PackHunter, route.background.predator_count});
-        }
-    }
-
-    // ---------------- background species init ----------------
-    // One NeatEvolution + initial NEAT population per species slot.
+    const auto resolved_slots = resolveBackgroundSlots(route);
     const std::size_t background_input_dim = backgroundSensoryDim(route);
     std::mt19937 init_rng(route.random_seed + 33333);
 
     struct SpeciesContext {
+        std::size_t slot_index{0};
+        std::size_t configured_count{0};
         SpeciesArchetype archetype;
         std::unique_ptr<NeatEvolution> evolution;
         std::vector<std::unique_ptr<IGenome>> population;
     };
     std::vector<SpeciesContext> species_contexts;
-    species_contexts.reserve(resolved_slots.size());
+    species_contexts.reserve(std::count_if(
+        resolved_slots.begin(),
+        resolved_slots.end(),
+        [](const ResolvedBackgroundSlot& slot) { return slot.count > 0; }));
 
-    // Each population gets a wide ID stride to avoid cross-population collisions
-    // after independent reproduce() calls (each population uses max_id+1 locally).
-    // Protagonist: [1, kIdStride), Species[i]: [(i+1)*kIdStride, (i+2)*kIdStride)
     constexpr std::uint64_t kIdStride = 100000ULL;
     std::uint32_t evolution_seed_offset = 11111;
     for (std::size_t slot_idx = 0; slot_idx < resolved_slots.size(); ++slot_idx) {
         const auto& slot = resolved_slots[slot_idx];
-        if (slot.count == 0) continue;
+        if (slot.count == 0) {
+            continue;
+        }
         SpeciesContext ctx;
+        ctx.slot_index = slot_idx;
+        ctx.configured_count = slot.count;
         ctx.archetype = slot.archetype;
         ctx.evolution = make_neat_evolution(evolution_seed_offset);
         evolution_seed_offset += 13371;
-        const auto output_dim = backgroundOutputDim(slot.archetype);
-        const std::uint64_t id_base = static_cast<std::uint64_t>(slot_idx + 1) * kIdStride + 1ULL;
-        ctx.population = createInitialNeatPopulation(
-            slot.count,
-            background_input_dim,
-            output_dim,
-            GenomeId{id_base},
-            ctx.evolution->innovationTracker(),
-            init_rng);
         species_contexts.push_back(std::move(ctx));
+    }
+
+    std::vector<std::unique_ptr<IGenome>> population;
+    std::size_t start_generation = 0;
+    double best_fitness_seen = -std::numeric_limits<double>::infinity();
+    const auto checkpoint_path = config_.getOr<std::string>("runtime.resume_checkpoint_path", "");
+    if (checkpoint_path.empty()) {
+        population = createInitialPopulation(route);
+        for (auto& ctx : species_contexts) {
+            const auto output_dim = backgroundOutputDim(ctx.archetype);
+            const std::uint64_t id_base = static_cast<std::uint64_t>(ctx.slot_index + 1) * kIdStride + 1ULL;
+            ctx.population = createInitialNeatPopulation(
+                ctx.configured_count,
+                background_input_dim,
+                output_dim,
+                GenomeId{id_base},
+                ctx.evolution->innovationTracker(),
+                init_rng);
+        }
+    } else {
+        const auto checkpoint_dir = std::filesystem::path(checkpoint_path);
+        if (auto checkpoint = tryLoadTrainingCheckpoint(route, checkpoint_dir, resolved_slots); checkpoint.has_value()) {
+            population = std::move(checkpoint->protagonist_population);
+            evolution.importState(checkpoint->protagonist_evolution_state);
+            start_generation = checkpoint->start_generation;
+            best_fitness_seen = checkpoint->best_fitness_seen;
+            if (checkpoint->background_species.size() != species_contexts.size()) {
+                throw std::runtime_error("checkpoint background species count does not match initialized species contexts");
+            }
+            for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                if (species_contexts[i].archetype != checkpoint->background_species[i].archetype) {
+                    throw std::runtime_error("checkpoint background species order does not match current scenario");
+                }
+                species_contexts[i].population = std::move(checkpoint->background_species[i].population);
+                species_contexts[i].evolution->importState(checkpoint->background_species[i].evolution_state);
+            }
+            copyIfExists(checkpoint_dir / "best_genome_overall.bin", run_dir / "best_genome_overall.bin");
+            copyIfExists(checkpoint_dir / "best_genome_latest.bin", run_dir / "best_genome_latest.bin");
+            LOG_INFO("ProtagonistEcologyRuntime: resumed full checkpoint from {} (generation={} protagonist_count={} background_species={})",
+                     checkpoint_path,
+                     start_generation,
+                     population.size(),
+                     species_contexts.size());
+        } else {
+            population = loadProtagonistCheckpointPopulation(route, checkpoint_dir);
+            for (auto& ctx : species_contexts) {
+                const auto output_dim = backgroundOutputDim(ctx.archetype);
+                const std::uint64_t id_base = static_cast<std::uint64_t>(ctx.slot_index + 1) * kIdStride + 1ULL;
+                ctx.population = createInitialNeatPopulation(
+                    ctx.configured_count,
+                    background_input_dim,
+                    output_dim,
+                    GenomeId{id_base},
+                    ctx.evolution->innovationTracker(),
+                    init_rng);
+            }
+            copyIfExists(checkpoint_dir / "best_genome_overall.bin", run_dir / "best_genome_overall.bin");
+            copyIfExists(checkpoint_dir / "best_genome_latest.bin", run_dir / "best_genome_latest.bin");
+            LOG_INFO("ProtagonistEcologyRuntime: resumed protagonist population count={} from {}",
+                     population.size(),
+                     checkpoint_path);
+            LOG_WARN("ProtagonistEcologyRuntime: checkpoint_state.toml missing; falling back to protagonist-only resume with fresh background species");
+        }
     }
 
     auto build_species_view = [&]() {
@@ -1719,7 +2648,7 @@ int ProtagonistEcologyRuntime::runTraining() {
     behavior_csv << "generation,episodes,total_protagonists,survived_protagonists,deposits_total,deposits_stick,deposits_stone,"
                  << "completed_worksites,worksite_completion_events,active_fires,chop_attempts,chop_successes,"
                  << "craft_attempts,craft_successes,throw_attempts,throw_hits,hunt_attempts,hunt_successes,"
-                 << "signal_emits,signal_co_attendance,cooperative_co_presence_seconds,"
+                 << "drank_water_events,signal_emits,signal_response_events,signal_co_attendance,cooperative_co_presence_seconds,"
                  << "dnc_usage_mean_avg,dnc_write_peak_avg,dnc_read_peak_avg,dnc_precedence_peak_avg,dnc_samples\n";
 
     std::ofstream species_csv(run_dir / "species_metrics.csv", std::ios::out | std::ios::trunc);
@@ -1740,8 +2669,7 @@ int ProtagonistEcologyRuntime::runTraining() {
                  return s;
              }());
 
-    double best_fitness_seen = -std::numeric_limits<double>::infinity();
-    for (std::size_t generation = 0; generation < params.generations; ++generation) {
+    for (std::size_t generation = start_generation; generation < params.generations; ++generation) {
         if (stop_requested_.load()) {
             break;
         }
@@ -1807,7 +2735,7 @@ int ProtagonistEcologyRuntime::runTraining() {
                 seedTrainingPopulation(*world, generation_route, population, background_view, local_next_agent_id);
 
                 EpisodeResult& result = episode_results[episode];
-                evaluatePopulation(*world, params, population, background_view, result.behavior, stop_requested_, trace_recorder.get());
+                evaluatePopulation(*world, generation_route, params, population, background_view, result.behavior, stop_requested_, trace_recorder.get());
                 accumulateGenomeFitness(*world, population, result.fitness_sum);
                 for (std::size_t i = 0; i < background_view.size(); ++i) {
                     if (background_view[i].population != nullptr) {
@@ -1936,7 +2864,9 @@ int ProtagonistEcologyRuntime::runTraining() {
                      << behavior.throw_hits << ','
                      << behavior.hunt_attempts << ','
                      << behavior.hunt_successes << ','
+                     << behavior.drank_water_events << ','
                      << behavior.signal_emits << ','
+                     << behavior.signal_response_events << ','
                      << behavior.signal_co_attendance << ','
                      << behavior.cooperative_co_presence_seconds << ','
                      << dnc_usage_mean_avg << ','
@@ -2000,16 +2930,38 @@ int ProtagonistEcologyRuntime::runTraining() {
             }
         }
 
-        // ---- checkpoint protagonists ----
-        if (params.checkpoint_every > 0
-            && (generation + 1) % params.checkpoint_every == 0) {
+        const bool checkpoint_due = params.checkpoint_every > 0
+            && (generation + 1) % params.checkpoint_every == 0;
+        const bool continue_training = generation + 1 < params.generations && !stop_requested_.load();
+        const bool need_post_reproduction_state = !stop_requested_.load()
+            && (continue_training || checkpoint_due);
+
+        std::vector<std::unique_ptr<IGenome>> next_population;
+        std::vector<std::vector<std::unique_ptr<IGenome>>> next_species_populations;
+        if (need_post_reproduction_state) {
+            auto raw = rawGenomePointers(population);
+            next_population = evolution.reproduce(evaluated, raw, nullptr);
+            next_species_populations.reserve(species_contexts.size());
+            for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                if (species_contexts[i].population.empty()) {
+                    next_species_populations.emplace_back();
+                    continue;
+                }
+                auto raw_i = rawGenomePointers(species_contexts[i].population);
+                next_species_populations.push_back(
+                    species_contexts[i].evolution->reproduce(species_evaluated[i], raw_i, nullptr));
+            }
+        }
+
+        if (checkpoint_due && !stop_requested_.load()) {
             const auto checkpoint_dir = run_dir / ("checkpoint_gen" + std::to_string(generation));
             std::error_code ec;
             std::filesystem::create_directories(checkpoint_dir, ec);
+            const auto& checkpoint_population = next_population.empty() ? population : next_population;
             std::size_t saved = 0;
             std::vector<std::string> saved_files;
-            saved_files.reserve(population.size());
-            for (const auto& genome : population) {
+            saved_files.reserve(checkpoint_population.size());
+            for (const auto& genome : checkpoint_population) {
                 if (genome == nullptr) {
                     continue;
                 }
@@ -2024,41 +2976,98 @@ int ProtagonistEcologyRuntime::runTraining() {
                     saved_files.push_back(filename);
                 }
             }
+
+            std::vector<TrainingCheckpointBackgroundEntry> background_entries;
+            background_entries.reserve(species_contexts.size());
+            for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                const auto species_dir_name = std::string("background_species_") + std::to_string(species_contexts[i].slot_index);
+                const auto species_dir = checkpoint_dir / species_dir_name;
+                const auto& checkpoint_species_population = next_species_populations.empty()
+                    ? species_contexts[i].population
+                    : next_species_populations[i];
+                std::vector<std::string> background_saved_files;
+                const auto saved_background = saveNeatCheckpointPopulation(
+                    checkpoint_species_population,
+                    species_dir,
+                    background_saved_files);
+                saveBackgroundEvolutionState(
+                    species_contexts[i].evolution->exportState(),
+                    species_contexts[i].archetype,
+                    species_dir,
+                    checkpoint_species_population.size());
+                background_entries.push_back(TrainingCheckpointBackgroundEntry{
+                    species_contexts[i].slot_index,
+                    species_contexts[i].archetype,
+                    species_dir_name,
+                    saved_background,
+                });
+            }
+
+            saveTrainingCheckpointState(
+                checkpoint_dir,
+                TrainingCheckpointState{
+                    generation,
+                    generation + 1,
+                    best_fitness_seen,
+                    evolution.exportState(),
+                    background_entries,
+                });
+            copyIfExists(run_dir / "best_genome_overall.bin", checkpoint_dir / "best_genome_overall.bin");
+            copyIfExists(run_dir / "best_genome_latest.bin", checkpoint_dir / "best_genome_latest.bin");
+
             std::ofstream manifest(checkpoint_dir / "checkpoint_manifest.json", std::ios::out | std::ios::trunc);
             if (manifest.is_open()) {
                 manifest << "{\n"
-                         << "  \"schema_version\": 1,\n"
-                         << "  \"generation\": " << generation << ",\n"
+                         << "  \"schema_version\": 2,\n"
+                         << "  \"evaluated_generation\": " << generation << ",\n"
+                         << "  \"resume_generation\": " << (generation + 1) << ",\n"
                          << "  \"scenario_name\": \"" << jsonEscape(route.scenario_name) << "\",\n"
                          << "  \"world_role\": \"" << jsonEscape(route.world_role) << "\",\n"
                          << "  \"config_path\": \"" << jsonEscape(config_.path().string()) << "\",\n"
-                         << "  \"resume_supported\": \"protagonist_population_only\",\n"
-                         << "  \"background_species_resume\": false,\n"
-                         << "  \"rng_state_resume\": false,\n"
-                         << "  \"innovation_tracker_resume\": false,\n"
+                         << "  \"resume_supported\": \"full_population_state\",\n"
+                         << "  \"background_species_resume\": true,\n"
+                         << "  \"rng_state_resume\": true,\n"
+                         << "  \"innovation_tracker_resume\": true,\n"
+                         << "  \"speciation_state_resume\": true,\n"
+                         << "  \"generation_index_resume\": true,\n"
+                         << "  \"checkpoint_state\": \"checkpoint_state.toml\",\n"
                          << "  \"protagonist_population_count\": " << saved << ",\n"
                          << "  \"protagonist_genomes\": [";
                 for (std::size_t i = 0; i < saved_files.size(); ++i) {
                     if (i > 0) manifest << ", ";
                     manifest << "\"" << jsonEscape(saved_files[i]) << "\"";
                 }
+                manifest << "],\n";
+                manifest << "  \"background_species\": [";
+                for (std::size_t i = 0; i < background_entries.size(); ++i) {
+                    if (i > 0) {
+                        manifest << ", ";
+                    }
+                    manifest << "{"
+                             << "\"slot_index\":" << background_entries[i].slot_index << ","
+                             << "\"archetype\":\"" << jsonEscape(std::string(speciesArchetypeName(background_entries[i].archetype))) << "\","
+                             << "\"directory\":\"" << jsonEscape(background_entries[i].directory) << "\","
+                             << "\"population_count\":" << background_entries[i].population_count
+                             << "}";
+                }
                 manifest << "]\n}\n";
             }
-            LOG_INFO("Protagonist gen {} checkpoint saved {} genomes -> {}", generation, saved, checkpoint_dir.string());
+            LOG_INFO("Protagonist gen {} checkpoint saved protagonist={} background_species={} -> {}",
+                     generation,
+                     saved,
+                     background_entries.size(),
+                     checkpoint_dir.string());
         }
 
-        if (generation + 1 >= params.generations || stop_requested_.load()) {
+        if (!continue_training) {
             break;
         }
 
-        // ---- reproduce all populations ----
-        auto raw = rawGenomePointers(population);
-        population = evolution.reproduce(evaluated, raw, nullptr);
-
+        population = std::move(next_population);
         for (std::size_t i = 0; i < species_contexts.size(); ++i) {
-            if (species_contexts[i].population.empty()) continue;
-            auto raw_i = rawGenomePointers(species_contexts[i].population);
-            species_contexts[i].population = species_contexts[i].evolution->reproduce(species_evaluated[i], raw_i, nullptr);
+            if (i < next_species_populations.size()) {
+                species_contexts[i].population = std::move(next_species_populations[i]);
+            }
         }
     }
 

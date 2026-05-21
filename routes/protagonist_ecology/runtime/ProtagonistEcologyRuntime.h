@@ -26,6 +26,7 @@ public:
     bool running() const { return running_.load(); }
 
 private:
+    int runMemoryAblation();
     int runTraining();
 
     config::Config config_;

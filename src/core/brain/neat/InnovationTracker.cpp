@@ -42,6 +42,19 @@ NodeId InnovationTracker::lastNodeId() const {
     return next_node_id_ == 0 ? 0 : next_node_id_ - 1;
 }
 
+InnovationTrackerState InnovationTracker::exportState() const {
+    return InnovationTrackerState{
+        next_innovation_.value,
+        next_node_id_,
+    };
+}
+
+void InnovationTracker::importState(const InnovationTrackerState& state) {
+    next_innovation_ = InnovationId{state.next_innovation_value == 0 ? 1 : state.next_innovation_value};
+    next_node_id_ = state.next_node_id == 0 ? 1 : state.next_node_id;
+    current_generation_cache_.clear();
+}
+
 std::size_t InnovationTracker::EdgeKeyHasher::operator()(const EdgeKey& key) const noexcept {
     const std::size_t lhs = std::hash<NodeId>{}(key.from);
     const std::size_t rhs = std::hash<NodeId>{}(key.to);

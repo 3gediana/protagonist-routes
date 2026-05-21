@@ -275,6 +275,7 @@ NeatEvolutionState NeatEvolution::exportState() const {
     rng_state << rng_;
     return NeatEvolutionState{
         rng_state.str(),
+        innovation_tracker_.exportState(),
         speciation_.exportState(),
     };
 }
@@ -287,6 +288,7 @@ void NeatEvolution::importState(const NeatEvolutionState& state) {
             throw std::runtime_error("NeatEvolution: failed to restore RNG state");
         }
     }
+    innovation_tracker_.importState(state.innovation_tracker_state);
     speciation_.importState(state.speciation_state);
     last_species_groups_.clear();
 }

@@ -3,6 +3,8 @@
 > 位置：`routes/protagonist_ecology/docx/COMPUTE_SCALING_GPU_CPU_PLAN.md`
 >
 > 作用：承接 `MEMORY_SYSTEM_MASTERPLAN.md`。这份文档回答的问题不是“记忆系统怎么设计”，而是**当主角记忆系统和主行为脑一起变大之后，算力路线怎么接**。
+>
+> 状态：规划文档；2026-05-21 truth-sync：CUDA build 路径已可编译运行，但 camp-building 1-generation benchmark 暂未显示优于 CPU 的训练总耗时。
 
 ---
 
@@ -53,34 +55,35 @@
 
 ## 1.2 当前 protagonist route 的真实并行方式
 
-当前 `EvaluationPool` 在 protagonist route 里，核心是：
+当前 protagonist route 已不再只是旧版的“纯 episode 级并行”。
 
-- 按 `episode` 并行
-- 每个线程跑一个完整世界副本
-- 每个 episode 内部仍是整世界 + 全 agent 串行推进
+现在更准确的描述是：
 
-并且线程数上限被：
+- 外层仍由 `EvaluationPool` 按 `episode / world replica` 并行
+- 内层已经有 `compute.agent_decision_threads`，把 in-world agent decision 计算切成并行
+- `world advance / event resolve / 大部分状态提交` 仍主要在 CPU 受控阶段串行完成
 
-- `episodes_per_generation`
+所以真实判断应当是：
 
-直接卡住。
+- `episodes_per_generation` 仍会限制**外层**并行度，但不再是唯一上限
+- CPU 并行基础设施已经比“只有 2~3 个重任务在跑”更深一步
+- 是否真的吃满 `16C / 32T`，要结合 profiling 与具体配置判断，不能只凭架构推断
 
-如果当前配置是：
+最近 camp-building benchmark 的一个参考配置就是：
 
-- `episodes_per_generation = 2` 或 `3`
-
-那么在 `16C / 32T` 机器上，实际上很多时候只有：
-
-- `2~3` 个重任务真正并行
-
-这意味着：
-
-- 当前 CPU 完全没吃满
-- 现在就说“必须全项目 GPU”，还太早
+- `pool_threads = 3`
+- `agent_decision_threads = 10`
 
 ## 1.3 当前 protagonist brain 还没到 GPU 必需阶段，但已经不小了
 
-当前主角脑已经在 `130k` 参数量级，不再是小玩具。
+当前 camp-building 主训练配置下，主角脑已经大约是：
+
+- sensory dim ≈ `128`
+- hidden dim = `512`
+- memory cells = `48`
+- read heads = `4`
+- action dim = `13`
+- protagonist controller params ≈ `355,188`（约 `355k`）
 
 但这还不是终点。
 
@@ -98,6 +101,19 @@
 - 更丰富 memory query
 
 那么 protagonist dense inference 就很可能成为重要瓶颈。
+
+## 1.4 当前 CUDA reality
+
+最新本机实况是：
+
+- `build_cuda/` 已能用 portable CUDA（`D:\NVIDIA\CUDA\v12.8\`）构建 protagonist CUDA 路径
+- 运行时仍需把 `D:\NVIDIA\CUDA\v12.8\bin` 放进 PATH，否则会缺 `cudart64_12.dll`
+- camp-building 1-generation benchmark：CPU 约 `5.6s/gen`，CUDA build 约 `8.5~9.2s/gen`
+
+所以当前口径只能写成：
+
+- **CUDA build 路径可运行**
+- **但“GPU 已带来训练加速”这个结论目前不成立**
 
 ---
 
@@ -215,20 +231,22 @@ GPU side
 
 这是第一优先级，不依赖 GPU。
 
-## 4.2.1 先扩大 episode 粒度并行的可利用空间
+## 4.2.1 先 profile，再扩大 episode / agent 两层并行的可利用空间
 
-当前 episode 数太少，直接限制了线程利用率。
+现在 episode 数仍会限制外层并行上界，但已经不是唯一因素。
 
 可选方向：
 
-- 训练配置允许更高 `episodes_per_generation`
+- 根据 profiling 调整 `episodes_per_generation`
+- 继续利用/调优 `compute.agent_decision_threads`
 - 把 generation 内评估任务进一步分片
 - 将 protagonist 与 background 的不同评估批次更灵活调度
 
 注意：
 
 - 不是盲目把 episode 数开大
-- 要兼顾训练信号质量与 wall-clock 成本
+- 也不是假设 `agent_decision_threads` 一开就一定吃满机器
+- 要兼顾训练信号质量、lock/merge 成本与 wall-clock 成本
 
 ## 4.2.2 做 episode 内的“决策并行、状态提交串行”
 
@@ -237,7 +255,7 @@ GPU side
 ```text
 世界状态冻结为当前 substep snapshot
     -> 并行计算 agent decisions
-    -> 主线程或受控阶段统一提交动作
+    -> 统一提交阶段提交动作
     -> world advance / event resolve
 ```
 

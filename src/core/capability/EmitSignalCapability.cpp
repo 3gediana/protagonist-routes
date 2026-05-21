@@ -12,14 +12,16 @@
 
 namespace neuro {
 
-EmitSignalCapability::EmitSignalCapability(std::size_t channels, float energy_cost)
-    : channels_(channels), energy_cost_(energy_cost) {}
+EmitSignalCapability::EmitSignalCapability(std::size_t channels, float energy_cost, bool enabled)
+    : channels_(channels), energy_cost_(energy_cost), enabled_(enabled) {}
 
 std::size_t EmitSignalCapability::consumedOutputs() const {
     return channels_;
 }
 
 void EmitSignalCapability::apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) {
+    if (!enabled_) return;
+
     auto* concrete = dynamic_cast<Agent*>(&agent);
     if (concrete == nullptr) return;
 

@@ -1,5 +1,568 @@
 # experience_log.md · 实验与调参记录
 
+## 2026-05-21 · 指标解释前先核对真实统计口径，字段名不能直接当结论
+
+### 背景
+
+这次为了给用户做单页指标说明，重新把 protagonist route 与 core observer 里的真实输出字段逐个对回代码，发现一个非常容易反复踩的坑：
+
+- **字段名看起来像一个意思，统计口径却可能完全不同**
+- 如果只看 CSV 表头，不回代码，很容易把“事件次数”“最终状态”“平均值”“代理指标”混成一类
+
+### 这次明确确认的高风险误读点
+
+1. `signal_emits` **不等于** `signal_emit_events_avg`
+   - `signal_emits` 更接近“被记录到的 emitter 数”
+   - `signal_emit_events_avg` 才是 fixed-task eval 里额外 probe 到的真实发信号事件均值
+
+2. `completed_worksites` **不等于** `worksite_completion_events`
+   - `completed_worksites` 更偏 episode 结束时的最终完成结果
+   - `worksite_completion_events` 更偏运行过程中“新完成了工地”的事件次数
+
+3. `active_fires` 是结果状态，不是“点火事件数”
+
+4. `dnc_usage_mean_avg / dnc_read_peak_avg / dnc_precedence_peak_avg` 只能说明 **DNC 在活动**
+   - 不能单独拿来下“记忆真的有效帮助任务”的结论
+   - 真正更硬的证据仍然要看 fixed-task ablation 的 `primary_metric` 是否分离
+
+5. `emergence_audit.csv` 里多项字段仍是 proxy
+   - 如 `modulatory_corr`
+   - 如 `species_dig_preference_var`
+   - 它们更适合解释结构趋势，不适合替代真实行为事件指标
+
+### 可复用规则
+
+以后只要需要解释项目指标，先按下面顺序做：
+
+1. 先确认这列来自哪个文件
+2. 再确认它在代码里是：
+   - 真实事件计数
+   - 最终状态快照
+   - 跨 episode 平均
+   - DNC/脑状态摘要
+   - proxy / 研究解释指标
+3. 最后再决定这列能不能单独支持一个行为结论
+
+### 当前沉淀产物
+
+这次已经把核对结果沉淀成：
+
+- `routes/protagonist_ecology/docx/METRICS_FIELD_GUIDE.html`
+
+后续只要新增或改动输出字段，都应该顺手同步这份说明页，否则很容易再次出现“表头没变、口径却变了”的隐性文档过期。
+
+## 2026-05-21 · protagonist fixed-task memory ablation 的 worksite_return 修复链与 full run 结论
+
+### 背景
+
+fixed-task memory ablation 的 C++ 入口虽然已经接通，但第一次 1-episode traceprobe 说明它还没有真正收口：
+
+- `water_return` 已修好
+- `worksite_return` 仍然在所有变体上为 0
+
+所以当时的问题已经不再是“入口能不能跑”，而是“为什么 worksite 任务还是死的”。
+
+### 这次确认的根因
+
+1. `GoalActionAssistCapability` 会直接帮 agent pickup stick / stone
+2. 旧 `DropCapability` 仍可能在**同一个 tick** 把刚拿到的材料立刻丢掉
+3. `ThrowCarriedObjectCapability` 也可能打断 stone logistics
+4. `WorksiteReturn` 任务里 nursery logistics 还会把材料流向搅乱
+
+也就是说，问题不是 `WorksiteLayer` 本身坏了，而是**新 assist 层和旧物流动作层互相打架**。
+
+### 这次可复用的修法
+
+- `GoalActionAssistCapability`
+  - 在 `GatherStick / GatherStone / BuildWorksite` 下，携带材料时优先回 remembered worksite
+  - 若还没有 remembered worksite，再退回 remembered base
+- 新增 `GoalAwareDropCapability`
+  - 在 logistics/build 相关 goal 下，不让普通 drop 路径把 stick/stone 立刻放掉
+- `ThrowCarriedObjectCapability`
+  - 在 logistics/build 相关 goal 下，抑制 stone throw
+- `MemoryAblationEval.cpp`
+  - `WorksiteReturn` 任务禁用 `nursery.enabled`
+
+### 验证链
+
+1. **focused gtests 通过**
+   - `GoalActionAssist.*`
+   - `GoalAwareDropCapability.*`
+   - `MemoryAblationEval.*`
+
+2. **1-episode traceprobe 先验证修法方向**
+   - `water_return`
+     - baseline / `no_episodic` / `no_social` = `189`
+     - `no_spatial` / `no_goal` = `0`
+   - `worksite_return`
+     - baseline / `no_episodic` / `no_social` = `1`
+     - `no_spatial` / `no_goal` = `0`
+
+3. **4-episode fixed full run**
+   - 运行目录：`data/runs/protagonist_memory_ablation_fixed/20260521-212657`
+   - `water_return`
+     - baseline / `no_episodic` / `no_social` = `162`
+     - `no_spatial` = `67.5`
+     - `no_goal` = `0`
+   - `worksite_return`
+     - baseline / `no_episodic` / `no_social` = `0.5`
+     - `no_spatial` / `no_goal` = `0`
+   - `signal_response`
+     - baseline = `15.5`
+     - `no_goal` = `0`
+     - 其余变体仍有 `12.25~13`，分离偏弱
+   - `danger_avoidance`
+     - `no_episodic` 明显变差：`survived 8 -> 6.25`
+
+### 当前结论
+
+- `worksite_return` 的 recent bug **确实**是 assist vs drop/throw 的同 tick 冲突，不是 worksite layer 本体坏了
+- `no_goal` 仍然是最稳定、最强的 ablation
+- `no_spatial` 在 `worksite_return` 上已经很干净，但在 `water_return` 上只部分下降，在 `signal_response` 上不够强
+- 后续优先级应该转向**解释和任务 tightening**，而不是继续反复证明“memory ablation 入口能不能跑”
+
+## 2026-05-21 · Windows 下 protagonist memory ablation 的固定构建链与路径约定
+
+### 目的
+
+避免后续会话反复在 Windows / MSVC / WSL 路径上绕路，尤其是：
+
+- 忘记 `cmake` / `MSBuild.exe` 的正确位置
+- 用错生成器或 PATH 里的别名工具
+- 运行 `neural-eco-protagonist.exe` 时混用 `/mnt/d/...`、相对路径、Windows 路径
+
+### 这次确认可复用的固定工具路径
+
+1. **优先使用 VS2022 BuildTools 自带 CMake**
+   - `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`
+
+2. **优先使用 VS2022 BuildTools 自带 Ninja**
+   - `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe`
+
+3. **固定使用 BuildTools 的 `MSBuild.exe`**
+   - `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe`
+
+4. `where cmake` 当前还能找到一份：
+   - `G:\ai\qtdownload\Tools\CMake_64\bin\cmake.exe`
+   - 但这不是后续默认口径。**后续统一优先用 VS BuildTools 自带那份**，避免又被 PATH/盘符误导。
+
+### 这次真正稳定的做法
+
+1. **构建时不要赌 PATH**
+   - 直接用上面的绝对路径调用 `cmake.exe` / `MSBuild.exe`
+
+2. **如果只是重编 protagonist 路线，优先重编目标工程**
+   - `build/routes/protagonist_ecology/neural-eco-protagonist.vcxproj`
+   - 必要时再补：
+     - `build/tests/test_core.vcxproj`
+
+3. **运行 `neural-eco-protagonist.exe` 时，配置文件路径要用 Windows 风格绝对路径**
+   - 对：`D:/claude-code/c++/build/tmp/protagonist_ecology_memory_ablation_fixed_run.toml`
+   - 不要再试：
+     - `/mnt/d/...`
+     - `./build/tmp/...`
+     - 依赖当前工作目录的相对路径
+
+4. **TOML 里面的外部文件路径也要写 Windows 风格绝对路径**
+   - 已验证可用：
+     - `protagonist_genome_path = "D:/claude-code/c++/..."`
+     - `runs_dir = "D:/claude-code/c++/..."`
+   - 不要写：
+     - `/mnt/d/...`
+     - 相对路径
+
+5. **本次固定任务相关临时配置统一放在**
+   - `build/tmp/`
+   - 已使用：
+     - `build/tmp/protagonist_ecology_memory_ablation_traceprobe.toml`
+     - `build/tmp/protagonist_ecology_memory_ablation_fixed_run.toml`
+
+### 推荐命令模板
+
+#### 1. 重新配置（必要时）
+
+```powershell
+& "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
+  -S D:\claude-code\c++ `
+  -B D:\claude-code\c++\build
+```
+
+#### 2. 只重编 protagonist 可执行
+
+```powershell
+& "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" `
+  D:\claude-code\c++\build\routes\protagonist_ecology\neural-eco-protagonist.vcxproj `
+  /p:Configuration=Release /m
+```
+
+#### 3. 运行 fixed ablation
+
+```powershell
+D:\claude-code\c++\build\bin\Release\neural-eco-protagonist.exe `
+  --config D:/claude-code/c++/build/tmp/protagonist_ecology_memory_ablation_fixed_run.toml
+```
+
+### 关键结论
+
+以后只要涉及 protagonist memory ablation：
+
+- **构建工具固定用 VS2022 BuildTools 那套绝对路径**
+- **运行时配置和 genome/checkpoint 路径固定用 `D:/...`**
+- **临时 TOML 固定放 `build/tmp/`**
+
+这样可以少掉一大半“不是代码问题，只是路径/工具链又走错”的无效排查。
+
+## 2026-05-21 · protagonist 文档同步 + camp-building CPU/CUDA 基准重校准
+
+### 背景
+
+在继续讨论 protagonist 路线时，用户指出一个关键问题：仓库里关于 protagonist 长蓝图完成度的描述已经开始失真，尤其是：
+
+- 把一些 **partial 落地** 写得像“整 phase 完成”
+- 把 CUDA build 路径接通，误表述成“训练过程已经获得 GPU 加速收益”
+
+因此这次不继续扩机制，先回到**文档和现实状态对齐**。
+
+### 这次真正确认的事实
+
+1. **按 `WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md` 的 8 个 Phase 严格算**
+   - 目前真正完整收口的只有 **Phase 1 · Trace / Resume**
+   - **Phase 2 / 3 / 5 / 6 / 7** 都已有代码落点，但仍是 **partial**
+   - **Phase 4 · 通信语义任务** 与 **Phase 8 · 长训 + 3D replay panel** 还没有真正开始
+
+2. **当前 protagonist 路线不是“没东西”，但也远没到大蓝图完成**
+   - 已有：
+     - Trace / resume / checkpoint continuity
+     - continuous-time 主链
+     - Memory Phase A
+     - worksite / hunt credit partial
+     - world model dataset builder
+     - offline MAP-Elites archive / scripts
+     - DNC-forcing micro-task 最小验证
+     - BrainV3 最小壳层 + body/working summaries 折回现有 learnable path
+   - 未有：
+     - EventLineageTracker
+     - communication task family + MI/ablation metrics
+     - EnvironmentGenome / POETCoordinator
+     - 真正的 predictor / latent world model
+     - Manager / Worker 双脑头
+     - 长训与 3D replay 展示
+
+3. **GPU 现在的真实作用要和“build 通了”分开看**
+   - CPU build：`build/` 里 `CMAKE_CUDA_COMPILER=NOTFOUND`
+   - CUDA build：`build_cuda/` 确实由 `D:\NVIDIA\CUDA\v12.8\bin\nvcc.exe` 编出，可执行文件也能启动
+   - 但 **camp-building 1 generation 实测**：
+     - CPU：约 `5.6s/gen`
+     - CUDA：约 `8.5 ~ 9.2s/gen`
+   - 结论：**当前训练总耗时没有观察到 GPU 收益，反而更慢**
+
+4. **为什么 GPU 没带来训练收益**
+   - 现在 GPU 只接管 `ProtagonistBrain` 里的一小段 dense forward
+   - 世界推进、事件、memory write、DNC step、绝大部分训练逻辑仍在 CPU
+   - 而且当前 CUDA 路径是**每步 host→device 拷 input，再 device→host 拷 hidden/output/interface**
+   - 所以它更像一个“局部前向加速尝试”，还不是“训练主引擎”
+
+### 这次文档同步后的口径
+
+- **不再使用“protagonist 长路线已完成/100%”的说法**
+- **不再把“CUDA build 可运行”直接说成“训练已获得 GPU 加速”**
+- 后续文档默认改成：
+  - 少量完整阶段
+  - 多项 partial
+  - 未开始阶段明确写未开始
+
+### 当前结论
+
+- protagonist 路线已经从“空规划”进入“多模块真实落地”的阶段
+- 但它仍然处在 **Phase 1 完整、多个后续 phase 半落地** 的状态
+- 下一步不该继续无节制加底座，而应该先把一个已经半落地的 phase 真正收口
+- 就当前仓库结构看，最合理的候选是：
+  - `Memory V2`
+  - `ContributionLedger`
+  - `communication semantics`
+
+## 2026-05-21 · `ProtagonistBrainV3` 最小壳层落地并通过最小 build/test（兼容现有 genome）
+
+### 本次目标
+
+在不破坏现有 `ProtagonistGenome / ProtagonistEvolution / checkpoint / GPU dense` 兼容面的前提下，先把 `ProtagonistBrain` 从“单块 dense controller”拆成更接近 `BrainV3` 设计语言的内部壳层：
+
+- 让 observation / memory-query / body-state / working-memory / motor / action / interface 这些子结构在代码里真正出现
+- 但**先不**升级 genome 编码
+- 也**先不**把新记忆壳层直接做成 learnable 主路径
+
+### 这次真正改掉的点
+
+1. **新增 `ProtagonistBrainV3Components.{h,cpp}`**
+   - 文件：
+     - `routes/protagonist_ecology/brain/ProtagonistBrainV3Components.h`
+     - `routes/protagonist_ecology/brain/ProtagonistBrainV3Components.cpp`
+   - 当前拆出的组件包括：
+     - `ObservationEncoder`
+     - `MemoryQueryEncoder`
+     - `BodyStateMemory`
+     - `WorkingMemoryBank`
+     - `BehaviorFusionTrunk`
+     - `MotorCore`
+     - `ActionHeads`
+     - `InterfaceHead`
+   - 这些实现目前是**最小工程壳层**：主要负责状态组织、时间积分、memory summary 聚合和 shape 边界，而不是完整的新学习架构。
+
+2. **`ProtagonistBrain` 内部前向路径已改成经由这些壳层组件**
+   - 文件：
+     - `routes/protagonist_ecology/brain/ProtagonistBrain.h`
+     - `routes/protagonist_ecology/brain/ProtagonistBrain.cpp`
+   - 但这次刻意保持以下兼容面不变：
+     - `total_input_dim_ = external_input_dim + memory_cells * read_heads`
+     - 原 6 组参数 buffer：
+       - `in_hidden_weights`
+       - `hidden_bias`
+       - `hidden_action_weights`
+       - `action_bias`
+       - `hidden_interface_weights`
+       - `interface_bias`
+     - 原 DNC `decodeInterface()` 路径
+     - 原 optional `ProtagonistDenseGpu` fallback 路径
+   - 换句话说，这次不是“BrainV3 真升级”，而是**先把代码结构拆成 V3 壳层语言**。
+
+3. **补了一个最小壳层测试**
+   - 文件：
+     - `tests/route_protagonist/test_protagonist_brain_v3_shell.cpp`
+   - 测试口径非常克制：
+     - 构造一个小 `ProtagonistBrain`
+     - 跑一次 `forward()`
+     - 只检查动作输出维度、`WorkingMemoryBank` 有 cell、`BodyStateMemory` 有 summary
+   - 目的不是证明行为正确，只是给这层重构留一个“壳层存在性”护栏。
+
+4. **开始把 `BodyStateMemory / WorkingMemoryBank` 真接进现有 learnable path**
+   - 文件：
+     - `routes/protagonist_ecology/brain/ProtagonistBrain.cpp`
+   - 当前做法刻意保持兼容：
+     - 不新增 genome buffer
+     - 不改 `total_input_dim_`
+     - 不改 `ProtagonistDenseGpu` 接口
+   - 具体接法是：
+     - `BodyStateMemory.summary()` 折叠回 observation slice
+     - `WorkingMemoryBank.summary()` 折叠回 DNC read-query slice
+   - 这样它们已经能通过原有 `in_hidden_weights_` 影响 dense controller，而不只是“旁边有个状态对象”。
+
+5. **补了一个 learnable path 护栏测试**
+   - 文件：
+     - `tests/route_protagonist/test_protagonist_brain_v3_shell.cpp`
+   - 新增：
+     - `ProtagonistBrain.FeedsBodyAndWorkingMemoryIntoLearnablePath`
+   - 测试方法：
+     - 两个同 seed 的 brain
+     - 只给其中一个预热 body/working memory
+     - 用同一组输入前向
+     - 要求输出发生差异
+   - 这个测试能防止以后又把 body/working memory 退回“有状态但不参与控制”的假接线。
+
+6. **继续把 working memory 往下游 motor/action 路再接一层**
+   - 文件：
+     - `routes/protagonist_ecology/brain/ProtagonistBrain.cpp`
+   - 当前增量非常克制：
+     - 不改 `BehaviorFusionTrunk` 参数面
+     - 不改 `ActionHeads / InterfaceHead` 参数面
+     - 只是在 `MotorCore::integrate()` 前，把 `WorkingMemoryBank.summary()` 再加到 `motor_target`
+   - 结果是：
+     - working memory 现在不只影响 trunk input
+     - 还会继续影响 `MotorCore -> ActionHeads / InterfaceHead`
+
+7. **补了一个更窄的 working-memory-only 护栏测试**
+   - 新增：
+     - `ProtagonistBrain.FeedsWorkingMemoryIntoLearnablePath`
+   - 方法：
+     - 两个同 seed 的 brain
+     - 只给其中一个预热 `WorkingMemoryBank`
+     - 同输入前向
+     - 要求输出发生差异
+
+### 这次最关键的经验
+
+1. **`BrainV3` 第一阶段必须是“结构拆壳”，不是“参数面升级”**
+   - 当前最危险的不是功能不够，而是兼容面太多：
+     - genome 序列化
+     - evolution crossover/mutate
+     - dense GPU mirror
+     - checkpoint/load
+   - 所以第一步先把代码从单块 brain 拆成组件，而不是立刻扩基因编码。
+
+2. **`total_input_dim_` 和 6-buffer genome 现在是 load-bearing**
+   - 这两个如果现在就改，很容易把：
+     - `ProtagonistGenome`
+     - `ProtagonistEvolution`
+     - `BootstrapPopulation`
+     - `ProtagonistDenseGpu`
+     - checkpoint compatibility
+     一起炸掉。
+   - 所以这轮最稳的策略是：**新结构，旧参数面**。
+
+3. **这种“内部重构 + 对外兼容”的改动，最容易死在编译接线上**
+   - 比如：
+     - 构造器初始化列表残留旧成员
+     - CMake 漏接新 `.cpp`
+     - accessor / const 签名不一致
+     - 测试 target 没把新文件编进来
+   - 所以下一步一定不是继续扩功能，而是先做最小 build/test 验证。
+
+### 验证结果
+
+1. **Release 重编通过**
+   - `test_core`
+   - `neural-eco-protagonist`
+
+2. **新增壳层测试通过**
+   - `ProtagonistBrain.ExposesMinimalBrainV3ShellState`
+
+3. **新增 learnable path 测试通过**
+   - `ProtagonistBrain.FeedsBodyAndWorkingMemoryIntoLearnablePath`
+
+4. **新增 working-memory-only 测试通过**
+   - `ProtagonistBrain.FeedsWorkingMemoryIntoLearnablePath`
+
+5. **上一轮关键回归保持全绿**
+   - `MemoryTrialLayer.*`
+   - `ProtagonistEcologyConfig.ParsesSignalSection`
+
+6. **随后又补了一轮 route smoke**
+   - 使用裁短后的 DNC cue-choice 配置：
+     - `generations = 2`
+     - `episodes_per_generation = 1`
+   - 在“只做壳层重构”时，输出目录：
+     - `data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-110925`
+   - 结果对上前一轮 micro-task：
+     - `fitness.csv`: `best_fitness = 24`, `min_fitness = -6`
+     - `protagonist_behaviors.csv`: DNC 指标继续非零
+
+7. **在接入 learnable path 之后又重跑了一次相同短 smoke**
+   - 输出目录：
+     - `data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-111856`
+   - 结果：
+     - `Gen 1` 再次出现 `best_fitness = 24`
+     - `fitness.csv` 为：
+       - `generation 0: best = -6`
+       - `generation 1: best = 24`
+   - 这说明 task wiring 还通，但也再次提醒：当前 route 在多线程 decision 配置下**不是逐 run 严格确定性**。
+
+8. **在继续把 working memory 接到 `motor_target` 之后又重跑了一次相同短 smoke**
+   - 输出目录：
+     - `data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-113010`
+   - 结果仍是：
+     - `generation 0: best = -6`
+     - `generation 1: best = 24`
+   - 说明更深一层的兼容接线仍没有把 task wiring 跑坏
+
+9. **当前仍只算“最小验证”**
+   - 现在可以说“body/working memory 已开始影响控制路径”
+   - 但还没有证明这种接线一定会提升训练效果
+   - 也还没有做更深层行为结论验证
+
+### 当前状态
+
+- 这批 `BrainV3` 壳层改动已经完成**最小 build/test + route smoke 验证**
+- 当前可以确定：
+  - 结构方向已经落到代码
+  - 兼容策略成立
+  - 新增壳层测试和上轮关键回归没有被重构打坏
+  - body/working memory 已开始通过现有权重面影响 controller
+  - 连 runtime 级 DNC 短 smoke 也继续跑通
+- 但还**不能**说这层已经完成更深的行为升级
+
+### 当前结论
+
+- `DNC-forcing micro-task` 解决的是“现在有没有一个必须记住 cue 才能拿 reward 的任务”
+- `BrainV3` 最小壳层解决的是“接下来要把 protagonist 脑扩成更像完整记忆-行为系统时，代码结构有没有干净落脚点”
+- 这两步是连续的，但不是一件事；前者已完成最小任务验证，后者当前已完成**最小 build/test + route smoke 验证**，并且已经开始把 body/working memory 折叠进现有 learnable path
+
+## 2026-05-21 · DNC-forcing micro-task 最小验证（build/test/smoke 通过，顺手抓到 signal config 漏读 bug）
+
+### 本次目标
+
+验证刚落地的 `DNC-forcing micro-task` 不是只停在代码骨架：
+
+- Release 能重编
+- `MemoryTrialLayer` 最小单测能过
+- cue-choice 训练配置至少能短跑启动并产出 generation 级输出
+
+### 这次真正发现的问题
+
+短 smoke 第一次启动时，runtime 直接报：
+
+```text
+protagonist action_dim does not match configured move/signal capability outputs
+```
+
+一开始看起来像 `BootstrapPopulation.cpp` 的 `required_action_dim` 公式错了，但继续追根因后确认：
+
+- `configs/protagonist_ecology_train_dnc_cue_choice.toml` 里明确写了 `world.signal.enabled = false`
+- `makeProtagonistAgent()` 的 action 维度公式本身没问题
+- 真正的问题是：`ProtagonistEcologyConfig::fromConfig()` **完全漏读了** `world.signal.*`
+- 结果就是 route config 中 `signal.enabled/channels/grid_resolution/decay_rate/diffusion_rate` 全都退回 struct 默认值
+- 在这个 micro-task 配置里，runtime 实际仍认为 signal 开着、channels=2，于是要求 `action_dim = 4`，而配置给的是 `2`
+
+### 这次真正改掉的点
+
+1. **补了 route config parser 对 `world.signal.*` 的读取**
+   - 文件：`routes/protagonist_ecology/runtime/ProtagonistEcologyConfig.cpp`
+   - 新增解析：
+     - `world.signal.enabled`
+     - `world.signal.channels`
+     - `world.signal.grid_resolution`
+     - `world.signal.decay_rate`
+     - `world.signal.diffusion_rate`
+
+2. **补了最小 config 回归测试**
+   - 文件：`tests/route_protagonist/test_protagonist_ecology_config.cpp`
+   - 目的：防止以后又出现“配置里写了，但 route config struct 没真读进去”的 silent fallback
+
+3. **收口了 MemoryTrial 作用域**
+   - `MemoryTrialLayer` 现在只作用于 `ProtagonistBrain` 个体
+   - 避免未来 background species 开回来后也被 cue/hub/target 强制搬运，污染 task
+
+### 验证结果
+
+1. **Release 重编通过**
+   - `test_core`
+   - `neural-eco-protagonist`
+
+2. **针对性测试通过**
+   - `ProtagonistEcologyConfig.ParsesSignalSection`
+   - `MemoryTrialLayer.*`（3 个）
+
+3. **短 smoke 通过**
+   - 配置：基于 `configs/protagonist_ecology_train_dnc_cue_choice.toml` 临时裁成 `2 generations × 1 episode`
+   - 可正常启动、跑完并产出：
+     - `fitness.csv`
+     - `evolution.csv`
+     - `protagonist_behaviors.csv`
+     - `best_genome_*`
+
+4. **reward 路径已真实接通**
+   - smoke 输出中：
+     - `best_fitness = 24`
+     - `min_fitness = -6`
+   - 这和 `MemoryTrialLayer` 里的 success bonus / failure penalty 完全对上
+   - 说明 task 奖惩已经不是“代码里写了”，而是 runtime 真的在吃
+
+### 这次最关键的经验
+
+1. **route-local config struct 很容易出现“字段定义了、配置也写了，但 parser 漏读”的假接线**
+   - 这种 bug 不会在编译期报错
+   - 只有到 runtime 某个组合配置真的依赖它时才会炸
+   - 所以 route config 每加一段新 `[world.xxx]`，最好都配一个最小 parse regression test
+
+2. **micro-task smoke 值得先裁成极短版本**
+   - 这次用 `2 generations × 1 episode` 就足够把 parser / runtime / reward wiring 的大问题抓出来
+   - 没必要一上来跑 20 代才发现配置根本没生效
+
+3. **当前 smoke 成功不等于“DNC 已经学会任务”**
+   - 现在只能证明：
+     - world/task wiring 是通的
+     - reward 在流
+     - protagonist route 能跑
+   - 还不能证明 DNC memory 已经被有效利用；那要看更长一点的训练和 ablation 对照
+
 ## 2026-05-20 · protagonist mixed compute 第一轮工程化（CPU 决策并行已验证，GPU backend 代码已落但环境未就绪）
 
 ### 本次目标

@@ -28,6 +28,10 @@ void WaterPerception::sense(const IAgent& self, const IWorld& world, std::span<f
 
     const Vec2 delta = nearest->position - self.position();
     const float distance = delta.length();
+    if (require_visibility_ && distance > sense_radius_) {
+        out[2] = 1.0f;
+        return;
+    }
     if (distance > 0.0001f) {
         out[0] = delta.x / distance;
         out[1] = delta.y / distance;

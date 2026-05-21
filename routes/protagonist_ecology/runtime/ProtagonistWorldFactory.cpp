@@ -13,6 +13,7 @@
 #include "world/BaseLayer.h"
 #include "world/CampfireLayer.h"
 #include "world/InterventionDirectorLayer.h"
+#include "world/MemoryTrialLayer.h"
 #include "world/NurseryLogisticsLayer.h"
 #include "world/NurseryProgressionLayer.h"
 #include "world/NurserySupplyLayer.h"
@@ -134,6 +135,9 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
         config.resources.regen_rate,
         config.resources.terrain_adjustment_enabled));
     world->addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, config.compute.agent_decision_threads));
+    if (config.memory_trial.enabled) {
+        world->addLayer(std::make_unique<MemoryTrialLayer>(config.memory_trial, config.random_seed + 907));
+    }
 
     if (config.terrain_enabled) {
         world->addLayer(std::make_unique<TerrainLayer>(config.world_size, config.terrain));

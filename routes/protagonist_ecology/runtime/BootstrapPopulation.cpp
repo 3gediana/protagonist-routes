@@ -5,6 +5,8 @@
 #include "capability/ChopTreeCapability.h"
 #include "capability/CraftSpearCapability.h"
 #include "capability/DrinkWaterCapability.h"
+#include "capability/GoalActionAssistCapability.h"
+#include "capability/GoalAwareDropCapability.h"
 #include "capability/NurseryPickUpCapability.h"
 #include "capability/ProtagonistHuntCapability.h"
 #include "capability/ThrowCarriedObjectCapability.h"
@@ -16,7 +18,6 @@
 #include "core/capability/EmitSignalCapability.h"
 #include "core/capability/FleeCapability.h"
 #include "core/capability/MoveCapability.h"
-#include "core/capability/DropCapability.h"
 #include "core/capability/PredatorHuntCapability.h"
 #include "core/brain/neat/NeatBrain.h"
 #include "core/brain/neat/NeatGenome.h"
@@ -32,6 +33,7 @@
 #include "perception/CarriedObjectPerception.h"
 #include "perception/DangerPerception.h"
 #include "perception/MemoryCognitionPerception.h"
+#include "perception/MemoryTrialPerception.h"
 #include "perception/ObjectLogisticsPerception.h"
 #include "perception/StockpilePerception.h"
 #include "perception/SurvivalStatePerception.h"
@@ -130,6 +132,9 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
     if (config.signal.enabled) {
         sensory_dim += SignalPerception::featureDim(config.signal.channels);
     }
+    if (config.memory_trial.enabled) {
+        sensory_dim += MemoryTrialPerception::kDim;
+    }
 
     // Memory V2 cognition input
     if (config.protagonist.memory_cognition_enabled) {
@@ -221,7 +226,9 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     agent->addPerception(std::make_unique<NearestFoodPerception>());
     agent->addPerception(std::make_unique<BasePerception>());
     if (config.water.enabled) {
-        agent->addPerception(std::make_unique<WaterPerception>(kWaterSenseRadius));
+        agent->addPerception(std::make_unique<WaterPerception>(
+            kWaterSenseRadius,
+            config.water.direction_requires_visibility));
     }
     if (config.survival.enabled) {
         agent->addPerception(std::make_unique<SurvivalStatePerception>());
@@ -244,13 +251,18 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         agent->addPerception(std::make_unique<DangerPerception>(kDangerSenseRadius));
     }
     if (config.worksite.enabled) {
-        agent->addPerception(std::make_unique<WorksitePerception>(kWorksiteSenseRadius));
+        agent->addPerception(std::make_unique<WorksitePerception>(
+            kWorksiteSenseRadius,
+            config.worksite.direction_requires_visibility));
     }
     if (config.terrain_enabled) {
         agent->addPerception(std::make_unique<TerrainPerception>(config.terrain.height_scale));
     }
     if (config.signal.enabled) {
         agent->addPerception(std::make_unique<SignalPerception>(config.signal.channels, kSignalRadius));
+    }
+    if (config.memory_trial.enabled) {
+        agent->addPerception(std::make_unique<MemoryTrialPerception>());
     }
 
     // Memory V2 Cognition Perception
@@ -259,15 +271,26 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));
+    if (config.protagonist.goal_action_assist_enabled) {
+        agent->addCapability(std::make_unique<GoalActionAssistCapability>(5.0f, kPickRadius));
+    }
     agent->addCapability(std::make_unique<EatCapability>(kEatRadius, kEatRate));
     if (config.signal.enabled) {
-        agent->addCapability(std::make_unique<EmitSignalCapability>(config.signal.channels, kSignalCost));
+        agent->addCapability(std::make_unique<EmitSignalCapability>(
+            config.signal.channels,
+            kSignalCost,
+            config.signal.protagonist_emit_enabled));
     }
     if (config.water.enabled && config.survival.enabled) {
         agent->addCapability(std::make_unique<DrinkWaterCapability>());
     }
     if (hasBackgroundAgents(config)) {
-        agent->addCapability(std::make_unique<ProtagonistHuntCapability>(5.0f, 10.0f, 6.0f, 0.02f));
+        agent->addCapability(std::make_unique<ProtagonistHuntCapability>(
+            5.0f,
+            10.0f,
+            6.0f,
+            0.02f,
+            config.protagonist.hunt_enabled));
         agent->addCapability(std::make_unique<FleeCapability>(16.0f, 3.0f, 0.03f));
     }
     if (has_tree_curriculum) {
@@ -279,7 +302,7 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     }
     if (config.objects.enabled) {
         agent->addCapability(std::make_unique<NurseryPickUpCapability>(kPickRadius, kPickCost));
-        agent->addCapability(std::make_unique<DropCapability>(kDropCost));
+        agent->addCapability(std::make_unique<GoalAwareDropCapability>(kDropCost));
     }
 
     return agent;

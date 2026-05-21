@@ -12,10 +12,6 @@ namespace neuro::routes::protagonist {
 
 namespace {
 
-float activate(float x) {
-    return std::tanh(x);
-}
-
 float integrationAlpha(float dt, float tau) {
     const float safe_dt = std::max(dt, 1.0e-4f);
     const float safe_tau = std::max(tau, 1.0e-4f);
@@ -26,6 +22,17 @@ void fillRandom(std::vector<float>& data, std::mt19937& rng, float scale = 0.35f
     std::normal_distribution<float> dist(0.0f, scale);
     for (float& value : data) {
         value = dist(rng);
+    }
+}
+
+void addWrapped(std::span<float> target,
+                std::span<const float> source,
+                float scale) {
+    if (target.empty() || source.empty() || scale == 0.0f) {
+        return;
+    }
+    for (std::size_t i = 0; i < target.size(); ++i) {
+        target[i] += source[i % source.size()] * scale;
     }
 }
 
@@ -191,8 +198,14 @@ ProtagonistBrain::ProtagonistBrain(std::size_t input_dim,
       action_bias_(action_dim_, 0.0f),
       hidden_interface_weights_(hidden_dim_ * DNCMemory::interfaceDim(memory_cells_, read_heads_), 0.0f),
       interface_bias_(DNCMemory::interfaceDim(memory_cells_, read_heads_), 0.0f),
-      hidden_(hidden_dim_, 0.0f),
-      outputs_(action_dim_, 0.0f),
+      observation_encoder_(external_input_dim_),
+      memory_query_encoder_(memory_cells_ * read_heads_),
+      body_state_memory_(external_input_dim_),
+      working_memory_(hidden_dim_),
+      behavior_fusion_trunk_(total_input_dim_, hidden_dim_),
+      motor_core_(hidden_dim_),
+      action_heads_(hidden_dim_, action_dim_),
+      interface_head_(hidden_dim_, DNCMemory::interfaceDim(memory_cells_, read_heads_)),
       dnc_memory_(memory_slots_, memory_cells_, read_heads_),
       spatial_memory_(32, 32, 200.0f, 200.0f),
       episodic_memory_(32),
@@ -241,8 +254,14 @@ ProtagonistBrain::ProtagonistBrain(const ProtagonistGenome& genome, bool enable_
       action_bias_(genome.actionBias()),
       hidden_interface_weights_(genome.hiddenInterfaceWeights()),
       interface_bias_(genome.interfaceBias()),
-      hidden_(hidden_dim_, 0.0f),
-      outputs_(action_dim_, 0.0f),
+      observation_encoder_(external_input_dim_),
+      memory_query_encoder_(memory_cells_ * read_heads_),
+      body_state_memory_(external_input_dim_),
+      working_memory_(hidden_dim_),
+      behavior_fusion_trunk_(total_input_dim_, hidden_dim_),
+      motor_core_(hidden_dim_),
+      action_heads_(hidden_dim_, action_dim_),
+      interface_head_(hidden_dim_, interface_bias_.size()),
       dnc_memory_(genome.memorySlots(), genome.memoryCells(), genome.readHeads()),
       spatial_memory_(32, 32, 200.0f, 200.0f),
       episodic_memory_(32),
@@ -301,56 +320,58 @@ std::span<const float> ProtagonistBrain::forward(std::span<const float> inputs, 
     social_memory_.tick(dt);
     goal_memory_.tick(dt);
 
-    std::vector<float> full_input(total_input_dim_, 0.0f);
-    std::copy(inputs.begin(), inputs.end(), full_input.begin());
-    const auto& read_vectors = dnc_memory_.readVectors();
-    std::copy(read_vectors.begin(), read_vectors.end(), full_input.begin() + static_cast<std::ptrdiff_t>(external_input_dim_));
+    const auto encoded_observation = observation_encoder_.encode(inputs);
+    body_state_memory_.observe(encoded_observation, dt);
+    const auto encoded_queries = memory_query_encoder_.encode(dnc_memory_.readVectors());
 
-    std::vector<float> interface_vector(interface_bias_.size(), 0.0f);
+    std::vector<float> full_input(total_input_dim_, 0.0f);
+    std::copy(encoded_observation.begin(), encoded_observation.end(), full_input.begin());
+    std::copy(encoded_queries.begin(), encoded_queries.end(), full_input.begin() + static_cast<std::ptrdiff_t>(external_input_dim_));
+    addWrapped(std::span<float>(full_input).first(external_input_dim_),
+               body_state_memory_.summary(),
+               0.25f);
+    addWrapped(std::span<float>(full_input).subspan(external_input_dim_),
+               working_memory_.summary(),
+               0.20f);
+
     if (dense_gpu_ != nullptr) {
-        if (dense_gpu_->forward(full_input, hidden_alpha, action_alpha, hidden_, outputs_, interface_vector)) {
-            dnc_memory_.step(decodeInterface(interface_vector, memory_cells_, read_heads_));
-            return outputs_;
+        if (dense_gpu_->forward(full_input,
+                                hidden_alpha,
+                                action_alpha,
+                                motor_core_.mutableState(),
+                                action_heads_.mutableOutputs(),
+                                interface_head_.mutableOutput())) {
+            working_memory_.observe(motor_core_.state(), dt);
+            dnc_memory_.step(decodeInterface(interface_head_.output(), memory_cells_, read_heads_));
+            return action_heads_.outputs();
         }
         dense_gpu_.reset();
     }
 
-    std::vector<float> hidden_target(hidden_dim_, 0.0f);
-    for (std::size_t h = 0; h < hidden_dim_; ++h) {
-        float sum = hidden_bias_[h];
-        for (std::size_t i = 0; i < total_input_dim_; ++i) {
-            sum += full_input[i] * in_hidden_weights_[i * hidden_dim_ + h];
-        }
-        hidden_target[h] = activate(sum);
-        hidden_[h] += hidden_alpha * (hidden_target[h] - hidden_[h]);
-    }
-
-    std::vector<float> output_target(action_dim_, 0.0f);
-    for (std::size_t o = 0; o < action_dim_; ++o) {
-        float sum = action_bias_[o];
-        for (std::size_t h = 0; h < hidden_dim_; ++h) {
-            sum += hidden_[h] * hidden_action_weights_[h * action_dim_ + o];
-        }
-        output_target[o] = activate(sum);
-        outputs_[o] += action_alpha * (output_target[o] - outputs_[o]);
-    }
-
-    for (std::size_t i = 0; i < interface_vector.size(); ++i) {
-        float sum = interface_bias_[i];
-        for (std::size_t h = 0; h < hidden_dim_; ++h) {
-            sum += hidden_[h] * hidden_interface_weights_[h * interface_vector.size() + i];
-        }
-        interface_vector[i] = sum;
-    }
+    const auto fused_hidden = behavior_fusion_trunk_.forward(full_input, in_hidden_weights_, hidden_bias_);
+    std::vector<float> motor_target(fused_hidden.begin(), fused_hidden.end());
+    addWrapped(std::span<float>(motor_target),
+               working_memory_.summary(),
+               0.15f);
+    const auto motor_state = motor_core_.integrate(motor_target, dt);
+    working_memory_.observe(motor_state, dt);
+    const auto outputs = action_heads_.forward(motor_state, hidden_action_weights_, action_bias_, dt);
+    const auto interface_vector = interface_head_.forward(motor_state, hidden_interface_weights_, interface_bias_);
 
     dnc_memory_.step(decodeInterface(interface_vector, memory_cells_, read_heads_));
 
-    return outputs_;
+    return outputs;
 }
 
 void ProtagonistBrain::reset() {
-    std::fill(hidden_.begin(), hidden_.end(), 0.0f);
-    std::fill(outputs_.begin(), outputs_.end(), 0.0f);
+    observation_encoder_.reset();
+    memory_query_encoder_.reset();
+    body_state_memory_.reset();
+    working_memory_.reset();
+    behavior_fusion_trunk_.reset();
+    motor_core_.reset();
+    action_heads_.reset();
+    interface_head_.reset();
     if (dense_gpu_ != nullptr) {
         dense_gpu_->reset();
     }

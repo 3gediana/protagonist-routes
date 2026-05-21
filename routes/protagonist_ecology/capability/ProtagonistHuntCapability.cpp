@@ -12,11 +12,19 @@
 
 namespace neuro::routes::protagonist {
 
-ProtagonistHuntCapability::ProtagonistHuntCapability(float hunt_radius, float damage, float energy_gain, float cost)
-    : hunt_radius_(hunt_radius), damage_(damage), energy_gain_(energy_gain), cost_(cost) {}
+ProtagonistHuntCapability::ProtagonistHuntCapability(float hunt_radius,
+                                                     float damage,
+                                                     float energy_gain,
+                                                     float cost,
+                                                     bool enabled)
+    : hunt_radius_(hunt_radius),
+      damage_(damage),
+      energy_gain_(energy_gain),
+      cost_(cost),
+      enabled_(enabled) {}
 
 void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) {
-    if (outputs.empty() || outputs[0] < 0.3f) {
+    if (!enabled_ || outputs.empty() || outputs[0] < 0.3f) {
         return;
     }
     hunt_attempts.fetch_add(1, std::memory_order_relaxed);

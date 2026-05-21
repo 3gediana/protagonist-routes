@@ -3,11 +3,17 @@
 #include "core/brain/neat/InnovationTracker.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 
 namespace neuro {
 
 namespace {
+
+constexpr std::uint32_t kNeatGenomeMagic = 0x4E474E4D;
+constexpr std::uint32_t kNeatGenomeVersion = 1;
 
 float sampleWeight(std::mt19937& rng) {
     std::normal_distribution<float> dist(0.0f, 1.0f);
@@ -17,6 +23,17 @@ float sampleWeight(std::mt19937& rng) {
 float sampleTimeConstant(std::mt19937& rng, float min_value, float max_value) {
     std::uniform_real_distribution<float> dist(min_value, max_value);
     return dist(rng);
+}
+
+template <typename T>
+void writeValue(std::ofstream& stream, const T& value) {
+    stream.write(reinterpret_cast<const char*>(&value), sizeof(T));
+}
+
+template <typename T>
+bool readValue(std::ifstream& stream, T& value) {
+    stream.read(reinterpret_cast<char*>(&value), sizeof(T));
+    return static_cast<bool>(stream);
 }
 
 }  // namespace
@@ -161,6 +178,150 @@ void NeatGenome::setWeights(const std::vector<float>& weights) {
             connection.weight = weights[wi++];
         }
     }
+}
+
+bool NeatGenome::saveToFile(const std::filesystem::path& path) const {
+    std::error_code ec;
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path(), ec);
+    }
+    std::ofstream stream(path, std::ios::out | std::ios::binary | std::ios::trunc);
+    if (!stream) {
+        return false;
+    }
+
+    writeValue(stream, kNeatGenomeMagic);
+    writeValue(stream, kNeatGenomeVersion);
+
+    const std::uint64_t genome_id = id_.value;
+    const std::uint64_t input_dim = input_dim_;
+    const std::uint64_t output_dim = output_dim_;
+    const std::uint64_t node_count = nodes_.size();
+    const std::uint64_t connection_count = connections_.size();
+    writeValue(stream, genome_id);
+    writeValue(stream, input_dim);
+    writeValue(stream, output_dim);
+    writeValue(stream, decision_interval_);
+    writeValue(stream, immunity_gain_rate_);
+    writeValue(stream, habitat_pref_);
+    writeValue(stream, activity_period_);
+    writeValue(stream, diet_pref_);
+    writeValue(stream, node_count);
+    writeValue(stream, connection_count);
+
+    for (const auto& node : nodes_) {
+        const auto type = static_cast<std::uint32_t>(node.type);
+        writeValue(stream, node.id);
+        writeValue(stream, type);
+        writeValue(stream, node.bias);
+        writeValue(stream, node.response);
+        writeValue(stream, node.time_constant);
+    }
+
+    for (const auto& connection : connections_) {
+        const std::uint8_t enabled = connection.enabled ? 1u : 0u;
+        const std::uint64_t innovation_id = connection.innovation_id.value;
+        writeValue(stream, connection.from);
+        writeValue(stream, connection.to);
+        writeValue(stream, connection.weight);
+        writeValue(stream, enabled);
+        writeValue(stream, innovation_id);
+    }
+
+    return static_cast<bool>(stream);
+}
+
+std::unique_ptr<NeatGenome> NeatGenome::loadFromFile(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::in | std::ios::binary);
+    if (!stream) {
+        return nullptr;
+    }
+
+    std::uint32_t magic = 0;
+    std::uint32_t version = 0;
+    if (!readValue(stream, magic) || !readValue(stream, version)) {
+        return nullptr;
+    }
+    if (magic != kNeatGenomeMagic || version != kNeatGenomeVersion) {
+        return nullptr;
+    }
+
+    std::uint64_t genome_id = 0;
+    std::uint64_t input_dim = 0;
+    std::uint64_t output_dim = 0;
+    float decision_interval = 1.0f;
+    float immunity_gain_rate = 0.05f;
+    float habitat_pref = 0.5f;
+    float activity_period = 0.5f;
+    float diet_pref = 0.5f;
+    std::uint64_t node_count = 0;
+    std::uint64_t connection_count = 0;
+    if (!readValue(stream, genome_id)
+        || !readValue(stream, input_dim)
+        || !readValue(stream, output_dim)
+        || !readValue(stream, decision_interval)
+        || !readValue(stream, immunity_gain_rate)
+        || !readValue(stream, habitat_pref)
+        || !readValue(stream, activity_period)
+        || !readValue(stream, diet_pref)
+        || !readValue(stream, node_count)
+        || !readValue(stream, connection_count)) {
+        return nullptr;
+    }
+
+    std::vector<NodeGene> nodes;
+    nodes.reserve(static_cast<std::size_t>(node_count));
+    for (std::uint64_t i = 0; i < node_count; ++i) {
+        NodeGene node;
+        std::uint32_t type = 0;
+        if (!readValue(stream, node.id)
+            || !readValue(stream, type)
+            || !readValue(stream, node.bias)
+            || !readValue(stream, node.response)
+            || !readValue(stream, node.time_constant)) {
+            return nullptr;
+        }
+        if (type > static_cast<std::uint32_t>(NodeGeneType::Modulatory)) {
+            return nullptr;
+        }
+        node.type = static_cast<NodeGeneType>(type);
+        nodes.push_back(node);
+    }
+
+    std::vector<ConnectionGene> connections;
+    connections.reserve(static_cast<std::size_t>(connection_count));
+    for (std::uint64_t i = 0; i < connection_count; ++i) {
+        ConnectionGene connection;
+        std::uint8_t enabled = 0;
+        std::uint64_t innovation_id = 0;
+        if (!readValue(stream, connection.from)
+            || !readValue(stream, connection.to)
+            || !readValue(stream, connection.weight)
+            || !readValue(stream, enabled)
+            || !readValue(stream, innovation_id)) {
+            return nullptr;
+        }
+        connection.enabled = enabled != 0;
+        connection.innovation_id = InnovationId{innovation_id};
+        connections.push_back(connection);
+    }
+
+    if (!stream) {
+        return nullptr;
+    }
+
+    auto genome = std::make_unique<NeatGenome>(
+        GenomeId{genome_id},
+        static_cast<std::size_t>(input_dim),
+        static_cast<std::size_t>(output_dim),
+        std::move(nodes),
+        std::move(connections),
+        decision_interval);
+    genome->setImmunityGainRate(immunity_gain_rate);
+    genome->setHabitatPreference(habitat_pref);
+    genome->setActivityPeriod(activity_period);
+    genome->setDietPreference(diet_pref);
+    return genome;
 }
 
 std::unique_ptr<NeatGenome> NeatGenome::minimal(GenomeId id,

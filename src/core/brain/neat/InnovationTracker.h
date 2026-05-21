@@ -9,6 +9,11 @@
 
 namespace neuro {
 
+struct InnovationTrackerState {
+    std::uint64_t next_innovation_value{1};
+    NodeId next_node_id{1};
+};
+
 class InnovationTracker {
 public:
     explicit InnovationTracker(std::uint64_t next_innovation_value = 1, NodeId next_node_id = 1);
@@ -20,6 +25,8 @@ public:
 
     InnovationId lastInnovationId() const;
     NodeId lastNodeId() const;
+    InnovationTrackerState exportState() const;
+    void importState(const InnovationTrackerState& state);
 
 private:
     struct EdgeKey {

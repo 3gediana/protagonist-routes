@@ -27,6 +27,10 @@ void WorksitePerception::sense(const IAgent& self, const IWorld& world, std::spa
 
     const Vec2 delta = nearest->position - self.position();
     const float dist = delta.length();
+    if (require_visibility_ && dist > sense_radius_) {
+        out[4] = 1.0f;
+        return;
+    }
     if (dist > 0.0001f) {
         out[0] = delta.x / dist;
         out[1] = delta.y / dist;

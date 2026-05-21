@@ -138,7 +138,12 @@ TEST(NeatEvolution, ExportImportStatePreservesNextReproduction) {
 
     auto evolution_b = make_evolution();
     evolution_b.importState(state);
-    auto population_b = build_population(evolution_b);
+    std::vector<std::unique_ptr<IGenome>> population_b;
+    population_b.reserve(population_a.size());
+    for (const auto& genome : population_a) {
+        ASSERT_NE(genome, nullptr);
+        population_b.push_back(genome->clone());
+    }
     auto evaluated_b = make_evaluated(evolution_b, population_b);
 
     std::vector<IGenome*> raw_a;

@@ -5,6 +5,7 @@
 #include "core/interfaces/IGenome.h"
 
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <random>
 #include <unordered_map>
@@ -61,6 +62,9 @@ public:
     void setActivityPeriod(float v) { activity_period_ = v; }
     float dietPreference() const { return diet_pref_; }
     void setDietPreference(float v) { diet_pref_ = v; }
+
+    bool saveToFile(const std::filesystem::path& path) const;
+    static std::unique_ptr<NeatGenome> loadFromFile(const std::filesystem::path& path);
 
     bool hasModulatoryNodes() const {
         for (const auto& n : nodes_) {
