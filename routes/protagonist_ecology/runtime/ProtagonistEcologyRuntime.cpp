@@ -519,6 +519,11 @@ void evaluatePopulation(World2D& world,
     std::unordered_map<AgentId, std::size_t> previous_kills;
     std::unordered_map<AgentId, float> previous_hydration;
     std::unordered_set<AgentId> alive_last_tick;
+    // Stage 1 extension: track the predator-visible state per agent across
+    // ticks so we can emit saw_predator on the rising edge (i.e. predator
+    // *just* entered view), instead of every tick the predator stays in
+    // range. Avoids spamming episodic memory.
+    std::unordered_set<AgentId> had_predator_in_view_last_tick;
 
     std::unordered_map<AgentId, float> bg_previous_damage;
     std::unordered_map<AgentId, std::size_t> bg_previous_kills;
@@ -886,6 +891,27 @@ void evaluatePopulation(World2D& world,
                     // 2. Episodic Memory Key Events
                     if (concrete->foodEatenThisTick() > 0.0f) {
                         record_episode(agent_pos, "ate_food", 0.5f);
+                    }
+                    // saw_predator: rising edge only (no spam while the predator
+                    // stays in view). High salience because predators are the
+                    // single biggest threat - we want the brain to remember
+                    // the location strongly. We do not have the actual predator
+                    // position here without re-walking the agent list, but
+                    // record_spatial above already wrote the danger cell at
+                    // the predator's position; for episodic we use the
+                    // protagonist's own position as the "where I noticed it"
+                    // anchor (which is what the brain actually had access to).
+                    {
+                        const bool seen_now = predator_nearby;
+                        const bool seen_last = had_predator_in_view_last_tick.contains(agent->id());
+                        if (seen_now && !seen_last) {
+                            record_episode(agent_pos, "saw_predator", 0.85f);
+                        }
+                        if (seen_now) {
+                            had_predator_in_view_last_tick.insert(agent->id());
+                        } else {
+                            had_predator_in_view_last_tick.erase(agent->id());
+                        }
                     }
                     // drank_water: detect a noticeable hydration jump tick-over-tick.
                     // SurvivalStatusLayer raises hydration when an agent uses
