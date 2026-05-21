@@ -660,6 +660,15 @@
 - Quality Diversity / MAP-Elites：保留多样稳定 archive，避免单路进化自毁
 - Prioritized Level Replay / Reverse Curriculum / UED / Adaptive Task Scheduler：把生产问题动态转成训练挑战与课程
 
+### 文献支持
+
+- Scholl et al., 2022, `Safe Policy Improvement Approaches and their Limitations`
+- Jaderberg et al., 2017, `Population Based Training of Neural Networks`
+- Pugh et al., 2016, `Quality Diversity: A New Frontier for Evolutionary Computation`
+- Florensa et al., 2017, `Reverse Curriculum Generation for Reinforcement Learning`
+- Jiang et al., 2021, `Prioritized Level Replay`
+- Yao et al., 2021, `Meta-learning with an Adaptive Task Scheduler`
+
 ### 必须避免的错误实现
 
 - 把 train/test/prod 做成三个长期割裂的手动菜单
@@ -673,3 +682,47 @@
 高优先级。
 
 这是让项目从“离线训练项目”升级为“会自我纠错、自我育种、自我放归的长期生态系统”的关键要求。
+
+---
+
+## R-008 · 系统应允许网络在更丰富的数据与环境压力下自长技能、分工与局部机制，而不是什么都人工写死
+
+### 用户要求
+
+用户希望项目后续不是所有行为机制都只能靠人工先写死，再让模型去适配；系统应尽量允许网络在更丰富的感知、记忆、任务压力和生态互动中，**自己长出新的技能、行为分化、局部模块化甚至通信/协作模式**。
+
+### 核心要求
+
+- 不能把网络永久锁死成只有固定套路的黑箱
+- 应给网络留下结构增长、行为分化、模块分工和技能沉淀的空间
+- richer data 本身不够，必须同时有选择压力、任务差异、环境变化和多样性保留
+- 新长出的能力不能一出现就被旧主流策略压死
+
+### 实现方向参考
+
+- NEAT / HyperNEAT：允许拓扑复杂化，给“长机制”留结构空间
+- Option-Critic：允许时序技能自己分化
+- DIAYN：允许无监督技能簇自己长出来
+- RIMs：鼓励内部模块分工而不是所有功能混成一团
+- PAIRED / UED：让环境自动出更合适的新题，逼出新行为
+
+### 文献支持
+
+- Stanley & Miikkulainen, 2002, `Evolving Neural Networks through Augmenting Topologies`
+- Bacon et al., 2017, `The Option-Critic Architecture`
+- Eysenbach et al., 2018, `Diversity is All You Need: Learning Skills without a Reward Function`
+- Goyal et al., 2019, `Recurrent Independent Mechanisms`
+- Dennis et al., 2020, `Emergent Complexity and Zero-shot Transfer via Unsupervised Environment Design`
+
+### 必须避免的错误实现
+
+- 只加更多输入维度，却不给新的选择压力
+- 只追单一总分，导致刚长出的新行为立刻被淘汰
+- 结构上允许增长，但没有 archive / speciation / 多样性保留
+- 把“会自动长机制”理解成完全不需要外部设计世界和训练压力
+
+### 实现优先级
+
+中高优先级。
+
+这是项目从“会拟合既定任务”走向“会在世界中自己长出新能力”的关键要求。
