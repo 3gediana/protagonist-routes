@@ -458,8 +458,14 @@ TrainingParams configureMemoryAblationTaskParams(const config::Config& config,
             params.signal_emit_reward = 0.2f;
             params.signal_emit_companion_radius = 30.0f;
             params.signal_co_attendance_reward = 2.5f;
-            params.signal_co_attendance_radius = 10.0f;
-            params.signal_co_attendance_window_seconds = 30.0;
+            // The emitter pulses every 30s. To count as a response the
+            // agent has to be inside an 8m halo within 15s of the pulse.
+            // The 15s slot lets a listener that just heard the pulse walk
+            // up to the emitter; the 15s silent gap that follows is what
+            // forces SpatialMemory / EpisodicMemory to carry the heading
+            // until the next pulse arrives.
+            params.signal_co_attendance_radius = 8.0f;
+            params.signal_co_attendance_window_seconds = 15.0;
             params.joint_hunt_reward = 0.0f;
             break;
     }
@@ -997,9 +1003,13 @@ bool usesControlledSignalEmitter(const ProtagonistEcologyConfig& route) {
 }
 
 Vec2 controlledSignalEmitterPosition(const ProtagonistEcologyConfig& route) {
+    // Place the emitter so its SignalPerception halo (radius 16) just reaches
+    // the nest edge. Agents in the nest sometimes hear the pulse, switch goal
+    // to RespondSignal, walk towards it, and then have to remember the
+    // heading during the silent gap between pulses.
     return Vec2{
-        std::clamp(route.base.center.x - 26.0f, 0.0f, route.world_size.x),
-        std::clamp(route.base.center.y + 12.0f, 0.0f, route.world_size.y),
+        std::clamp(route.base.center.x - 18.0f, 0.0f, route.world_size.x),
+        std::clamp(route.base.center.y + 8.0f, 0.0f, route.world_size.y),
     };
 }
 
@@ -1208,7 +1218,12 @@ void evaluatePopulation(World2D& world,
         tick_deaths.clear();
         while (controlled_signal_emitter && elapsed_seconds + 1.0e-9 >= next_controlled_signal_emit_seconds) {
             emitControlledSignal(world, *signal_layer, route);
-            next_controlled_signal_emit_seconds += 6.0;
+            // Pulse every 30s instead of every 6s. The long silent gap is
+            // what forces listeners to remember the emitter's last known
+            // position via SpatialMemory / EpisodicMemory: SignalPerception
+            // (radius 16) only senses the field briefly after each pulse,
+            // so without memory the agent loses its heading mid-silence.
+            next_controlled_signal_emit_seconds += 30.0;
         }
         world.tick(dt);
         elapsed_seconds += dt_seconds;
@@ -1443,11 +1458,21 @@ void evaluatePopulation(World2D& world,
                         }
                         // Recent peer signal nearby -> chance to switch into
                         // RespondSignal so listeners actually act on heard
-                        // signals.
+                        // signals. We look at the persistent last_signal_emit
+                        // map (kept across ticks) and accept any emit that
+                        // fired within signal_co_attendance_window_seconds.
+                        // tick_emits alone is too sparse: with a 30s pulse
+                        // interval and a 6s GoalManager refresh, listeners
+                        // would almost never catch the emit on the right tick.
                         bool peer_signal_nearby = false;
-                        for (const auto& emit : tick_emits) {
-                            if (emit.id == agent->id()) continue;
-                            if (Vec2::distanceSquared(agent_pos, emit.pos) <= params.signal_emit_companion_radius * params.signal_emit_companion_radius) {
+                        const SimTimeSeconds peer_now_time = world.currentTimeSeconds();
+                        const float companion_r2 = params.signal_emit_companion_radius * params.signal_emit_companion_radius;
+                        for (const auto& [emitter_id, emit] : last_signal_emit) {
+                            if (emitter_id == agent->id()) continue;
+                            if (emit.tick == 0) continue;
+                            if (peer_now_time <= emit.time_seconds) continue;
+                            if (peer_now_time - emit.time_seconds > params.signal_co_attendance_window_seconds) continue;
+                            if (Vec2::distanceSquared(agent_pos, emit.position) <= companion_r2) {
                                 peer_signal_nearby = true;
                                 break;
                             }

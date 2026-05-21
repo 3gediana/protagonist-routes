@@ -82,11 +82,24 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.resources.count = 0;
             route.resources.amount = std::max(route.resources.amount, 18.0f);
             route.water.source_count = 1;
-            route.water.spawn_radius_min = 26.0f;
-            route.water.spawn_radius_max = 26.0f;
+            // Water spawns just outside WaterPerception sense radius (36) so
+            // the agent cannot see it from spawn. Once it explores in the
+            // right direction (or wanders close enough), the source enters
+            // perception and gets written into SpatialMemory. With spatial
+            // writes disabled, the agent only re-finds water by chance / by
+            // staying inside the 36u sense bubble around the source.
+            route.water.spawn_radius_min = 42.0f;
+            route.water.spawn_radius_max = 42.0f;
             route.water.direction_requires_visibility = true;
-            route.survival.initial_hydration_ratio = std::min(route.survival.initial_hydration_ratio, 0.30f);
-            route.survival.hydration_decay_per_second = std::max(route.survival.hydration_decay_per_second, 0.075f);
+            // hydration values are ABSOLUTE units against max_hydration=100,
+            // not ratios. Start at 65 (above the dehydration threshold of
+            // 32) so the agent has time to explore. Decay 0.6/s puts the
+            // agent into dehydration around ~55s, leaving room for ~2-3
+            // drink/return cycles per 200s episode. With spawn_radius 42 >
+            // sense_radius 36 the source is invisible from the nest, so the
+            // second time the agent gets thirsty it has to rely on memory.
+            route.survival.initial_hydration_ratio = 0.65f;
+            route.survival.hydration_decay_per_second = 0.6f;
             route.objects.count = 10;
             route.tree.count = 1;
             route.campfire.count = 0;
