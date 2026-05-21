@@ -28,6 +28,18 @@ struct SignalConfig {
     std::size_t grid_resolution{64};
     float decay_rate{0.05f};
     float diffusion_rate{0.08f};
+    // Controlled emitter (was hard-coded to memory_ablation_signal_response eval).
+    // When enabled, the runtime spawns periodic pulses from a fixed/randomised
+    // location and (optionally) drops transient food at the emitter site so
+    // an agent that learns to follow the signal gets a real reward signal.
+    bool controlled_emitter_enabled{false};
+    SimTimeSeconds controlled_emitter_period_seconds{30.0};
+    float controlled_emitter_offset_radius{18.0f};        // distance from base.center
+    float controlled_emitter_offset_jitter{8.0f};         // random episode-level jitter on offset radius
+    bool controlled_emitter_randomize_position{false};    // if true, pick a fresh angle each episode
+    float controlled_emitter_food_radius{6.0f};           // food drop scatter radius at emitter
+    std::size_t controlled_emitter_food_count{2};
+    float controlled_emitter_food_amount{15.0f};
 };
 
 struct ObjectWorldConfig {

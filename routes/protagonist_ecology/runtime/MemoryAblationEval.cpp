@@ -161,6 +161,15 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.resources.amount = std::max(route.resources.amount, 22.0f);
             route.water.source_count = 1;
             route.signal.protagonist_emit_enabled = false;
+            // SignalResponse ablation now drives the controlled emitter via
+            // the flag instead of relying on the legacy scenario_name match
+            // in usesControlledSignalEmitter. Position stays deterministic
+            // for eval, no food drops (we want to score memory recall, not
+            // a free meal).
+            route.signal.controlled_emitter_enabled = true;
+            route.signal.controlled_emitter_period_seconds = 30.0;
+            route.signal.controlled_emitter_randomize_position = false;
+            route.signal.controlled_emitter_food_count = 0;
             route.objects.count = 10;
             route.tree.count = 1;
             route.campfire.count = 0;

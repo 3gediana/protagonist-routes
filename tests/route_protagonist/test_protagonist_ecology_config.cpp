@@ -51,3 +51,58 @@ TEST(ProtagonistEcologyConfig, ParsesSignalSection) {
     EXPECT_FALSE(route.protagonist.predator_warn_enabled);
     EXPECT_FALSE(route.protagonist.hunt_enabled);
 }
+
+TEST(ProtagonistEcologyConfig, ParsesControlledEmitterFlags) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 7
+world_role = "train"
+scenario_name = "controlled_emitter_test"
+
+[world]
+size = [200.0, 200.0]
+
+[world.signal]
+enabled = true
+controlled_emitter_enabled = true
+controlled_emitter_period_seconds = 18.5
+controlled_emitter_offset_radius = 27.0
+controlled_emitter_offset_jitter = 11.0
+controlled_emitter_randomize_position = true
+controlled_emitter_food_radius = 7.0
+controlled_emitter_food_count = 3
+controlled_emitter_food_amount = 14.0
+)";
+
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+
+    EXPECT_TRUE(route.signal.controlled_emitter_enabled);
+    EXPECT_DOUBLE_EQ(route.signal.controlled_emitter_period_seconds, 18.5);
+    EXPECT_FLOAT_EQ(route.signal.controlled_emitter_offset_radius, 27.0f);
+    EXPECT_FLOAT_EQ(route.signal.controlled_emitter_offset_jitter, 11.0f);
+    EXPECT_TRUE(route.signal.controlled_emitter_randomize_position);
+    EXPECT_FLOAT_EQ(route.signal.controlled_emitter_food_radius, 7.0f);
+    EXPECT_EQ(route.signal.controlled_emitter_food_count, 3u);
+    EXPECT_FLOAT_EQ(route.signal.controlled_emitter_food_amount, 14.0f);
+}
+
+TEST(ProtagonistEcologyConfig, ControlledEmitterDefaultsToOff) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 1
+world_role = "train"
+scenario_name = "controlled_emitter_default_test"
+
+[world]
+size = [120.0, 120.0]
+)";
+
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+
+    EXPECT_FALSE(route.signal.controlled_emitter_enabled);
+    EXPECT_FALSE(route.signal.controlled_emitter_randomize_position);
+    EXPECT_DOUBLE_EQ(route.signal.controlled_emitter_period_seconds, 30.0);
+    EXPECT_GT(route.signal.controlled_emitter_food_amount, 0.0f);
+}

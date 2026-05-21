@@ -148,4 +148,11 @@ TEST(MemoryAblationEval, TaskSpecificTweaksMatchIntent) {
     EXPECT_TRUE(signal.signal.enabled);
     EXPECT_EQ(signal.resources.count, 0u);
     EXPECT_EQ(signal.worksite.count, 0u);
+    // SignalResponse ablation now drives the controlled emitter through the
+    // explicit flag (not the legacy scenario_name match), with deterministic
+    // position and no food drops so the metric still measures memory recall.
+    EXPECT_TRUE(signal.signal.controlled_emitter_enabled);
+    EXPECT_FALSE(signal.signal.controlled_emitter_randomize_position);
+    EXPECT_EQ(signal.signal.controlled_emitter_food_count, 0u);
+    EXPECT_DOUBLE_EQ(signal.signal.controlled_emitter_period_seconds, 30.0);
 }

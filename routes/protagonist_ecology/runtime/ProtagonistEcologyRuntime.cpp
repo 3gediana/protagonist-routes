@@ -999,27 +999,52 @@ double evaluateIntrinsicReward(const Agent& agent) {
 }
 
 bool usesControlledSignalEmitter(const ProtagonistEcologyConfig& route) {
+    if (route.signal.controlled_emitter_enabled) {
+        return true;
+    }
+    // Backward-compat: keep the old behaviour for memory ablation eval even
+    // if the new flag was forgotten in an older config.
     return route.isEvalRole() && route.scenario_name == "memory_ablation_signal_response";
 }
 
-Vec2 controlledSignalEmitterPosition(const ProtagonistEcologyConfig& route) {
-    // Place the emitter so its SignalPerception halo (radius 16) just reaches
-    // the nest edge. Agents in the nest sometimes hear the pulse, switch goal
-    // to RespondSignal, walk towards it, and then have to remember the
-    // heading during the silent gap between pulses.
+// Pick a controlled-emitter position for a single episode. When randomisation
+// is off, falls back to the legacy fixed offset so memory ablation eval keeps
+// its existing distribution. When randomisation is on, samples a fresh angle
+// + radius jitter around base.center, so the policy cannot just memorise one
+// fixed direction.
+Vec2 controlledSignalEmitterPosition(const ProtagonistEcologyConfig& route, std::mt19937& rng) {
+    const auto& cfg = route.signal;
+    if (!cfg.controlled_emitter_randomize_position) {
+        // Place the emitter so its SignalPerception halo (radius 16) just
+        // reaches the nest edge. Agents in the nest sometimes hear the pulse,
+        // switch goal to RespondSignal, walk towards it, and then have to
+        // remember the heading during the silent gap between pulses.
+        return Vec2{
+            std::clamp(route.base.center.x - 18.0f, 0.0f, route.world_size.x),
+            std::clamp(route.base.center.y + 8.0f, 0.0f, route.world_size.y),
+        };
+    }
+    std::uniform_real_distribution<float> angle_dist(0.0f, 6.2831853f);
+    std::uniform_real_distribution<float> jitter_dist(-cfg.controlled_emitter_offset_jitter, cfg.controlled_emitter_offset_jitter);
+    const float angle = angle_dist(rng);
+    const float radius = std::max(2.0f, cfg.controlled_emitter_offset_radius + jitter_dist(rng));
     return Vec2{
-        std::clamp(route.base.center.x - 18.0f, 0.0f, route.world_size.x),
-        std::clamp(route.base.center.y + 8.0f, 0.0f, route.world_size.y),
+        std::clamp(route.base.center.x + radius * std::cos(angle), 0.0f, route.world_size.x),
+        std::clamp(route.base.center.y + radius * std::sin(angle), 0.0f, route.world_size.y),
     };
 }
 
-void emitControlledSignal(World2D& world, SignalLayer& signal_layer, const ProtagonistEcologyConfig& route) {
+void emitControlledSignal(World2D& world,
+                          SignalLayer& signal_layer,
+                          const ProtagonistEcologyConfig& route,
+                          const Vec2& emitter_pos,
+                          ResourceLayer* resource_layer,
+                          std::mt19937& rng) {
     std::vector<float> signal(signal_layer.channels(), 0.0f);
     if (signal.empty()) {
         return;
     }
 
-    const Vec2 emitter_pos = controlledSignalEmitterPosition(route);
     signal[0] = 1.0f;
     signal_layer.emitWithHistory(
         kInvalidAgentId,
@@ -1032,6 +1057,24 @@ void emitControlledSignal(World2D& world, SignalLayer& signal_layer, const Prota
         events::AgentEmittedSignal{kInvalidAgentId, emitter_pos, 0, signal[0]},
         world.currentTick(),
         world.currentTimeSeconds()});
+
+    // Drop transient food at the emitter so an agent that learns "follow the
+    // signal" gets a real reward signal once it arrives. Without this hook the
+    // policy has no concrete reason to traverse the silent gap.
+    const auto& cfg = route.signal;
+    if (resource_layer != nullptr && cfg.controlled_emitter_food_count > 0 && cfg.controlled_emitter_food_amount > 0.0f) {
+        std::uniform_real_distribution<float> r_dist(0.0f, cfg.controlled_emitter_food_radius);
+        std::uniform_real_distribution<float> a_dist(0.0f, 6.2831853f);
+        for (std::size_t i = 0; i < cfg.controlled_emitter_food_count; ++i) {
+            const float r = r_dist(rng);
+            const float a = a_dist(rng);
+            const Vec2 food_pos{
+                std::clamp(emitter_pos.x + r * std::cos(a), 0.0f, route.world_size.x),
+                std::clamp(emitter_pos.y + r * std::sin(a), 0.0f, route.world_size.y),
+            };
+            resource_layer->addCorpse(food_pos, cfg.controlled_emitter_food_amount, world);
+        }
+    }
 }
 
 void evaluatePopulation(World2D& world,
@@ -1056,6 +1099,18 @@ void evaluatePopulation(World2D& world,
     auto* water_layer = world.getLayer<WaterLayer>();
     const bool controlled_signal_emitter = signal_layer != nullptr && usesControlledSignalEmitter(route);
     SimTimeSeconds next_controlled_signal_emit_seconds = 0.0;
+    // Episode-local RNG for controlled-emitter position randomisation + food
+    // scatter. Seeded from world tick so resumed runs are reproducible per
+    // episode but episodes within a generation get distinct emitter angles.
+    std::mt19937 controlled_emitter_rng{
+        static_cast<std::mt19937::result_type>(
+            static_cast<std::uint64_t>(world.currentTick()) ^
+            (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&world)) >> 4))};
+    Vec2 controlled_emitter_pos = controlled_signal_emitter
+        ? controlledSignalEmitterPosition(route, controlled_emitter_rng)
+        : Vec2{0.0f, 0.0f};
+    const SimTimeSeconds controlled_emitter_period_seconds = std::max<SimTimeSeconds>(
+        0.1, route.signal.controlled_emitter_period_seconds);
 
     std::unordered_set<GenomeId> protagonist_ids;
     protagonist_ids.reserve(population.size());
@@ -1217,13 +1272,13 @@ void evaluatePopulation(World2D& world,
         tick_deposits.clear();
         tick_deaths.clear();
         while (controlled_signal_emitter && elapsed_seconds + 1.0e-9 >= next_controlled_signal_emit_seconds) {
-            emitControlledSignal(world, *signal_layer, route);
-            // Pulse every 30s instead of every 6s. The long silent gap is
-            // what forces listeners to remember the emitter's last known
-            // position via SpatialMemory / EpisodicMemory: SignalPerception
-            // (radius 16) only senses the field briefly after each pulse,
-            // so without memory the agent loses its heading mid-silence.
-            next_controlled_signal_emit_seconds += 30.0;
+            emitControlledSignal(world, *signal_layer, route, controlled_emitter_pos, resource_layer, controlled_emitter_rng);
+            // Long silent gap (configured via controlled_emitter_period_seconds,
+            // default 30s) forces listeners to remember the emitter's last
+            // known position via SpatialMemory / EpisodicMemory: SignalPerception
+            // (radius 16) only senses the field briefly after each pulse, so
+            // without memory the agent loses its heading mid-silence.
+            next_controlled_signal_emit_seconds += controlled_emitter_period_seconds;
         }
         world.tick(dt);
         elapsed_seconds += dt_seconds;

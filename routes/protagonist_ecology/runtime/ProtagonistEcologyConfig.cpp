@@ -99,6 +99,14 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.signal.grid_resolution = config.getOr<std::size_t>("world.signal.grid_resolution", out.signal.grid_resolution);
     out.signal.decay_rate = config.getOr<float>("world.signal.decay_rate", out.signal.decay_rate);
     out.signal.diffusion_rate = config.getOr<float>("world.signal.diffusion_rate", out.signal.diffusion_rate);
+    out.signal.controlled_emitter_enabled = config.getOr<bool>("world.signal.controlled_emitter_enabled", out.signal.controlled_emitter_enabled);
+    out.signal.controlled_emitter_period_seconds = config.getOr<double>("world.signal.controlled_emitter_period_seconds", out.signal.controlled_emitter_period_seconds);
+    out.signal.controlled_emitter_offset_radius = config.getOr<float>("world.signal.controlled_emitter_offset_radius", out.signal.controlled_emitter_offset_radius);
+    out.signal.controlled_emitter_offset_jitter = config.getOr<float>("world.signal.controlled_emitter_offset_jitter", out.signal.controlled_emitter_offset_jitter);
+    out.signal.controlled_emitter_randomize_position = config.getOr<bool>("world.signal.controlled_emitter_randomize_position", out.signal.controlled_emitter_randomize_position);
+    out.signal.controlled_emitter_food_radius = config.getOr<float>("world.signal.controlled_emitter_food_radius", out.signal.controlled_emitter_food_radius);
+    out.signal.controlled_emitter_food_count = config.getOr<std::size_t>("world.signal.controlled_emitter_food_count", out.signal.controlled_emitter_food_count);
+    out.signal.controlled_emitter_food_amount = config.getOr<float>("world.signal.controlled_emitter_food_amount", out.signal.controlled_emitter_food_amount);
 
     out.objects.enabled = config.getOr<bool>("world.objects.enabled", out.objects.enabled);
     out.objects.count = config.getOr<std::size_t>("world.objects.count", out.objects.count);
