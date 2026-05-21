@@ -13,7 +13,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
-    add_compile_options(/W4 /utf-8 /Zc:__cplusplus)
+    # Apply host-compiler flags only to CXX/C source files. nvcc must not
+    # see /W4 /utf-8 /Zc directly: nvcc parses anything starting with '/'
+    # as a Windows-style path/input file, which causes
+    #   "nvcc fatal: A single input file is required for a non-link phase".
+    # The CUDA host-compiler flags can be wired separately via
+    # CMAKE_CUDA_FLAGS or per-target -Xcompiler= if we ever need them.
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:CXX>:/W4>
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>
+        $<$<COMPILE_LANGUAGE:C>:/W4>
+        $<$<COMPILE_LANGUAGE:C>:/utf-8>
+    )
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:8388608 /MAP")
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
