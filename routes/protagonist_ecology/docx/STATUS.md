@@ -1,10 +1,15 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-21（含 memory ablation 任务 tightening + peer_signal_nearby fix）
+> 最后巡检：2026-05-22（含 controlled emitter 训练支持 + listener reward field + metric decoupling，3 次训练失败留下基础设施）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`02d5a08 fix(protagonist): tighten memory ablation tasks + peer_signal_nearby fix`
-> 上一个 commit：`71ddc9b wip(protagonist): prior session work - memory ablation infra + brainv3 shell + goal manager`（把上几次会话留在工作树上的 5000+ 行未 commit 工作打了 WIP 快照）
+> 当前 HEAD：`8225c71 chore(protagonist): revert memory_ablation.toml genome path + REALTIME_USER_REQUIREMENTS sync`
+> 关键近期 commit 链：
+> - `81f763f feat(protagonist): listener-side signal response reward + metric decoupling`
+> - `2c81ca4 feat(protagonist): controlled signal emitter for camp+signal co-training`
+> - `89b56ab docs(protagonist): condense experience_log + sync PROGRESS / STATUS for ablation tightening`
+> - `02d5a08 fix(protagonist): tighten memory ablation tasks + peer_signal_nearby fix`
+> - `71ddc9b wip(protagonist): prior session work - memory ablation infra + brainv3 shell + goal manager`
 > 交接目标：让新对话能在**不依赖旧上下文**的情况下，快速接手仓库真实状态。
 
 > **本版本相对旧版 handoff 的关键修正（精简版）**：

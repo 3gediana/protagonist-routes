@@ -5,11 +5,11 @@
 ## ⏱️ 顶部状态
 | 项 | 值 |
 |---|---|
-| **最后更新** | 2026-05-21 |
+| **最后更新** | 2026-05-22 |
 | **当前阶段** | 🟩 Baseline M0-M5 完成 + 12 Modules MVP + protagonist 训练路线可运行（共同训练 / checkpoint-resume / trace / continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层）+ **World Understanding 长蓝图目前只有 Phase 1 完整收口，Phase 2/3/5/6/7 为 partial，Phase 4/8 仍未真正开始** + mixed compute / CUDA build 路径已接通但训练侧收益未证实 |
 | **整体进度** | 不再使用“100%”口径：基础仓库与 MVP 已完成，但 protagonist 长期研究路线仍处于“少量完整 + 多项 partial”阶段 |
-| **最近会话摘要** | 本轮收口前一轮 fixed-task memory ablation full run 留下的两个分离弱：水任务 spatial 因 `kWaterSenseRadius=36 > spawn_radius=26` 永远可见 + `hydration_decay` 单位被误读为 ratio/s，改 spawn=42 + decay 0.6/s（absolute）后 baseline drank=207.5 / no_spatial=90.25（~56% drop, 7/8 干涸），spatial 因果证据干净；signal 任务把 emit 间隔从 6s 拉到 30s + emitter 拉近 nest 边缘 + response radius/window 收紧到 8m/15s；同时修了一个真 bug — `peer_signal_nearby` 之前只看本 tick emit，30s 间隔下 GoalManager 几乎永远错过，listener 不切 RespondSignal goal，改成扫 `last_signal_emit` map + window 过滤后 events 从全 0 → baseline 1.5 / no_spatial 1.75（fitness 维度 7.95/4.37 即 ~55% 残余）；signal events 维度仍弱因 fixed genome OOD（训练时无 signal_response 奖励）。把仓库脏工作树（5000+ 行未 commit 的上次 session 工作）拍成 WIP commit，本会话改动 `02d5a08` 单独 commit；同步压缩 `experience_log.md` 1898 → 354 行并提取通用规则。 |
-| **下一步建议** | signal_response events 维度的真正分离需要重训含 signal_response 奖励的 genome（用户保留决策权），或在 ablation summary 标记 signal_response 为 "OOD evaluation, fitness-level separation only"；继续往下做 P3 因果信用（signal credit、EventLineage）或 P4 通信语义任务定义；不要再为 signal 调任务参数（已进入收益递减区）。 |
+| **最近会话摘要** | 上半场：收口前一轮 fixed-task memory ablation 的两个分离弱（water spatial / signal response），水任务 tightening 拿到 56% spatial drop，signal 任务任务设计修对 + 修了 `peer_signal_nearby` 真 bug，但 events 维度只到 1.5/1.75（commit `02d5a08`）。下半场：尝试用"camp+signal 共同训练"解决 signal events 维度，连续 30 代 × 3 次失败：第 1 次发现 `signal_co_attendance_reward` 是 emitter-side（rewards 自己 emit + peer 吃食物）不是 listener-side，controlled emitter 永远不触发；第 2 次加 `signal_response_reward` listener-side 字段后 events 仍 0，发现 metric 包 `if (currentGoal == RespondSignal)` 实际测的是 GoalManager 优先级；第 3 次解耦 metric 跟 GoalManager 后 events 仍 0，撞上**鸡生蛋**——listener reward 触发条件是"进入 halo"但 agent 没 perception gradient 引导。3 次失败留下完整基础设施（commit `2c81ca4` controlled emitter 训练支持 + `81f763f` listener reward + metric decoupling），下次会话只需补 perception-driven shaping reward 即可。 |
+| **下一步建议** | 加 perception-driven shaping reward（基于 `SignalPerception` 强度给 dense reward / 把 food spawn 半径放大到 SignalPerception 16m 范围）让 agent 朝 emitter 移动过程中就有 gradient，再重训 30 代验证 `signal_response_events` 是否真分离；不要再继续单纯调 reward 数值或重新组合现有 reward 通路（已确认是结构问题不是数值问题）。 |
 
 ---
 

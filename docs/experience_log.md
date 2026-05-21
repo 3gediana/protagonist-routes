@@ -52,6 +52,38 @@
 
 ---
 
+## 2026-05-22 · 训练 signal_response 三次失败 — train/eval objective alignment 的鸡生蛋问题
+
+为让 ablation eval 里 `signal_response_events` 真正分离，从把 controlled emitter 接入训练开始，连续做了 3 次 30 代训练 + ablation 验证，**全部失败（events 全 0）**，留下 3 条经验：
+
+**第 1 次**：在 camp_building train config 加 `world.signal.controlled_emitter_enabled=true` + 拉高 `signal_co_attendance_reward` 1.5 + emitter 周围 spawn 食物。
+
+结果：fitness 上涨（avg 2171→5365），`signal_co_attendance` 翻倍（4812→10453），但 `signal_response_events` 全 0。**根因**：`signal_co_attendance_reward` 是 **emitter-side reward**（自己 emit + peer 同伴在你半径内吃食物），不是 listener-side。controlled emitter 的 `emitter_id=kInvalidAgentId`，永远不会触发这个 reward 通路。
+
+**第 2 次**：加 `signal_response_reward` listener-side 字段（agent 进入 emit halo + 在 window 内即给 reward）。
+
+结果：fitness 又涨，events 仍 0。**根因**：events 计数和 listener reward 都 wrap 在 `if (currentGoal == RespondSignal)` 内。GoalManager rule-based 优先级表里 RespondSignal 排在 health/predator/hydration/carrying/site_needs 之后，训练时 agent 总在 GatherStick 或 BuildWorksite 状态，几乎从不切到 RespondSignal goal。metric 测的不是 agent 能力而是 GoalManager 优先级表。
+
+**第 3 次**：把 events 计数和 listener reward 从 `currentGoal == RespondSignal` 解耦，直接看物理位置 + window。
+
+结果：fitness 巨涨（avg 6519→19680，best 74833），events 仍 0。**根因（鸡生蛋）**：listener reward 触发条件是"进入 halo"，但 agent 没动力进 halo（emitter 远在 28m 外，agent 在 nest 里看不见、没 perception gradient 引导）。需要 perception-driven shaping reward 让 agent 朝 emitter **移动过程中**就拿 reward，但那是又一轮 reward shaping。
+
+**留下的可复用基础设施**（commit `2c81ca4` + `81f763f`）：
+- `controlled_emitter_enabled` flag 让 controlled emitter 可在训练时启用，randomize_position 防过拟合，emit 时通过 `ResourceLayer::addCorpse` spawn 食物
+- `signal_response_reward` listener-side reward field + parser，默认 0 不影响现有训练
+- `signal_response_events` metric 跟 GoalManager 解耦，直接物理位置 + window
+- train_camp_signal.toml 训练 config 已 ready
+
+**通用教训**：
+- ablation eval 的 metric 设计必须跟训练 reward shaping 完全对齐，否则训出来的能力跟测的能力不是同一回事
+- 训练 reward 不只是数值大小，还要看**触发条件方向**（emitter-side vs listener-side）
+- rule-based GoalManager 是 metric 的隐藏依赖：metric 包 `if (currentGoal == X)` 时实际测的是 GoalManager 优先级
+- listener-side reward 触发条件是"进入 halo"会有鸡生蛋问题，需要 perception-driven shaping 给 agent "朝 X 走"的连续 gradient
+
+下一步（不在今晚做）：perception-driven shaping reward，比如基于 SignalPerception 强度给 dense reward，或者把 food spawn 半径放大到 SignalPerception 16m 范围让 agent 在能听信号时同时能看食物。
+
+---
+
 ## 2026-05-21 · memory ablation 任务 tightening + peer_signal_nearby bug
 
 修 fixed-task memory ablation 的两个分离弱（water/no_spatial 41% 残余、signal 分离几乎不存在），最后只 water 拿到干净分离，signal 暴露 genome OOD。
