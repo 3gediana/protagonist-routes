@@ -257,6 +257,13 @@ signal_co_attendance_radius = 8.0
 # 15s matches the memory ablation eval window so what the policy learns
 # in train transfers cleanly to eval.
 signal_co_attendance_window_seconds = 15.0
+# Listener-side reward: counts every time an agent enters the response
+# halo of a recent pulse (incl. the controlled emitter). The condition
+# is identical to the ablation eval signal_response_events metric, so
+# learning to chase this reward directly improves the eval score. Off
+# by default in other configs; on here so camp+signal co-training has
+# a real listener-side gradient.
+signal_response_reward = 1.5
 joint_hunt_reward = 10.0
 joint_hunt_radius = 10.0
 

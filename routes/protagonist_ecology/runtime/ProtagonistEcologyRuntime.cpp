@@ -95,6 +95,14 @@ struct TrainingParams {
     float signal_co_attendance_reward{0.6f};
     float signal_co_attendance_radius{8.0f};
     SimTimeSeconds signal_co_attendance_window_seconds{40.0};
+    // Listener-side reward: when an agent enters the response halo of any
+    // recent emit (incl. the controlled emitter, which is what
+    // signal_co_attendance_reward cannot hit), it gets this reward. Off by
+    // default so existing training distributions are unaffected. The metric
+    // counted by ablation eval (signal_response_events) uses the same
+    // condition, so turning this on aligns the training reward with what
+    // ablation eval actually measures.
+    float signal_response_reward{0.0f};
     float joint_hunt_reward{8.0f};
     float joint_hunt_radius{10.0f};
     std::size_t checkpoint_every{0};
@@ -354,6 +362,7 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.signal_co_attendance_radius = config.getOr<float>("reward.signal_co_attendance_radius", params.signal_co_attendance_radius);
     params.signal_co_attendance_window_seconds = config.getOr<double>("reward.signal_co_attendance_window_seconds",
                                                                       config.getOr<double>("reward.signal_co_attendance_window", params.signal_co_attendance_window_seconds));
+    params.signal_response_reward = config.getOr<float>("reward.signal_response_reward", params.signal_response_reward);
     params.joint_hunt_reward = config.getOr<float>("reward.joint_hunt_reward", params.joint_hunt_reward);
     params.joint_hunt_radius = config.getOr<float>("reward.joint_hunt_radius", params.joint_hunt_radius);
     params.checkpoint_every = config.getOr<std::size_t>("evolution.checkpoint_every", params.checkpoint_every);
@@ -1689,7 +1698,17 @@ void evaluatePopulation(World2D& world,
                         }
                     }
 
-                    if (brain->goalMemory().currentGoal() == GoalType::RespondSignal) {
+                    // signal_response_events: measures *physical proximity*
+                    // to a recent emit, decoupled from the GoalManager. The
+                    // old metric wrapped this in (currentGoal==RespondSignal),
+                    // but GoalManager's rule-based priority almost always
+                    // demoted RespondSignal under carrying / site_needs /
+                    // hydration, so the metric effectively tested GoalManager
+                    // priority instead of agent ability. Now the metric and
+                    // the listener-side reward use the same condition
+                    // (distance + window), so what gets rewarded in training
+                    // is exactly what gets measured in eval.
+                    {
                         const SimTimeSeconds now_time = world.currentTimeSeconds();
                         for (const auto& [emitter_id, emit] : last_signal_emit) {
                             if (emitter_id == agent->id()) {
@@ -1711,6 +1730,9 @@ void evaluatePopulation(World2D& world,
                             }
                             last_response_tick = emit.tick;
                             ++behavior.signal_response_events;
+                            if (params.signal_response_reward != 0.0f) {
+                                reward += params.communication_weight * static_cast<double>(params.signal_response_reward);
+                            }
                             break;
                         }
                     }
