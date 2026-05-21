@@ -4,7 +4,7 @@ log_level = "info"
 world_role = "eval"
 scenario_name = "protagonist_memory_ablation"
 resume_checkpoint_path = ""
-protagonist_genome_path = "data/runs/protagonist_train_camp_building_bench_cpu/20260521-121311/best_genome_overall.bin"
+protagonist_genome_path = ""
 
 [output]
 runs_dir = "data/runs/protagonist_memory_ablation_fixed"
