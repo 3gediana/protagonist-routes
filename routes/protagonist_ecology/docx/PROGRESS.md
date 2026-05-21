@@ -264,6 +264,16 @@
   - `completed_worksites` vs `worksite_completion_events`
   - DNC 摘要字段“只能辅助解释，不等于记忆已有效帮助任务”
 
+### 12. memory ablation 任务 tightening + peer_signal_nearby bug（2026-05-21）
+
+commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
+
+- **water_return**：旧 `spawn_radius=26` 在 `kWaterSenseRadius=36` 内永远可见 + `hydration_decay` 单位是 absolute/s 不是 ratio/s。改 spawn=42、initial=0.65、decay=0.6 后 baseline drank=207.5 / no_spatial=90.25（~56% drop, 7/8 干涸）。SpatialMemory 因果证据干净。
+- **signal_response**：改 emit 间隔 6s→30s、emitter 拉近到 nest 边缘、response 半径 10→8 / window 30s→15s。同时修了一个真 bug — `peer_signal_nearby` 只看本 tick emit，30s 间隔下 GoalManager 几乎永远错过，listener 不会切 RespondSignal goal。改成扫 `last_signal_emit` + window 过滤后 events 从全 0 → baseline 1.5 / no_spatial 1.75。fitness 维度 baseline 7.95 / no_spatial 4.37（~55% 残余）。
+- **遗留**：signal_response events 维度仍弱，**根因不是任务，是 fixed genome 训练时没有 signal_response 奖励 — policy OOD**。water spatial 分离干净是因为 worksite_return 训练里用了 spatial，能力部分泛化；signal 能力 task-specific，无法泛化。
+
+下一步：要么重训含 signal_response 奖励的 genome，要么在 ablation summary 把 signal_response 标记为 "OOD evaluation, fitness-level separation only"。
+
 ---
 
 ## 进行中

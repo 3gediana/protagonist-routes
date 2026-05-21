@@ -8,8 +8,8 @@
 | **最后更新** | 2026-05-21 |
 | **当前阶段** | 🟩 Baseline M0-M5 完成 + 12 Modules MVP + protagonist 训练路线可运行（共同训练 / checkpoint-resume / trace / continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层）+ **World Understanding 长蓝图目前只有 Phase 1 完整收口，Phase 2/3/5/6/7 为 partial，Phase 4/8 仍未真正开始** + mixed compute / CUDA build 路径已接通但训练侧收益未证实 |
 | **整体进度** | 不再使用“100%”口径：基础仓库与 MVP 已完成，但 protagonist 长期研究路线仍处于“少量完整 + 多项 partial”阶段 |
-| **最近会话摘要** | 本轮围绕“把真实指标讲清楚”这一用户需求，逐个核对了 `fitness.csv`、`evolution.csv`、`protagonist_behaviors.csv`、`memory_ablation_results.csv`、`module_metrics.csv`、`advanced_stats.csv`、`emergence_audit.csv` 与 `comprehensive/*.csv` 的真实字段和计算口径，重点澄清了 `signal_emits` vs `signal_emit_events_avg`、`completed_worksites` vs `worksite_completion_events`、以及 DNC 摘要字段只能做辅助解释这几类易误读项；随后在 `routes/protagonist_ecology/docx/` 新增可直接打开的单页 `METRICS_FIELD_GUIDE.html`，按模块整理指标含义、判读方法与常见误区。 |
-| **下一步建议** | 回到 fixed-task memory ablation full run 的解释层，继续追 `signal_response` 分离偏弱与 `water_return/no_spatial` 残余的原因，并把新的 `METRICS_FIELD_GUIDE.html` 持续与实际输出字段保持同步；若继续文档线，优先补 communication / signal 指标的专项解释，而不是泛泛重复项目总介绍。 |
+| **最近会话摘要** | 本轮收口前一轮 fixed-task memory ablation full run 留下的两个分离弱：水任务 spatial 因 `kWaterSenseRadius=36 > spawn_radius=26` 永远可见 + `hydration_decay` 单位被误读为 ratio/s，改 spawn=42 + decay 0.6/s（absolute）后 baseline drank=207.5 / no_spatial=90.25（~56% drop, 7/8 干涸），spatial 因果证据干净；signal 任务把 emit 间隔从 6s 拉到 30s + emitter 拉近 nest 边缘 + response radius/window 收紧到 8m/15s；同时修了一个真 bug — `peer_signal_nearby` 之前只看本 tick emit，30s 间隔下 GoalManager 几乎永远错过，listener 不切 RespondSignal goal，改成扫 `last_signal_emit` map + window 过滤后 events 从全 0 → baseline 1.5 / no_spatial 1.75（fitness 维度 7.95/4.37 即 ~55% 残余）；signal events 维度仍弱因 fixed genome OOD（训练时无 signal_response 奖励）。把仓库脏工作树（5000+ 行未 commit 的上次 session 工作）拍成 WIP commit，本会话改动 `02d5a08` 单独 commit；同步压缩 `experience_log.md` 1898 → 354 行并提取通用规则。 |
+| **下一步建议** | signal_response events 维度的真正分离需要重训含 signal_response 奖励的 genome（用户保留决策权），或在 ablation summary 标记 signal_response 为 "OOD evaluation, fitness-level separation only"；继续往下做 P3 因果信用（signal credit、EventLineage）或 P4 通信语义任务定义；不要再为 signal 调任务参数（已进入收益递减区）。 |
 
 ---
 

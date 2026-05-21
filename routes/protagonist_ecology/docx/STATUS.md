@@ -1,9 +1,10 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-21（含后续 BrainV3、camp-building benchmark 与文档同步）
+> 最后巡检：2026-05-21（含 memory ablation 任务 tightening + peer_signal_nearby fix）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`4dd1dbc chore(gitignore): ignore build_cuda directory`
+> 当前 HEAD：`02d5a08 fix(protagonist): tighten memory ablation tasks + peer_signal_nearby fix`
+> 上一个 commit：`71ddc9b wip(protagonist): prior session work - memory ablation infra + brainv3 shell + goal manager`（把上几次会话留在工作树上的 5000+ 行未 commit 工作打了 WIP 快照）
 > 交接目标：让新对话能在**不依赖旧上下文**的情况下，快速接手仓库真实状态。
 
 > **本版本相对旧版 handoff 的关键修正（精简版）**：

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Neural Eco 指标说明</title>
+  <title>Neural Eco 机制、训练、测试与指标说明</title>
   <style>
     :root {
       --bg: #f4f4f1;
@@ -153,12 +153,16 @@
 <body>
   <div class="page">
     <section class="hero">
-      <h1>Neural Eco · 指标与判读说明</h1>
-      <p>这页专门回答 3 个问题：<strong>这个字段是什么、它怎么统计出来、它能不能用来判断某个行为真的发生了</strong>。内容基于当前代码里真实存在的输出字段整理。</p>
+      <h1>Neural Eco · 机制、训练、测试与指标说明</h1>
+      <p>这页不只解释指标，还会把<strong>系统里有哪些机制、它们为什么要加、怎么训练、怎么测试、真实运行时怎么跑</strong>串成一张完整地图。内容尽量保持“适合入门，但不幼稚”的讲法，并尽量对齐当前项目真实代码与配置。</p>
       <div class="nav">
         <a href="#rules">怎么看</a>
         <a href="#map">文件地图</a>
-        <a href="#train">训练指标</a>
+        <a href="#system">系统机制</a>
+        <a href="#training-flow">怎么训练</a>
+        <a href="#testing">怎么测试</a>
+        <a href="#runtime">怎么运行</a>
+        <a href="#train-metrics">训练指标</a>
         <a href="#behavior">主角行为</a>
         <a href="#memory">记忆与 Ablation</a>
         <a href="#eco">生态模块</a>
@@ -167,7 +171,7 @@
         <a href="#recipes">判读模板</a>
       </div>
       <div class="callout">
-        <strong>先记一句：</strong> 想判断“行为有没有发生”，优先看真实事件计数；想判断“系统是不是更复杂了”，再看互信息、熵、多样性这些研究统计。
+        <strong>先记一句：</strong> 你可以把这页分成 5 层：<strong>机制</strong>回答“系统里装了什么”，<strong>训练</strong>回答“它怎么学”，<strong>测试</strong>回答“我们怎么知道它不是碰巧”，<strong>运行</strong>回答“最后怎么长期跑”，<strong>指标</strong>回答“我们拿什么证据来判断这些事”。
       </div>
     </section>
 
@@ -224,8 +228,312 @@
       </div>
     </section>
 
-    <section id="train" class="section">
-      <h2>3. 训练主指标</h2>
+    <section id="system" class="section">
+      <h2>3. 系统机制地图：除了记忆，还加了什么</h2>
+      <div class="callout">
+        <strong>先建立一个总画面：</strong> 这个项目不是“只有一个神经网络在乱走”，而是<strong>神经脑 + 身体状态 + 资源世界 + 社会互动 + 生态压力 + 进化</strong> 一起作用的系统。记忆只是其中一块，而且它必须和其它机制配合才有意义。
+      </div>
+      <div class="grid">
+        <div class="card">
+          <h3>世界与时间</h3>
+          <p><strong>地形</strong>不是纯装饰，会影响移动成本和可达性；世界也在往<strong>连续时间</strong>方向走，所以行为不是只有“按一次按钮”那么简单，而是跟 <code>dt</code> 和持续时间有关。</p>
+        </div>
+        <div class="card">
+          <h3>生存机制</h3>
+          <p>主角不只是“活着就行”，而是要处理<strong>血量、口渴、受伤、取暖、恢复</strong>。这让“找水、回火边、回巢”变成真实需求，而不是脚本规定的任务。</p>
+        </div>
+        <div class="card">
+          <h3>资源与工具链</h3>
+          <p>世界里有<strong>资源、树、石头、可搬运物体、工具制作、投掷、狩猎</strong>。这样主角不是只会移动，而是可能形成“采集 → 搬运 → 制作 → 使用”的链条。</p>
+        </div>
+        <div class="card">
+          <h3>基地与聚落机制</h3>
+          <p><strong>base、stockpile、nursery、campfire、worksite、progression</strong> 这些机制一起定义了“家”“营火”“工地”“发展阶段”这些概念，所以系统才能朝原始聚落而不是随机生态箱发展。</p>
+        </div>
+        <div class="card">
+          <h3>通信与合作</h3>
+          <p>有 <strong>signal</strong> 层，也有会合、共同在场、共同狩猎、工地贡献这些机制。它们的目标不是做“装饰性信号”，而是让合作有可观测后果。</p>
+        </div>
+        <div class="card">
+          <h3>生态压力</h3>
+          <p>背景物种、捕食者、猎物、病原体、昼夜、季节都会改变环境压力。这样训练出来的行为更像“在真实环境里应付问题”，而不是只对单一奖励函数取巧。</p>
+        </div>
+      </div>
+
+      <details open>
+        <summary>主角脑、背景物种脑、进化三者是什么关系</summary>
+        <div class="detail-body">
+          <p>你可以把系统里的“智能部分”分成两层看：</p>
+          <ul>
+            <li><strong>主角脑：</strong> 当前路线里主角有自己的脑结构、记忆通路、DNC 和专门感知。</li>
+            <li><strong>背景物种脑：</strong> 背景 species 走的是另一套更通用的 NEAT 路线。</li>
+            <li><strong>进化器：</strong> 它不直接“替主角思考”，而是根据表现保留好的个体、淘汰差的个体，再通过交叉和变异产生下一代。</li>
+          </ul>
+          <p>所以这不是“一个固定模型上线推理”，而更像“许多个体在世界里竞争，表现好的脑结构被保留下来”。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>基地、营火、工地、progression 为什么重要</summary>
+        <div class="detail-body">
+          <p>如果没有这些机制，主角最多学会“找吃的、躲危险”。但你真正想看到的是更高一级的行为，比如：</p>
+          <ul>
+            <li>把材料搬回共同位置</li>
+            <li>围着火生存和恢复</li>
+            <li>在工地持续投入材料</li>
+            <li>随着世界阶段推进，解锁新任务和新资源</li>
+          </ul>
+          <p>这就是为什么系统里要有 <code>base / nursery / campfire / worksite / progression</code> 这些看起来“不是 AI 本体”的机制：它们定义了 AI 可以理解和争夺的社会空间。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>信号、合作、贡献记录为什么不是可有可无</summary>
+        <div class="detail-body">
+          <p>如果只有奖励，没有“谁做了贡献”的记录，系统很容易出现搭便车问题：真正干活的人和路过的人拿分差不多。</p>
+          <p>所以项目里会逐步加入：</p>
+          <ul>
+            <li>谁发了信号</li>
+            <li>谁到场响应了信号</li>
+            <li>谁对狩猎造成了真实伤害</li>
+            <li>谁给工地送了材料</li>
+          </ul>
+          <p>这些东西不是“锦上添花”，而是为了让合作能被正确奖励。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>疾病、昼夜、季节这些机制到底在干嘛</summary>
+        <div class="detail-body">
+          <p>它们的作用不是把世界弄复杂而已，而是防止系统学出太机械的固定套路。</p>
+          <ul>
+            <li><strong>疾病：</strong> 让个体和病原体出现军备竞赛压力。</li>
+            <li><strong>昼夜：</strong> 让同样的行动在不同时间成本不同。</li>
+            <li><strong>季节：</strong> 让资源和环境条件不总是恒定。</li>
+          </ul>
+          <p>简单说：这些机制的作用是让主角必须“理解世界在变”，而不是只记一条固定路线。</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="training-flow" class="section">
+      <h2>4. 这个项目是怎么训练的</h2>
+      <div class="callout">
+        <strong>最关键一句：</strong> 这条 protagonist 路线当前主训练方式更接近<strong>进化训练</strong>，不是常见课堂上那种“拿标签做反向传播的监督学习”。
+      </div>
+
+      <details open>
+        <summary>一代训练大致发生什么</summary>
+        <div class="detail-body">
+          <ul>
+            <li><strong>第 1 步：</strong> 读取配置，决定世界大小、机制开关、奖励权重、是否 resume checkpoint。</li>
+            <li><strong>第 2 步：</strong> 创建或恢复 protagonist population，同时创建背景物种 population。</li>
+            <li><strong>第 3 步：</strong> 每一代跑多个 episode；每个 episode 会把主角和背景物种一起放进世界。</li>
+            <li><strong>第 4 步：</strong> 世界按 <code>substep_dt</code> 连续推进，期间累计 reward、行为指标、trace、DNC 摘要等。</li>
+            <li><strong>第 5 步：</strong> 把多个 episode 的表现汇总成每个个体的 fitness。</li>
+            <li><strong>第 6 步：</strong> 用 selection + crossover + mutation 产生下一代，并定期保存 checkpoint。</li>
+          </ul>
+          <p>你可以把它理解成：<strong>不是在调一个模型的梯度，而是在筛选一整群不同的脑，留下更适应这个世界的那些。</strong></p>
+        </div>
+      </details>
+
+      <details>
+        <summary>训练时到底在优化什么</summary>
+        <div class="detail-body">
+          <p>当前训练参数里，reward 不是只看一项，而是多项组合：</p>
+          <ul>
+            <li>生存</li>
+            <li>进食</li>
+            <li>探索 / 内在动机</li>
+            <li>战斗</li>
+            <li>合作</li>
+            <li>通信</li>
+            <li>工地靠近 / 工地完成</li>
+            <li>共同狩猎</li>
+          </ul>
+          <p>这也是为什么后面你不能只看 <code>avg_fitness</code>：因为它本来就是这些目标混合后的总分。</p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>常见训练入口配置怎么理解</summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>配置</th><th>用途</th><th>适合理解成什么</th></tr></thead>
+              <tbody>
+                <tr><td><code>protagonist_ecology_train_smoke.toml</code></td><td>极短训练</td><td>接线验收，不是最终能力证明</td></tr>
+                <tr><td><code>protagonist_ecology_train_survival_foundation.toml</code></td><td>生存基础课</td><td>先学活下来</td></tr>
+                <tr><td><code>protagonist_ecology_train_camp_building.toml</code></td><td>营地建造课</td><td>学会搬运、围火、工地闭环</td></tr>
+                <tr><td><code>protagonist_ecology_train_camp_building_evolve.toml</code></td><td>更正式的建造训练</td><td>在更完整训练循环里真正进化</td></tr>
+                <tr><td><code>protagonist_ecology_train_hunt_avoid.toml</code></td><td>狩猎 / 躲避课</td><td>学应对生态压力</td></tr>
+                <tr><td><code>protagonist_ecology_train_dnc_cue_choice.toml</code></td><td>DNC micro-task</td><td>测试“纯记忆能力 wiring 是否打通”</td></tr>
+                <tr><td><code>protagonist_ecology_train_overnight.toml</code></td><td>长训入口</td><td>更接近正式跑</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>为什么训练要多 episode，而不是一代只跑一次</summary>
+        <div class="detail-body">
+          <p>因为世界有随机性。只跑一次，某个个体可能只是“运气好”。</p>
+          <p>多 episode 的意义是：让系统更看重<strong>稳定表现</strong>，而不是一次碰巧拿高分。</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="testing" class="section">
+      <h2>5. 这个项目怎么测试</h2>
+      <div class="callout">
+        <strong>测试不只是一种：</strong> 这个项目里至少有<strong>代码级测试、短 smoke、专门 eval 世界、ablation、traceprobe</strong> 这几层。
+      </div>
+
+      <details open>
+        <summary>第一层：代码级测试</summary>
+        <div class="detail-body">
+          <p>这层回答的是“代码有没有接错”。当前 route 里已经有不少专门测试，例如：</p>
+          <ul>
+            <li><code>test_protagonist_ecology_config.cpp</code>：配置解析是否正确</li>
+            <li><code>test_goal_manager.cpp</code>：目标管理逻辑是否正常</li>
+            <li><code>test_checkpoint_resume.cpp</code>：checkpoint 是否能真恢复</li>
+            <li><code>test_memory_ablation_eval.cpp</code>：ablation 任务派生是否正确</li>
+            <li><code>test_memory_trial_layer.cpp</code>：DNC micro-task 层是否正常</li>
+            <li><code>test_protagonist_brain_v3_shell.cpp</code>：BrainV3 最小壳层是否没接崩</li>
+          </ul>
+          <p>这层很重要，但它只能证明“系统没坏”，不能证明“系统真的学会了”。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>第二层：smoke run</summary>
+        <div class="detail-body">
+          <p>smoke run 的意思不是“训练完成”，而是“我先用一个很小的配置跑一下，看整条链有没有打通”。</p>
+          <p>例如 <code>protagonist_ecology_train_smoke.toml</code> 就适合验证：</p>
+          <ul>
+            <li>世界能不能正常启动</li>
+            <li>训练循环能不能跑完</li>
+            <li>CSV 和 trace 能不能产出</li>
+            <li>行为计数是不是非空</li>
+          </ul>
+        </div>
+      </details>
+
+      <details open>
+        <summary>第三层：eval 世界</summary>
+        <div class="detail-body">
+          <p>eval 世界是专门拿来问一句：<strong>它学到的是规则，还是只是记住了训练地图？</strong></p>
+          <p>当前已经有几类 eval 配置：</p>
+          <ul>
+            <li><code>protagonist_ecology_eval_generalization.toml</code></li>
+            <li><code>protagonist_ecology_eval_sparse_terrain.toml</code></li>
+            <li><code>protagonist_ecology_eval_timing_shift.toml</code></li>
+          </ul>
+          <p>它们会改几何布局、地形、资源节奏或时间条件，用来测试泛化，而不是只看训练世界里会不会走固定路线。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>第四层：ablation</summary>
+        <div class="detail-body">
+          <p>ablation 的意思是“把系统里某一块先关掉，再看表现会不会掉”。</p>
+          <p>这比“某个指标升了”更有解释力，因为它直接在问：<strong>这块机制到底有没有贡献</strong>。</p>
+          <p>当前最典型的就是 memory ablation：关掉 spatial / episodic / social / goal 之一，看 fixed-task 的主指标是否下降。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>第五层：traceprobe</summary>
+        <div class="detail-body">
+          <p>当某个结果不对时，traceprobe 不是继续盲猜，而是回到事件级和 agent 级轨迹里查：</p>
+          <ul>
+            <li>信号有没有真的发出</li>
+            <li>材料有没有真的送到</li>
+            <li>goal 有没有在该切换时切换</li>
+            <li>记忆写入有没有真的发生</li>
+          </ul>
+          <p>它更像“黑盒训练里的调试显微镜”。</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="runtime" class="section">
+      <h2>6. 真实运行与“生产环境”怎么理解</h2>
+
+      <details open>
+        <summary>当前代码里已经区分了 <code>train / eval / live</code></summary>
+        <div class="detail-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>角色</th><th>它在语义上是什么</th><th>当前怎么用</th></tr></thead>
+              <tbody>
+                <tr><td><code>train</code></td><td>训练世界</td><td>用来进化 population，产生新一代</td></tr>
+                <tr><td><code>eval</code></td><td>评估世界</td><td>换环境检验泛化，不应把它和正式训练混在一起</td></tr>
+                <tr><td><code>live</code></td><td>长期运行世界</td><td>更像开放运行 / 展示 / 观察环境</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary><code>run()</code> 现在真实怎么分支</summary>
+        <div class="detail-body">
+          <p>当前 runtime 的分支逻辑很直接：</p>
+          <ul>
+            <li>如果开了 memory ablation，就走 <strong>专项 ablation 入口</strong></li>
+            <li>否则如果 <code>evolution.generations &gt; 0</code>，就走 <strong>训练入口</strong></li>
+            <li>否则就只是<strong>初始化世界，然后按 <code>preview_duration_seconds</code> 把世界往前推进</strong></li>
+          </ul>
+          <p>这意味着：<strong>现在的 live 角色已经存在，但它当前更像“长期运行世界”，不是一套完整的线上继续学习系统。</strong></p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>“生产环境里继续学”这个想法能不能做</summary>
+        <div class="detail-body">
+          <p><strong>原则上能做，但要分清两种含义：</strong></p>
+          <ul>
+            <li><strong>含义 A：</strong> live 世界只是继续运行，个体在世界里靠记忆、状态、生态互动继续适应。这个现在就能做一部分。</li>
+            <li><strong>含义 B：</strong> live 世界里的模型权重 / 基因也在线继续更新。这个现在还不是完整闭环。</li>
+          </ul>
+          <p>如果直接让线上个体边跑边改脑，风险很大：</p>
+          <ul>
+            <li>可能突然学坏</li>
+            <li>可能把生态平衡直接打崩</li>
+            <li>出问题时很难回滚和定位</li>
+            <li>你也会分不清“这是新能力”还是“偶然漂移”</li>
+          </ul>
+        </div>
+      </details>
+
+      <details>
+        <summary>更安全的“生产环境继续学习”方案应该是什么</summary>
+        <div class="detail-body">
+          <p>对这个项目来说，最合理的不是“live 里无约束自我修改”，而是<strong>受控的持续学习</strong>：</p>
+          <ul>
+            <li><strong>第 1 步：</strong> live 世界继续跑，持续收集轨迹、行为、环境数据。</li>
+            <li><strong>第 2 步：</strong> 在旁路训练区或 shadow world 里，用这些数据继续训练 / 继续进化候选 population。</li>
+            <li><strong>第 3 步：</strong> 用 eval 世界、ablation、关键任务指标去审查候选版本。</li>
+            <li><strong>第 4 步：</strong> 只有通过门槛的新 checkpoint，才替换到 live。</li>
+            <li><strong>第 5 步：</strong> 保留旧 checkpoint，随时能回滚。</li>
+          </ul>
+          <p>你可以把它理解成：<strong>不是让“线上个体自己乱改脑”，而是让 live 提供真实经验，再由受控训练系统慢慢学习。</strong></p>
+        </div>
+      </details>
+
+      <details>
+        <summary>如果以后真的要这样跑，最推荐的顺序</summary>
+        <div class="detail-body">
+          <p><strong>最稳的流程：</strong> <code>train → eval → live → shadow continual learning → gated promotion</code></p>
+          <p>这很像真正工程里的做法：先离线学，再上线观察，再受控更新，而不是一上来就在线自我进化。</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="train-metrics" class="section">
+      <h2>7. 训练主指标</h2>
 
       <details open>
         <summary><code>fitness.csv</code> · 最基础总分</summary>
@@ -270,7 +578,7 @@
     </section>
 
     <section id="behavior" class="section">
-      <h2>4. 主角行为指标</h2>
+      <h2>8. 主角行为指标</h2>
       <div class="callout">
         <strong>这是当前 route 最关键的一张表：</strong> <code>protagonist_behaviors.csv</code>。
       </div>
@@ -363,7 +671,7 @@
     </section>
 
     <section id="memory" class="section">
-      <h2>5. 记忆 / DNC / Ablation</h2>
+      <h2>9. 记忆 / DNC / Ablation</h2>
 
       <details open>
         <summary><code>memory_ablation_results.csv</code> 怎么看</summary>
@@ -413,7 +721,7 @@
     </section>
 
     <section id="eco" class="section">
-      <h2>6. 生态模块指标</h2>
+      <h2>10. 生态模块指标</h2>
 
       <details open>
         <summary><code>module_metrics.csv</code></summary>
@@ -440,7 +748,7 @@
     </section>
 
     <section id="research" class="section">
-      <h2>7. 研究型统计</h2>
+      <h2>11. 研究型统计</h2>
       <div class="callout warn">
         <strong>这部分容易误读：</strong> 很多字段是“解释系统结构”的，不是“证明某个行为已经学会”的硬证据。
       </div>
@@ -501,7 +809,7 @@
     </section>
 
     <section id="params" class="section">
-      <h2>8. 关键参数：为什么同一个指标不能乱比</h2>
+      <h2>12. 关键参数：为什么同一个指标不能乱比</h2>
       <div class="table-wrap">
         <table>
           <thead><tr><th>参数</th><th>会影响什么</th><th>为什么重要</th></tr></thead>
@@ -522,7 +830,7 @@
     </section>
 
     <section id="recipes" class="section">
-      <h2>9. 实战判读模板</h2>
+      <h2>13. 实战判读模板</h2>
       <div class="grid">
         <div class="card">
           <h3>会不会回水</h3>
@@ -557,7 +865,7 @@
     </section>
 
     <footer>
-      建议阅读顺序：先看“主角行为指标”和“记忆 / Ablation”，再看研究型统计。
+      建议阅读顺序：先看“系统机制”“怎么训练”“怎么运行”，再看“主角行为指标”和“记忆 / Ablation”。
     </footer>
   </div>
 </body>
