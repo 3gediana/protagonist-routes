@@ -517,6 +517,7 @@ void evaluatePopulation(World2D& world,
     tick_deaths.reserve(8);
     std::unordered_map<AgentId, float> previous_damage;
     std::unordered_map<AgentId, std::size_t> previous_kills;
+    std::unordered_map<AgentId, float> previous_hydration;
     std::unordered_set<AgentId> alive_last_tick;
 
     std::unordered_map<AgentId, float> bg_previous_damage;
@@ -885,6 +886,20 @@ void evaluatePopulation(World2D& world,
                     // 2. Episodic Memory Key Events
                     if (concrete->foodEatenThisTick() > 0.0f) {
                         record_episode(agent_pos, "ate_food", 0.5f);
+                    }
+                    // drank_water: detect a noticeable hydration jump tick-over-tick.
+                    // SurvivalStatusLayer raises hydration when an agent uses
+                    // DrinkWaterCapability inside a water source's drink radius;
+                    // there is no dedicated event for it, so we infer from the
+                    // delta. Threshold 0.02 of max hydration filters routine
+                    // metabolism noise. Salience 0.55 puts it slightly above
+                    // ate_food because water is far scarcer.
+                    {
+                        const float prev_hydr = previous_hydration[agent->id()];
+                        if (hydration_ratio > prev_hydr + 0.02f) {
+                            record_episode(agent_pos, "drank_water", 0.55f);
+                        }
+                        previous_hydration[agent->id()] = hydration_ratio;
                     }
                     if (kill_delta > 0) {
                         record_episode(agent_pos, "killed_prey", 0.9f);
