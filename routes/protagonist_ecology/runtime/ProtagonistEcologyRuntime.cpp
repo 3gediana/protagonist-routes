@@ -178,6 +178,20 @@ struct BehaviorAccumulator {
     std::size_t signal_emits{0};
     std::size_t signal_response_events{0};
     std::size_t signal_co_attendance{0};
+    // A2.Step3 signal 3-role per-episode counts:
+    //   producer  = unique protagonist agents that emitted a signal
+    //               (controlled emitter does NOT count; only protagonist-
+    //                originated emits)
+    //   listener  = unique protagonist agents that were within
+    //               signal_emit_companion_radius of any active emit
+    //   responder = unique protagonist agents that entered the halo
+    //               (signal_co_attendance_radius) of any active emit
+    // Always producer<=listener<=responder? No: in eval the controlled
+    // emitter produces 100% of the signal but doesn't count, so
+    // producer=0 with listener/responder>0 is normal.
+    std::size_t signal_producer_count{0};
+    std::size_t signal_listener_count{0};
+    std::size_t signal_responder_count{0};
     std::size_t worksite_completion_events{0};
     double cooperative_co_presence_seconds{0.0};
     std::size_t survived_protagonists{0};
@@ -232,6 +246,10 @@ struct MemoryAblationResultRow {
     double signal_emitters_avg{0.0};
     double signal_emit_events_avg{0.0};
     double signal_response_events_avg{0.0};
+    // A2.Step3 signal 3-role per-episode averages.
+    double signal_producer_count_avg{0.0};
+    double signal_listener_count_avg{0.0};
+    double signal_responder_count_avg{0.0};
     double signal_co_attendance_avg{0.0};
     double dnc_usage_mean_avg{0.0};
     double dnc_read_peak_avg{0.0};
@@ -556,6 +574,9 @@ void mergeBehaviorAccumulator(BehaviorAccumulator& dst, const BehaviorAccumulato
     dst.signal_emits += src.signal_emits;
     dst.signal_response_events += src.signal_response_events;
     dst.signal_co_attendance += src.signal_co_attendance;
+    dst.signal_producer_count += src.signal_producer_count;
+    dst.signal_listener_count += src.signal_listener_count;
+    dst.signal_responder_count += src.signal_responder_count;
     dst.worksite_completion_events += src.worksite_completion_events;
     dst.cooperative_co_presence_seconds += src.cooperative_co_presence_seconds;
     dst.survived_protagonists += src.survived_protagonists;
@@ -1243,6 +1264,10 @@ void evaluatePopulation(World2D& world,
     // build / hunt / signal credit. Per-evaluatePopulation lifecycle (no
     // explicit clear needed; instance scoped to this function call).
     CreditLedger credit_ledger;
+    // A2.Step3 signal 3-role sets (per-episode unique agents).
+    std::unordered_set<AgentId> signal_producers;
+    std::unordered_set<AgentId> signal_listeners;
+    std::unordered_set<AgentId> signal_responders;
     std::vector<AgentId> tick_deaths;
     tick_deaths.reserve(8);
     std::unordered_map<AgentId, float> previous_damage;
@@ -1295,6 +1320,11 @@ void evaluatePopulation(World2D& world,
             entry.emit_time = event.timeSeconds();
             entry.emit_tick = event.tick();
             entry.settled = false;
+            // A2.Step3 producer set: only actual protagonist emits count
+            // (controlled emitter uses kInvalidAgentId, excluded).
+            if (payload.id != kInvalidAgentId) {
+                signal_producers.insert(payload.id);
+            }
         }) : 0u;
 
     auto subscribe_attacked = world.eventBus().subscribe(
@@ -1910,6 +1940,11 @@ void evaluatePopulation(World2D& world,
                                 debug_min_dist_to_emitter = dist;
                             }
 
+                            // A2.Step3 listener set: protagonist heard signal
+                            // (within companion radius and window).
+                            if (dist_sq <= dense_radius_sq) {
+                                signal_listeners.insert(agent->id());
+                            }
                             if (params.signal_response_dense_reward != 0.0f
                                 && dist_sq <= dense_radius_sq) {
                                 const float strength = std::clamp(1.0f - dist / dense_radius, 0.0f, 1.0f);
@@ -1923,6 +1958,9 @@ void evaluatePopulation(World2D& world,
                                 ++debug_listener_dense_only;  // DEBUG (audit § 7)
                                 continue;
                             }
+                            // A2.Step3 responder set: protagonist entered the
+                            // response halo (subset of listeners).
+                            signal_responders.insert(agent->id());
                             // A2.signal credit ledger: listener is inside the
                             // halo this tick, accumulate dwell time for the
                             // share calculation at settlement. We accumulate
@@ -2390,6 +2428,12 @@ void evaluatePopulation(World2D& world,
         credit_ledger.appendCsv("data/runs/_credit_log.csv", credit_tag);
     }
 
+    // A2.Step3 signal 3-role per-episode counts roll up into behavior.
+    // Aggregate caller averages across episodes_per_task later.
+    behavior.signal_producer_count += signal_producers.size();
+    behavior.signal_listener_count += signal_listeners.size();
+    behavior.signal_responder_count += signal_responders.size();
+
     // DEBUG INSTRUMENTATION (audit § 7 - signal_response_events root cause probe)
     // Append one row per evaluatePopulation call to data/runs/_signal_debug.csv.
     // Header is written once when the file is empty / does not exist.
@@ -2665,7 +2709,9 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
     csv << "task,variant,primary_metric,primary_metric_name,avg_fitness,best_fitness,survived_avg,avg_health_ratio,"
            "avg_hydration_ratio,drank_water_events_avg,dehydrated_avg,injured_avg,protagonist_attack_avg,protagonist_deaths_avg,"
            "deposits_avg,completed_worksites_avg,worksite_completion_events_avg,signal_emitters_avg,"
-           "signal_emit_events_avg,signal_response_events_avg,signal_co_attendance_avg,dnc_usage_mean_avg,dnc_read_peak_avg\n";
+           "signal_emit_events_avg,signal_response_events_avg,signal_co_attendance_avg,"
+           "signal_producer_count_avg,signal_listener_count_avg,signal_responder_count_avg,"
+           "dnc_usage_mean_avg,dnc_read_peak_avg\n";
 
     std::vector<MemoryAblationResultRow> rows;
     rows.reserve(memoryAblationTasks().size() * memoryAblationVariants().size());
@@ -2831,6 +2877,9 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
             row.signal_emit_events_avg = averagePerEpisode(static_cast<double>(aggregate.signal_emit_events), settings.episodes_per_task);
             row.signal_response_events_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_response_events), settings.episodes_per_task);
             row.signal_co_attendance_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_co_attendance), settings.episodes_per_task);
+            row.signal_producer_count_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_producer_count), settings.episodes_per_task);
+            row.signal_listener_count_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_listener_count), settings.episodes_per_task);
+            row.signal_responder_count_avg = averagePerEpisode(static_cast<double>(aggregate.behavior.signal_responder_count), settings.episodes_per_task);
             row.dnc_usage_mean_avg = aggregate.behavior.dnc_samples > 0
                 ? aggregate.behavior.dnc_usage_mean_sum / static_cast<double>(aggregate.behavior.dnc_samples)
                 : 0.0;
@@ -2860,6 +2909,9 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                 << row.signal_emit_events_avg << ','
                 << row.signal_response_events_avg << ','
                 << row.signal_co_attendance_avg << ','
+                << row.signal_producer_count_avg << ','
+                << row.signal_listener_count_avg << ','
+                << row.signal_responder_count_avg << ','
                 << row.dnc_usage_mean_avg << ','
                 << row.dnc_read_peak_avg << '\n';
             csv.flush();
