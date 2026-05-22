@@ -2,6 +2,7 @@
 
 #include "brain/ProtagonistDenseGpu.h"
 #include "brain/ProtagonistGenome.h"
+#include "runtime/TrainingProfiler.h"
 
 #include <algorithm>
 #include <cmath>
@@ -308,6 +309,7 @@ DNCStateSummary ProtagonistBrain::dncSummary() const {
 }
 
 std::span<const float> ProtagonistBrain::forward(std::span<const float> inputs, float dt) {
+    TrainingProfiler::Scope profile_scope(TrainingProfiler::Phase::kBrainForward);
     if (inputs.size() != external_input_dim_) {
         throw std::invalid_argument("ProtagonistBrain input dim mismatch");
     }

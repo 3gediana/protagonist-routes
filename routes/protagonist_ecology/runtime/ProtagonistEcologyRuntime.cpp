@@ -4,6 +4,7 @@
 #include "core/agent/Agent.h"
 #include "core/logging/Logger.h"
 #include "core/events/EventBus.h"
+#include "runtime/TrainingProfiler.h"
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IGenome.h"
 #include "core/reward/CombatReward.h"
@@ -1609,7 +1610,10 @@ void evaluatePopulation(World2D& world,
             // without memory the agent loses its heading mid-silence.
             next_controlled_signal_emit_seconds += controlled_emitter_period_seconds;
         }
-        world.tick(dt);
+        {
+            TrainingProfiler::Scope world_scope(TrainingProfiler::Phase::kWorldTick);
+            world.tick(dt);
+        }
         elapsed_seconds += dt_seconds;
         bool any_alive = false;
 
@@ -3459,6 +3463,13 @@ int ProtagonistEcologyRuntime::runTraining() {
             break;
         }
 
+        // L2 GPU-decision profile: reset per-phase microsecond counters at the
+        // start of each generation, then log the breakdown at the end of the
+        // generation. See docx/STATUS.md s 4.5 and SPECIES_DIFFERENTIATION_SPEC.md
+        // for context. Overhead is negligible (atomic add per scope).
+        TrainingProfiler::instance().resetGeneration();
+        const auto profile_gen_start = std::chrono::high_resolution_clock::now();
+
         std::unordered_map<GenomeId, double> fitness_sum;
         std::vector<std::unordered_map<GenomeId, double>> species_fitness_sum(species_contexts.size());
         BehaviorAccumulator behavior;
@@ -3690,6 +3701,44 @@ int ProtagonistEcologyRuntime::runTraining() {
                  behavior.chop_successes,
                  behavior.hunt_successes,
                  behavior.signal_emits);
+
+        // L2 GPU-decision profile: per-generation phase breakdown.
+        // gen_total = wall clock of this generation (CPU/CPU+GPU combined).
+        // brain     = sum of ProtagonistBrain::forward across all agent-ticks
+        //             (dense matmul + DNC step + memory ops).
+        // world_non_brain = world.tick(dt) total minus brain (the other
+        //                   IWorldLayer ticks: ResourceLayer / WaterLayer /
+        //                   WorksiteLayer / CampfireLayer / SignalLayer / ...).
+        // other     = gen_total - world.tick total. Mainly: protagonist
+        //             reward loop + background reward loop + episode/gen
+        //             bookkeeping + NEAT genetic operators between gens.
+        // Use these % to decide whether batched GPU brain forward is worth
+        // refactoring (only worth it if brain% is dominant).
+        const auto profile_gen_end = std::chrono::high_resolution_clock::now();
+        const std::int64_t profile_gen_total_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            profile_gen_end - profile_gen_start).count();
+        const std::int64_t profile_brain_us = TrainingProfiler::instance().getMicroseconds(
+            TrainingProfiler::Phase::kBrainForward);
+        const std::int64_t profile_world_us = TrainingProfiler::instance().getMicroseconds(
+            TrainingProfiler::Phase::kWorldTick);
+        const std::int64_t profile_world_non_brain_us =
+            std::max<std::int64_t>(0, profile_world_us - profile_brain_us);
+        const std::int64_t profile_other_us =
+            std::max<std::int64_t>(0, profile_gen_total_us - profile_world_us);
+        const auto pct = [&](std::int64_t part) {
+            return profile_gen_total_us > 0
+                       ? 100.0 * static_cast<double>(part)
+                             / static_cast<double>(profile_gen_total_us)
+                       : 0.0;
+        };
+        LOG_INFO(
+            "Gen {} profile | gen_total={:.2f}s | brain={:.2f}s ({:.0f}%) | "
+            "world_non_brain={:.2f}s ({:.0f}%) | reward_and_other={:.2f}s ({:.0f}%)",
+            generation,
+            profile_gen_total_us / 1e6,
+            profile_brain_us / 1e6, pct(profile_brain_us),
+            profile_world_non_brain_us / 1e6, pct(profile_world_non_brain_us),
+            profile_other_us / 1e6, pct(profile_other_us));
 
         // ---- save best protagonist genome ----
         if (!evaluated.empty()) {
