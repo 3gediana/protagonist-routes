@@ -242,6 +242,12 @@ struct SimulationTimeConfig {
 
 struct ComputeConfig {
     bool protagonist_dense_gpu_enabled{true};
+    // G1: route protagonist agents through a batched dense forward
+    // (single CUDA call, or CPU reference path when CUDA not available).
+    // Disabled by default until validated.
+    bool protagonist_batched_dense_enabled{false};
+    // Force CPU even when CUDA is ready. Used by tests / debugging.
+    bool protagonist_batched_dense_force_cpu{false};
     std::size_t agent_decision_threads{0};
 };
 

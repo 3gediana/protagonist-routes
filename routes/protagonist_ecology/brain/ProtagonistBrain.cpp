@@ -365,6 +365,80 @@ std::span<const float> ProtagonistBrain::forward(std::span<const float> inputs, 
     return outputs;
 }
 
+// IBatchableBrain ============================================================
+// Phase 1 (per-agent parallel): same prologue as forward(), but stops after
+// building full_input. The dense matmul is deferred to denseSlot()/external
+// batched runner. Memory bank ticks and observation_encoder updates remain
+// here because they must happen exactly once per decision tick, regardless
+// of whether the dense matmul is batched.
+void ProtagonistBrain::prepareInputs(std::span<const float> external_inputs, float dt) {
+    TrainingProfiler::Scope profile_scope(TrainingProfiler::Phase::kBrainForward);
+    if (external_inputs.size() != external_input_dim_) {
+        throw std::invalid_argument("ProtagonistBrain input dim mismatch (prepareInputs)");
+    }
+
+    pending_hidden_alpha_ = integrationAlpha(dt, 0.25f);
+    pending_action_alpha_ = integrationAlpha(dt, 0.12f);
+
+    spatial_memory_.tick(dt);
+    social_memory_.tick(dt);
+    goal_memory_.tick(dt);
+
+    const auto encoded_observation = observation_encoder_.encode(external_inputs);
+    body_state_memory_.observe(encoded_observation, dt);
+    const auto encoded_queries = memory_query_encoder_.encode(dnc_memory_.readVectors());
+
+    pending_full_input_.assign(total_input_dim_, 0.0f);
+    std::copy(encoded_observation.begin(), encoded_observation.end(), pending_full_input_.begin());
+    std::copy(encoded_queries.begin(),
+              encoded_queries.end(),
+              pending_full_input_.begin() + static_cast<std::ptrdiff_t>(external_input_dim_));
+    addWrapped(std::span<float>(pending_full_input_).first(external_input_dim_),
+               body_state_memory_.summary(),
+               0.25f);
+    addWrapped(std::span<float>(pending_full_input_).subspan(external_input_dim_),
+               working_memory_.summary(),
+               0.20f);
+}
+
+// Phase 2 hand-off: runner reads inputs / weights / biases, writes hidden /
+// action / interface mutable spans. After the runner returns, finalizeOutputs()
+// is called.
+BatchedDenseSlot ProtagonistBrain::denseSlot() {
+    BatchedDenseSlot slot;
+    slot.total_input_dim = total_input_dim_;
+    slot.hidden_dim = hidden_dim_;
+    slot.action_dim = action_dim_;
+    slot.interface_dim = interface_bias_.size();
+    slot.hidden_alpha = pending_hidden_alpha_;
+    slot.action_alpha = pending_action_alpha_;
+
+    slot.full_input = std::span<const float>(pending_full_input_);
+
+    slot.input_hidden_weights = std::span<const float>(in_hidden_weights_);
+    slot.hidden_bias = std::span<const float>(hidden_bias_);
+    slot.hidden_action_weights = std::span<const float>(hidden_action_weights_);
+    slot.action_bias = std::span<const float>(action_bias_);
+    slot.hidden_interface_weights = std::span<const float>(hidden_interface_weights_);
+    slot.interface_bias = std::span<const float>(interface_bias_);
+
+    slot.hidden_io = motor_core_.mutableState();
+    slot.action_io = action_heads_.mutableOutputs();
+    slot.interface_out = interface_head_.mutableOutput();
+
+    return slot;
+}
+
+// Phase 3 (per-agent parallel): dense state has been written by the runner.
+// Run the same epilogue as the GPU branch in forward(): working memory observe,
+// DNC step, return action span.
+std::span<const float> ProtagonistBrain::finalizeOutputs(float dt) {
+    TrainingProfiler::Scope profile_scope(TrainingProfiler::Phase::kBrainForward);
+    working_memory_.observe(motor_core_.state(), dt);
+    dnc_memory_.step(decodeInterface(interface_head_.output(), memory_cells_, read_heads_));
+    return action_heads_.outputs();
+}
+
 void ProtagonistBrain::reset() {
     observation_encoder_.reset();
     memory_query_encoder_.reset();

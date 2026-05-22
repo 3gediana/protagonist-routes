@@ -20,6 +20,52 @@
 
 namespace neuro {
 
+// Optional batched-forward extension. Brains that can split their forward()
+// into prepare/dense/finalize phases can implement this so a batched runner
+// can fold N agents' dense matmul into a single GPU/SIMD call.
+//
+// Three-phase contract:
+//   Phase 1 (per-agent, parallel): prepareInputs() — perception-side bookkeeping,
+//           encode external inputs, build full_input vector. NO dense matmul yet.
+//   Phase 2 (single batched call): runner reads denseSlot() from each brain,
+//           batches their (input, weights, biases) into one GPU pass, writes
+//           hidden / action / interface state back via the slot's mutable spans.
+//   Phase 3 (per-agent, parallel): finalizeOutputs(dt) — DNC step / working memory
+//           updates, returns the action span.
+//
+// All dimensions returned by denseSlot() must be stable for the brain's lifetime.
+struct BatchedDenseSlot {
+    std::size_t total_input_dim{0};
+    std::size_t hidden_dim{0};
+    std::size_t action_dim{0};
+    std::size_t interface_dim{0};
+
+    float hidden_alpha{0.0f};
+    float action_alpha{0.0f};
+
+    std::span<const float> full_input;
+
+    std::span<const float> input_hidden_weights;
+    std::span<const float> hidden_bias;
+    std::span<const float> hidden_action_weights;
+    std::span<const float> action_bias;
+    std::span<const float> hidden_interface_weights;
+    std::span<const float> interface_bias;
+
+    std::span<float> hidden_io;
+    std::span<float> action_io;
+    std::span<float> interface_out;
+};
+
+class IBatchableBrain {
+public:
+    virtual ~IBatchableBrain() = default;
+
+    virtual void prepareInputs(std::span<const float> external_inputs, float dt) = 0;
+    virtual BatchedDenseSlot denseSlot() = 0;
+    virtual std::span<const float> finalizeOutputs(float dt) = 0;
+};
+
 class IBrain {
 public:
     virtual ~IBrain() = default;
@@ -44,6 +90,10 @@ public:
 
     // Coarse complexity metric, e.g. parameter count. Used for stats.
     virtual std::size_t parameterCount() const = 0;
+
+    // Optional: brains that support batched dense forward return a non-null
+    // pointer to themselves cast as IBatchableBrain. Default: not batchable.
+    virtual IBatchableBrain* asBatchable() { return nullptr; }
 };
 
 }  // namespace neuro

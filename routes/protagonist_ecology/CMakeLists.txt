@@ -10,6 +10,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     brain/MemoryBank.cpp
     brain/DNCMemory.cpp
     brain/ProtagonistDenseGpu.cpp
+    brain/BatchedDenseGpu.cpp
     brain/ProtagonistBrainV3Components.cpp
     brain/SpatialMemoryBank.cpp
     brain/EpisodicMemoryBank.cpp
@@ -35,6 +36,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     runtime/CreditLedger.cpp
     runtime/GoalManager.cpp
     runtime/MemoryAblationEval.cpp
+    runtime/ProtagonistBatchedDenseRunner.cpp
     runtime/ProtagonistEcologyConfig.cpp
     runtime/ProtagonistEvolution.cpp
     runtime/ProtagonistEcologyRuntime.cpp
@@ -66,6 +68,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     brain/MemoryBank.h
     brain/DNCMemory.h
     brain/ProtagonistDenseGpu.h
+    brain/BatchedDenseGpu.h
     brain/ProtagonistBrainV3Components.h
     brain/SpatialMemoryBank.h
     brain/EpisodicMemoryBank.h
@@ -91,6 +94,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     runtime/CreditLedger.h
     runtime/GoalManager.h
     runtime/MemoryAblationEval.h
+    runtime/ProtagonistBatchedDenseRunner.h
     runtime/ProtagonistEcologyConfig.h
     runtime/ProtagonistEvolution.h
     runtime/ProtagonistEcologyRuntime.h
@@ -118,6 +122,7 @@ add_library(neural_eco_route_protagonist STATIC
 if(NEURAL_ECO_HAS_PROTAGONIST_CUDA)
     target_sources(neural_eco_route_protagonist PRIVATE
         brain/ProtagonistDenseGpu.cu
+        brain/BatchedDenseGpu.cu
     )
 endif()
 

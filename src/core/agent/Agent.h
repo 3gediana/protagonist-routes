@@ -58,6 +58,16 @@ public:
     void addCapability(std::unique_ptr<IAgentCapability> capability);
     void beginTick();
     void decide(IWorld& world, float dt);
+    // Phase 1 of batched decision: run perception sense, then if brain is
+    // batchable call prepareInputs() (NO dense matmul yet); else stash inputs
+    // for phase 3 to run brain.forward() inline.
+    // Returns true iff this agent's brain decided this tick (so the runner
+    // knows to include it in the batch).
+    bool decideUntilDense(IWorld& world, float dt);
+    // Phase 3 of batched decision: if brain is batchable call finalizeOutputs();
+    // else run brain.forward() on stashed inputs. Either way writes last_outputs_.
+    void decideAfterDense(IWorld& world, float dt);
+    bool batchedDecisionPending() const;
     void publishDecisionEvent(IWorld& world);
     void applyCapabilities(IWorld& world, float dt);
     void step(IWorld& world, float dt);
@@ -135,6 +145,11 @@ private:
     SimTimeSeconds next_decision_time_seconds_;
     std::vector<float> last_outputs_;
     bool decision_triggered_this_tick_;
+    // Batched-decision stash: between decideUntilDense() and decideAfterDense().
+    std::vector<float> pending_inputs_;
+    float pending_dt_ = 0.0f;
+    bool pending_decision_ = false;
+    bool pending_uses_batch_ = false;
     float food_eaten_this_tick_;
     float plant_food_this_tick_;
     float meat_food_this_tick_;

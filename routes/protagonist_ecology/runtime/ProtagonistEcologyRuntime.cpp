@@ -32,6 +32,7 @@
 #include "core/world/layers/ResourceLayer.h"
 #include "core/world/layers/signal/SignalLayer.h"
 #include "runtime/headless/EvaluationPool.h"
+#include "runtime/ProtagonistBatchedDenseRunner.h"
 #include "runtime/ProtagonistEvolution.h"
 #include "runtime/BootstrapPopulation.h"
 #include "runtime/CommunicationMetrics.h"
@@ -71,6 +72,28 @@
 namespace neuro::routes::protagonist {
 
 namespace {
+
+// Install the batched dense decision hook on the world's AgentLayer if the
+// route config opts in. Walks all currently-living agents and toggles their
+// brain's batchable mode. Safe to call multiple times across world rebuilds.
+void installBatchedDenseHook(World2D& world,
+                             const ProtagonistEcologyConfig& route,
+                             ProtagonistBatchedDenseRunner& runner) {
+    if (!route.compute.protagonist_batched_dense_enabled) return;
+
+    auto* agent_layer = world.getLayer<AgentLayer>();
+    if (agent_layer == nullptr) return;
+
+    for (auto* agent : agent_layer->agents()) {
+        if (agent == nullptr) continue;
+        if (auto* brain = dynamic_cast<ProtagonistBrain*>(&agent->brain())) {
+            brain->setBatchableEnabled(true);
+        }
+    }
+    agent_layer->setBatchedDecisionHook([&runner](IWorld& w, float dt, const std::vector<Agent*>& agents) {
+        runner(w, dt, agents);
+    });
+}
 
 struct TrainingParams {
     std::size_t generations{0};
@@ -2895,6 +2918,15 @@ void ProtagonistEcologyRuntime::initialize() {
     if (!preview_population.empty()) {
         LOG_INFO("ProtagonistEcologyRuntime: loaded protagonist genome population for preview/eval count={}", preview_population.size());
     }
+    if (route.compute.protagonist_batched_dense_enabled && batched_dense_runner_ == nullptr) {
+        const auto backend = route.compute.protagonist_batched_dense_force_cpu
+                                ? ProtagonistBatchedDenseRunner::Backend::kCpu
+                                : ProtagonistBatchedDenseRunner::Backend::kAuto;
+        batched_dense_runner_ = std::make_unique<ProtagonistBatchedDenseRunner>(backend);
+    }
+    if (batched_dense_runner_ != nullptr) {
+        installBatchedDenseHook(*world_, route, *batched_dense_runner_);
+    }
 
     LOG_INFO(
         "ProtagonistEcologyRuntime: world ready (role={}, scenario={}, mode_train={}, mode_eval={}, mode_live={}, world={}x{}, protagonist={}, background_foragers={}, background_predators={}, protagonist_hidden={}, protagonist_memory={}, protagonist_slots={}, protagonist_read_heads={}, protagonist_dense_gpu={}, agent_decision_threads={})",
@@ -3048,6 +3080,15 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                 auto world = createBootstrapWorld(episode_route);
                 std::uint64_t next_agent_id = 1;
                 seedBootstrapPopulation(*world, episode_route, next_agent_id, &population);
+
+                std::unique_ptr<ProtagonistBatchedDenseRunner> episode_runner;
+                if (episode_route.compute.protagonist_batched_dense_enabled) {
+                    const auto backend = episode_route.compute.protagonist_batched_dense_force_cpu
+                                            ? ProtagonistBatchedDenseRunner::Backend::kCpu
+                                            : ProtagonistBatchedDenseRunner::Backend::kAuto;
+                    episode_runner = std::make_unique<ProtagonistBatchedDenseRunner>(backend);
+                    installBatchedDenseHook(*world, episode_route, *episode_runner);
+                }
 
                 auto* agent_layer = world->getLayer<AgentLayer>();
                 if (agent_layer == nullptr) {
@@ -3503,6 +3544,13 @@ int ProtagonistEcologyRuntime::runTraining() {
                     + static_cast<std::uint32_t>(generation * 9973 + 17)
                     + static_cast<std::uint32_t>(episode * 131);
                 auto world = createBootstrapWorld(generation_route);
+                std::unique_ptr<ProtagonistBatchedDenseRunner> episode_runner;
+                if (generation_route.compute.protagonist_batched_dense_enabled) {
+                    const auto backend = generation_route.compute.protagonist_batched_dense_force_cpu
+                                            ? ProtagonistBatchedDenseRunner::Backend::kCpu
+                                            : ProtagonistBatchedDenseRunner::Backend::kAuto;
+                    episode_runner = std::make_unique<ProtagonistBatchedDenseRunner>(backend);
+                }
                 std::unique_ptr<TraceRecorder> trace_recorder;
                 if (shouldTraceEpisode(trace_config, generation, episode)) {
                     const auto trace_dir = run_dir
@@ -3529,6 +3577,10 @@ int ProtagonistEcologyRuntime::runTraining() {
 
                 std::uint64_t local_next_agent_id = 1;
                 seedTrainingPopulation(*world, generation_route, population, background_view, local_next_agent_id);
+
+                if (episode_runner != nullptr) {
+                    installBatchedDenseHook(*world, generation_route, *episode_runner);
+                }
 
                 EpisodeResult& result = episode_results[episode];
                 evaluatePopulation(*world, generation_route, params, population, background_view, result.behavior, stop_requested_, trace_recorder.get());

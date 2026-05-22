@@ -27,7 +27,7 @@ struct DNCStateSummary {
 class ProtagonistGenome;
 class ProtagonistDenseGpu;
 
-class ProtagonistBrain final : public IBrain {
+class ProtagonistBrain final : public IBrain, public IBatchableBrain {
 public:
     ProtagonistBrain(std::size_t input_dim,
                      std::size_t hidden_dim,
@@ -45,6 +45,15 @@ public:
     std::span<const float> forward(std::span<const float> inputs, float dt) override;
     void reset() override;
     std::size_t parameterCount() const override;
+    IBatchableBrain* asBatchable() override { return batchable_enabled_ ? this : nullptr; }
+    void setBatchableEnabled(bool enabled) { batchable_enabled_ = enabled; }
+    bool batchableEnabled() const { return batchable_enabled_; }
+
+    // IBatchableBrain ---------------------------------------------------------
+    void prepareInputs(std::span<const float> external_inputs, float dt) override;
+    BatchedDenseSlot denseSlot() override;
+    std::span<const float> finalizeOutputs(float dt) override;
+    // -------------------------------------------------------------------------
 
     std::size_t hiddenDim() const { return hidden_dim_; }
     std::size_t memoryCells() const { return memory_cells_; }
@@ -103,6 +112,12 @@ private:
     EpisodicMemoryBank episodic_memory_;
     SocialMemoryBank social_memory_;
     GoalMemory goal_memory_;
+
+    // Batched-forward state (set by prepareInputs(), consumed by finalizeOutputs())
+    std::vector<float> pending_full_input_;
+    float pending_hidden_alpha_{0.0f};
+    float pending_action_alpha_{0.0f};
+    bool batchable_enabled_{false};
 };
 
 }  // namespace neuro::routes::protagonist

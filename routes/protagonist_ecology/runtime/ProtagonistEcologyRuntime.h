@@ -11,6 +11,8 @@ class World2D;
 
 namespace neuro::routes::protagonist {
 
+class ProtagonistBatchedDenseRunner;
+
 class ProtagonistEcologyRuntime {
 public:
     explicit ProtagonistEcologyRuntime(config::Config config);
@@ -31,6 +33,7 @@ private:
 
     config::Config config_;
     std::unique_ptr<World2D> world_;
+    std::unique_ptr<ProtagonistBatchedDenseRunner> batched_dense_runner_;
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_requested_{false};
     bool initialized_{false};

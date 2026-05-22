@@ -69,6 +69,8 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
                                                               "runtime.preview_ticks",
                                                               out.sim_time.preview_duration_seconds);
     out.compute.protagonist_dense_gpu_enabled = config.getOr<bool>("compute.protagonist_dense_gpu_enabled", out.compute.protagonist_dense_gpu_enabled);
+    out.compute.protagonist_batched_dense_enabled = config.getOr<bool>("compute.protagonist_batched_dense_enabled", out.compute.protagonist_batched_dense_enabled);
+    out.compute.protagonist_batched_dense_force_cpu = config.getOr<bool>("compute.protagonist_batched_dense_force_cpu", out.compute.protagonist_batched_dense_force_cpu);
     out.compute.agent_decision_threads = config.getOr<std::size_t>("compute.agent_decision_threads", out.compute.agent_decision_threads);
 
     out.terrain_enabled = config.getOr<bool>("world.terrain.enabled", true);

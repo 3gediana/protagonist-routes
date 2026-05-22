@@ -136,6 +136,66 @@ void Agent::decide(IWorld& world, float dt) {
     }
 }
 
+bool Agent::decideUntilDense(IWorld& world, float dt) {
+    pending_decision_ = false;
+    pending_uses_batch_ = false;
+    if (!alive_) return false;
+    if (!shouldDecideAt(world.currentTimeSeconds())) return false;
+
+    std::size_t input_dim = 0;
+    for (const auto& perception : perceptions_) {
+        input_dim += perception->dim();
+    }
+
+    pending_inputs_.assign(input_dim, 0.0f);
+    std::size_t offset = 0;
+    for (const auto& perception : perceptions_) {
+        auto view = std::span<float>(pending_inputs_.data() + offset, perception->dim());
+        perception->sense(*this, world, view);
+        offset += perception->dim();
+    }
+
+    if (brain_->inputDim() != pending_inputs_.size()) {
+        throw std::runtime_error("Agent perception input dim mismatch");
+    }
+
+    pending_dt_ = dt;
+    pending_decision_ = true;
+
+    if (auto* batchable = brain_->asBatchable()) {
+        batchable->prepareInputs(pending_inputs_, dt);
+        pending_uses_batch_ = true;
+        return true;
+    }
+    return false;
+}
+
+bool Agent::batchedDecisionPending() const {
+    return pending_decision_ && pending_uses_batch_;
+}
+
+void Agent::decideAfterDense(IWorld& world, float dt) {
+    if (!alive_ || !pending_decision_) return;
+
+    std::span<const float> output_span;
+    if (pending_uses_batch_) {
+        auto* batchable = brain_->asBatchable();
+        // The batched runner has already populated dense state. Finalize.
+        output_span = batchable->finalizeOutputs(pending_dt_);
+    } else {
+        // Fallback: run regular forward inline.
+        output_span = brain_->forward(pending_inputs_, pending_dt_);
+    }
+
+    last_outputs_.assign(output_span.begin(), output_span.end());
+    next_decision_time_seconds_ = world.currentTimeSeconds() + static_cast<SimTimeSeconds>(decision_interval_);
+    decision_triggered_this_tick_ = true;
+
+    pending_decision_ = false;
+    pending_uses_batch_ = false;
+    (void)dt;
+}
+
 void Agent::publishDecisionEvent(IWorld& world) {
     if (!alive_ || !decision_triggered_this_tick_) {
         return;

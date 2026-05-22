@@ -148,6 +148,10 @@ void AgentLayer::onAttach(IWorld&) {
 }
 
 void AgentLayer::tick(IWorld& world, float dt) {
+    if (batched_decision_hook_ && agents_.size() > 1) {
+        tickBatched(world, dt);
+        return;
+    }
     if (decision_executor_ != nullptr && agents_.size() > 1) {
         decision_executor_->parallelFor(agents_.size(), [&](std::size_t index) {
             auto& agent = agents_[index];
@@ -271,6 +275,89 @@ std::vector<const Agent*> AgentLayer::agents() const {
         result.push_back(agent.get());
     }
     return result;
+}
+
+void AgentLayer::setBatchedDecisionHook(BatchedDecisionHook hook) {
+    batched_decision_hook_ = std::move(hook);
+}
+
+bool AgentLayer::hasBatchedDecisionHook() const {
+    return static_cast<bool>(batched_decision_hook_);
+}
+
+void AgentLayer::tickBatched(IWorld& world, float dt) {
+    // Phase 1 (parallel): perception + brain.prepareInputs (or stash for fallback).
+    std::vector<std::uint8_t> wants_batch(agents_.size(), 0u);
+    if (decision_executor_ != nullptr) {
+        decision_executor_->parallelFor(agents_.size(), [&](std::size_t index) {
+            auto& agent = agents_[index];
+            if (!agent->alive()) return;
+            agent->beginTick();
+            wants_batch[index] = agent->decideUntilDense(world, dt) ? 1u : 0u;
+        });
+    } else {
+        for (std::size_t i = 0; i < agents_.size(); ++i) {
+            auto& agent = agents_[i];
+            if (!agent->alive()) continue;
+            agent->beginTick();
+            wants_batch[i] = agent->decideUntilDense(world, dt) ? 1u : 0u;
+        }
+    }
+
+    // Phase 2 (single batched call): hook folds dense matmul for batched_agents.
+    std::vector<Agent*> batched_agents;
+    batched_agents.reserve(agents_.size());
+    for (std::size_t i = 0; i < agents_.size(); ++i) {
+        if (wants_batch[i] != 0u) batched_agents.push_back(agents_[i].get());
+    }
+    if (!batched_agents.empty()) {
+        batched_decision_hook_(world, dt, batched_agents);
+    }
+
+    // Phase 3 (parallel): finalize / write outputs.
+    if (decision_executor_ != nullptr) {
+        decision_executor_->parallelFor(agents_.size(), [&](std::size_t index) {
+            auto& agent = agents_[index];
+            if (!agent->alive()) return;
+            agent->decideAfterDense(world, dt);
+        });
+    } else {
+        for (auto& agent : agents_) {
+            if (!agent->alive()) continue;
+            agent->decideAfterDense(world, dt);
+        }
+    }
+
+    // Phase 4 (serial): publish + capabilities + metabolism + death.
+    for (auto& agent : agents_) {
+        if (!agent->alive()) continue;
+
+        agent->publishDecisionEvent(world);
+        agent->applyCapabilities(world, dt);
+        agent->incrementAge(dt);
+
+        const float previous_energy = agent->energy();
+        float metabolism = base_metabolism_;
+        if (agent->infected()) {
+            metabolism *= 2.0f;
+        }
+        const float next_energy = previous_energy - metabolism * dt;
+        agent->setEnergy(next_energy);
+        if (next_energy != previous_energy) {
+            world.eventBus().publish(events::Event{events::EventType::AgentEnergyChanged,
+                                                   events::AgentEnergyChanged{agent->id(), previous_energy, next_energy},
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
+        }
+
+        if (agent->energy() <= death_threshold_) {
+            agent->kill("energy_depleted");
+            world.eventBus().publish(events::Event{events::EventType::AgentDied,
+                                                   events::AgentDied{agent->id(), "energy_depleted"},
+                                                   world.currentTick(),
+                                                   world.currentTimeSeconds()});
+        }
+    }
 }
 
 }  // namespace neuro
