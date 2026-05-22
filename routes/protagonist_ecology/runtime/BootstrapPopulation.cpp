@@ -40,6 +40,7 @@
 #include "perception/ObjectLogisticsPerception.h"
 #include "perception/StockpilePerception.h"
 #include "perception/SurvivalStatePerception.h"
+#include "perception/TaskContextPerception.h"
 #include "perception/TreePerception.h"
 #include "perception/WaterPerception.h"
 #include "perception/WeaponPerception.h"
@@ -142,6 +143,16 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
     // Memory V2 cognition input
     if (config.protagonist.memory_cognition_enabled) {
         sensory_dim += MemoryCognitionPerception::kDim;
+    }
+
+    // L2.6 v12 (PEARL/RL² context-conditioned policy): always reserve
+    // 8 onehot inputs for the active task_template index. When
+    // task_templates is empty (task_template_idx = -1) all 8 slots are
+    // 0, so the brain ignores them. When non-empty, the network can
+    // learn template-specific behaviour without needing to delete
+    // templates from the pool.
+    if (config.task_context_perception_enabled) {
+        sensory_dim += TaskContextPerception::kDim;
     }
 
     return sensory_dim;
@@ -271,6 +282,12 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // Memory V2 Cognition Perception
     if (config.protagonist.memory_cognition_enabled) {
         agent->addPerception(std::make_unique<MemoryCognitionPerception>());
+    }
+
+    // L2.6 v12 task context perception (PEARL/RL² context-conditioned).
+    // Always last so the order matches protagonistSensoryDim().
+    if (config.task_context_perception_enabled) {
+        agent->addPerception(std::make_unique<TaskContextPerception>());
     }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));

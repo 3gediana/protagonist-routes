@@ -708,22 +708,102 @@ void applyMemoryAblationVariant(TrainingParams& params, const MemoryAblationVari
 const TaskTemplate* selectTaskTemplate(const std::vector<TaskTemplate>& templates,
                                        std::size_t generation,
                                        std::size_t episode,
-                                       std::uint32_t base_seed) {
+                                       std::uint32_t base_seed,
+                                       std::size_t* out_idx = nullptr) {
     if (templates.empty()) return nullptr;
     float total_weight = 0.0f;
     for (const auto& t : templates) total_weight += std::max(0.0f, t.weight);
-    if (total_weight <= 0.0f) return &templates.front();
+    if (total_weight <= 0.0f) {
+        if (out_idx) *out_idx = 0;
+        return &templates.front();
+    }
     std::mt19937 rng(base_seed
                      + static_cast<std::uint32_t>(generation * 1009u)
                      + static_cast<std::uint32_t>(episode * 31u));
     std::uniform_real_distribution<float> u(0.0f, total_weight);
     const float r = u(rng);
     float acc = 0.0f;
-    for (const auto& t : templates) {
-        acc += std::max(0.0f, t.weight);
-        if (r <= acc) return &t;
+    for (std::size_t i = 0; i < templates.size(); ++i) {
+        acc += std::max(0.0f, templates[i].weight);
+        if (r <= acc) {
+            if (out_idx) *out_idx = i;
+            return &templates[i];
+        }
     }
+    if (out_idx) *out_idx = templates.size() - 1;
     return &templates.back();
+}
+
+// L2.6 v12: dynamic template selection. Replaces the static-weight
+// version above with one that also accepts an `effective_weights`
+// vector (computed from base weight, ACCEL regret score, and SMT
+// hard-tasks-first boost). Falls back to base weights if effective
+// is empty / wrong size.
+const TaskTemplate* selectTaskTemplateDynamic(const std::vector<TaskTemplate>& templates,
+                                              const std::vector<float>& effective_weights,
+                                              std::size_t generation,
+                                              std::size_t episode,
+                                              std::uint32_t base_seed,
+                                              std::size_t* out_idx) {
+    if (templates.empty()) return nullptr;
+    const bool use_eff = (effective_weights.size() == templates.size());
+    float total_weight = 0.0f;
+    for (std::size_t i = 0; i < templates.size(); ++i) {
+        total_weight += std::max(0.0f, use_eff ? effective_weights[i] : templates[i].weight);
+    }
+    if (total_weight <= 0.0f) {
+        if (out_idx) *out_idx = 0;
+        return &templates.front();
+    }
+    std::mt19937 rng(base_seed
+                     + static_cast<std::uint32_t>(generation * 1009u)
+                     + static_cast<std::uint32_t>(episode * 31u));
+    std::uniform_real_distribution<float> u(0.0f, total_weight);
+    const float r = u(rng);
+    float acc = 0.0f;
+    for (std::size_t i = 0; i < templates.size(); ++i) {
+        acc += std::max(0.0f, use_eff ? effective_weights[i] : templates[i].weight);
+        if (r <= acc) {
+            if (out_idx) *out_idx = i;
+            return &templates[i];
+        }
+    }
+    if (out_idx) *out_idx = templates.size() - 1;
+    return &templates.back();
+}
+
+// L2.6 v12 (ACCEL Parker-Holder 2022 + SMT ICML 2024): combine
+// base weight, regret-based dynamic weight, and hard-tasks-first
+// difficulty boost into a single effective weight vector for the
+// upcoming generation's template sampling. regret_score is a per-
+// template EMA of (best_in_episodes_using_this_template - avg).
+// High regret = "agent ALMOST solves it" -> ACCEL says boost it.
+// Hard-Tasks-First only applies for the first N generations.
+std::vector<float> computeEffectiveTemplateWeights(
+    const std::vector<TaskTemplate>& templates,
+    const std::vector<float>& regret_score,
+    std::size_t generation,
+    bool dynamic_weight_enabled,
+    std::size_t hard_first_generations) {
+    std::vector<float> weights(templates.size(), 0.0f);
+    for (std::size_t i = 0; i < templates.size(); ++i) {
+        float w = std::max(0.0f, templates[i].weight);
+        if (dynamic_weight_enabled && i < regret_score.size()) {
+            // Squash regret to [0, 2] to avoid runaway weights.
+            const float r = std::clamp(regret_score[i], 0.0f, 2.0f);
+            w *= (1.0f + r);
+        }
+        if (hard_first_generations > 0 && generation < hard_first_generations) {
+            // Difficulty 1.0 = no boost; 2.0 = +50% in early gens; tapers
+            // linearly to 0 as generation approaches the warm-up window.
+            const float diff_boost = std::max(0.0f, templates[i].difficulty - 1.0f);
+            const float taper = 1.0f - static_cast<float>(generation) /
+                                static_cast<float>(hard_first_generations);
+            w *= (1.0f + 0.5f * diff_boost * taper);
+        }
+        weights[i] = w;
+    }
+    return weights;
 }
 
 // Apply a TaskTemplate's overrides on top of a (per-episode-copy)
@@ -1790,7 +1870,14 @@ void evaluatePopulation(World2D& world,
                 any_alive = true;
                 reward += outcome_w * params.survival_weight * 0.01 * static_cast<double>(dt_seconds);
                 reward += outcome_w * params.food_weight * evaluateFoodReward(*concrete, world);
-                reward += outcome_w * params.intrinsic_weight * evaluateIntrinsicReward(*concrete);
+                // L2.6 v12: NEAT-style intrinsic motivation (Cuccu &
+                // Schmidhuber 2011, "Intrinsically Motivated NeuroEvolution").
+                // Decoupled from outcome_w on purpose - novelty is what
+                // drives the network OUT of the lazy-agent local optimum
+                // when sparse outcome rewards (worksite/craft) are too
+                // weak to overcome drive penalty. v10/v11 had it
+                // multiplied by outcome_w which silently zeroed it.
+                reward += params.intrinsic_weight * evaluateIntrinsicReward(*concrete);
                 alive_last_tick.insert(agent->id());
 
                 // L2.2 v2: thirst drive sync from SurvivalStatusLayer.
@@ -3616,6 +3703,12 @@ int ProtagonistEcologyRuntime::runTraining() {
                  return s;
              }());
 
+    // L2.6 v12 (ACCEL): rolling per-template regret EMA. regret_score[i]
+    // is updated each generation from (best_in_episodes - avg_in_episodes)
+    // for episodes that ran under template i. High regret = "agent
+    // almost solves it" -> upweighted in the next generation's sampling.
+    std::vector<float> template_regret_score(route.task_templates.size(), 0.0f);
+
     for (std::size_t generation = start_generation; generation < params.generations; ++generation) {
         if (stop_requested_.load()) {
             break;
@@ -3627,6 +3720,16 @@ int ProtagonistEcologyRuntime::runTraining() {
         // for context. Overhead is negligible (atomic add per scope).
         TrainingProfiler::instance().resetGeneration();
         const auto profile_gen_start = std::chrono::high_resolution_clock::now();
+
+        // L2.6 v12: compute effective per-template weights for this generation
+        // (combines base weight, ACCEL regret EMA, and SMT hard-tasks-first
+        // difficulty boost). Empty when route.task_templates is empty.
+        const auto effective_template_weights = computeEffectiveTemplateWeights(
+            route.task_templates,
+            template_regret_score,
+            generation,
+            route.task_template_dynamic_weight,
+            route.task_template_hard_first_generations);
 
         std::unordered_map<GenomeId, double> fitness_sum;
         std::vector<std::unordered_map<GenomeId, double>> species_fitness_sum(species_contexts.size());
@@ -3645,6 +3748,9 @@ int ProtagonistEcologyRuntime::runTraining() {
             std::unordered_map<GenomeId, double> fitness_sum;
             std::vector<std::unordered_map<GenomeId, double>> species_fitness_sum;
             BehaviorAccumulator behavior;
+            // L2.6 v12: which task_template ran in this episode (-1 = none).
+            // Used after generation to update template_regret_score.
+            int template_idx = -1;
         };
         std::vector<EpisodeResult> episode_results(episodes_per_generation);
         for (auto& r : episode_results) {
@@ -3664,14 +3770,42 @@ int ProtagonistEcologyRuntime::runTraining() {
                 // [[evolution.task_templates]] is non-empty in the toml,
                 // each episode picks one (weighted) and applies its
                 // overrides to a copy of route + params.
+                // L2.6 v11 stable curriculum: when stable_within_generation
+                // is true (default), all episodes within one generation
+                // see the SAME template. Cross-generation NEAT selection
+                // still cycles through templates over time, but the
+                // neural net sees a stable env across the 6 episodes
+                // it's evaluated on, so emergent behaviour (build/hunt/
+                // co-presence) has time to crystallise. Setting it
+                // false restores v10 per-episode resampling.
                 TrainingParams episode_params = params;
-                if (const auto* tpl = selectTaskTemplate(route.task_templates,
-                                                        generation,
-                                                        episode,
-                                                        route.random_seed)) {
+                const std::size_t template_episode_idx =
+                    route.task_template_stable_within_generation ? 0 : episode;
+                std::size_t selected_idx = 0;
+                if (const auto* tpl = selectTaskTemplateDynamic(route.task_templates,
+                                                                effective_template_weights,
+                                                                generation,
+                                                                template_episode_idx,
+                                                                route.random_seed,
+                                                                &selected_idx)) {
                     applyTaskTemplate(generation_route, episode_params, *tpl);
+                    episode_results[episode].template_idx = static_cast<int>(selected_idx);
                 }
                 auto world = createBootstrapWorld(generation_route);
+                // L2.6 v12 (PEARL/RL² context-conditioned policy): stamp
+                // the selected template index onto every protagonist
+                // so TaskContextPerception can expose it to the brain
+                // as the 8-onehot input. Background agents don't have
+                // TaskContextPerception so the stamp is harmless.
+                if (episode_results[episode].template_idx >= 0) {
+                    if (auto* agent_layer = world->getLayer<AgentLayer>()) {
+                        for (auto* a : agent_layer->agents()) {
+                            if (auto* concrete = dynamic_cast<Agent*>(a); concrete != nullptr) {
+                                concrete->setTaskTemplateIndex(episode_results[episode].template_idx);
+                            }
+                        }
+                    }
+                }
                 std::unique_ptr<ProtagonistBatchedDenseRunner> episode_runner;
                 if (generation_route.compute.protagonist_batched_dense_enabled) {
                     const auto backend = generation_route.compute.protagonist_batched_dense_force_cpu
@@ -3723,6 +3857,44 @@ int ProtagonistEcologyRuntime::runTraining() {
             });
         }
         evaluation_pool.waitAll();
+
+        // L2.6 v12 (ACCEL): update template_regret_score from this generation's
+        // results. For each template that ran, regret = (best_protag_fit - avg_protag_fit)
+        // averaged across episodes that used that template. EMA: 0.7*old + 0.3*new
+        // so a single noisy generation doesn't whiplash the curriculum.
+        if (route.task_template_dynamic_weight && !route.task_templates.empty()) {
+            std::vector<double> tpl_best_sum(route.task_templates.size(), 0.0);
+            std::vector<double> tpl_avg_sum(route.task_templates.size(), 0.0);
+            std::vector<std::size_t> tpl_count(route.task_templates.size(), 0);
+            for (const auto& r : episode_results) {
+                if (r.template_idx < 0 || static_cast<std::size_t>(r.template_idx) >= route.task_templates.size()) continue;
+                if (r.fitness_sum.empty()) continue;
+                double best = -std::numeric_limits<double>::infinity();
+                double sum = 0.0;
+                std::size_t n = 0;
+                for (const auto& [id, fit] : r.fitness_sum) {
+                    best = std::max(best, fit);
+                    sum += fit;
+                    ++n;
+                }
+                if (n == 0) continue;
+                tpl_best_sum[r.template_idx] += best;
+                tpl_avg_sum[r.template_idx] += sum / static_cast<double>(n);
+                tpl_count[r.template_idx]++;
+            }
+            for (std::size_t i = 0; i < route.task_templates.size(); ++i) {
+                if (tpl_count[i] == 0) continue;
+                const double mean_best = tpl_best_sum[i] / static_cast<double>(tpl_count[i]);
+                const double mean_avg  = tpl_avg_sum[i]  / static_cast<double>(tpl_count[i]);
+                // Normalised regret: (best - avg) / (|avg| + 1) so absolute
+                // fitness magnitude doesn't dominate. Clamped to [0, 5] to
+                // bound the EMA.
+                const double raw = std::max(0.0, mean_best - mean_avg)
+                                   / (std::abs(mean_avg) + 1.0);
+                const float new_regret = static_cast<float>(std::clamp(raw, 0.0, 5.0));
+                template_regret_score[i] = 0.7f * template_regret_score[i] + 0.3f * new_regret;
+            }
+        }
 
         // Merge per-episode results into the generation's accumulators.
         for (auto& r : episode_results) {

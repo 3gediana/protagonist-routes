@@ -166,6 +166,16 @@ public:
     SimTimeSeconds stationarySeconds() const { return stationary_seconds_; }
     void setStationarySeconds(SimTimeSeconds v) { stationary_seconds_ = v; }
 
+    // L2.6 v12 (context-conditioned policy, PEARL/RL² style): which
+    // task_template the protagonist is currently in. Filled by the
+    // Runtime after applyTaskTemplate() picks a template. Read by
+    // TaskContextPerception which exposes it to the brain as an
+    // 8-onehot input, so the network can learn task-specific behaviour
+    // (proactive_build vs solo_hunt vs mixed_ecology) without needing
+    // to delete templates from the pool. -1 = no template active.
+    int taskTemplateIndex() const { return task_template_idx_; }
+    void setTaskTemplateIndex(int idx) { task_template_idx_ = idx; }
+
     // Digest satiety (apex predator). After a big kill, set a "satiety
     // until" timestamp. While current_time < this value, hunt damage
     // and energy gain are scaled down (apex sleeps off the kill, the
@@ -306,6 +316,7 @@ private:
     std::vector<ThreatHit> threat_damage_window_;
     float damage_threshold_ = 0.0f;
     bool stealth_state_ = false;
+    int task_template_idx_ = -1;
     SimTimeSeconds stationary_seconds_ = 0.0;
     SimTimeSeconds digest_satiety_until_seconds_ = -1.0;
     float scavenge_efficiency_ = 1.0f;

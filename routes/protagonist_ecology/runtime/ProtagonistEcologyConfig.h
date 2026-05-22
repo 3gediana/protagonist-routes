@@ -293,6 +293,11 @@ struct TaskTemplateOverride {
 struct TaskTemplate {
     std::string name{"default"};
     float weight{1.0f};
+    // L2.6 v12: declared difficulty (1.0 = easy, 2.0 = hard, etc.).
+    // Used by the Hard-Tasks-First scheduler in early generations.
+    // No effect on training when task_template_hard_first_generations
+    // = 0. Default 1.0 (treat as ordinary task).
+    float difficulty{1.0f};
     bool has_protagonist_count{false};
     std::size_t protagonist_count{0};
     bool has_worksite_count{false};
@@ -353,6 +358,34 @@ struct ProtagonistEcologyConfig {
     // unchanged across all episodes. When non-empty, episodes draw
     // from this list.
     std::vector<TaskTemplate> task_templates{};
+    // L2.6 v11: when true (default), all episodes WITHIN one generation
+    // see the SAME sampled task_template. The neural net thus has time
+    // to learn a stable strategy across the 6-episode evaluation. NEAT
+    // selection across generations still rotates through templates.
+    // Setting this false restores v10 per-episode resampling, which
+    // we found shatters emergent build/hunt/co-presence behaviour
+    // because the same network is averaged across 6 conflicting envs.
+    bool task_template_stable_within_generation{true};
+    // L2.6 v12 (PEARL/RL² context-conditioned policy): when true
+    // (default), the protagonist brain receives an 8-onehot input
+    // encoding the current task_template index, so a single network
+    // can learn task-specific behaviour (proactive_build chops vs
+    // wave_attack defends vs mixed_ecology survives) without needing
+    // to delete templates from the pool. Set false for ablation.
+    bool task_context_perception_enabled{true};
+    // L2.6 v12 (ACCEL regret-based curriculum): when true, the static
+    // [[evolution.task_templates.weight]] is dynamically multiplied by
+    // (1 + regret_score) where regret_score is a rolling estimate of
+    // (best_fitness - avg_fitness) gap on that template. High-regret
+    // templates ("agent ALMOST solves it") are prioritised, which is
+    // the standard ACCEL principle (Parker-Holder 2022).
+    bool task_template_dynamic_weight{true};
+    // L2.6 v12 (Hard-Tasks-First, SMT ICML 2024): in early generations
+    // (gen < this many), templates with declared higher difficulty
+    // get an extra weight multiplier so the network is forced to
+    // confront hard tasks first. After the warm-up window, templates
+    // weight equally. Disable by setting to 0.
+    std::size_t task_template_hard_first_generations{20};
 
     bool isTrainRole() const;
     bool isEvalRole() const;

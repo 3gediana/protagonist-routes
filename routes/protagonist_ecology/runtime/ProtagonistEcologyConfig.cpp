@@ -353,6 +353,9 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
                 if (const auto& w = (*tt)["weight"]; w.is_number()) {
                     tpl.weight = static_cast<float>(w.value<double>().value_or(1.0));
                 }
+                if (const auto& d = (*tt)["difficulty"]; d.is_number()) {
+                    tpl.difficulty = static_cast<float>(d.value<double>().value_or(1.0));
+                }
                 if (const auto& v = (*tt)["protagonist_count"]; v.is_integer()) {
                     tpl.protagonist_count = static_cast<std::size_t>(v.value<std::int64_t>().value_or(0));
                     tpl.has_protagonist_count = true;
@@ -410,6 +413,22 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
             }
         }
     }
+    // L2.6 v11: stable curriculum toggle (default true).
+    out.task_template_stable_within_generation = config.getOr<bool>(
+        "evolution.task_template_stable_within_generation",
+        out.task_template_stable_within_generation);
+    // L2.6 v12: context-conditioned policy toggle (default true).
+    out.task_context_perception_enabled = config.getOr<bool>(
+        "evolution.task_context_perception_enabled",
+        out.task_context_perception_enabled);
+    // L2.6 v12: ACCEL regret-based dynamic weight (default true).
+    out.task_template_dynamic_weight = config.getOr<bool>(
+        "evolution.task_template_dynamic_weight",
+        out.task_template_dynamic_weight);
+    // L2.6 v12: hard-tasks-first warm-up window (default 20 generations).
+    out.task_template_hard_first_generations = config.getOr<std::size_t>(
+        "evolution.task_template_hard_first_generations",
+        out.task_template_hard_first_generations);
 
     return out;
 }

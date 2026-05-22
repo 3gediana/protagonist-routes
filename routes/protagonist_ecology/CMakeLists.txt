@@ -29,6 +29,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     perception/ObjectLogisticsPerception.cpp
     perception/StockpilePerception.cpp
     perception/SurvivalStatePerception.cpp
+    perception/TaskContextPerception.cpp
     perception/TreePerception.cpp
     perception/WaterPerception.cpp
     perception/WeaponPerception.cpp
