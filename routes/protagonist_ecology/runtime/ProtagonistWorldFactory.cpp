@@ -150,8 +150,7 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.base.stockpile_radius,
             config.base.nest_radius,
             config.base.stockpile_offset,
-            config.base.nest_offset,
-            config.base.nest_predator_damage_per_second));
+            config.base.nest_offset));
     }
 
     if (config.objects.enabled) {

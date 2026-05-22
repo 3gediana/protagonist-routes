@@ -14,12 +14,14 @@ public:
               float stockpile_radius,
               float nest_radius,
               float stockpile_offset,
-              float nest_offset,
-              float nest_predator_damage_per_second = 0.0f);
+              float nest_offset);
 
     const char* layerName() const override { return kName; }
     void onAttach(IWorld& world) override;
-    void tick(IWorld& world, float dt) override;
+    // No per-tick logic required: shelter physics is provided by completed
+    // worksites (WorksiteLayer::enforcePredatorObstacles), not by a magical
+    // damage rule on nest entry.
+    void tick(IWorld& /*world*/, float /*dt*/) override {}
 
     Vec2 baseCenter() const { return base_center_; }
     Vec2 stockpileCenter() const { return stockpile_center_; }
@@ -44,7 +46,6 @@ private:
     float nest_radius_;
     float stockpile_offset_;
     float nest_offset_;
-    float nest_predator_damage_per_second_;
 };
 
 }  // namespace neuro::routes::protagonist

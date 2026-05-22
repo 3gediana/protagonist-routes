@@ -27,6 +27,8 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
     const Agent* nearest_predator = nullptr;
     float nearest_prey_dist_sq = sense_radius_ * sense_radius_;
     float nearest_predator_dist_sq = sense_radius_ * sense_radius_;
+    std::size_t peer_count = 0;
+    std::size_t predator_count = 0;
 
     for (const auto* other : agent_layer->agents()) {
         if (other == nullptr || !other->alive() || other->id() == self.id()) {
@@ -43,6 +45,7 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
         }
 
         if (concrete->isPredator()) {
+            ++predator_count;
             if (nearest_predator == nullptr || dist_sq < nearest_predator_dist_sq) {
                 nearest_predator = concrete;
                 nearest_predator_dist_sq = dist_sq;
@@ -52,6 +55,7 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
 
         const bool is_protagonist = dynamic_cast<const ProtagonistBrain*>(&concrete->brain()) != nullptr;
         if (is_protagonist) {
+            ++peer_count;
             continue;
         }
 
@@ -86,6 +90,12 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
     } else {
         out[6] = 1.0f;
     }
+
+    // Local social context: how many protagonist peers and how many
+    // predators are in sense_radius. Used by the protagonist brain to
+    // pick fight-back vs flee (emergent shelter L1 follow-up).
+    out[8] = std::clamp(static_cast<float>(peer_count) / kCountCap, 0.0f, 1.0f);
+    out[9] = std::clamp(static_cast<float>(predator_count) / kCountCap, 0.0f, 1.0f);
 }
 
 }  // namespace neuro::routes::protagonist

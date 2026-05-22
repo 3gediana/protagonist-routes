@@ -47,9 +47,15 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
         }
 
         auto* target = dynamic_cast<Agent*>(other);
-        if (target == nullptr || target->isPredator()) {
+        if (target == nullptr) {
             continue;
         }
+        // Skip protagonist peers only (no friendly fire). Predators are
+        // valid targets now: the protagonist brain decides when to
+        // fight back vs flee using local social context provided by
+        // AgentSocialPerception (peer_count / predator_count
+        // dimensions). Energy gain on predator kills is also valid -
+        // a slain wolf is meat too.
         if (dynamic_cast<const ProtagonistBrain*>(&target->brain()) != nullptr) {
             continue;
         }

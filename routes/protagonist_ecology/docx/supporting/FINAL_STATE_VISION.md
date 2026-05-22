@@ -122,16 +122,16 @@
 5. 主角自己能从缝隙穿过（要么因为体型小，要么因为有一个 friend-or-foe 判断）
 6. 不需要再加任何"魔法伤害"——狼进不来纯粹是因为路被堵了
 
-**当前状态（不要美化）**：当前 `BaseLayer.nest_predator_damage_per_second` 是一条临时占位规则，作用是让 `comm_danger_warning` eval 在 v8 能力下能产出 survived 数据。它不是这条闭环的最终方案，**B 阶段必须把它替换为真实的 collidable structure**。已在 `PROGRESS.md` 标注为 hack。
+**当前状态（2026-05-22 夜更新）**：~~`BaseLayer.nest_predator_damage_per_second` 是一条临时占位规则~~ 已删除。**L1 机制底座 + L3 物种识别已完成**：`WorksiteLayer::enforcePredatorObstacles` 让完工 worksite 变成 collidable 圆，predator 撞墙被推回边缘、protagonist 不阻挡（friend-or-foe 直接由 `Agent::isPredator()` 实现）。v9 retrain 后存活率反而比 hack 时还高（comm_danger_warning baseline 5.0/8 → 6.5/8 ▲30%）。但 v9 当前学到的是**直接反击狼**（attacks 0→352.5）而不是"先建墙再用墙"——eval 配置 `worksite.count=0` 让它没有建墙机会，训练 task 也没专门让 predator 浪涌前 protagonist 先建墙。所以画面上还看不到"墙挡狼"的高光，是训练 task 设计问题，不是机制问题。
 
 实施分级（B 阶段路线）：
-- **L1 单墙**：worksite 完工后在 nest 入口生成 1 个 ObstacleObject，predator 走到墙边就被 movement 反弹
-- **L2 围拢**：多个 worksite 沿 nest 边缘排列，完工后形成一圈墙，留 1-2 个口
-- **L3 物种识别**：墙体对 protagonist 不可阻挡（或留低成本通道），对 predator 完全阻挡
+- **L1 单墙** ✅ **机制完成**：worksite 完工后形成 collidable 圆（`WorksiteLayer::enforcePredatorObstacles`），predator 撞墙被推回边缘、protagonist 不阻挡。`AgentSocialPerception` 加 peer_count / predator_count，`ProtagonistHuntCapability` 开放 predator，`shelter_camp_reward` 上线。**画面行为部分**（让 v9 真的学会"建墙后躲在里面"）需要 L2 训练 task 设计才能出来。
+- **L2 围拢 + 训练 task 改造**：多个 worksite 沿 nest 边缘排列、完工形成一圈墙留 1-2 个口；让 comm_danger_warning eval 加 worksite preactivate，让训练 task 设计专门让 predator 浪涌前 protagonist 先建墙。
+- **L3 物种识别** ✅ **L1 已附带完成**：`enforcePredatorObstacles` 用 `isPredator()` 区分，protagonist 不受墙影响。
 - **L4 损伤与维护**：墙体可被 predator 攻击破坏，protagonist 必须周期补修
 - **L5 升级**：木墙 -> 木+石墙 -> 多层墙，提供不同保护级别
 
-L1 是真正解锁这条闭环的最小工程量；L2-L5 是这条路线在视觉和故事感上的进阶。
+L1 机制底座已经解锁这条闭环；L2 是把"行为画面"补齐的训练 task 改造；L4-L5 是视觉和故事感上的进阶。
 
 ---
 

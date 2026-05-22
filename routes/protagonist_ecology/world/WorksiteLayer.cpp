@@ -52,6 +52,11 @@ void WorksiteLayer::tick(IWorld& world, float dt) {
     absorbCarriedMaterials(world);
     absorbNearbyMaterials();
     progressConstruction(world, dt);
+    // Emergent shelter L1: completed worksites act as collidable walls
+    // for predators. Runs after AgentLayer (tickOrder 100 < 155) so the
+    // movement positions for this tick are already in agent->position()
+    // and we can push them back out to the wall boundary.
+    enforcePredatorObstacles();
 }
 
 std::optional<Worksite> WorksiteLayer::nearestActiveSite(Vec2 position) const {
@@ -106,6 +111,72 @@ std::size_t WorksiteLayer::completedSiteCount() const {
         count += site.completed ? 1u : 0u;
     }
     return count;
+}
+
+bool WorksiteLayer::blocksPredatorAt(Vec2 pos) const {
+    for (const auto& site : sites_) {
+        if (!site.completed) {
+            continue;
+        }
+        if (Vec2::distanceSquared(site.position, pos) < site.radius * site.radius) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void WorksiteLayer::spawnCompletedAt(Vec2 position) {
+    Worksite site{};
+    site.id = sites_.size() + 1u;
+    site.position = position;
+    site.radius = interaction_radius_;
+    site.active = true;
+    site.completed = true;
+    site.stored_sticks = required_sticks_;
+    site.stored_stones = required_stones_;
+    site.required_sticks = required_sticks_;
+    site.required_stones = required_stones_;
+    site.build_progress = 1.0f;
+    site.build_started_at_seconds = -1.0;
+    sites_.push_back(std::move(site));
+}
+
+void WorksiteLayer::enforcePredatorObstacles() {
+    if (agents_ == nullptr) {
+        return;
+    }
+    for (auto* agent : agents_->agents()) {
+        if (agent == nullptr || !agent->alive()) {
+            continue;
+        }
+        const auto* concrete = dynamic_cast<const Agent*>(agent);
+        if (concrete == nullptr || !concrete->isPredator()) {
+            continue;
+        }
+        for (const auto& site : sites_) {
+            if (!site.completed) {
+                continue;
+            }
+            const Vec2 to_agent = agent->position() - site.position;
+            const float dist = to_agent.length();
+            if (dist >= site.radius) {
+                continue;
+            }
+            // Predator stepped into a completed worksite (a built wall).
+            // Push it out to the boundary along the radial direction so it
+            // physically cannot walk through. Velocity is zeroed so it does
+            // not keep ramming next tick (it will need to re-decide a move
+            // direction). Protagonists / foragers / non-predators are not
+            // affected, so the protagonist can still enter the nest area
+            // and reach the shelter_energy_bonus tile inside.
+            const Vec2 push_dir = (dist > 0.0001f)
+                                      ? (to_agent / dist)
+                                      : Vec2{1.0f, 0.0f};
+            agent->setPosition(site.position + push_dir * (site.radius + 0.05f));
+            agent->setVelocity(Vec2{0.0f, 0.0f});
+            break;  // already pushed out for this tick
+        }
+    }
 }
 
 void WorksiteLayer::seedSites(Vec2 world_size) {

@@ -72,11 +72,27 @@ public:
     std::size_t activeSiteCount() const;
     std::size_t completedSiteCount() const;
 
+    // Emergent shelter L1: a completed worksite represents a stack of
+    // sticks/stones pushed up against the nest perimeter and forms a
+    // collidable wall. Predators are pushed back to the boundary if they
+    // try to walk through; protagonists and other agents are unaffected,
+    // so they can still enter the nest / shelter / pick up the stockpile.
+    // Returns true iff `pos` is inside any completed site.
+    bool blocksPredatorAt(Vec2 pos) const;
+    // Spawns a worksite that is already 100% completed at `position`. Used
+    // by tasks that need a pre-built wall in the eval (e.g. before the
+    // protagonists themselves can build).
+    void spawnCompletedAt(Vec2 position);
+
 private:
     void seedSites(Vec2 world_size);
     void absorbCarriedMaterials(IWorld& world);
     void absorbNearbyMaterials();
     void progressConstruction(IWorld& world, float dt);
+    // Pushes predators that walked into a completed wall back out to its
+    // boundary. Called from tick() at tickOrder=155 (after AgentLayer
+    // tick=100). See FINAL_STATE_VISION § 3.7 (emergent shelter L1).
+    void enforcePredatorObstacles();
 
     BaseLayer* base_ = nullptr;
     AgentLayer* agents_ = nullptr;

@@ -90,6 +90,19 @@ struct TrainingParams {
     float combat_death_penalty{5.0f};
     float worksite_proximity_reward{0.05f};
     float worksite_completion_reward{60.0f};
+    // Emergent shelter L1 (2026-05-22): rewards a protagonist for
+    // standing inside a *completed* worksite (i.e. behind a built wall)
+    // while there is at least one predator within
+    // shelter_camp_predator_radius. Encodes "use the shelter" so v9 can
+    // learn to pair the proactive build (worksite_proximity_reward)
+    // with the late-game reuse (this) - the latter half of "fang wei du
+    // jian" / proactive defence. Default 0 keeps existing scenarios
+    // unchanged. Off in tasks where there is no predator pressure
+    // (e.g. comm_scout_worker) - turning it on without predators is a
+    // free-camp exploit (the predator gate is always false, the gate
+    // never fires).
+    float shelter_camp_reward{0.0f};
+    float shelter_camp_predator_radius{12.0f};
     float social_proximity_reward{0.01f};
     float social_proximity_radius{6.0f};
     float signal_emit_reward{0.03f};
@@ -395,6 +408,8 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.communication_weight = config.getOr<double>("reward.communication_weight", params.communication_weight);
     params.worksite_proximity_reward = config.getOr<float>("reward.worksite_proximity_reward", params.worksite_proximity_reward);
     params.worksite_completion_reward = config.getOr<float>("reward.worksite_completion_reward", params.worksite_completion_reward);
+    params.shelter_camp_reward = config.getOr<float>("reward.shelter_camp_reward", params.shelter_camp_reward);
+    params.shelter_camp_predator_radius = config.getOr<float>("reward.shelter_camp_predator_radius", params.shelter_camp_predator_radius);
     params.social_proximity_reward = config.getOr<float>("reward.social_proximity_reward", params.social_proximity_reward);
     params.social_proximity_radius = config.getOr<float>("reward.social_proximity_radius", params.social_proximity_radius);
     params.signal_emit_reward = config.getOr<float>("reward.signal_emit_reward", params.signal_emit_reward);
@@ -2217,6 +2232,62 @@ void evaluatePopulation(World2D& world,
                                     protagonist_brain->socialMemory().rewardCooperation(peer->id(), 0.015f * dt);
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Emergent shelter L1 (2026-05-22): "use the shelter"
+                // reward. Pays a per-tick bonus when the protagonist is
+                // standing inside a completed worksite (i.e. behind a
+                // built wall) AND there is at least one predator within
+                // shelter_camp_predator_radius. Off by default
+                // (shelter_camp_reward = 0) so existing scenarios are
+                // unaffected. Without the predator gate this would just
+                // pay agents to camp on completed worksites all day,
+                // which is a free-camp exploit; with the gate the only
+                // way to collect is to have actually retreated to a
+                // shelter while predators are nearby - the late-game
+                // half of "fang wei du jian" (the early-game half is
+                // already covered by worksite_proximity_reward, which
+                // pays in-progress builders even without immediate
+                // threat).
+                if (params.shelter_camp_reward > 0.0f && worksite_layer != nullptr) {
+                    bool inside_completed_shelter = false;
+                    for (const auto& site : worksite_layer->sites()) {
+                        if (!site.completed) {
+                            continue;
+                        }
+                        if (Vec2::distanceSquared(concrete->position(), site.position)
+                            <= site.radius * site.radius) {
+                            inside_completed_shelter = true;
+                            break;
+                        }
+                    }
+                    if (inside_completed_shelter && agent_layer != nullptr) {
+                        const float shelter_predator_r2 =
+                            params.shelter_camp_predator_radius
+                            * params.shelter_camp_predator_radius;
+                        bool predator_nearby = false;
+                        for (const auto* threat : agent_layer->agents()) {
+                            if (threat == nullptr || !threat->alive()) {
+                                continue;
+                            }
+                            const auto* threat_concrete =
+                                dynamic_cast<const Agent*>(threat);
+                            if (threat_concrete == nullptr || !threat_concrete->isPredator()) {
+                                continue;
+                            }
+                            if (Vec2::distanceSquared(concrete->position(),
+                                                      threat->position())
+                                <= shelter_predator_r2) {
+                                predator_nearby = true;
+                                break;
+                            }
+                        }
+                        if (predator_nearby) {
+                            reward += params.cooperation_weight
+                                    * static_cast<double>(params.shelter_camp_reward)
+                                    * static_cast<double>(dt_seconds);
                         }
                     }
                 }

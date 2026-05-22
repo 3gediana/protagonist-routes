@@ -86,13 +86,13 @@ struct BaseZoneConfig {
     float nest_radius{10.0f};
     float stockpile_offset{14.0f};
     float nest_offset{-8.0f};
-    // When > 0, BaseLayer.tick applies this damage/sec to any agent that
-    // both is a predator AND stands inside the nest radius. Predators thus
-    // self-destruct if they try to chase a protagonist into the nest, which
-    // is the cleanest way to give the nest a real physical-shelter
-    // semantics without modifying core/capability/PredatorHuntCapability.
-    // Default 0 keeps existing scenarios unchanged.
-    float nest_predator_damage_per_second{0.0f};
+    // (Removed 2026-05-22) `nest_predator_damage_per_second` was a
+    // temporary stand-in that gave the nest a magical "predators die on
+    // entry" rule so comm_danger_warning eval could produce non-zero
+    // survived deltas before the physical shelter mechanism existed. It
+    // is gone now: shelter physics comes from completed worksites
+    // (WorksiteLayer::enforcePredatorObstacles), as designed in
+    // FINAL_STATE_VISION § 3.7 / § 4.6 (emergent shelter L1).
 };
 
 struct NurseryLogisticsConfig {

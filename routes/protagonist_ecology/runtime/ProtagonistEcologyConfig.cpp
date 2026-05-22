@@ -140,8 +140,6 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.base.nest_radius = config.getOr<float>("world.base.nest_radius", out.base.nest_radius);
     out.base.stockpile_offset = config.getOr<float>("world.base.stockpile_offset", out.base.stockpile_offset);
     out.base.nest_offset = config.getOr<float>("world.base.nest_offset", out.base.nest_offset);
-    out.base.nest_predator_damage_per_second = config.getOr<float>(
-        "world.base.nest_predator_damage_per_second", out.base.nest_predator_damage_per_second);
 
     out.nursery.enabled = config.getOr<bool>("world.nursery.enabled", out.nursery.enabled);
     out.nursery.deposit_energy_bonus = config.getOr<float>("world.nursery.deposit_energy_bonus", out.nursery.deposit_energy_bonus);

@@ -253,6 +253,16 @@ cooperation_weight = 6.0
 communication_weight = 6.0
 worksite_proximity_reward = 0.06
 worksite_completion_reward = 80.0
+# Emergent shelter L1 (B-stage start, 2026-05-22): turn on the
+# "use the shelter" signal. Pays per-tick when the protagonist is
+# inside a completed worksite AND a predator is within
+# shelter_camp_predator_radius. Magnitude is matched to
+# worksite_proximity_reward (0.06) so building and using the
+# shelter pay at the same per-tick rate when the predator gate
+# fires; this prevents reward-hack camping while still teaching
+# the late-game half of "fang wei du jian".
+shelter_camp_reward = 0.06
+shelter_camp_predator_radius = 12.0
 social_proximity_reward = 0.012
 social_proximity_radius = 6.5
 signal_emit_reward = 0.10

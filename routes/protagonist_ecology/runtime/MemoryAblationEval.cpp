@@ -260,21 +260,17 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.base.radius = 10.0f;
             route.base.stockpile_radius = 6.0f;
             route.base.nest_radius = 4.0f;
-            // Phase 2 follow-up 2026-05-22 (third pass): give the nest a
-            // real physical-shelter semantics. Up to this point the nest was
-            // only a marker zone; predators happily walked into it and
-            // killed protagonists, so survived was indistinguishable
-            // between "signal on" and "signal off". By setting
-            // nest_predator_damage_per_second high enough that any predator
-            // intruding the nest dies in ~1s, we encode the rule
-            // "predators can't follow you home". With the controlled
-            // emitter parked next to the nest, the listener that follows
-            // the signal hides behind this rule and survives; without the
-            // signal it has no nest-direction cue and gets caught in the
-            // open. v8 hydration_decay is unchanged so the listener still
-            // has to leave the nest periodically (no shelter-camping
-            // exploit).
-            route.base.nest_predator_damage_per_second = 60.0f;
+            // Phase 3 (2026-05-22, B-stage L1): the magical
+            // nest_predator_damage_per_second hack has been removed and
+            // replaced by emergent shelter physics. Shelter now lives in
+            // WorksiteLayer::enforcePredatorObstacles: completed worksites
+            // act as collidable walls that predators cannot pass through.
+            // For this task to read non-zero survived deltas, the
+            // protagonist must learn to build worksites *before* the
+            // predator wave arrives (proactive shelter building). v8 has
+            // never been trained on that objective, so baseline survived
+            // here is expected to regress to disabled levels until a v9
+            // retrain teaches the proactive-build behaviour.
             route.background.forager_count = 0;
             route.background.predator_count = 12;  // 3 -> 12 (dense roaming)
             route.protagonist.predator_warn_enabled = false;
