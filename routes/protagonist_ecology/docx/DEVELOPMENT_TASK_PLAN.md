@@ -42,8 +42,16 @@
 - [x] 实现 `scout-worker` 最小任务（Step 2：`MemoryAblationTaskKind::CommScoutWorker`，emitter 配 food drop，reward profile：food=6 + communication=8 + signal_response_dense=0.8 + halo=1.0，primary metric=`signal_responder_count`）
 - [x] 实现 `danger warning` 最小任务（Step 3：`MemoryAblationTaskKind::CommDangerWarning`，反向 dense reward = -0.6 训"逃"，3 predator pack 隐藏 + predator_warn_enabled=false，primary metric=`survived`）
 - [x] 实现 `build request` 最小任务（Step 4：`MemoryAblationTaskKind::CommBuildRequest`，emitter 在 worksite 位置(offset=0)，worksite.direction_requires_visibility=true 强制只能靠信号定位 worksite，primary metric=`worksite_completion_events`）
-- [ ] 用 trace + ablation 证明至少一条通信任务满足"关闭信号后明显下降"（**未跑分**：S1-S4 代码就位且 128/128 tests PASS，等待 user 决策启动实验 run）
-- [x] 为 communication 线写单独结果说明（Step 5：`supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md` 骨架已建，三任务 ablation 跑分表格目前是 TODO 占位符，等实验数据填）
+- [x] 用 trace + ablation 证明至少一条通信任务满足"关闭信号后明显下降"（**2026-05-22 v8 实验完成**：`comm_scout_worker` 在 baseline → signal_disabled 下 `avg_fitness` 58.3 → 9.95 (▼83%)、`signal_responder_count` 1.5 → 0 (▼100%)。详见 `supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md § 3`）
+- [x] 为 communication 线写单独结果说明（Step 5：`supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md` v8 数据已填）
+
+### A3.P2 · Communication task 设计修复（partial / Phase 2）
+
+> 这一节是 A3 跑分发现的两个 task 设计缺陷，留待 Phase 2 修复。当前 A3 主线已经收口（scout-worker 强证据），这两个不阻塞 A3 整体完成。
+
+- [ ] `comm_danger_warning` task pressure 不足：3 predator 在 200s episode 内根本没杀到 protagonist，`survived` 全是 8/8，primary metric 失效。修法见 `supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md § 4.2`（predator_pack 3→6、spawn 距离 18m→8m、`signal_response_dense_reward` 改正向）
+- [ ] `comm_build_request` worksite logistics 链断：listener 真心跟信号 (5.25/8 responder)，但 `worksite_completion_events = 0`，因为 v8 不会 chop tree→carry→deposit。修法见 § 5.2（listener 入场自带 stick / 把 `required_sticks` 降到 1 / emitter 改成靠近 listener 才 emit）
+- [ ] MI 离线分析（trace 启用后）：当前 `memory_ablation.trace_enabled = false`，`scripts/protagonist_communication_mi.py` 还不能跑。补一次开启 trace 的 sweep 后再算 MI 矩阵
 
 ---
 

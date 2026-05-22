@@ -1,0 +1,280 @@
+# protagonist_ecology_train_a3.toml
+#
+# A3-aware retrain of v7 (`protagonist_ecology_train_camp_signal.toml`),
+# 120 generations. Differences from v7:
+#   - random_seed 91 -> 137 (independent rollout)
+#   - generations 60 -> 120 (more NEAT exploration time for signal semantics)
+#   - controlled emitter period 30s -> 15s (twice as many pulses per episode)
+#   - controlled emitter food_count 2 -> 3, food_amount 12 -> 18 (stronger
+#     reinforcement when listener actually walks to the pulse)
+#   - controlled emitter offset_jitter 10 -> 16 (wider position
+#     distribution, forces generalisation across emitter locations -
+#     matches the comm_scout_worker eval task that randomises emitter
+#     position every episode)
+#   - signal_response_dense_reward 1.0 -> 1.5 (stronger listener-side
+#     gradient toward whichever emitter is active)
+#   - signal_co_attendance_reward 1.5 -> 2.0
+#   - signal_emit_companion_radius 30 -> 36 (matches comm_scout_worker
+#     eval halo at 22m offset + jitter 6m + reach margin)
+# Output: data/runs/protagonist_train_a3/
+#
+# First applied 2026-05-22 for A3 communication-semantics ablation eval;
+# produced "v8" genome at peak best_fitness=229k (gen 39) vs v7 ~140k.
+# Evidence + ablation drop tables: routes/protagonist_ecology/docx/supporting/
+# COMMUNICATION_SEMANTICS_EVIDENCE.md.
+
+[runtime]
+random_seed = 137
+log_level = "info"
+preview_ticks = 1
+world_role = "train"
+scenario_name = "a3_train_v8"
+
+[output]
+runs_dir = "data/runs/protagonist_train_a3"
+
+[world]
+size = [200.0, 200.0]
+
+[world.resources]
+count = 84
+amount = 18.0
+respawn_ticks = 14
+dynamic = true
+regen_rate = 0.20
+terrain_adjustment_enabled = true
+
+[world.terrain]
+enabled = true
+height_scale = 30.0
+slope_resistance = 0.38
+cave_density = 0.04
+cave_shelter_factor = 0.50
+min_velocity_factor = 0.18
+seed = 137
+grid_resolution = 128
+perlin_frequency = 3.8
+perlin_persistence = 0.48
+perlin_octaves = 4
+
+[world.signal]
+enabled = true
+channels = 2
+grid_resolution = 64
+decay_rate = 0.05
+diffusion_rate = 0.08
+controlled_emitter_enabled = true
+# Pulse twice as often as v7 (15s vs 30s) so each 1400-tick episode contains
+# ~9 pulses instead of ~4. Doubles the per-episode listener-side gradient.
+controlled_emitter_period_seconds = 15.0
+controlled_emitter_offset_radius = 28.0
+# Wider jitter so emitter ends up in many different places across
+# episodes - forces generalisation, matches the comm_scout_worker eval
+# task's randomised emitter position.
+controlled_emitter_offset_jitter = 16.0
+controlled_emitter_randomize_position = true
+# Stronger food reward at each pulse to reinforce "walk to signal -> eat".
+controlled_emitter_food_radius = 6.0
+controlled_emitter_food_count = 3
+controlled_emitter_food_amount = 18.0
+
+[world.objects]
+enabled = true
+count = 52
+damping = 0.9
+
+[world.base]
+enabled = true
+center_x = 60.0
+center_y = 100.0
+radius = 18.0
+stockpile_radius = 12.0
+nest_radius = 10.0
+stockpile_offset = 14.0
+nest_offset = -12.0
+
+[world.nursery]
+enabled = true
+deposit_energy_bonus = 8.0
+deposit_fitness_bonus = 3.0
+stockpile_snap_radius = 6.0
+
+[world.nursery_supply]
+enabled = true
+min_nearby_sticks = 8
+replenish_batch = 4
+near_radius = 16.0
+spawn_radius = 10.0
+cooldown_ticks = 22
+
+[world.campfire]
+enabled = true
+count = 2
+spawn_radius = 16.0
+warmth_radius = 11.0
+danger_radius = 3.5
+warmth_energy_bonus = 0.05
+danger_damage = 0.40
+
+[world.water]
+enabled = true
+source_count = 2
+spawn_radius_min = 18.0
+spawn_radius_max = 36.0
+source_radius = 5.0
+drink_radius = 3.5
+drink_rate = 26.0
+
+[world.survival]
+enabled = true
+max_health = 100.0
+max_hydration = 100.0
+initial_health_ratio = 1.0
+initial_hydration_ratio = 0.68
+hydration_decay_per_tick = 0.060
+dehydration_threshold_ratio = 0.32
+dehydration_damage_per_tick = 0.14
+fire_health_damage_per_tick = 0.40
+warmth_recovery_per_tick = 0.06
+nest_recovery_per_tick = 0.10
+injured_threshold_ratio = 0.45
+
+[world.tree]
+enabled = true
+count = 14
+spawn_radius_min = 16.0
+spawn_radius_max = 38.0
+trunk_radius = 2.5
+max_integrity = 16.0
+wood_yield = 3
+regrow_ticks = 220
+
+[world.worksite]
+enabled = true
+count = 2
+spawn_radius = 12.0
+interaction_radius = 10.0
+required_sticks = 4
+required_stones = 1
+assembly_rate = 0.20
+shelter_energy_bonus = 0.03
+
+[world.intervention]
+enabled = true
+initial_budget = 1.3
+max_budget = 2.6
+recharge_per_tick = 0.020
+stress_decay_per_tick = 0.01
+max_stress = 0.80
+cooldown_ticks = 20
+
+[world.progression]
+enabled = true
+first_fire_stick_threshold = 4
+worksite_unlock_deposit_threshold = 8
+worksite_unlock_stone_threshold = 1
+stone_unlock_deposit_threshold = 6
+heavy_unlock_deposit_threshold = 16
+second_fire_deposit_threshold = 20
+heavy_unlock_stone_threshold = 2
+second_fire_stone_threshold = 3
+stone_unlock_count = 10
+heavy_unlock_count = 4
+unlock_radius_min = 24.0
+unlock_radius_max = 42.0
+event_min_interval_ticks = 20
+event_max_interval_ticks = 80
+
+[population.protagonist]
+count = 24
+hidden_dim = 512
+memory_cells = 48
+action_dim = 13
+
+[population.background]
+hidden_dim = 32
+
+[[population.background.species]]
+archetype = "large_herbivore"
+count = 24
+
+[[population.background.species]]
+archetype = "small_forager"
+count = 18
+
+[[population.background.species]]
+archetype = "apex_predator"
+count = 3
+
+[[population.background.species]]
+archetype = "pack_hunter"
+count = 10
+
+[[population.background.species]]
+archetype = "ambush_predator"
+count = 6
+
+[[population.background.species]]
+archetype = "scavenger"
+count = 10
+
+[[population.background.species]]
+archetype = "omnivore"
+count = 18
+
+[evolution]
+generations = 120
+episode_ticks = 1400
+episodes_per_generation = 3
+checkpoint_every = 20
+
+[evolution.neat]
+add_node_rate = 0.04
+add_connection_rate = 0.10
+toggle_connection_rate = 0.02
+add_modulatory_rate = 0.005
+compatibility_threshold = 3.0
+
+[evolution.selection]
+elite_ratio = 0.15
+tournament_size = 4
+
+[evolution.mutation]
+weight_perturb_rate = 0.80
+weight_reset_rate = 0.05
+weight_perturb_sigma = 0.40
+
+[reward]
+survival_weight = 1.0
+food_weight = 10.0
+intrinsic_weight = 4.0
+combat_weight = 1.0
+cooperation_weight = 6.0
+communication_weight = 6.0
+worksite_proximity_reward = 0.06
+worksite_completion_reward = 80.0
+social_proximity_reward = 0.012
+social_proximity_radius = 6.5
+signal_emit_reward = 0.10
+# 30 -> 36 so the listener-side dense gradient covers comm_scout_worker eval's
+# 22m offset + 6m jitter even on the far side of the jitter range.
+signal_emit_companion_radius = 36.0
+# 1.5 -> 2.0 so showing up at the emitter halo is more attractive than just
+# wandering near food.
+signal_co_attendance_reward = 2.0
+# 12m halo, unchanged from v6/v7. Matches all comm_* eval tasks' response halo.
+signal_co_attendance_radius = 12.0
+signal_co_attendance_window_seconds = 15.0
+signal_response_reward = 1.5
+# 1.0 -> 1.5: stronger dense gradient toward whichever emitter is active.
+# The listener-side learning bottleneck identified in audit § 8 is that
+# dense gradient was the only signal during the silent-window. Bumping it
+# 1.5x gives NEAT a louder gradient to follow.
+signal_response_dense_reward = 1.5
+joint_hunt_reward = 10.0
+joint_hunt_radius = 10.0
+
+[combat]
+attack_reward = 1.5
+kill_bonus = 8.0
+death_penalty = 4.0

@@ -198,7 +198,11 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.base.radius = 12.0f;
             route.base.stockpile_radius = 8.0f;
             route.base.nest_radius = 4.0f;
-            route.background.forager_count = 0;
+            // Keep at least one background agent so AgentSocialPerception stays
+            // in the sensory dim and the loaded protagonist genome's input
+            // shape matches the base ablation config. forager_count=1 is the
+            // same convention the other 4 ablation tasks use.
+            route.background.forager_count = 1;
             route.background.predator_count = 0;
             route.resources.count = 0;
             route.water.source_count = 1;
@@ -268,7 +272,9 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.world_role = "eval";
             route.world_size = Vec2{120.0f, 120.0f};
             route.base.center = Vec2{44.0f, 60.0f};
-            route.background.forager_count = 0;
+            // Keep at least one background agent so AgentSocialPerception stays
+            // in the sensory dim (see CommScoutWorker comment above).
+            route.background.forager_count = 1;
             route.background.predator_count = 0;
             route.protagonist.hunt_enabled = false;
             route.protagonist.goal_action_assist_enabled = true;

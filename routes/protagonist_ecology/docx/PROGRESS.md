@@ -11,9 +11,9 @@
 | 项 | 值 |
 |---|---|
 | 最后更新 | 2026-05-22 |
-| 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；A2 (CreditLedger) + A3 (Communication semantics) 代码就位 128 PASS，但 **A3 跑分实验未启动** |
-| 当前项目优先级 | A1-A3 三条主线代码已全部落地（A1 audit-driven fix + A2 CreditLedger + A3 通信基础设施 + 3 个 micro-task）。下一步：(a) 启动 A3 ablation 实验跑分填 `COMMUNICATION_SEMANTICS_EVIDENCE.md`；或 (b) 进入 B 鲜明物种生态角色；或 (c) 把 A2.3 fairness 暴露到 results.csv 收尾。优先级以 user 决策为准。 |
-| 最新用户新增问题 | 用户要求 "看看相关文档补充上下文，规划 a3 + 开工"——已完成 S1-S5：S1 `CommunicationMetrics` 基础设施（9 个 gtest）+ 4 个 ablation 开关（disabled/listener_blind/one_channel_only/noise）+ MI 离线脚本 → S2/S3/S4 三个 micro-task kinds (`CommScoutWorker / CommDangerWarning / CommBuildRequest`) + 各自 reward profile + primary metric 配置 → S5 结果文档 `COMMUNICATION_SEMANTICS_EVIDENCE.md` 骨架。128/128 tests PASS（118 旧 + 10 新）。**跑分实验未启动** — 数据表格目前是 TODO 占位符。 |
+| 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；A2 (CreditLedger) + A3 (Communication semantics) 代码 + **A3 v8 retrain + 5×7 ablation sweep 已完成**：`comm_scout_worker` 在 baseline → signal_disabled 下 `avg_fitness` 58.3 → 9.95 (▼83%)、`signal_responder_count` 1.5 → 0 (▼100%)，**A3 主线"关掉信号必须明显下降"判定成立**。`comm_danger_warning` / `comm_build_request` 信号链路通了但主指标失效（已 partial 记录） |
+| 当前项目优先级 | A3 主线已收口（强证据落地）。下一步候选：(a) 修 `comm_danger_warning` + `comm_build_request` 两个 task 的设计缺陷（predator pressure 不足 + worksite logistics 链断），跑第二轮 A3 sweep；或 (b) 进入 B 鲜明物种生态角色；或 (c) 把 A2.3 fairness 暴露到 results.csv 收尾。优先级以 user 决策为准。 |
+| 最新用户新增问题 | 用户要求 "跑a3实验看看效果"——发现旧 exe 不带 A3 代码 + `CommScoutWorker / CommBuildRequest` 把 background_count 设 0 导致 protagonist sensory dim 缩水拒绝加载 genome。修：MemoryAblationEval.cpp 给两个 task 留 forager_count=1；rebuild build_vs3131；用户决定"重训 v8 + 新写 A3-aware train config + 120 代"。**v8 训练**：seed=137、120 gen、controlled emitter 周期 15s（× 2 密度）、food_count=3 × amount=18、jitter=16m、signal_response_dense_reward=1.5、训练 12 min、best=229k（gen 39，v7 同期 140k）。**v8 评估**：5 个 signal ablation × 7 task × 5 memory variant = 175 行 results。**关键结论**：`comm_scout_worker` 强证据成立（fitness ▼83%、responders ▼100%）；`comm_danger_warning` survived 始终 8/8 (task pressure 不足) + reward 方向矛盾；`comm_build_request` worksite_completion=0 (logistics 链断)。`one_channel_only` 在所有 task 无差异（2 通道未差异化使用）。完整数据 + 修复方向见 `supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md`。 |
 | 最新本体论决议 | 用户提出"如果出问题要回流训练，活体是不是会集体消失？"——已固化为 `supporting/PRODUCTION_WORLD_LIFECYCLE_SPEC.md`。核心三句话：主世界永不 reset / 训练永远在别处做 / 新血脉只能通过出生或迁徙进入主世界。这份 spec 是 R-002 / R-006 / R-007 / 3D viewer 四条线的共同地基。 |
 
 ---
