@@ -113,6 +113,17 @@ struct TrainingParams {
     // ablation-tuned signal_response task and the camp+signal training
     // config opt in explicitly.
     float signal_response_dense_reward{0.0f};
+    // A2.signal credit ledger (audit § 8 follow-up). When a controlled
+    // emitter fires, listeners that enter the halo accumulate dwell time
+    // until the response window closes. At settlement we publish
+    // CreditAssigned{kind=2} for each listener with their dwell-share and
+    // optionally pay out share * signal_response_share_reward as a
+    // cooperative bonus. Default 0 so existing training distributions are
+    // unaffected; turn on per-task to align dense halo dwell with explicit
+    // contribution-share fitness. The CreditAssigned event is always
+    // published regardless of share_reward magnitude (it carries lineage,
+    // not just reward).
+    float signal_response_share_reward{0.0f};
     float joint_hunt_reward{8.0f};
     float joint_hunt_radius{10.0f};
     std::size_t checkpoint_every{0};
@@ -374,6 +385,7 @@ TrainingParams loadTrainingParams(const config::Config& config) {
                                                                       config.getOr<double>("reward.signal_co_attendance_window", params.signal_co_attendance_window_seconds));
     params.signal_response_reward = config.getOr<float>("reward.signal_response_reward", params.signal_response_reward);
     params.signal_response_dense_reward = config.getOr<float>("reward.signal_response_dense_reward", params.signal_response_dense_reward);
+    params.signal_response_share_reward = config.getOr<float>("reward.signal_response_share_reward", params.signal_response_share_reward);
     params.joint_hunt_reward = config.getOr<float>("reward.joint_hunt_reward", params.joint_hunt_reward);
     params.joint_hunt_radius = config.getOr<float>("reward.joint_hunt_radius", params.joint_hunt_radius);
     params.checkpoint_every = config.getOr<std::size_t>("evolution.checkpoint_every", params.checkpoint_every);
@@ -1207,6 +1219,25 @@ void evaluatePopulation(World2D& world,
     // distribute joint_hunt_reward by damage share, so a bystander who
     // happened to be near the kill but contributed no damage gets zero.
     std::unordered_map<AgentId, std::unordered_map<AgentId, float>> hunt_damage_ledger;
+    // A2.signal credit ledger (audit § 8 follow-up). Mirrors hunt_damage_ledger
+    // structurally but indexed by emit_tick (emit event uniqueness key within
+    // an episode). Each entry tracks listener dwell time inside the response
+    // halo. Settlement happens when current_world_time > emit_time + window:
+    // we compute dwell-share per listener, publish CreditAssigned{kind=2,
+    // source_id=emit_tick}, and push share*signal_response_share_reward into
+    // `pending_signal_share_credit` so the next protagonist loop iter can
+    // claim it (avoids needing Agent* lookup mid-settlement). Episode-end
+    // settles any remaining entries to prevent dropped credit.
+    struct SignalLedgerEntry {
+        AgentId emitter_id{0};
+        Vec2 emit_pos{};
+        SimTimeSeconds emit_time{0.0};
+        Tick emit_tick{0};
+        std::unordered_map<AgentId, float> response_seconds;
+        bool settled{false};
+    };
+    std::unordered_map<Tick, SignalLedgerEntry> signal_response_ledger;
+    std::unordered_map<AgentId, double> pending_signal_share_credit;
     std::vector<AgentId> tick_deaths;
     tick_deaths.reserve(8);
     std::unordered_map<AgentId, float> previous_damage;
@@ -1248,6 +1279,17 @@ void evaluatePopulation(World2D& world,
             last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), payload.pos, event.tick()};
             tick_emits.push_back(payload);
             ++debug_subscriber_invokes;
+            // A2.signal credit ledger: open a new ledger entry for each
+            // emit so we can collect listener dwell time and settle later.
+            // Key by emit_tick (unique within an episode given dt ~ 0.1s).
+            // Same key collision = same emitter same tick = duplicate event
+            // (won't happen in normal flow), the second write overwrites.
+            auto& entry = signal_response_ledger[event.tick()];
+            entry.emitter_id = payload.id;
+            entry.emit_pos = payload.pos;
+            entry.emit_time = event.timeSeconds();
+            entry.emit_tick = event.tick();
+            entry.settled = false;
         }) : 0u;
 
     auto subscribe_attacked = world.eventBus().subscribe(
@@ -1380,6 +1422,16 @@ void evaluatePopulation(World2D& world,
             }
 
             double reward = 0.0;
+            // A2.signal credit ledger: claim any deferred signal-share credit
+            // from prior ticks' settlements. Settlement happens in the
+            // post-protagonist-loop block below, but the share_reward applies
+            // to this listener on whichever tick it next runs alive. Cleared
+            // after claim so a single settle pays out exactly once.
+            if (auto pend_it = pending_signal_share_credit.find(agent->id());
+                pend_it != pending_signal_share_credit.end()) {
+                reward += pend_it->second;
+                pending_signal_share_credit.erase(pend_it);
+            }
             const bool alive_now = concrete->alive();
             if (alive_now) {
                 any_alive = true;
@@ -1866,6 +1918,19 @@ void evaluatePopulation(World2D& world,
                                 ++debug_listener_dense_only;  // DEBUG (audit § 7)
                                 continue;
                             }
+                            // A2.signal credit ledger: listener is inside the
+                            // halo this tick, accumulate dwell time for the
+                            // share calculation at settlement. We accumulate
+                            // even after `halo_credited_this_tick` triggers,
+                            // because dwell-share is per (emitter, emit_tick)
+                            // not per (listener, tick). Look up the ledger
+                            // entry by emit.tick; if absent (would only happen
+                            // if the subscribe handler never wrote it, which
+                            // shouldn't occur), skip silently.
+                            if (auto ledger_it = signal_response_ledger.find(emit.tick);
+                                ledger_it != signal_response_ledger.end() && !ledger_it->second.settled) {
+                                ledger_it->second.response_seconds[agent->id()] += static_cast<float>(dt_seconds);
+                            }
                             if (halo_credited_this_tick) {
                                 continue;
                             }
@@ -2212,6 +2277,52 @@ void evaluatePopulation(World2D& world,
             }
         }
 
+        // A2.signal credit ledger: settle any emit whose response window has
+        // fully closed (current_world_time > emit_time + window). We walk
+        // the ledger, compute total dwell time, then per-listener share, and
+        // publish CreditAssigned{kind=2}. share_reward is pushed into the
+        // deferred map so the listener's next protagonist-loop iter claims
+        // it. Event is published unconditionally (lineage carries even when
+        // share_reward = 0). Removed from ledger after settle to bound size.
+        {
+            const SimTimeSeconds now_time = world.currentTimeSeconds();
+            const SimTimeSeconds window = params.signal_co_attendance_window_seconds;
+            for (auto it = signal_response_ledger.begin(); it != signal_response_ledger.end(); ) {
+                auto& entry = it->second;
+                if (entry.settled || now_time <= entry.emit_time + window) {
+                    ++it;
+                    continue;
+                }
+                float total_seconds = 0.0f;
+                for (const auto& [_, secs] : entry.response_seconds) {
+                    total_seconds += secs;
+                }
+                if (total_seconds > 1.0e-6f) {
+                    for (const auto& [listener_id, secs] : entry.response_seconds) {
+                        const float share = secs / total_seconds;
+                        const double share_reward = params.cooperation_weight
+                                                  * static_cast<double>(params.signal_response_share_reward)
+                                                  * static_cast<double>(share);
+                        world.eventBus().publish(events::Event{
+                            events::EventType::CreditAssigned,
+                            events::CreditAssigned{
+                                listener_id,
+                                /*source_kind=*/2u,  // 2 = signal_response
+                                static_cast<std::uint64_t>(entry.emit_tick),
+                                share,
+                                static_cast<float>(share_reward)},
+                            world.currentTick(),
+                            world.currentTimeSeconds()});
+                        if (share_reward != 0.0) {
+                            pending_signal_share_credit[listener_id] += share_reward;
+                        }
+                    }
+                }
+                entry.settled = true;
+                it = signal_response_ledger.erase(it);
+            }
+        }
+
         if (trace_recorder != nullptr) {
             trace_recorder->recordTick(world);
         }
@@ -2219,6 +2330,41 @@ void evaluatePopulation(World2D& world,
         if (!any_alive) {
             break;
         }
+    }
+
+    // A2.signal credit ledger: episode-end settle for any entries whose
+    // window hadn't closed by the time the main loop exited (e.g. agents
+    // all died before window expiry, or episode ended within 15s of last
+    // emit). Same logic as in-loop settle, but unconditional on emit_time.
+    // No pending credit map push because protagonists won't get another
+    // loop iteration this episode; we just publish the lineage event.
+    {
+        for (auto& [emit_tick, entry] : signal_response_ledger) {
+            if (entry.settled) continue;
+            float total_seconds = 0.0f;
+            for (const auto& [_, secs] : entry.response_seconds) {
+                total_seconds += secs;
+            }
+            if (total_seconds <= 1.0e-6f) continue;
+            for (const auto& [listener_id, secs] : entry.response_seconds) {
+                const float share = secs / total_seconds;
+                const double share_reward = params.cooperation_weight
+                                          * static_cast<double>(params.signal_response_share_reward)
+                                          * static_cast<double>(share);
+                world.eventBus().publish(events::Event{
+                    events::EventType::CreditAssigned,
+                    events::CreditAssigned{
+                        listener_id,
+                        /*source_kind=*/2u,
+                        static_cast<std::uint64_t>(entry.emit_tick),
+                        share,
+                        static_cast<float>(share_reward)},
+                    world.currentTick(),
+                    world.currentTimeSeconds()});
+            }
+            entry.settled = true;
+        }
+        signal_response_ledger.clear();
     }
 
     if (signal_layer != nullptr && subscribe_signals != 0) {

@@ -89,11 +89,16 @@ struct BuildStarted       { AgentId builder; std::size_t worksite_id; Vec2 site_
 struct BuildCompleted     { std::size_t worksite_id; Vec2 site_pos; std::vector<AgentId> contributors; std::vector<float> contribution_seconds; double started_at_seconds; double duration_seconds; };
 struct WorksiteMaterialDeposited { AgentId depositor; std::size_t worksite_id; std::uint8_t material_type; double time_seconds; };
 // CreditAssigned: emitted whenever the ContributionLedger pays out a share
-// of a cooperative reward (Stage 2). source_kind = 0 -> worksite_build,
-// 1 -> hunt_kill. source_id is the worksite id (for build) or victim id
-// (for hunt). share is the agent's fraction of the legitimate contributors'
-// total contribution. reward is the actual fitness delta in protagonist
-// units (already weighted by cooperation_weight). Lets trace analyzers
+// of a cooperative reward (Stage 2 + A2.signal). source_kind:
+//   0 -> worksite_build (source_id = worksite_id, share = time-share among
+//        legitimate builders)
+//   1 -> hunt_kill (source_id = victim_id, share = damage-share among
+//        attackers above 1% threshold)
+//   2 -> signal_response (source_id = emit_tick, share = dwell-time-share
+//        among listeners that entered the halo within the response window)
+// share is the agent's fraction of the legitimate contributors' total
+// contribution. reward is the actual fitness delta in protagonist units
+// (already weighted by cooperation_weight). Lets trace analyzers
 // reconstruct who got credited for what without re-running the simulation.
 struct CreditAssigned     { AgentId recipient; std::uint8_t source_kind; std::uint64_t source_id; float share; float reward; };
 
