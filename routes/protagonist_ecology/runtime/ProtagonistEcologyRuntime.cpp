@@ -700,6 +700,80 @@ void applyMemoryAblationVariant(TrainingParams& params, const MemoryAblationVari
     params.goal_manager_enabled = variant.goal_manager_enabled;
 }
 
+// L2.4 v2 (SPECIES_DIFFERENTIATION_SPEC.md § 4 autocurriculum). Pick
+// a TaskTemplate from `templates` weighted by `weight`, deterministic
+// in the (generation, episode) pair so that re-running the same
+// seed produces the same template assignment. Returns nullptr if the
+// template list is empty.
+const TaskTemplate* selectTaskTemplate(const std::vector<TaskTemplate>& templates,
+                                       std::size_t generation,
+                                       std::size_t episode,
+                                       std::uint32_t base_seed) {
+    if (templates.empty()) return nullptr;
+    float total_weight = 0.0f;
+    for (const auto& t : templates) total_weight += std::max(0.0f, t.weight);
+    if (total_weight <= 0.0f) return &templates.front();
+    std::mt19937 rng(base_seed
+                     + static_cast<std::uint32_t>(generation * 1009u)
+                     + static_cast<std::uint32_t>(episode * 31u));
+    std::uniform_real_distribution<float> u(0.0f, total_weight);
+    const float r = u(rng);
+    float acc = 0.0f;
+    for (const auto& t : templates) {
+        acc += std::max(0.0f, t.weight);
+        if (r <= acc) return &t;
+    }
+    return &templates.back();
+}
+
+// Apply a TaskTemplate's overrides on top of a (per-episode-copy)
+// route + TrainingParams. Empty/has=false fields leave the route
+// untouched; explicit overrides win over base toml.
+void applyTaskTemplate(ProtagonistEcologyConfig& route,
+                       TrainingParams& params,
+                       const TaskTemplate& tpl) {
+    if (tpl.has_protagonist_count) {
+        route.protagonist.count = tpl.protagonist_count;
+    }
+    if (tpl.has_worksite_count) {
+        route.worksite.count = tpl.worksite_count;
+    }
+    if (tpl.has_tree_count) {
+        route.tree.count = tpl.tree_count;
+    }
+    if (tpl.has_worksite_preactivate) {
+        route.worksite.preactivate = tpl.worksite_preactivate;
+    }
+    // Background slot count overrides. We replace the existing slot's
+    // count if archetype matches; we don't add new slots (the toml
+    // base setup must declare the archetype's slot at least once).
+    for (const auto& ov : tpl.background_overrides) {
+        bool matched = false;
+        for (auto& slot : route.background.slots) {
+            if (slot.archetype == ov.archetype) {
+                slot.count = ov.count;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched && ov.count > 0) {
+            // Auto-add the slot if it doesn't exist.
+            SpeciesSlotConfig slot{};
+            slot.archetype = ov.archetype;
+            slot.count = ov.count;
+            route.background.slots.push_back(std::move(slot));
+        }
+    }
+    if (tpl.has_drive_weight) params.drive_weight = tpl.drive_weight;
+    if (tpl.has_outcome_weight) params.outcome_weight = tpl.outcome_weight;
+    if (tpl.has_worksite_completion_reward) {
+        params.worksite_completion_reward = tpl.worksite_completion_reward;
+    }
+    if (tpl.has_shelter_camp_reward) {
+        params.shelter_camp_reward = tpl.shelter_camp_reward;
+    }
+}
+
 void mergeBehaviorAccumulator(BehaviorAccumulator& dst, const BehaviorAccumulator& src) {
     dst.deposits_total += src.deposits_total;
     dst.deposits_stick += src.deposits_stick;
@@ -3586,6 +3660,17 @@ int ProtagonistEcologyRuntime::runTraining() {
                 generation_route.random_seed = route.random_seed
                     + static_cast<std::uint32_t>(generation * 9973 + 17)
                     + static_cast<std::uint32_t>(episode * 131);
+                // L2.4 v2: per-episode task template selection. When
+                // [[evolution.task_templates]] is non-empty in the toml,
+                // each episode picks one (weighted) and applies its
+                // overrides to a copy of route + params.
+                TrainingParams episode_params = params;
+                if (const auto* tpl = selectTaskTemplate(route.task_templates,
+                                                        generation,
+                                                        episode,
+                                                        route.random_seed)) {
+                    applyTaskTemplate(generation_route, episode_params, *tpl);
+                }
                 auto world = createBootstrapWorld(generation_route);
                 std::unique_ptr<ProtagonistBatchedDenseRunner> episode_runner;
                 if (generation_route.compute.protagonist_batched_dense_enabled) {
@@ -3626,7 +3711,7 @@ int ProtagonistEcologyRuntime::runTraining() {
                 }
 
                 EpisodeResult& result = episode_results[episode];
-                evaluatePopulation(*world, generation_route, params, population, background_view, result.behavior, stop_requested_, trace_recorder.get());
+                evaluatePopulation(*world, generation_route, episode_params, population, background_view, result.behavior, stop_requested_, trace_recorder.get());
                 accumulateGenomeFitness(*world, population, result.fitness_sum);
                 for (std::size_t i = 0; i < background_view.size(); ++i) {
                     if (background_view[i].population != nullptr) {

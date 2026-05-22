@@ -340,6 +340,77 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
         }
     }
 
+    // L2.4 v2 task templates: parse [[evolution.task_templates]] array.
+    if (auto tt_view = config.raw().at_path("evolution.task_templates"); tt_view && tt_view.is_array()) {
+        if (const auto* arr = tt_view.as_array()) {
+            for (const auto& element : *arr) {
+                const auto* tt = element.as_table();
+                if (tt == nullptr) continue;
+                TaskTemplate tpl{};
+                if (const auto& name = (*tt)["name"]; name.is_string()) {
+                    tpl.name = name.value<std::string>().value_or("unnamed");
+                }
+                if (const auto& w = (*tt)["weight"]; w.is_number()) {
+                    tpl.weight = static_cast<float>(w.value<double>().value_or(1.0));
+                }
+                if (const auto& v = (*tt)["protagonist_count"]; v.is_integer()) {
+                    tpl.protagonist_count = static_cast<std::size_t>(v.value<std::int64_t>().value_or(0));
+                    tpl.has_protagonist_count = true;
+                }
+                if (const auto& v = (*tt)["worksite_count"]; v.is_integer()) {
+                    tpl.worksite_count = static_cast<std::size_t>(v.value<std::int64_t>().value_or(0));
+                    tpl.has_worksite_count = true;
+                }
+                if (const auto& v = (*tt)["tree_count"]; v.is_integer()) {
+                    tpl.tree_count = static_cast<std::size_t>(v.value<std::int64_t>().value_or(0));
+                    tpl.has_tree_count = true;
+                }
+                if (const auto& v = (*tt)["drive_weight"]; v.is_number()) {
+                    tpl.drive_weight = v.value<double>().value_or(0.0);
+                    tpl.has_drive_weight = true;
+                }
+                if (const auto& v = (*tt)["outcome_weight"]; v.is_number()) {
+                    tpl.outcome_weight = v.value<double>().value_or(1.0);
+                    tpl.has_outcome_weight = true;
+                }
+                if (const auto& v = (*tt)["worksite_completion_reward"]; v.is_number()) {
+                    tpl.worksite_completion_reward = static_cast<float>(v.value<double>().value_or(0.0));
+                    tpl.has_worksite_completion_reward = true;
+                }
+                if (const auto& v = (*tt)["shelter_camp_reward"]; v.is_number()) {
+                    tpl.shelter_camp_reward = static_cast<float>(v.value<double>().value_or(0.0));
+                    tpl.has_shelter_camp_reward = true;
+                }
+                if (const auto& v = (*tt)["worksite_preactivate"]; v.is_boolean()) {
+                    tpl.worksite_preactivate = v.value<bool>().value_or(false);
+                    tpl.has_worksite_preactivate = true;
+                }
+                // background_overrides is itself an array of {archetype, count} tables.
+                if (const auto& bg = (*tt)["background"]; bg.is_array()) {
+                    if (const auto* bg_arr = bg.as_array()) {
+                        for (const auto& bg_el : *bg_arr) {
+                            const auto* bg_tab = bg_el.as_table();
+                            if (bg_tab == nullptr) continue;
+                            TaskTemplateOverride ov{};
+                            if (const auto& a = (*bg_tab)["archetype"]; a.is_string()) {
+                                ov.archetype = a.value<std::string>().value_or("");
+                            }
+                            if (const auto& c = (*bg_tab)["count"]; c.is_integer()) {
+                                ov.count = static_cast<std::size_t>(c.value<std::int64_t>().value_or(0));
+                            }
+                            if (!ov.archetype.empty()) {
+                                tpl.background_overrides.push_back(std::move(ov));
+                            }
+                        }
+                    }
+                }
+                if (tpl.weight > 0.0f) {
+                    out.task_templates.push_back(std::move(tpl));
+                }
+            }
+        }
+    }
+
     return out;
 }
 

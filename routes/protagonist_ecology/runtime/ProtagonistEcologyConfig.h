@@ -281,6 +281,37 @@ struct SpeciesSlotConfig {
     std::size_t count{0};
 };
 
+// L2.4 v2 (SPECIES_DIFFERENTIATION_SPEC.md § 4 autocurriculum). A
+// per-episode "scenario" override. Each generation samples a template
+// (weighted) and applies its overrides on top of the base toml before
+// the episode bootstraps. ACCEL-style regret-based weighting (spec
+// § 4.1) is deferred to L2.5 - this v0 uses static weights only.
+struct TaskTemplateOverride {
+    std::string archetype;
+    std::size_t count{0};
+};
+struct TaskTemplate {
+    std::string name{"default"};
+    float weight{1.0f};
+    bool has_protagonist_count{false};
+    std::size_t protagonist_count{0};
+    bool has_worksite_count{false};
+    std::size_t worksite_count{0};
+    bool has_tree_count{false};
+    std::size_t tree_count{0};
+    std::vector<TaskTemplateOverride> background_overrides;  // archetype -> count
+    bool has_drive_weight{false};
+    double drive_weight{0.0};
+    bool has_outcome_weight{false};
+    double outcome_weight{1.0};
+    bool has_worksite_completion_reward{false};
+    float worksite_completion_reward{0.0f};
+    bool has_shelter_camp_reward{false};
+    float shelter_camp_reward{0.0f};
+    bool has_worksite_preactivate{false};
+    bool worksite_preactivate{false};
+};
+
 struct BackgroundBrainConfig {
     std::size_t forager_count{0};
     std::size_t predator_count{0};
@@ -317,6 +348,11 @@ struct ProtagonistEcologyConfig {
     MemoryTrialConfig memory_trial{};
     ProtagonistBrainConfig protagonist{};
     BackgroundBrainConfig background{};
+    // L2.4 v2: list of task templates for autocurriculum. When empty
+    // (default), the training loop uses the toml's base setup
+    // unchanged across all episodes. When non-empty, episodes draw
+    // from this list.
+    std::vector<TaskTemplate> task_templates{};
 
     bool isTrainRole() const;
     bool isEvalRole() const;
