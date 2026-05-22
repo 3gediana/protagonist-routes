@@ -1231,12 +1231,23 @@ void evaluatePopulation(World2D& world,
     std::unordered_map<AgentId, std::size_t> bg_previous_kills;
     std::unordered_set<AgentId> bg_alive_last_tick;
 
+    // DEBUG INSTRUMENTATION (audit § 7 - signal_response_events root cause probe)
+    std::size_t debug_emit_calls = 0;
+    std::size_t debug_subscriber_invokes = 0;
+    std::size_t debug_listener_skip_self = 0;
+    std::size_t debug_listener_skip_tick_zero = 0;
+    std::size_t debug_listener_skip_window = 0;
+    std::size_t debug_listener_dense_only = 0;
+    std::size_t debug_listener_in_halo = 0;
+    std::size_t debug_listener_already_credited = 0;
+    float debug_min_dist_to_emitter = std::numeric_limits<float>::infinity();
     auto subscribe_signals = signal_layer != nullptr ? world.eventBus().subscribe(
         events::EventType::AgentEmittedSignal,
         [&](const events::Event& event) {
             const auto& payload = event.payloadAs<events::AgentEmittedSignal>();
             last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), payload.pos, event.tick()};
             tick_emits.push_back(payload);
+            ++debug_subscriber_invokes;
         }) : 0u;
 
     auto subscribe_attacked = world.eventBus().subscribe(
@@ -1325,6 +1336,7 @@ void evaluatePopulation(World2D& world,
         tick_deaths.clear();
         while (controlled_signal_emitter && elapsed_seconds + 1.0e-9 >= next_controlled_signal_emit_seconds) {
             emitControlledSignal(world, *signal_layer, route, controlled_emitter_pos, resource_layer, controlled_emitter_rng);
+            ++debug_emit_calls;  // DEBUG (audit § 7)
             // Long silent gap (configured via controlled_emitter_period_seconds,
             // default 30s) forces listeners to remember the emitter's last
             // known position via SpatialMemory / EpisodicMemory: SignalPerception
@@ -1576,7 +1588,12 @@ void evaluatePopulation(World2D& world,
                         const float companion_r2 = params.signal_emit_companion_radius * params.signal_emit_companion_radius;
                         for (const auto& [emitter_id, emit] : last_signal_emit) {
                             if (emitter_id == agent->id()) continue;
-                            if (emit.tick == 0) continue;
+                            // Audit § 7 fix: removed the `emit.tick == 0` skip
+                            // because controlled emitter's first pulse fires at
+                            // elapsed=0 with world.currentTick()=0 — the very
+                            // emit we want listeners to react to. The map only
+                            // contains entries the subscribe handler wrote, so
+                            // any entry already corresponds to a real emit.
                             if (peer_now_time <= emit.time_seconds) continue;
                             if (peer_now_time - emit.time_seconds > params.signal_co_attendance_window_seconds) continue;
                             if (Vec2::distanceSquared(agent_pos, emit.position) <= companion_r2) {
@@ -1723,8 +1740,9 @@ void evaluatePopulation(World2D& world,
                         const SimTimeSeconds heard_window = params.signal_co_attendance_window_seconds;
                         for (const auto& [emitter_id, emit] : last_signal_emit) {
                             if (emitter_id == agent->id()) continue;
-                            if (emit.tick == 0
-                                || current_world_time <= emit.time_seconds
+                            // Audit § 7 fix: dropped emit.tick==0 sentinel skip;
+                            // the map entry alone proves a real emit happened.
+                            if (current_world_time <= emit.time_seconds
                                 || current_world_time - emit.time_seconds > heard_window) {
                                 continue;
                             }
@@ -1819,18 +1837,24 @@ void evaluatePopulation(World2D& world,
                         bool halo_credited_this_tick = false;
                         for (const auto& [emitter_id, emit] : last_signal_emit) {
                             if (emitter_id == agent->id()) {
+                                ++debug_listener_skip_self;  // DEBUG (audit § 7)
                                 continue;
                             }
-                            if (emit.tick == 0
-                                || now_time <= emit.time_seconds
+                            // Audit § 7 fix: dropped emit.tick==0 sentinel skip;
+                            // the map entry alone proves a real emit happened.
+                            if (now_time <= emit.time_seconds
                                 || now_time - emit.time_seconds > params.signal_co_attendance_window_seconds) {
+                                ++debug_listener_skip_window;  // DEBUG (audit § 7)
                                 continue;
                             }
                             const float dist_sq = Vec2::distanceSquared(agent_pos, emit.position);
+                            const float dist = std::sqrt(dist_sq);
+                            if (dist < debug_min_dist_to_emitter) {  // DEBUG (audit § 7)
+                                debug_min_dist_to_emitter = dist;
+                            }
 
                             if (params.signal_response_dense_reward != 0.0f
                                 && dist_sq <= dense_radius_sq) {
-                                const float dist = std::sqrt(dist_sq);
                                 const float strength = std::clamp(1.0f - dist / dense_radius, 0.0f, 1.0f);
                                 reward += params.communication_weight
                                         * static_cast<double>(params.signal_response_dense_reward)
@@ -1838,16 +1862,22 @@ void evaluatePopulation(World2D& world,
                                         * static_cast<double>(dt_seconds);
                             }
 
-                            if (halo_credited_this_tick || dist_sq > halo_r2) {
+                            if (dist_sq > halo_r2) {
+                                ++debug_listener_dense_only;  // DEBUG (audit § 7)
+                                continue;
+                            }
+                            if (halo_credited_this_tick) {
                                 continue;
                             }
 
                             auto& last_response_tick = last_signal_response_tick[agent->id()][emitter_id];
                             if (last_response_tick == emit.tick) {
+                                ++debug_listener_already_credited;  // DEBUG (audit § 7)
                                 continue;
                             }
                             last_response_tick = emit.tick;
                             ++behavior.signal_response_events;
+                            ++debug_listener_in_halo;  // DEBUG (audit § 7)
                             if (params.signal_response_reward != 0.0f) {
                                 reward += params.communication_weight * static_cast<double>(params.signal_response_reward);
                             }
@@ -2199,6 +2229,50 @@ void evaluatePopulation(World2D& world,
     }
     if (resource_layer != nullptr && subscribe_died != 0) {
         world.eventBus().unsubscribe(subscribe_died);
+    }
+
+    // DEBUG INSTRUMENTATION (audit § 7 - signal_response_events root cause probe)
+    // Append one row per evaluatePopulation call to data/runs/_signal_debug.csv.
+    // Header is written once when the file is empty / does not exist.
+    {
+        std::error_code ec;
+        std::filesystem::path debug_path = "data/runs/_signal_debug.csv";
+        std::filesystem::create_directories(debug_path.parent_path(), ec);
+        const bool need_header = !std::filesystem::exists(debug_path, ec)
+                                 || std::filesystem::file_size(debug_path, ec) == 0;
+        std::ofstream debug_csv(debug_path, std::ios::app);
+        if (debug_csv.is_open()) {
+            if (need_header) {
+                debug_csv << "scenario_name,emit_calls,subscriber_invokes,last_signal_emit_size,"
+                          << "listener_skip_self,listener_skip_tick_zero,listener_skip_window,"
+                          << "listener_dense_only,listener_in_halo,listener_already_credited,"
+                          << "min_dist_to_emitter,halo_radius,companion_radius,"
+                          << "first_emitter_x,first_emitter_y,signal_response_dense_reward,"
+                          << "signal_response_reward,episode_seconds\n";
+            }
+            const float min_dist_out = (debug_min_dist_to_emitter == std::numeric_limits<float>::infinity())
+                                       ? -1.0f : debug_min_dist_to_emitter;
+            const float emit_x = last_signal_emit.empty() ? -1.0f : last_signal_emit.begin()->second.position.x;
+            const float emit_y = last_signal_emit.empty() ? -1.0f : last_signal_emit.begin()->second.position.y;
+            debug_csv << route.scenario_name << ','
+                      << debug_emit_calls << ','
+                      << debug_subscriber_invokes << ','
+                      << last_signal_emit.size() << ','
+                      << debug_listener_skip_self << ','
+                      << debug_listener_skip_tick_zero << ','
+                      << debug_listener_skip_window << ','
+                      << debug_listener_dense_only << ','
+                      << debug_listener_in_halo << ','
+                      << debug_listener_already_credited << ','
+                      << min_dist_out << ','
+                      << params.signal_co_attendance_radius << ','
+                      << params.signal_emit_companion_radius << ','
+                      << emit_x << ','
+                      << emit_y << ','
+                      << params.signal_response_dense_reward << ','
+                      << params.signal_response_reward << ','
+                      << params.episode_duration_seconds << '\n';
+        }
     }
 
     behavior.signal_emits += static_cast<std::size_t>(std::count_if(

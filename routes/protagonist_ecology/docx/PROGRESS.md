@@ -13,7 +13,8 @@
 | 最后更新 | 2026-05-22 |
 | 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；底座侧已接通 continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层 / mixed compute，**但这些不等于长蓝图已经完成** |
 | 当前项目优先级 | 当前优先级已从“单点补 signal reward”上升为“按新执行文档统一收口主线”：先沿 `DEVELOPMENT_EXECUTION_GUIDE.md` / `DEVELOPMENT_TASK_PLAN.md` 收口 `Memory V2 -> ContributionLedger -> communication semantics`，确认 cognition-social 主链站稳后，再进入物种角色、生命周期、自动晋升闭环与 R-008 自长机制。 |
-| 最新用户新增问题 | 用户要求"按 audit 揭示的问题开始改 + 把记忆机制测试修完跑完"——已落地 audit § 4.1 cascade 解耦 / § 4.2 episodic readback specialise / § 4.4 (b)(d) peer_signal_heard + dense reward / A1.4 trace columns，连测 4 个新 perception unit test，5 轮重训 v3→v7 验证。cascade 解耦四轮独立 ✅；signal events 五轮均 0 ❌（根因 reward 全局比例失衡，见 audit § 7）。 |
+| 最新用户新增问题 | 用户要求"按 audit 揭示的问题开始改 + 把记忆机制测试修完跑完"——已落地 audit § 4.1 cascade 解耦 / § 4.2 episodic readback specialise / § 4.4 (b)(d) peer_signal_heard + dense reward / A1.4 trace columns，连测 4 个新 perception unit test，5 轮重训 v3→v7 验证。cascade 解耦四轮独立 ✅；signal events 五轮均 0 ❌（**已修正**：经 systematic-debugging 取证发现是 ablation toml `resume_path=""` 跑随机网 + `emit.tick==0` 哨兵 bug 两层叠加，与 reward economy 无关；3 处 tick==0 跳过已删，instrument 计数器留作长期 debug 工具，事后 events_avg 0.25~1.75 / fitness ×5 / min_dist 10m→0.12m。详见 audit § 8）。 |
+| 最新本体论决议 | 用户提出"如果出问题要回流训练，活体是不是会集体消失？"——已固化为 `supporting/PRODUCTION_WORLD_LIFECYCLE_SPEC.md`。核心三句话：主世界永不 reset / 训练永远在别处做 / 新血脉只能通过出生或迁徙进入主世界。这份 spec 是 R-002 / R-006 / R-007 / 3D viewer 四条线的共同地基。 |
 
 ---
 
@@ -275,6 +276,42 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 - **遗留**：signal_response events 维度仍弱，**根因不是任务，是 fixed genome 训练时没有 signal_response 奖励 — policy OOD**。water spatial 分离干净是因为 worksite_return 训练里用了 spatial，能力部分泛化；signal 能力 task-specific，无法泛化。
 
 下一步：要么重训含 signal_response 奖励的 genome，要么在 ablation summary 把 signal_response 标记为 "OOD evaluation, fitness-level separation only"。
+
+### 13. Production World Lifecycle Spec 落地（2026-05-22）
+
+用户提出关键的本体论质疑：如果主世界要支持 R-007 自动晋升闭环，那"出问题"是不是会导致活体集体消失、训练完再集体回来？这与 R-002 持续运行 + R-006 个体级生命周期天然冲突。
+
+**结论已固化为 spec**：`supporting/PRODUCTION_WORLD_LIFECYCLE_SPEC.md`
+
+核心立场：
+
+- **主世界永不 reset**
+- **训练永远在别处做**
+- **新血脉只能通过出生或迁徙进入主世界**
+
+物理图景：
+
+- 三层世界并存：训练沙盒（用户不可见、episode 化）/ 边境试运行世界（次要可见、连续运行）/ 主生产世界（主要可见、永不 reset）
+- 个体进入主世界只有两条合法路径：父母在主世界繁殖（主路径） + 从边境迁徙过来（辅路径，单次 1-3 个、地图边缘出现）
+- 个体离开主世界只有四条合法路径：老死 / 病死 / 战死 / 长期生理压力死
+- incident → challenge → 训练 → 边境 → 迁徙 → 主世界路径 A 复用，构成完整闭环
+- 任何"集体消失 / 集体出现 / 主世界 reset"都是被工程上禁止的非法路径
+
+工程意义：
+
+- 这份 spec 是 R-002 / R-006 / R-007 / 3D viewer 四条需求的共同地基
+- 任何与本 spec 不变量冲突的设计不允许进入实现阶段
+- 当前代码距离 spec 目标态很远，主世界 / 边境世界 / 迁徙入口 / incident 录制 / 谱系持久化都还没开始
+- 已在 spec § 11 写出后续 W1~W6 工作顺序，对接 `DEVELOPMENT_EXECUTION_GUIDE.md` Stage C / D / E
+
+**灭绝边界补丁（同日扩展）**：用户追问"种群没来得及繁衍就灭绝怎么办"，已在 spec 新增 § 4.4 灭绝场景处理 + § 7 新增 7 条灭绝相关不变量（共 17 条）。覆盖：
+
+- 4.4.1 迁徙者灭绝（最常见，设计上接受，可重试，连续 N 次失败升级 incident）
+- 4.4.2 主世界某 lineage 灭绝（真实事件，可从 archive fork 重训，但重训版是带 `ancestral_archive_id` 的新 lineage，必须走 frontier → migration 重新引入）
+- 4.4.3 整个物种灭绝（关键 incident，主世界不立即填空，留一个 day-night + 季节窗口的生态反应时间）
+- 4.4.4 主角物种全灭绝（戏剧高光，主世界仍然连续运行，不黑屏，不"训练中请等待"，archive 里的旧 protagonist 通过 frontier 重新孵化）
+
+补丁后的核心立场：**灭绝是合法的世界叙事，不是失败状态；archive 永久保留但不能直接复活；任何灭绝都不会让主世界 reset。**
 
 ---
 

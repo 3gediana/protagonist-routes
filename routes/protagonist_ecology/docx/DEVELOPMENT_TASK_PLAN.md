@@ -20,7 +20,7 @@
 ### A1. Memory V2 收口
 
 - [x] 为 `water_return` 重写 spatial 证据链：cascade 解耦后 v4-v7 四轮均 `no_spatial=-78%~-100%`、`no_goal=-64%~-100%`，两通道独立，旧 `-44%` 是 cascade 假阳性（见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 7.3）
-- [~] 为 `signal_response` 重写完整证据链：v3-v7 五轮 `signal_response_events` 全为 0；perception dim 18-21 已专门化为 `peer_signal_heard` readback，TraceRecorder 已加 4 列归因，但根因诊断为 reward 全局比例失衡（§ 7.4），不是单点缺口
+- [x] 为 `signal_response` 重写完整证据链：v3-v7 五轮 `events=0` 的诊断在 2026-05-22 下午被 instrument 取证推翻——root cause 是 ablation toml `resume_path=""` 跑随机网（伪问题）+ 3 处 `emit.tick==0` 哨兵 bug 误杀第一次 controlled emit。3 处 tick==0 跳过已删，用 v7 genome 实测 events_avg=0.25~1.75（≠0）、avg_fitness 11~21 → 72~79（×5）、min_dist 10m → 0.12~3.8m。perception dim 18-21 + TraceRecorder 4 列 + dense reward 全保留（这些都是真改进）。详见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 8
 - [x] 为 `signal_response` 增加 perception-driven shaping reward，避免只有进 halo 才有梯度（已加 `signal_response_dense_reward` 字段 + dense gradient `(1-dist/companion_radius)*dt`，但 v4-v7 数据显示量级仍不够撬动 NEAT 30/60 代探索；见 § 7.5 后续放大方向）
 - [x] 为 `signal_response` 增加 trace 字段，单独记录 listener 的 signal 强度、朝向变化与响应轨迹（`agent_trace.csv` 新增 `recent_signal_dx/dy/salience/age_seconds` 4 列）
 - [x] 为 `water_return / signal_response / worksite_return` 三个任务输出统一对照表，明确 primary metric 和 secondary metrics（见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 1）
