@@ -15,6 +15,19 @@ enum class MemoryAblationTaskKind : std::uint8_t {
     DangerAvoidance,
     WorksiteReturn,
     SignalResponse,
+    // A3.S2-S4 communication semantics micro-tasks.
+    // CommScoutWorker: controlled emitter "scout" beacons over food drops;
+    // protagonist "worker" must follow the signal to reach the food. Scores
+    // worker arrival count + total reward.
+    CommScoutWorker,
+    // CommDangerWarning: controlled emitter beacons "predator nearby" but
+    // hides the predator from direct perception. Listener must use the
+    // signal to flee. Scores death count + distance-from-emitter.
+    CommDangerWarning,
+    // CommBuildRequest: worksite needs materials; emitter beacons near the
+    // worksite while protagonist carrying stick/stone must follow signal to
+    // deposit. Scores deposit count + worksite completion events.
+    CommBuildRequest,
 };
 
 struct MemoryAblationSettings {
@@ -33,7 +46,7 @@ struct MemoryAblationVariant {
 
 MemoryAblationSettings loadMemoryAblationSettings(const config::Config& config);
 std::string_view memoryAblationTaskName(MemoryAblationTaskKind task);
-const std::array<MemoryAblationTaskKind, 4>& memoryAblationTasks();
+const std::array<MemoryAblationTaskKind, 7>& memoryAblationTasks();
 const std::array<MemoryAblationVariant, 5>& memoryAblationVariants();
 ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyConfig& base,
                                                      MemoryAblationTaskKind task);

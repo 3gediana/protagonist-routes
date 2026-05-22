@@ -17,6 +17,8 @@
 > **2026-05-22 audit-driven fix 落地**：基于 audit § 4.1 + § 4.2 + § 4.4 + A1.4 的修复已 commit（peer_signal_heard episodic 写入、perception dim 18-21 specialise、dim 34-35 cascade 解耦、listener-side dense reward `signal_response_dense_reward`、TraceRecorder 4 列 signal 归因 + 4 perception unit tests）。共 5 轮重训 v3→v7 验证：**cascade 解耦四轮独立证据稳定（water/worksite spatial/goal 各 -55%~-100% 分离）**；signal_response_events 仍 0，根因是 reward 全局比例失衡（v6 5 variants fitness bit-exact 相同 / v7 反向），非单点缺口。见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 7。
 >
 > **2026-05-22 下午 ROOT CAUSE 修正 + tick=0 sentinel fix**：systematic-debugging 重新走 Phase 1 取证（instrument 9 个 debug counter + `data/runs/_signal_debug.csv`），发现 v3~v7 全部 signal_events=0 是**两层 bug 叠加**，不是 reward economy 失衡：(1) ablation toml `resume_checkpoint_path=""` → 跑随机网络，events 必然 0；(2) `runtime/ProtagonistEcologyRuntime.cpp` 3 处 `emit.tick == 0` 哨兵把 controlled emitter 第一次 emit 永久跳过。修后用同一 v7 genome 跑：events_avg 0.25~1.75（≠ 0），**avg_fitness 11~21 → 72~79（×5）**，`min_dist_to_emitter` 10m → 0.12~3.8m。详见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 8。Audit § 7 的"需要换 PPO"假设被推翻——NEAT 已经能学到 protagonist 紧贴 emitter，events 数字偏低是 dedup 副作用。
+>
+> **2026-05-22 晚 A3 通信语义代码就位**：S1 `CommunicationMetrics` 基础设施（`runtime/CommunicationMetrics.{h,cpp}` + 9 个 gtest + `data/runs/_communication_metrics.csv`）+ 4 个信号 ablation 开关（`world.signal.ablation = disabled|listener_blind|one_channel_only|noise`，runtime 在 emit / subscriber / listener / episodic 四处拦截）+ `scripts/protagonist_communication_mi.py` 离线 MI 计算。S2-S4 三个新 `MemoryAblationTaskKind`：`CommScoutWorker / CommDangerWarning / CommBuildRequest`，各自有差异化 reward profile（scout-worker 用 food drop 当 win condition；danger warning 用 `signal_response_dense_reward = -0.6` 反向训"逃"；build request 强制 worksite 不可见、靠信号定位）。S5 结果文档骨架 `supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md` 已建，三任务 ablation 表是 TODO 占位符。**128/128 tests PASS**（118 旧 + 10 新 CommunicationMetrics）。**实验未跑** — 等 user 决策启动 ablation run。
 
 > **本版本相对旧版 handoff 的关键修正（精简版）**：
 > - 继续保留已落地代码：CT 结构化事件、Memory Phase A、worksite/hunt credit、rule-based goal loop、world-model dataset builder、offline MAP-Elites、DNC micro-task、BrainV3 最小壳层
@@ -117,6 +119,7 @@ D:\claude-code\downloads\
 4. `supporting/CONTINUOUS_TIME_WORLD_DESIGN.md`
 5. `supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md`
 6. `supporting/PRODUCTION_WORLD_LIFECYCLE_SPEC.md` — **动 R-002 / R-006 / R-007 / 3D viewer 任何代码之前必读**；固定了主世界永不 reset、训练永远在别处做、新血脉只能通过出生或迁徙进入、灭绝场景的合法处理路径等 17 条不变量
+7. `supporting/SELF_GROW_CAPABILITY_LIMITS_SPEC.md` — **动 R-008 / Stage E / 任何"自长 / 涌现"机制之前必读**；7 层 L0-L7 精确化定义，L7 凭空新 capability 物理不可达必须人写，任何"自长 X"表述必须指明 Layer 编号
 
 补充说明：
 

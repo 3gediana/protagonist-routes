@@ -37,13 +37,13 @@
 
 ### A3. Communication semantics 收口
 
-- [ ] 新增 `communication_metrics.csv`
-- [ ] 新增 `signal disabled / listener blind / one-channel only / signal noise increased` 四组 ablation
-- [ ] 实现 `scout-worker` 最小任务
-- [ ] 实现 `danger warning` 最小任务
-- [ ] 实现 `build request` 最小任务
-- [ ] 用 trace + ablation 证明至少一条通信任务满足“关闭信号后明显下降”
-- [ ] 为 communication 线写单独结果说明，避免再把 goal 变化误读成 signal 语义成立
+- [x] 新增 `communication_metrics.csv`（Step 1：`runtime/CommunicationMetrics.{h,cpp}` 共 9 个 gtest，per-channel emit/listener_ticks/silent_ticks/response_events/listener_policy_shift_l2|cos/response_latency_avg_seconds；写 `data/runs/_communication_metrics.csv`，与 `_credit_log.csv` 同 tag）
+- [x] 新增 `signal disabled / listener blind / one channel only / signal noise` 四组 ablation（Step 1：`world.signal.ablation = "none|disabled|listener_blind|one_channel_only|noise"` 配置 + `world.signal.noise_position_stddev`，runtime 在 `emitControlledSignal` / `AgentEmittedSignal` subscriber / listener block / peer_signal_heard episodic 四处拦截）
+- [x] 实现 `scout-worker` 最小任务（Step 2：`MemoryAblationTaskKind::CommScoutWorker`，emitter 配 food drop，reward profile：food=6 + communication=8 + signal_response_dense=0.8 + halo=1.0，primary metric=`signal_responder_count`）
+- [x] 实现 `danger warning` 最小任务（Step 3：`MemoryAblationTaskKind::CommDangerWarning`，反向 dense reward = -0.6 训"逃"，3 predator pack 隐藏 + predator_warn_enabled=false，primary metric=`survived`）
+- [x] 实现 `build request` 最小任务（Step 4：`MemoryAblationTaskKind::CommBuildRequest`，emitter 在 worksite 位置(offset=0)，worksite.direction_requires_visibility=true 强制只能靠信号定位 worksite，primary metric=`worksite_completion_events`）
+- [ ] 用 trace + ablation 证明至少一条通信任务满足"关闭信号后明显下降"（**未跑分**：S1-S4 代码就位且 128/128 tests PASS，等待 user 决策启动实验 run）
+- [x] 为 communication 线写单独结果说明（Step 5：`supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md` 骨架已建，三任务 ablation 跑分表格目前是 TODO 占位符，等实验数据填）
 
 ---
 

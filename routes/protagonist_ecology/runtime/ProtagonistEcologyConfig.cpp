@@ -107,6 +107,26 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.signal.controlled_emitter_food_radius = config.getOr<float>("world.signal.controlled_emitter_food_radius", out.signal.controlled_emitter_food_radius);
     out.signal.controlled_emitter_food_count = config.getOr<std::size_t>("world.signal.controlled_emitter_food_count", out.signal.controlled_emitter_food_count);
     out.signal.controlled_emitter_food_amount = config.getOr<float>("world.signal.controlled_emitter_food_amount", out.signal.controlled_emitter_food_amount);
+    // A3.S1 ablation string -> enum. Default "none" = SignalAblation::None.
+    // Accept any case; unknown values fall back to None and silently leave a
+    // log-friendly canonical name in the parsed config.
+    {
+        std::string ablation_str = config.getOr<std::string>("world.signal.ablation", std::string{"none"});
+        std::transform(ablation_str.begin(), ablation_str.end(), ablation_str.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ablation_str == "disabled") {
+            out.signal.ablation = SignalAblation::Disabled;
+        } else if (ablation_str == "listener_blind") {
+            out.signal.ablation = SignalAblation::ListenerBlind;
+        } else if (ablation_str == "one_channel_only") {
+            out.signal.ablation = SignalAblation::OneChannelOnly;
+        } else if (ablation_str == "noise") {
+            out.signal.ablation = SignalAblation::Noise;
+        } else {
+            out.signal.ablation = SignalAblation::None;
+        }
+    }
+    out.signal.noise_position_stddev = config.getOr<float>("world.signal.noise_position_stddev", out.signal.noise_position_stddev);
 
     out.objects.enabled = config.getOr<bool>("world.objects.enabled", out.objects.enabled);
     out.objects.count = config.getOr<std::size_t>("world.objects.count", out.objects.count);

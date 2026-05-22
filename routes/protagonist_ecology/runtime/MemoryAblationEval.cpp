@@ -8,11 +8,14 @@ namespace neuro::routes::protagonist {
 
 namespace {
 
-const std::array<MemoryAblationTaskKind, 4> kMemoryAblationTasks{
+const std::array<MemoryAblationTaskKind, 7> kMemoryAblationTasks{
     MemoryAblationTaskKind::WaterReturn,
     MemoryAblationTaskKind::DangerAvoidance,
     MemoryAblationTaskKind::WorksiteReturn,
     MemoryAblationTaskKind::SignalResponse,
+    MemoryAblationTaskKind::CommScoutWorker,
+    MemoryAblationTaskKind::CommDangerWarning,
+    MemoryAblationTaskKind::CommBuildRequest,
 };
 
 const std::array<MemoryAblationVariant, 5> kMemoryAblationVariants{{
@@ -41,11 +44,14 @@ std::string_view memoryAblationTaskName(MemoryAblationTaskKind task) {
         case MemoryAblationTaskKind::DangerAvoidance: return "danger_avoidance";
         case MemoryAblationTaskKind::WorksiteReturn: return "worksite_return";
         case MemoryAblationTaskKind::SignalResponse: return "signal_response";
+        case MemoryAblationTaskKind::CommScoutWorker: return "comm_scout_worker";
+        case MemoryAblationTaskKind::CommDangerWarning: return "comm_danger_warning";
+        case MemoryAblationTaskKind::CommBuildRequest: return "comm_build_request";
     }
     return "unknown";
 }
 
-const std::array<MemoryAblationTaskKind, 4>& memoryAblationTasks() {
+const std::array<MemoryAblationTaskKind, 7>& memoryAblationTasks() {
     return kMemoryAblationTasks;
 }
 
@@ -175,6 +181,117 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.campfire.count = 0;
             route.worksite.count = 0;
             route.survival.initial_hydration_ratio = std::max(route.survival.initial_hydration_ratio, 0.70f);
+            break;
+
+        case MemoryAblationTaskKind::CommScoutWorker:
+            // A3.S2 - partial observability scout-worker task. The controlled
+            // emitter "scout" beacons over a food drop the protagonist
+            // "worker" cannot see directly (food count 0 elsewhere). Worker
+            // must follow the signal to reach the food. Differs from
+            // SignalResponse in that there IS a real reward at the emitter
+            // (food drop), so reaching the emitter is grounded in survival
+            // not just halo-entry score. This is the strongest minimal
+            // probe for "signal -> behavior change".
+            route.world_role = "eval";
+            route.world_size = Vec2{120.0f, 120.0f};
+            route.base.center = Vec2{44.0f, 60.0f};
+            route.base.radius = 12.0f;
+            route.base.stockpile_radius = 8.0f;
+            route.base.nest_radius = 4.0f;
+            route.background.forager_count = 0;
+            route.background.predator_count = 0;
+            route.resources.count = 0;
+            route.water.source_count = 1;
+            route.signal.protagonist_emit_enabled = false;
+            route.signal.controlled_emitter_enabled = true;
+            route.signal.controlled_emitter_period_seconds = 20.0;  // shorter cadence than SignalResponse
+            route.signal.controlled_emitter_randomize_position = true;
+            route.signal.controlled_emitter_offset_radius = 22.0f;
+            route.signal.controlled_emitter_offset_jitter = 6.0f;
+            // Food drops AT the emitter: a worker that follows the signal
+            // gets a real meal. count > 0 + amount > 0 is the only
+            // difference from SignalResponse on the world layer.
+            route.signal.controlled_emitter_food_count = 2;
+            route.signal.controlled_emitter_food_amount = 18.0f;
+            route.signal.controlled_emitter_food_radius = 4.0f;
+            route.objects.count = 6;
+            route.tree.count = 1;
+            route.campfire.count = 0;
+            route.worksite.count = 0;
+            route.survival.initial_hydration_ratio = std::max(route.survival.initial_hydration_ratio, 0.65f);
+            break;
+
+        case MemoryAblationTaskKind::CommDangerWarning:
+            // A3.S3 - danger warning task. Controlled emitter beacons near
+            // a predator pack the protagonist's direct DangerPerception
+            // cannot reach (predator hidden beyond predator_warn radius).
+            // Listener must flee the emitter to avoid death. Differs from
+            // DangerAvoidance in that predator location is hidden but
+            // signaled; without signal listening, deaths spike. Predator
+            // count is small (only need a few real kills to confirm
+            // ablation_drop).
+            route.world_role = "eval";
+            route.world_size = Vec2{120.0f, 120.0f};
+            route.base.center = Vec2{44.0f, 60.0f};
+            route.base.radius = 12.0f;
+            route.base.stockpile_radius = 8.0f;
+            route.base.nest_radius = 4.0f;
+            route.background.forager_count = 0;
+            route.background.predator_count = 3;
+            route.protagonist.predator_warn_enabled = false;
+            route.resources.count = 8;
+            route.water.source_count = 1;
+            route.signal.protagonist_emit_enabled = false;
+            route.signal.controlled_emitter_enabled = true;
+            route.signal.controlled_emitter_period_seconds = 12.0;  // frequent alarm
+            route.signal.controlled_emitter_randomize_position = true;
+            route.signal.controlled_emitter_offset_radius = 18.0f;
+            route.signal.controlled_emitter_offset_jitter = 6.0f;
+            route.signal.controlled_emitter_food_count = 0;  // no food: pure warning
+            route.objects.count = 6;
+            route.tree.count = 1;
+            route.campfire.count = 0;
+            route.worksite.count = 0;
+            route.survival.initial_health_ratio = std::max(route.survival.initial_health_ratio, 0.90f);
+            route.survival.initial_hydration_ratio = std::max(route.survival.initial_hydration_ratio, 0.70f);
+            break;
+
+        case MemoryAblationTaskKind::CommBuildRequest:
+            // A3.S4 - build request task. Worksite needs sticks + stones;
+            // controlled emitter beacons FROM the worksite (offset radius 0
+            // so emitter sits at worksite position) to call carriers in.
+            // Listener carrying a stick/stone must follow the signal to
+            // deposit. Differs from WorksiteReturn in that worksite
+            // direct-visibility is OFF (perception cannot see worksite,
+            // signal is the only way to locate it). Tests the integration
+            // of signal-following with material-carrying logistics.
+            route.world_role = "eval";
+            route.world_size = Vec2{120.0f, 120.0f};
+            route.base.center = Vec2{44.0f, 60.0f};
+            route.background.forager_count = 0;
+            route.background.predator_count = 0;
+            route.protagonist.hunt_enabled = false;
+            route.protagonist.goal_action_assist_enabled = true;
+            route.resources.count = 6;
+            route.water.source_count = 1;
+            route.signal.protagonist_emit_enabled = false;
+            route.signal.controlled_emitter_enabled = true;
+            route.signal.controlled_emitter_period_seconds = 15.0;
+            route.signal.controlled_emitter_randomize_position = false;
+            route.signal.controlled_emitter_offset_radius = 0.0f;  // emit at worksite
+            route.signal.controlled_emitter_offset_jitter = 0.0f;
+            route.signal.controlled_emitter_food_count = 0;
+            route.objects.count = 24;  // need sticks + stones around
+            route.tree.count = 1;
+            route.campfire.count = 0;
+            route.worksite.count = 1;
+            route.worksite.spawn_radius = 10.0f;
+            route.worksite.required_sticks = 2;
+            route.worksite.required_stones = 1;
+            route.worksite.assembly_rate = std::max(route.worksite.assembly_rate, 0.25f);
+            // Worksite visibility off: signal is the only directional cue.
+            route.worksite.direction_requires_visibility = true;
+            route.survival.initial_hydration_ratio = std::max(route.survival.initial_hydration_ratio, 0.75f);
             break;
     }
 

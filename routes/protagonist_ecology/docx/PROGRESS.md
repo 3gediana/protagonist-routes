@@ -11,9 +11,9 @@
 | 项 | 值 |
 |---|---|
 | 最后更新 | 2026-05-22 |
-| 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；底座侧已接通 continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层 / mixed compute，**但这些不等于长蓝图已经完成** |
-| 当前项目优先级 | 当前优先级已从“单点补 signal reward”上升为“按新执行文档统一收口主线”：先沿 `DEVELOPMENT_EXECUTION_GUIDE.md` / `DEVELOPMENT_TASK_PLAN.md` 收口 `Memory V2 -> ContributionLedger -> communication semantics`，确认 cognition-social 主链站稳后，再进入物种角色、生命周期、自动晋升闭环与 R-008 自长机制。 |
-| 最新用户新增问题 | 用户要求"按 audit 揭示的问题开始改 + 把记忆机制测试修完跑完"——已落地 audit § 4.1 cascade 解耦 / § 4.2 episodic readback specialise / § 4.4 (b)(d) peer_signal_heard + dense reward / A1.4 trace columns，连测 4 个新 perception unit test，5 轮重训 v3→v7 验证。cascade 解耦四轮独立 ✅；signal events 五轮均 0 ❌（**已修正**：经 systematic-debugging 取证发现是 ablation toml `resume_path=""` 跑随机网 + `emit.tick==0` 哨兵 bug 两层叠加，与 reward economy 无关；3 处 tick==0 跳过已删，instrument 计数器留作长期 debug 工具，事后 events_avg 0.25~1.75 / fitness ×5 / min_dist 10m→0.12m。详见 audit § 8）。 |
+| 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；A2 (CreditLedger) + A3 (Communication semantics) 代码就位 128 PASS，但 **A3 跑分实验未启动** |
+| 当前项目优先级 | A1-A3 三条主线代码已全部落地（A1 audit-driven fix + A2 CreditLedger + A3 通信基础设施 + 3 个 micro-task）。下一步：(a) 启动 A3 ablation 实验跑分填 `COMMUNICATION_SEMANTICS_EVIDENCE.md`；或 (b) 进入 B 鲜明物种生态角色；或 (c) 把 A2.3 fairness 暴露到 results.csv 收尾。优先级以 user 决策为准。 |
+| 最新用户新增问题 | 用户要求 "看看相关文档补充上下文，规划 a3 + 开工"——已完成 S1-S5：S1 `CommunicationMetrics` 基础设施（9 个 gtest）+ 4 个 ablation 开关（disabled/listener_blind/one_channel_only/noise）+ MI 离线脚本 → S2/S3/S4 三个 micro-task kinds (`CommScoutWorker / CommDangerWarning / CommBuildRequest`) + 各自 reward profile + primary metric 配置 → S5 结果文档 `COMMUNICATION_SEMANTICS_EVIDENCE.md` 骨架。128/128 tests PASS（118 旧 + 10 新）。**跑分实验未启动** — 数据表格目前是 TODO 占位符。 |
 | 最新本体论决议 | 用户提出"如果出问题要回流训练，活体是不是会集体消失？"——已固化为 `supporting/PRODUCTION_WORLD_LIFECYCLE_SPEC.md`。核心三句话：主世界永不 reset / 训练永远在别处做 / 新血脉只能通过出生或迁徙进入主世界。这份 spec 是 R-002 / R-006 / R-007 / 3D viewer 四条线的共同地基。 |
 
 ---
@@ -312,6 +312,40 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 - 4.4.4 主角物种全灭绝（戏剧高光，主世界仍然连续运行，不黑屏，不"训练中请等待"，archive 里的旧 protagonist 通过 frontier 重新孵化）
 
 补丁后的核心立场：**灭绝是合法的世界叙事，不是失败状态；archive 永久保留但不能直接复活；任何灭绝都不会让主世界 reset。**
+
+### 14. R-008 自长机制精确化 spec 落地（2026-05-22）
+
+用户追问"如果不给喝水 capability，agent 能不能进化出喝水？文献支持到哪？" 经查 Baker 2019 hide-and-seek / Wang 2023 Voyager / Sims 1994 / DIAYN / Option-Critic / Lazaridou-Foerster emergent communication 等核心文献，结论：**任何文献都没有证明 agent 能在没有底层 primitive 情况下凭空创造新 capability**。
+
+**结论已固化为 spec**：`supporting/SELF_GROW_CAPABILITY_LIMITS_SPEC.md`
+
+7 层定义：
+
+- L0 参数微调 / L1 结构生长 / L2 策略组合：默认可达，不算"自长"
+- L3 策略涌现（hide-and-seek 6 阶段那种）：可达，最低门槛"真自长"
+- L4 技能分化（DIAYN / Option-Critic）：需 brain 架构留 modular 空间
+- L5 通信协议涌现（emergent communication）：需通信任务立起来
+- L6 组合性能力（Voyager / Sims）：需 capability 改原子化
+- L7 凭空新 capability / 新物理：**物理不可达**，必须人写
+
+R-008 期待逐项落层：
+
+- "自己长出新技能" → L3 + L4，可达
+- "行为分化 / 局部模块化" → L4，可达
+- "通信 / 协作模式" → L5，可达
+- 隐含期待"自己长出新 capability" → L7，**不可达**
+
+硬规则：
+
+- 任何"自长 X"表述必须指明 Layer 编号
+- L7 必须人写，不在任何文档承诺
+- 任何机制证据链必须包含 `target_layer: L0~L7` 字段
+
+三条路线：
+
+- A · capability 通用化（选 1-2 个改原子，L6 实验候选）✅ 推荐
+- B · LLM-as-author（Voyager 风格）❌ 违背神经进化主线
+- C · 修正 R-008 期待写进 spec ✅ 必须做
 
 ---
 

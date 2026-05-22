@@ -21,6 +21,33 @@ struct ResourceConfig {
     bool terrain_adjustment_enabled{true};
 };
 
+// A3.S1 communication ablation knobs. Drives the four probes against
+// the signal-response stack:
+//   None             - default, no ablation
+//   Disabled         - emit events are dropped at the runtime layer (no
+//                      AgentEmittedSignal published, controlled emitter
+//                      skipped). The strongest probe: should drive every
+//                      downstream signal metric to 0.
+//   ListenerBlind    - emit events are still published, but listener block
+//                      treats last_signal_emit as empty (no dense reward,
+//                      no halo entry, no peer_signal_heard episodic, no
+//                      mask bits in CommunicationMetrics). Isolates
+//                      "signal exists" from "listener uses it".
+//   OneChannelOnly   - all emit events are forced onto channel 0 at the
+//                      subscriber layer. Probes whether multi-channel
+//                      semantics are doing real work.
+//   Noise            - emit position is perturbed by gaussian noise with
+//                      stddev `noise_position_stddev` before reaching
+//                      the listener block. Probes whether listeners
+//                      depend on precise position vs coarse direction.
+enum class SignalAblation : std::uint8_t {
+    None = 0,
+    Disabled = 1,
+    ListenerBlind = 2,
+    OneChannelOnly = 3,
+    Noise = 4,
+};
+
 struct SignalConfig {
     bool enabled{true};
     bool protagonist_emit_enabled{true};
@@ -40,6 +67,9 @@ struct SignalConfig {
     float controlled_emitter_food_radius{6.0f};           // food drop scatter radius at emitter
     std::size_t controlled_emitter_food_count{2};
     float controlled_emitter_food_amount{15.0f};
+    // A3.S1 ablation.
+    SignalAblation ablation{SignalAblation::None};
+    float noise_position_stddev{1.5f};  // meters; used only when ablation == Noise
 };
 
 struct ObjectWorldConfig {

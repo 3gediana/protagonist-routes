@@ -33,6 +33,7 @@
 #include "runtime/headless/EvaluationPool.h"
 #include "runtime/ProtagonistEvolution.h"
 #include "runtime/BootstrapPopulation.h"
+#include "runtime/CommunicationMetrics.h"
 #include "runtime/CreditLedger.h"
 #include "runtime/GoalManager.h"
 #include "runtime/MemoryAblationEval.h"
@@ -544,6 +545,86 @@ TrainingParams configureMemoryAblationTaskParams(const config::Config& config,
             params.signal_response_dense_reward = 1.0f;
             params.joint_hunt_reward = 0.0f;
             break;
+
+        case MemoryAblationTaskKind::CommScoutWorker:
+            // A3.S2 reward profile. Heavy food weight so a worker that
+            // follows the signal to the emitter's food drop is paid; light
+            // survival; same signal_response gradient + halo entry as
+            // SignalResponse so the worker has a learnable signal path.
+            params.survival_weight = 0.3;
+            params.food_weight = 6.0;  // food at emitter is the win condition
+            params.intrinsic_weight = 0.0;
+            params.combat_weight = 0.0;
+            params.cooperation_weight = 0.0;
+            params.communication_weight = 8.0;
+            params.worksite_proximity_reward = 0.0f;
+            params.worksite_completion_reward = 0.0f;
+            params.signal_emit_reward = 0.0f;
+            params.signal_co_attendance_reward = 1.5f;
+            params.signal_emit_companion_radius = 30.0f;
+            params.signal_co_attendance_radius = 10.0f;
+            params.signal_co_attendance_window_seconds = 10.0;
+            params.signal_response_reward = 1.0f;
+            params.signal_response_dense_reward = 0.8f;
+            params.joint_hunt_reward = 0.0f;
+            break;
+
+        case MemoryAblationTaskKind::CommDangerWarning:
+            // A3.S3 reward profile. Inverted: signal -> flee. We don't
+            // change the listener block (still pays for entering halo),
+            // BUT we set:
+            //   - heavy death penalty (combat_death_penalty)
+            //   - low survival reward (so just-stand-still doesn't dominate)
+            //   - signal_response_reward = 0 (don't pay for being in halo!)
+            //   - signal_response_dense_reward = -0.6 (penalty for being
+            //     near emitter -> agent learns "signal means RUN")
+            // The dense gradient sign is the key probe: a positive gradient
+            // means follow, a negative gradient means flee. Both are
+            // measurable via listener_policy_shift_l2.
+            params.survival_weight = 1.2;
+            params.food_weight = 1.0;
+            params.intrinsic_weight = 0.0;
+            params.combat_weight = 0.0;
+            params.combat_death_penalty = 12.0f;  // heavier than default 5
+            params.cooperation_weight = 0.0;
+            params.communication_weight = 6.0;
+            params.worksite_proximity_reward = 0.0f;
+            params.worksite_completion_reward = 0.0f;
+            params.signal_emit_reward = 0.0f;
+            params.signal_co_attendance_reward = 0.0f;
+            params.signal_emit_companion_radius = 30.0f;
+            params.signal_co_attendance_radius = 12.0f;
+            params.signal_co_attendance_window_seconds = 12.0;
+            // Negative dense reward = penalty for staying near emitter.
+            // Halo entry pays nothing.
+            params.signal_response_reward = 0.0f;
+            params.signal_response_dense_reward = -0.6f;
+            params.joint_hunt_reward = 0.0f;
+            break;
+
+        case MemoryAblationTaskKind::CommBuildRequest:
+            // A3.S4 reward profile. Combines worksite completion + signal
+            // following. The protagonist must (a) listen to the signal to
+            // know where worksite is, (b) gather sticks/stones, (c) deposit.
+            // Largest of the three tasks because worksite logistics is its
+            // own coupled mechanism.
+            params.survival_weight = 0.2;
+            params.food_weight = 0.0;
+            params.intrinsic_weight = 0.0;
+            params.combat_weight = 0.0;
+            params.cooperation_weight = 6.0;
+            params.communication_weight = 6.0;
+            params.worksite_proximity_reward = 0.10f;
+            params.worksite_completion_reward = 80.0f;
+            params.signal_emit_reward = 0.0f;
+            params.signal_co_attendance_reward = 1.2f;
+            params.signal_emit_companion_radius = 30.0f;
+            params.signal_co_attendance_radius = 10.0f;
+            params.signal_co_attendance_window_seconds = 12.0;
+            params.signal_response_reward = 0.8f;
+            params.signal_response_dense_reward = 0.6f;
+            params.joint_hunt_reward = 0.0f;
+            break;
     }
     return params;
 }
@@ -598,6 +679,18 @@ double primaryMetricValue(const MemoryAblationResultRow& row) {
         case MemoryAblationTaskKind::DangerAvoidance: return row.survived_avg;
         case MemoryAblationTaskKind::WorksiteReturn: return row.worksite_completion_events_avg;
         case MemoryAblationTaskKind::SignalResponse: return row.signal_response_events_avg;
+        // A3.S2 scout-worker: primary = signal_responder_count (how many
+        // workers actually reached the emitter/food halo). signal_response_
+        // events_avg is also reasonable but counts halo entries per emit,
+        // while responder_count counts unique agents.
+        case MemoryAblationTaskKind::CommScoutWorker: return row.signal_responder_count_avg;
+        // A3.S3 danger warning: primary = survived (deaths ablation drop is
+        // the cleanest probe; high signal noise should reduce survival).
+        case MemoryAblationTaskKind::CommDangerWarning: return row.survived_avg;
+        // A3.S4 build request: primary = worksite_completion_events (the
+        // same as WorksiteReturn but expected to drop with signal_disabled
+        // since the worksite is no longer directly visible).
+        case MemoryAblationTaskKind::CommBuildRequest: return row.worksite_completion_events_avg;
     }
     return 0.0;
 }
@@ -608,6 +701,9 @@ std::string_view primaryMetricName(MemoryAblationTaskKind task) {
         case MemoryAblationTaskKind::DangerAvoidance: return "survived";
         case MemoryAblationTaskKind::WorksiteReturn: return "worksite_completion_events";
         case MemoryAblationTaskKind::SignalResponse: return "signal_response_events";
+        case MemoryAblationTaskKind::CommScoutWorker: return "signal_responder_count";
+        case MemoryAblationTaskKind::CommDangerWarning: return "survived";
+        case MemoryAblationTaskKind::CommBuildRequest: return "worksite_completion_events";
     }
     return "metric";
 }
@@ -1119,21 +1215,40 @@ void emitControlledSignal(World2D& world,
                           const Vec2& emitter_pos,
                           ResourceLayer* resource_layer,
                           std::mt19937& rng) {
+    // A3.S1 ablation::Disabled - drop the emit entirely. The downstream
+    // food drop still happens (so the listener has a reachable target if
+    // any other emit signals the same area), but no signal pulse exists
+    // for any listener to follow. ablation::Noise perturbs emit position.
+    const bool ablation_disabled = route.signal.ablation == SignalAblation::Disabled;
+    if (ablation_disabled) {
+        return;  // no pulse, no food (food without signal is no probe target)
+    }
+    Vec2 effective_pos = emitter_pos;
+    if (route.signal.ablation == SignalAblation::Noise && route.signal.noise_position_stddev > 0.0f) {
+        std::normal_distribution<float> noise(0.0f, route.signal.noise_position_stddev);
+        effective_pos.x = std::clamp(emitter_pos.x + noise(rng), 0.0f, route.world_size.x);
+        effective_pos.y = std::clamp(emitter_pos.y + noise(rng), 0.0f, route.world_size.y);
+    }
+
     std::vector<float> signal(signal_layer.channels(), 0.0f);
     if (signal.empty()) {
         return;
     }
 
+    // A3.S1 ablation::OneChannelOnly forces channel 0; for the controlled
+    // emitter this is already the default so no change is required, but
+    // we keep the logic explicit for symmetry with the EmitSignalCapability
+    // subscriber path.
     signal[0] = 1.0f;
     signal_layer.emitWithHistory(
         kInvalidAgentId,
-        emitter_pos,
+        effective_pos,
         signal,
         world.currentTick(),
         world.currentTimeSeconds());
     world.eventBus().publish(events::Event{
         events::EventType::AgentEmittedSignal,
-        events::AgentEmittedSignal{kInvalidAgentId, emitter_pos, 0, signal[0]},
+        events::AgentEmittedSignal{kInvalidAgentId, effective_pos, 0, signal[0]},
         world.currentTick(),
         world.currentTimeSeconds()});
 
@@ -1212,6 +1327,7 @@ void evaluatePopulation(World2D& world,
         SimTimeSeconds time_seconds{0.0};
         Vec2 position{};
         Tick tick{0};
+        std::uint8_t channel{0};  // A3.S1: track which channel this emit was on.
     };
     struct AttackEventInfo {
         AgentId attacker{0};
@@ -1264,6 +1380,15 @@ void evaluatePopulation(World2D& world,
     // build / hunt / signal credit. Per-evaluatePopulation lifecycle (no
     // explicit clear needed; instance scoped to this function call).
     CreditLedger credit_ledger;
+    // A3.S1 CommunicationMetrics: per-channel emit/listener stats with KL-style
+    // policy shift between active and silent listener-ticks. Scoped to this
+    // evaluatePopulation call; flushed at end. Channel count == signal_layer
+    // channels (or 0 if no signal layer at all). Action_dim=2 = (velocity.x,
+    // velocity.y) — a minimal observable that reflects whether the listener's
+    // post-perception movement direction changed after hearing the signal.
+    const std::size_t comm_num_channels = signal_layer != nullptr ? signal_layer->channels() : 0u;
+    constexpr std::size_t kCommActionDim = 2u;
+    CommunicationMetrics comm_metrics(comm_num_channels, kCommActionDim);
     // A2.Step3 signal 3-role sets (per-episode unique agents).
     std::unordered_set<AgentId> signal_producers;
     std::unordered_set<AgentId> signal_listeners;
@@ -1302,13 +1427,53 @@ void evaluatePopulation(World2D& world,
     std::size_t debug_listener_in_halo = 0;
     std::size_t debug_listener_already_credited = 0;
     float debug_min_dist_to_emitter = std::numeric_limits<float>::infinity();
+    // A3.S1 ablation noise rng: subscriber-side perturbation of
+    // protagonist-originated emits (controlled emitter is perturbed in
+    // emitControlledSignal). Seeded once per evaluatePopulation so runs
+    // are reproducible.
+    std::mt19937 signal_ablation_rng{
+        static_cast<std::mt19937::result_type>(
+            static_cast<std::uint64_t>(world.currentTick()) ^
+            0x9E3779B97F4A7C15ull)};
+    const SignalAblation signal_ablation_mode = route.signal.ablation;
+    const float signal_noise_stddev = route.signal.noise_position_stddev;
     auto subscribe_signals = signal_layer != nullptr ? world.eventBus().subscribe(
         events::EventType::AgentEmittedSignal,
         [&](const events::Event& event) {
             const auto& payload = event.payloadAs<events::AgentEmittedSignal>();
-            last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), payload.pos, event.tick()};
-            tick_emits.push_back(payload);
             ++debug_subscriber_invokes;
+            // A3.S1 ablation::Disabled: drop the emit at the subscriber
+            // layer. This catches every emit path (protagonist's
+            // EmitSignalCapability + controlled emitter), so no
+            // last_signal_emit / signal_response_ledger / metrics row
+            // is written. The signal field on the world still gets the
+            // value (EmitSignalCapability::apply already wrote it before
+            // publishing the event), but with no ledger/listener entry
+            // the listener block treats the field as silent.
+            if (signal_ablation_mode == SignalAblation::Disabled) {
+                return;
+            }
+            // A3.S1 ablation::OneChannelOnly - force channel to 0 inside
+            // last_signal_emit / metrics so the multi-channel listener
+            // path collapses to a single channel.
+            std::uint8_t effective_channel = (signal_ablation_mode == SignalAblation::OneChannelOnly)
+                ? std::uint8_t{0}
+                : payload.channel;
+            // A3.S1 ablation::Noise (protagonist emits): perturb position
+            // before it lands in last_signal_emit / ledger. We do not
+            // re-publish the event; the world signal field already
+            // reflects the un-perturbed emit (cheap approximation: the
+            // perturbation is small relative to halo radius so the
+            // field-only listener path stays consistent).
+            Vec2 effective_pos = payload.pos;
+            if (signal_ablation_mode == SignalAblation::Noise && signal_noise_stddev > 0.0f
+                && payload.id != kInvalidAgentId) {
+                std::normal_distribution<float> noise(0.0f, signal_noise_stddev);
+                effective_pos.x += noise(signal_ablation_rng);
+                effective_pos.y += noise(signal_ablation_rng);
+            }
+            last_signal_emit[payload.id] = SignalEmitInfo{event.timeSeconds(), effective_pos, event.tick(), effective_channel};
+            tick_emits.push_back(payload);
             // A2.signal credit ledger: open a new ledger entry for each
             // emit so we can collect listener dwell time and settle later.
             // Key by emit_tick (unique within an episode given dt ~ 0.1s).
@@ -1316,7 +1481,7 @@ void evaluatePopulation(World2D& world,
             // (won't happen in normal flow), the second write overwrites.
             auto& entry = signal_response_ledger[event.tick()];
             entry.emitter_id = payload.id;
-            entry.emit_pos = payload.pos;
+            entry.emit_pos = effective_pos;
             entry.emit_time = event.timeSeconds();
             entry.emit_tick = event.tick();
             entry.settled = false;
@@ -1325,6 +1490,13 @@ void evaluatePopulation(World2D& world,
             if (payload.id != kInvalidAgentId) {
                 signal_producers.insert(payload.id);
             }
+            // A3.S1 communication metrics: record per-channel emit. Both
+            // controlled emitter (id=kInvalidAgentId) and protagonist
+            // emits flow through this event, so this counts the full
+            // signal traffic on the channel.
+            comm_metrics.recordEmit(static_cast<std::size_t>(effective_channel),
+                                    payload.id,
+                                    event.timeSeconds());
         }) : 0u;
 
     auto subscribe_attacked = world.eventBus().subscribe(
@@ -1821,7 +1993,9 @@ void evaluatePopulation(World2D& world,
                     // signal source is more memorable than a distant one.
                     // Dedup by (listener, emitter, emit_tick): one episodic
                     // event per emit, not per tick of in-range exposure.
-                    {
+                    // A3.S1 ablation::ListenerBlind: skip the episodic write
+                    // so dim 18-21 stays empty when listening is disabled.
+                    if (signal_ablation_mode != SignalAblation::ListenerBlind) {
                         const float heard_radius = params.signal_emit_companion_radius;
                         const float heard_radius_sq = heard_radius * heard_radius;
                         const SimTimeSeconds heard_window = params.signal_co_attendance_window_seconds;
@@ -1915,13 +2089,17 @@ void evaluatePopulation(World2D& world,
                     //
                     // 2. Halo entry (signal_response_reward): unchanged,
                     //    once per (listener, emitter, emit_tick).
-                    {
+                    if (signal_ablation_mode != SignalAblation::ListenerBlind) {
                         const SimTimeSeconds now_time = world.currentTimeSeconds();
                         const float halo_r2 = params.signal_co_attendance_radius
                                             * params.signal_co_attendance_radius;
                         const float dense_radius = std::max(params.signal_emit_companion_radius, 1.0f);
                         const float dense_radius_sq = dense_radius * dense_radius;
                         bool halo_credited_this_tick = false;
+                        // A3.S1: build channel_active_mask for this listener-tick.
+                        // Bit c set <=> at least one peer emit on channel c is
+                        // currently within dense_radius of this listener.
+                        std::uint32_t channel_active_mask = 0u;
                         for (const auto& [emitter_id, emit] : last_signal_emit) {
                             if (emitter_id == agent->id()) {
                                 ++debug_listener_skip_self;  // DEBUG (audit § 7)
@@ -1944,6 +2122,12 @@ void evaluatePopulation(World2D& world,
                             // (within companion radius and window).
                             if (dist_sq <= dense_radius_sq) {
                                 signal_listeners.insert(agent->id());
+                                // A3.S1: mark this channel as active for the
+                                // policy-shift accumulator. Cap at 32 channels
+                                // (matches std::uint32_t mask width).
+                                if (emit.channel < 32u) {
+                                    channel_active_mask |= (1u << emit.channel);
+                                }
                             }
                             if (params.signal_response_dense_reward != 0.0f
                                 && dist_sq <= dense_radius_sq) {
@@ -1990,6 +2174,20 @@ void evaluatePopulation(World2D& world,
                                 reward += params.communication_weight * static_cast<double>(params.signal_response_reward);
                             }
                             halo_credited_this_tick = true;
+                        }
+                        // A3.S1: per-listener-tick recordListenerAction. action
+                        // vector = (velocity.x, velocity.y) — kCommActionDim=2.
+                        // The metric internally sums into active_ticks or
+                        // silent_ticks per channel based on mask bits, and
+                        // tracks (listener_id, action_vec) for response_events
+                        // / latency-from-last-emit.
+                        if (comm_num_channels > 0) {
+                            const Vec2 vel = concrete->velocity();
+                            const std::vector<float> action_vec = {vel.x, vel.y};
+                            comm_metrics.recordListenerAction(agent->id(),
+                                                              action_vec,
+                                                              channel_active_mask,
+                                                              now_time);
                         }
                     }
                 }
@@ -2426,6 +2624,16 @@ void evaluatePopulation(World2D& world,
         credit_tag += "/ep_";
         credit_tag += std::to_string(epoch_us);
         credit_ledger.appendCsv("data/runs/_credit_log.csv", credit_tag);
+        // A3.S1: flush this episode's communication metrics on the same tag.
+        // Each row is a (scenario_name, generation, channel) tuple; the
+        // generation_index here is the world tick at episode end (best
+        // available proxy when this layer doesn't know the global gen num).
+        // The downstream analysis script can pick up either generation
+        // axis from scenario_name's epoch_us or the column.
+        if (comm_num_channels > 0) {
+            comm_metrics.summarise(static_cast<std::size_t>(world.currentTick()));
+            comm_metrics.appendCsv("data/runs/_communication_metrics.csv", credit_tag);
+        }
     }
 
     // A2.Step3 signal 3-role per-episode counts roll up into behavior.
