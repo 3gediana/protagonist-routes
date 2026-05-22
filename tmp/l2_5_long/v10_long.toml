@@ -1,0 +1,346 @@
+[runtime]
+random_seed = 91
+log_level = "info"
+preview_ticks = 1
+world_role = "train"
+scenario_name = "protagonist_train_smoke"
+
+[output]
+runs_dir = "data/runs/protagonist_smoke"
+
+[world]
+size = [200.0, 200.0]
+
+[world.resources]
+count = 84
+amount = 18.0
+respawn_ticks = 14
+dynamic = true
+regen_rate = 0.20
+terrain_adjustment_enabled = true
+
+[world.terrain]
+enabled = true
+height_scale = 30.0
+slope_resistance = 0.38
+cave_density = 0.04
+cave_shelter_factor = 0.50
+min_velocity_factor = 0.18
+seed = 91
+grid_resolution = 128
+perlin_frequency = 3.8
+perlin_persistence = 0.48
+perlin_octaves = 4
+
+[world.signal]
+enabled = true
+channels = 2
+grid_resolution = 64
+decay_rate = 0.05
+diffusion_rate = 0.08
+
+[world.objects]
+enabled = true
+count = 52
+damping = 0.9
+
+[world.base]
+enabled = true
+center_x = 60.0
+center_y = 100.0
+radius = 18.0
+stockpile_radius = 12.0
+nest_radius = 10.0
+stockpile_offset = 14.0
+nest_offset = -12.0
+
+[world.nursery]
+enabled = true
+deposit_energy_bonus = 8.0
+deposit_fitness_bonus = 3.0
+stockpile_snap_radius = 6.0
+
+[world.nursery_supply]
+enabled = true
+min_nearby_sticks = 8
+replenish_batch = 4
+near_radius = 16.0
+spawn_radius = 10.0
+cooldown_ticks = 22
+
+[world.campfire]
+enabled = true
+count = 2
+spawn_radius = 16.0
+warmth_radius = 11.0
+danger_radius = 3.5
+warmth_energy_bonus = 0.05
+danger_damage = 0.40
+
+[world.water]
+enabled = true
+source_count = 2
+spawn_radius_min = 18.0
+spawn_radius_max = 36.0
+source_radius = 5.0
+drink_radius = 3.5
+drink_rate = 26.0
+
+[world.survival]
+enabled = true
+max_health = 100.0
+max_hydration = 100.0
+initial_health_ratio = 1.0
+initial_hydration_ratio = 0.68
+hydration_decay_per_tick = 0.060
+dehydration_threshold_ratio = 0.32
+dehydration_damage_per_tick = 0.14
+fire_health_damage_per_tick = 0.40
+warmth_recovery_per_tick = 0.06
+nest_recovery_per_tick = 0.10
+injured_threshold_ratio = 0.45
+
+[world.tree]
+enabled = true
+count = 14
+spawn_radius_min = 16.0
+spawn_radius_max = 38.0
+trunk_radius = 2.5
+max_integrity = 16.0
+wood_yield = 3
+regrow_ticks = 220
+
+[world.worksite]
+enabled = true
+count = 2
+spawn_radius = 12.0
+interaction_radius = 10.0
+required_sticks = 4
+required_stones = 1
+assembly_rate = 0.20
+shelter_energy_bonus = 0.03
+
+[world.intervention]
+enabled = true
+initial_budget = 1.3
+max_budget = 2.6
+recharge_per_tick = 0.020
+stress_decay_per_tick = 0.01
+max_stress = 0.80
+cooldown_ticks = 20
+
+[world.progression]
+enabled = true
+first_fire_stick_threshold = 4
+worksite_unlock_deposit_threshold = 8
+worksite_unlock_stone_threshold = 1
+stone_unlock_deposit_threshold = 6
+heavy_unlock_deposit_threshold = 16
+second_fire_deposit_threshold = 20
+heavy_unlock_stone_threshold = 2
+second_fire_stone_threshold = 3
+stone_unlock_count = 10
+heavy_unlock_count = 4
+unlock_radius_min = 24.0
+unlock_radius_max = 42.0
+event_min_interval_ticks = 20
+event_max_interval_ticks = 80
+
+[population.protagonist]
+count = 8
+hidden_dim = 512
+memory_cells = 48
+action_dim = 13
+
+[population.background]
+# 7-species ecosystem (small smoke variant)
+# Total background = 45, total agents = 53
+hidden_dim = 32
+
+[[population.background.species]]
+archetype = "large_herbivore"
+count = 10
+
+[[population.background.species]]
+archetype = "small_forager"
+count = 8
+
+[[population.background.species]]
+archetype = "apex_predator"
+count = 1
+
+[[population.background.species]]
+archetype = "pack_hunter"
+count = 4
+
+[[population.background.species]]
+archetype = "ambush_predator"
+count = 2
+
+[[population.background.species]]
+archetype = "scavenger"
+count = 4
+
+[[population.background.species]]
+archetype = "omnivore"
+count = 8
+
+[evolution]
+generations = 30
+episode_ticks = 400
+episodes_per_generation = 6
+checkpoint_every = 2
+
+[evolution.neat]
+add_node_rate = 0.04
+add_connection_rate = 0.10
+toggle_connection_rate = 0.02
+add_modulatory_rate = 0.005
+compatibility_threshold = 3.0
+
+[evolution.selection]
+elite_ratio = 0.20
+tournament_size = 3
+
+[evolution.mutation]
+weight_perturb_rate = 0.80
+weight_reset_rate = 0.05
+weight_perturb_sigma = 0.50
+
+[trace]
+enabled = true
+events_enabled = true
+agents_enabled = true
+world_enabled = true
+agent_interval = 10
+world_interval = 10
+max_generations = 1
+max_episodes_per_generation = 1
+
+# L2.2 v2 smoke: drive-delta reward as primary signal.
+# outcome_weight=0.05 fades the legacy v9 reward components down to
+# 5% of their old magnitude; drive_weight=15 gives the homeostatic
+# penalty enough authority to actually move fitness.
+[reward]
+drive_weight = 15.0
+outcome_weight = 0.05
+drive_thirst_from_hydration = true
+survival_weight = 1.0
+food_weight = 10.0
+intrinsic_weight = 4.0
+combat_weight = 1.0
+cooperation_weight = 6.0
+communication_weight = 4.0
+worksite_proximity_reward = 0.05
+worksite_completion_reward = 60.0
+social_proximity_reward = 0.01
+social_proximity_radius = 6.0
+signal_emit_reward = 0.04
+signal_emit_companion_radius = 12.0
+signal_co_attendance_reward = 0.6
+signal_co_attendance_radius = 8.0
+signal_co_attendance_window = 40
+joint_hunt_reward = 8.0
+joint_hunt_radius = 10.0
+
+[combat]
+attack_reward = 1.5
+kill_bonus = 8.0
+death_penalty = 4.0
+
+# L2.3 v2 smoke: enable plant kind partitioning + drive-delta reward.
+[world.resources.plant_weights]
+grass = 0.5
+browse = 0.3
+fruit = 0.2
+
+
+# L2.4 v2 task templates (SPECIES_DIFFERENTIATION_SPEC.md § 4.2).
+# 6 templates from the spec, sampled per episode.
+
+[[evolution.task_templates]]
+name = "solo_hunt_easy"
+weight = 1.0
+protagonist_count = 1
+[[evolution.task_templates.background]]
+archetype = "small_forager"
+count = 1
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 0
+[[evolution.task_templates.background]]
+archetype = "apex_predator"
+count = 0
+
+[[evolution.task_templates]]
+name = "solo_hunt_predator"
+weight = 1.0
+protagonist_count = 1
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 1
+[[evolution.task_templates.background]]
+archetype = "small_forager"
+count = 0
+
+[[evolution.task_templates]]
+name = "group_vs_pack"
+weight = 1.0
+protagonist_count = 4
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 3
+[[evolution.task_templates.background]]
+archetype = "small_forager"
+count = 0
+
+[[evolution.task_templates]]
+name = "proactive_build"
+weight = 0.7
+protagonist_count = 4
+worksite_count = 1
+tree_count = 4
+worksite_completion_reward = 80.0
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 0
+[[evolution.task_templates.background]]
+archetype = "small_forager"
+count = 0
+
+[[evolution.task_templates]]
+name = "wave_attack"
+weight = 0.7
+protagonist_count = 4
+worksite_count = 1
+worksite_preactivate = true
+shelter_camp_reward = 0.10
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 5
+
+[[evolution.task_templates]]
+name = "mixed_ecology"
+weight = 1.5
+protagonist_count = 8
+[[evolution.task_templates.background]]
+archetype = "small_forager"
+count = 8
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 6
+[[evolution.task_templates.background]]
+archetype = "apex_predator"
+count = 2
+[[evolution.task_templates.background]]
+archetype = "ambush_predator"
+count = 2
+[[evolution.task_templates.background]]
+archetype = "scavenger"
+count = 4
+[[evolution.task_templates.background]]
+archetype = "omnivore"
+count = 4
+[[evolution.task_templates.background]]
+archetype = "large_herbivore"
+count = 4

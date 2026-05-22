@@ -1,9 +1,20 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-22（含 controlled emitter 训练支持 + listener reward field + metric decoupling，3 次训练失败留下基础设施）
+> 最后巡检：2026-05-22（**v2 物种差异化 L2.1-L2.4 全套落地，30 gen smoke 验证通过**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`8225c71 chore(protagonist): revert memory_ablation.toml genome path + REALTIME_USER_REQUIREMENTS sync`
+> 当前 HEAD：`7d978b6 L2.4: per-episode task template autocurriculum (POET-lite)`
+>
+> **2026-05-22 夜 v2 物种差异化全部落地**（4 commits, +2740 行）：
+> - `200ea1a L2.1: species differentiation v2` (damage threshold + stealth + scavenge eff + 8 species capability differentiation)
+> - `3896e90 L2.2: homeostatic drive state v2` (5 drives + drive-delta reward formula + per-species setpoints + 3 toml gates)
+> - `06daaf0 L2.3: resource niche partitioning v2` (4-kind plant + corpse + per-species eat efficiency)
+> - `7d978b6 L2.4: per-episode task template autocurriculum` (POET-lite 6 templates from spec § 4.2)
+> - **30 代 long retrain 验证通过**（`tmp/l2_5_long/v10_long.toml`，6 templates × 6 episodes/gen × 30 gen = 180 episodes，~85s）：所有 8 物种 fitness 健康收敛，**none collapsed**；scavenger peak avg=1068 (scavenge_eff working)、ambush_predator avg 300-660 (stealth + niche)、protagonist drive penalty 从 -1551 → -127 (best @ gen 22)。166/166 unit tests PASS。
+> - 所有 v2 改动**全部默认 off**：`reward.drive_weight=0` / `world.resources.plant_weights.grass=1.0` / `[[evolution.task_templates]]` 空数组 = 老 v9 / a3 / memory ablation 训练分布完全不变。
+> - 用户原话核心理由："**奖励太直接 → 反涌现**" — v1 30 reward labels 路径完全废弃，v2 走"机制压出来"路径，符合 spec § 0.1 "v1 v2 根本差异" 表。
+>
+> **历史 commit 链**（保留参考）：
 > 关键近期 commit 链：
 > - `81f763f feat(protagonist): listener-side signal response reward + metric decoupling`
 > - `2c81ca4 feat(protagonist): controlled signal emitter for camp+signal co-training`
