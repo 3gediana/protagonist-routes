@@ -2,14 +2,14 @@
 
 > 位置：`routes/protagonist_ecology/docx/supporting/MEMORY_EVIDENCE_AUDIT.md`
 >
-> HEAD 基线：`9a0d5ed`（工作树有未 commit 的 docx 重排）
+> HEAD 基线：`f64d7c4`（初版审计 commit）→ 后续 audit-driven fix 见 § 7
 >
 > 作用：把"三任务证据链 + 44 维 MemoryCognitionPerception + 四类 memory bank 的真实 query"对照一次。
 >
 > 用法：
 > - 每次想动 reward shaping / metric / perception 维度前先查 § 1~§ 3
 > - 不在这里讲设计哲学；只列「真代码 + 真数据 + 哪里 DEAD/WEAK」
-> - 数据来源：`data/runs/protagonist_memory_ablation_fixed/20260522-015711/memory_ablation_results.csv`，4 episodes × 5 variants × 4 tasks
+> - 数据来源：§ 1~§ 4 用 v3 genome (2026-05-22 01:57:11)；§ 7 增加 v4-v7 follow-up 数据
 
 ---
 
@@ -235,3 +235,80 @@ dim 36-43 是 DNC summary，目前 ablation harness 没有 `no_dnc` 变体。DNC
 - 想解释 no_X 分离 → § 4.1 先排除 cascade
 - signal_response 为什么全 0 → § 4.4 四条路
 - 下一步候选 → § 5
+- audit-driven fix 实际效果 → § 7
+
+---
+
+## 7. Audit-driven Fix Follow-up · 2026-05-22
+
+§ 1~§ 5 是审计静态报告（v3 genome）。§ 7 记录基于 § 4 / § 5 提出的修复方案的真实落地数据，覆盖 5 轮重训 v3→v7。
+
+### 7.1 已落地代码改动
+
+按 § 5 建议依次落地（commit 同批）：
+
+| audit 节 | 修复 | 代码位置 |
+|---|---|---|
+| § 4.4 (b) | 加 `peer_signal_heard` episodic 写入（listener 在 companion radius 内每个 emit 写一次，per-emit dedup） | `runtime/ProtagonistEcologyRuntime.cpp` ~L1672-1709 |
+| § 2 / § 4.2 | perception dim 18-21 从 `topSalient(1)` 改为 `recentOfType("peer_signal_heard",1)` 的 dxdy/salience/recency | `perception/MemoryCognitionPerception.cpp` § 2 |
+| § 4.4 (d) | 加 `signal_response_dense_reward` 字段 + dense gradient `(1-dist/companion_radius)*dt` | `runtime/ProtagonistEcologyRuntime.cpp` reward 累积 ~L1820-1845 |
+| § 4.1 | dim 34-35 从 goal-derived spatial cascade 改为 goal-only (`completionProgress`, `elapsedSeconds/60`) | `perception/MemoryCognitionPerception.cpp` § 4 |
+| A1.4 | `agent_trace.csv` 加 `recent_signal_dx/dy/salience/age_seconds` 4 列 | `runtime/TraceRecorder.cpp` |
+| 测试 | 4 个 perception unit test (cascade decoupled / goal-only / peer_signal_heard readback / silent without event) | `tests/route_protagonist/test_memory_cognition_perception.cpp` |
+
+### 7.2 五轮重训 + ablation 真实数据
+
+每一轮都用 `configs/protagonist_ecology_train_camp_signal.toml` 训练，再用 `configs/protagonist_ecology_memory_ablation.toml`（4 episodes × 5 variants × 4 tasks，固定 v_x best_genome）评估。
+
+| Genome | train 关键参数 | gens | water spatial 分离 | water goal 分离 | worksite fitness spatial | signal_response_events |
+|---|---|---:|---:|---:|---:|---:|
+| **v3** (pre-audit) | 旧 perception (cascade fused) | — | -44% (=cascade 假阳性) | -40% (=cascade 假阳性) | — | **0** |
+| **v4** | 新 perception, train companion=12, halo=8 | 30 | **-95%** ✅ | **-90%** ✅ | -84% | 0 |
+| **v5** | + train companion 12→30 (与 eval 对齐) | 30 | -78% ✅ | -64% ✅ | -60% | 0 |
+| **v6** | + halo 8→12 (任务软化) | 30 | **-100%** ✅ | **-100%** ✅ | -55% | 0 |
+| **v7** | + 30→60 代翻倍 | 60 | **-100%** ✅ | **-100%** ✅ | -66% | 0 |
+
+实验数据存放于 `data/runs/protagonist_memory_ablation_fixed/` 多个时间戳子目录（最新 = v7 = `20260522-105509`）。
+
+### 7.3 结论
+
+**audit § 4.1 cascade 解耦 ✅✅✅✅ 四轮独立验证**
+
+v4-v7 全部独立分离 −55%~−100%，证明：
+
+- v3 时代 `no_spatial=-44%` / `no_goal=-40%` 不是两条独立证据，是 cascade 双重计数
+- 解耦后两条通道各自能强分离（water `-100%/-100%`）
+- 这条证据是 audit 最坚实的成果
+
+**audit § 4.4 signal_response_events ❌❌❌❌❌ 五轮均为 0**
+
+即使依次落地了：
+- `peer_signal_heard` episodic 写入（§ 4.4 (b)）
+- perception dim 18-21 readback specialise（§ 4.2）
+- listener-side dense gradient reward（§ 4.4 (d)）
+- train/eval companion radius 对齐 30m
+- halo softening 8→12m
+- 训练翻倍 30→60 代
+
+`signal_response_events` 在 v3-v7 全部稳定为 0。这不是单点缺口，而是 task setup × reward 全局比例 × NEAT 学习能力的复合问题。
+
+### 7.4 v6/v7 的关键负向证据：reward 全局比例失衡
+
+- v6 五个 ablation variant fitness **bit-exact 相同** (6.63)：v6 controller 在 signal_response eval 任务下完全没动用任何 memory，关闭哪条都跑出相同物理轨迹
+- v7 五个 variant fitness **反向**（`no_spatial=17.9 > no_episodic=10.9 > baseline=7.6 > no_goal=6.7`）：关闭 memory **反而** fitness 更高，说明 v7 学到 "memory 信号 = bias 远离 base，远离 base = 远离 food + 高生存风险 = 总收益负"。
+- 这意味着即便 dense reward + halo reward 在数学上都打开了，`signal_response_dense_reward * communication_weight = 1.0 * 10.0 = 10.0` 的累积仍**小于**留在 base 周围吃 food 的 `food_weight = 4.0` 长期累积，因为 emit 间隔 30s，agent 90% 时间无 dense gradient
+
+### 7.5 如果再做一轮要改什么（不在本次 commit 范围）
+
+1. **大幅放大 listener reward 主导地位**：`signal_response_dense_reward 1.0 → 5.0`，`signal_response_reward 1.5 → 8.0`，让 "走向 emitter" 的累积稳定大于 food
+2. **降低 food_weight 在 signal_response task params 中**：现有 4.0，改 0.5 让 food 不再霸占 fitness
+3. **改任务 setup**：让 emitter 旁边有充足 food（§ 4.4 (d) 的 "food spawn near emitter"），把 "进 halo" 与 "活下来" 对齐而不是冲突
+4. **换学习算法**：30/60 代 NEAT 不够，gradient-based PPO / SAC 在 dense reward 下可能几代就学会
+5. **task 软化继续**：halo 12 → 16m + window 15 → 25s，让进 halo 几乎自动
+
+### 7.6 经验沉淀
+
+- **audit 最大的产出不是修复，是揭示**。§ 4.1 cascade 的揭示让 5 轮训练有了一个稳健的对照测量（spatial vs goal 真分离），这本身就是科学价值
+- **基础设施齐备 ≠ 任务能学会**。peer_signal_heard pipeline、dense reward、cascade decoupling 都是真实增益，但全局 reward 比例不对仍能把整条链锁死
+- **chicken-and-egg 不是单一缺口**。原以为是 perception 缺 readback（§ 4.4 (a-c)）或缺 dense reward（§ 4.4 (d)），现在知道：四条路全打开后**仍然**在 30/60 代 NEAT 下学不会，根因是 reward 整体经济不平衡 + NEAT 探索效率
+- **"5 variants bit-exact 相同"**是个有力的诊断信号：当看到 baseline / no_spatial / no_episodic / no_social / no_goal 的 fitness 完全相同时，这意味着 controller 物理轨迹在 5 个 variants 下完全相同，等价于 "这个任务下 controller 没用 memory"

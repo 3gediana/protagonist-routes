@@ -20,7 +20,7 @@ world_role = "train"
 scenario_name = "curriculum_camp_signal"
 
 [output]
-runs_dir = "data/runs/protagonist_train_camp_signal"
+runs_dir = "data/runs/protagonist_train_camp_signal_audit_v7"
 
 [world]
 size = [200.0, 200.0]
@@ -209,7 +209,14 @@ archetype = "omnivore"
 count = 18
 
 [evolution]
-generations = 120
+# v7: 60 generations. v6 ran 30 generations with halo 12m + companion
+# 30m + dense gradient and produced bit-exact identical fitness across
+# the five ablation variants on signal_response (6.63 each), strongly
+# suggesting the policy was not yet using the listener-side gradient
+# even though emit-side fitness reached 140k. The hypothesis for v7
+# is "underTrained, not structurally blocked" - same task, double the
+# generations.
+generations = 60
 episode_ticks = 1400
 episodes_per_generation = 3
 checkpoint_every = 10
@@ -248,11 +255,23 @@ social_proximity_radius = 6.5
 # more profitable, but we still rely mostly on food drops at the
 # controlled emitter to teach the response side.
 signal_emit_reward = 0.10
-signal_emit_companion_radius = 12.0
+# v5 fix: bumped 12 -> 30 so listener-side episodic write
+# (peer_signal_heard) and the dense distance-gradient reward both
+# trigger on the controlled emitter, which sits ~28m away from the
+# nest. With 12m the emitter pulse was outside the listener's
+# response window during training and the controller never got any
+# gradient toward signal sources -- the v4 retrain produced a
+# "signals=0" listener even though emit-side rewards fired normally.
+# 30m matches the SignalResponse ablation eval task so train and eval
+# agree on what counts as "I heard a peer".
+signal_emit_companion_radius = 30.0
 # Bumped from 0.7 -> 1.5 so co-attendance with the controlled emitter
 # (or peers) is genuinely competitive with food / camp rewards.
 signal_co_attendance_reward = 1.5
-signal_co_attendance_radius = 8.0
+# v6: softened halo 8 -> 12 to match the eased SignalResponse ablation
+# task. v5 confirmed listeners can collect the 30m dense gradient but
+# could not consistently land inside an 8m halo in 30 generations.
+signal_co_attendance_radius = 12.0
 # Window in seconds within which a co-attendance counts after a pulse.
 # 15s matches the memory ablation eval window so what the policy learns
 # in train transfers cleanly to eval.
@@ -264,6 +283,16 @@ signal_co_attendance_window_seconds = 15.0
 # by default in other configs; on here so camp+signal co-training has
 # a real listener-side gradient.
 signal_response_reward = 1.5
+# Audit § 4.4 chicken-and-egg break. Each tick the listener accrues
+# `signal_response_dense_reward * (1 - dist/companion_radius) * dt`
+# for every peer emit within companion_radius + response window.
+# Without this dense gradient the listener had no reason to walk
+# toward an emitter; the binary halo entry was effectively
+# unreachable (~0 events in three prior 30-generation runs). With
+# the gradient + the new peer_signal_heard episodic readback on
+# perception dim 18-21, the controller can now learn the chain
+# "heard signal -> turn toward source -> enter halo".
+signal_response_dense_reward = 1.0
 joint_hunt_reward = 10.0
 joint_hunt_radius = 10.0
 

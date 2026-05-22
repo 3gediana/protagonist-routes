@@ -103,6 +103,16 @@ struct TrainingParams {
     // condition, so turning this on aligns the training reward with what
     // ablation eval actually measures.
     float signal_response_reward{0.0f};
+    // Audit § 4.4 fix (chicken-and-egg break). Dense distance gradient for
+    // a listener that is within signal_emit_companion_radius of a recent
+    // peer emit but has not yet entered the response halo. Each tick the
+    // listener accrues `signal_response_dense_reward * (1 - dist/radius)
+    // * dt` so walking toward the emitter is immediately reinforced,
+    // instead of only paying out the binary halo entry. Off by default
+    // (zero) so existing training distributions are unaffected; the
+    // ablation-tuned signal_response task and the camp+signal training
+    // config opt in explicitly.
+    float signal_response_dense_reward{0.0f};
     float joint_hunt_reward{8.0f};
     float joint_hunt_radius{10.0f};
     std::size_t checkpoint_every{0};
@@ -363,6 +373,7 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.signal_co_attendance_window_seconds = config.getOr<double>("reward.signal_co_attendance_window_seconds",
                                                                       config.getOr<double>("reward.signal_co_attendance_window", params.signal_co_attendance_window_seconds));
     params.signal_response_reward = config.getOr<float>("reward.signal_response_reward", params.signal_response_reward);
+    params.signal_response_dense_reward = config.getOr<float>("reward.signal_response_dense_reward", params.signal_response_dense_reward);
     params.joint_hunt_reward = config.getOr<float>("reward.joint_hunt_reward", params.joint_hunt_reward);
     params.joint_hunt_radius = config.getOr<float>("reward.joint_hunt_radius", params.joint_hunt_radius);
     params.checkpoint_every = config.getOr<std::size_t>("evolution.checkpoint_every", params.checkpoint_every);
@@ -468,13 +479,38 @@ TrainingParams configureMemoryAblationTaskParams(const config::Config& config,
             params.signal_emit_companion_radius = 30.0f;
             params.signal_co_attendance_reward = 2.5f;
             // The emitter pulses every 30s. To count as a response the
-            // agent has to be inside an 8m halo within 15s of the pulse.
+            // agent has to be inside a 12m halo within 15s of the pulse.
             // The 15s slot lets a listener that just heard the pulse walk
             // up to the emitter; the 15s silent gap that follows is what
             // forces SpatialMemory / EpisodicMemory to carry the heading
             // until the next pulse arrives.
-            params.signal_co_attendance_radius = 8.0f;
+            //
+            // v6 softening: 8m -> 12m halo. With 8m the v5 retrain (which
+            // already fixed the train companion_radius mismatch) still
+            // produced events=0 across all variants. The dense distance
+            // gradient inside 30m was being collected, but the 8m halo
+            // was effectively a precision target the controller could
+            // not learn in 30 generations without driving fitness through
+            // food / emit-side rewards. 12m is still well inside the
+            // 30m perception range so "I heard a peer therefore I am in
+            // the halo" remains a non-trivial spatial task.
+            params.signal_co_attendance_radius = 12.0f;
             params.signal_co_attendance_window_seconds = 15.0;
+            // Listener-side rewards (audit § 4.4). Halo entry pays out
+            // signal_response_reward once per (listener, emitter, emit_tick),
+            // and the distance gradient inside the 30m companion radius
+            // pays out signal_response_dense_reward * (1 - dist/radius)
+            // every tick, both multiplied by communication_weight.
+            // The dense channel exists to break the chicken-and-egg
+            // observed in the prior three failed runs: the agent had no
+            // perception gradient toward the emitter, so it never
+            // reached the halo and never collected any reward, so it
+            // never learned to head that way. With the gradient and the
+            // new peer_signal_heard memory readback on perception
+            // dim 18-21, the controller can now learn the chain
+            // "heard signal -> turn toward source -> enter halo".
+            params.signal_response_reward = 1.5f;
+            params.signal_response_dense_reward = 1.0f;
             params.joint_hunt_reward = 0.0f;
             break;
     }
@@ -1177,6 +1213,13 @@ void evaluatePopulation(World2D& world,
     std::unordered_map<AgentId, std::size_t> previous_kills;
     std::unordered_map<AgentId, float> previous_hydration;
     std::unordered_map<AgentId, std::unordered_map<AgentId, Tick>> last_signal_response_tick;
+    // Audit § 4.4 / 4.2 fix: each (listener, emitter, emit_tick) tuple
+    // generates exactly one peer_signal_heard episodic event, so the
+    // listener's EpisodicMemoryBank carries a "last heard signal pos"
+    // entry that perception dim 18-21 can read back. Without this dedup
+    // we would write a fresh episodic event every tick the listener
+    // stays in companion radius.
+    std::unordered_map<AgentId, std::unordered_map<AgentId, Tick>> last_signal_heard_episodic_tick;
     std::unordered_set<AgentId> alive_last_tick;
     // Stage 1 extension: track the predator-visible state per agent across
     // ticks so we can emit saw_predator on the rising edge (i.e. predator
@@ -1662,6 +1705,45 @@ void evaluatePopulation(World2D& world,
                         break;
                     }
 
+                    // Audit § 4.4 fix: listener-side peer_signal_heard
+                    // episodic write. For each peer emit currently within
+                    // companion_radius and within the response window, write
+                    // one episodic event so EpisodicMemoryBank carries the
+                    // signal source position. Perception dim 18-21 reads
+                    // this back, giving the controller a memory-driven
+                    // gradient toward the emitter instead of relying on
+                    // GoalManager priority or instantaneous SignalLayer
+                    // queries. Salience scales with proximity so a nearby
+                    // signal source is more memorable than a distant one.
+                    // Dedup by (listener, emitter, emit_tick): one episodic
+                    // event per emit, not per tick of in-range exposure.
+                    {
+                        const float heard_radius = params.signal_emit_companion_radius;
+                        const float heard_radius_sq = heard_radius * heard_radius;
+                        const SimTimeSeconds heard_window = params.signal_co_attendance_window_seconds;
+                        for (const auto& [emitter_id, emit] : last_signal_emit) {
+                            if (emitter_id == agent->id()) continue;
+                            if (emit.tick == 0
+                                || current_world_time <= emit.time_seconds
+                                || current_world_time - emit.time_seconds > heard_window) {
+                                continue;
+                            }
+                            const float dist_sq = Vec2::distanceSquared(agent_pos, emit.position);
+                            if (dist_sq > heard_radius_sq) continue;
+
+                            auto& last_heard_tick = last_signal_heard_episodic_tick[agent->id()][emitter_id];
+                            if (last_heard_tick == emit.tick) continue;
+                            last_heard_tick = emit.tick;
+
+                            const float dist = std::sqrt(dist_sq);
+                            const float salience = std::clamp(
+                                1.0f - dist / std::max(heard_radius, 1.0f),
+                                0.10f,
+                                1.0f);
+                            record_episode(emit.position, "peer_signal_heard", salience);
+                        }
+                    }
+
                     // 3. Social Sightings (Record other living companions and predators)
                     for (const auto* peer : alive_protagonists) {
                         if (peer != nullptr && peer != concrete) {
@@ -1708,8 +1790,33 @@ void evaluatePopulation(World2D& world,
                     // the listener-side reward use the same condition
                     // (distance + window), so what gets rewarded in training
                     // is exactly what gets measured in eval.
+                    //
+                    // Audit § 4.4 chicken-and-egg break. We now pay out two
+                    // listener rewards in this block:
+                    //
+                    // 1. Dense distance gradient (signal_response_dense_reward):
+                    //    For every peer emit within companion_radius and the
+                    //    response window, the listener accrues `weight *
+                    //    (1 - dist/companion_radius) * dt` per tick. This
+                    //    rewards walking toward the emitter even before the
+                    //    listener enters the response halo. Without it, the
+                    //    only reward was the binary halo entry, which was
+                    //    unreachable because the controller had no learned
+                    //    gradient. The dense channel + the new
+                    //    peer_signal_heard episodic readback (perception
+                    //    dim 18-21) together give the controller both the
+                    //    direction (memory) and the reinforcement (dense
+                    //    gradient) needed to learn the heading.
+                    //
+                    // 2. Halo entry (signal_response_reward): unchanged,
+                    //    once per (listener, emitter, emit_tick).
                     {
                         const SimTimeSeconds now_time = world.currentTimeSeconds();
+                        const float halo_r2 = params.signal_co_attendance_radius
+                                            * params.signal_co_attendance_radius;
+                        const float dense_radius = std::max(params.signal_emit_companion_radius, 1.0f);
+                        const float dense_radius_sq = dense_radius * dense_radius;
+                        bool halo_credited_this_tick = false;
                         for (const auto& [emitter_id, emit] : last_signal_emit) {
                             if (emitter_id == agent->id()) {
                                 continue;
@@ -1719,8 +1826,19 @@ void evaluatePopulation(World2D& world,
                                 || now_time - emit.time_seconds > params.signal_co_attendance_window_seconds) {
                                 continue;
                             }
-                            if (Vec2::distanceSquared(agent_pos, emit.position)
-                                > params.signal_co_attendance_radius * params.signal_co_attendance_radius) {
+                            const float dist_sq = Vec2::distanceSquared(agent_pos, emit.position);
+
+                            if (params.signal_response_dense_reward != 0.0f
+                                && dist_sq <= dense_radius_sq) {
+                                const float dist = std::sqrt(dist_sq);
+                                const float strength = std::clamp(1.0f - dist / dense_radius, 0.0f, 1.0f);
+                                reward += params.communication_weight
+                                        * static_cast<double>(params.signal_response_dense_reward)
+                                        * static_cast<double>(strength)
+                                        * static_cast<double>(dt_seconds);
+                            }
+
+                            if (halo_credited_this_tick || dist_sq > halo_r2) {
                                 continue;
                             }
 
@@ -1733,7 +1851,7 @@ void evaluatePopulation(World2D& world,
                             if (params.signal_response_reward != 0.0f) {
                                 reward += params.communication_weight * static_cast<double>(params.signal_response_reward);
                             }
-                            break;
+                            halo_credited_this_tick = true;
                         }
                     }
                 }

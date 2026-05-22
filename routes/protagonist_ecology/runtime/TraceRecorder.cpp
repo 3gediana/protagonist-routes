@@ -146,7 +146,7 @@ TraceRecorder::TraceRecorder(World2D& world,
     if (config_.agents_enabled) {
         agent_trace_.open(trace_dir_ / "agent_trace.csv", std::ios::out | std::ios::trunc);
         if (agent_trace_.is_open()) {
-            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills,goal_index,goal_name,goal_commitment,goal_elapsed_seconds,goal_progress,episodic_event_count,episodic_top_type,episodic_top_salience,social_relation_count,social_best_coop,social_best_comm,social_best_hostility,spatial_water_cells,spatial_food_cells,spatial_danger_cells,spatial_fire_cells,spatial_worksite_cells,dnc_usage_mean,dnc_usage_max,dnc_write_peak,dnc_read_peak,dnc_read_norm,dnc_precedence_peak,dnc_write_focus_slot,dnc_read_focus_slot\n";
+            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills,goal_index,goal_name,goal_commitment,goal_elapsed_seconds,goal_progress,episodic_event_count,episodic_top_type,episodic_top_salience,social_relation_count,social_best_coop,social_best_comm,social_best_hostility,spatial_water_cells,spatial_food_cells,spatial_danger_cells,spatial_fire_cells,spatial_worksite_cells,dnc_usage_mean,dnc_usage_max,dnc_write_peak,dnc_read_peak,dnc_read_norm,dnc_precedence_peak,dnc_write_focus_slot,dnc_read_focus_slot,recent_signal_dx,recent_signal_dy,recent_signal_salience,recent_signal_age_seconds\n";
         }
     }
     if (config_.world_enabled) {
@@ -483,6 +483,17 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
         float dnc_precedence_peak = 0.0f;
         float dnc_write_focus_slot = 0.0f;
         float dnc_read_focus_slot = 0.0f;
+        // Audit § 4.4 / A1.4 trace: peer_signal_heard readback for
+        // post-hoc attribution of the chain "heard signal -> turn ->
+        // enter halo". recent_signal_dx/dy are world-space offsets to
+        // the most recent peer_signal_heard event; salience is the
+        // event's stored salience (proxy for proximity at hear time);
+        // age_seconds is now - event_time. All four are 0 / -1 when
+        // no such event exists.
+        float recent_signal_dx = 0.0f;
+        float recent_signal_dy = 0.0f;
+        float recent_signal_salience = 0.0f;
+        float recent_signal_age_seconds = -1.0f;
 
         if (const auto* protagonist_brain = dynamic_cast<const ProtagonistBrain*>(&agent->brain()); protagonist_brain != nullptr) {
             const auto dnc = protagonist_brain->dncSummary();
@@ -499,6 +510,15 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
             if (!top_events.empty()) {
                 episodic_top_type = top_events.front().type;
                 episodic_top_salience = top_events.front().salience;
+            }
+
+            const auto recent_signal = episodic.recentOfType("peer_signal_heard", 1);
+            if (!recent_signal.empty()) {
+                const auto& evt = recent_signal.front();
+                recent_signal_dx = evt.pos.x - pos.x;
+                recent_signal_dy = evt.pos.y - pos.y;
+                recent_signal_salience = evt.salience;
+                recent_signal_age_seconds = static_cast<float>(world.currentTimeSeconds() - evt.time_seconds);
             }
 
             const auto& social = protagonist_brain->socialMemory();
@@ -576,7 +596,11 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
                      << dnc_read_norm << ','
                      << dnc_precedence_peak << ','
                      << dnc_write_focus_slot << ','
-                     << dnc_read_focus_slot << '\n';
+                     << dnc_read_focus_slot << ','
+                     << recent_signal_dx << ','
+                     << recent_signal_dy << ','
+                     << recent_signal_salience << ','
+                     << recent_signal_age_seconds << '\n';
     }
     agent_trace_.flush();
 }

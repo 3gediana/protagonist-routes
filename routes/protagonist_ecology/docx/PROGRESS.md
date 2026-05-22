@@ -13,7 +13,7 @@
 | 最后更新 | 2026-05-22 |
 | 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；底座侧已接通 continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层 / mixed compute，**但这些不等于长蓝图已经完成** |
 | 当前项目优先级 | 当前优先级已从“单点补 signal reward”上升为“按新执行文档统一收口主线”：先沿 `DEVELOPMENT_EXECUTION_GUIDE.md` / `DEVELOPMENT_TASK_PLAN.md` 收口 `Memory V2 -> ContributionLedger -> communication semantics`，确认 cognition-social 主链站稳后，再进入物种角色、生命周期、自动晋升闭环与 R-008 自长机制。 |
-| 最新用户新增问题 | 用户要求对照长蓝图、用户需求与真实代码，重写一份**最少绕路的开发执行文档**和一份**可勾选任务计划**，并清理 route 内过时文档入口。 |
+| 最新用户新增问题 | 用户要求"按 audit 揭示的问题开始改 + 把记忆机制测试修完跑完"——已落地 audit § 4.1 cascade 解耦 / § 4.2 episodic readback specialise / § 4.4 (b)(d) peer_signal_heard + dense reward / A1.4 trace columns，连测 4 个新 perception unit test，5 轮重训 v3→v7 验证。cascade 解耦四轮独立 ✅；signal events 五轮均 0 ❌（根因 reward 全局比例失衡，见 audit § 7）。 |
 
 ---
 
@@ -482,7 +482,7 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 
 ## 下一步
 
-1. 按 `DEVELOPMENT_TASK_PLAN.md` 先收口 `signal_response`：补 perception-driven shaping reward、listener trace 字段和更干净的 primary metric。
+1. `signal_response` 收口下一轮（如重启）：按 audit § 7.5 列出的方向之一推进——大幅放大 listener reward 量级（`signal_response_dense_reward 1→5` + `signal_response_reward 1.5→8`）、或在 SignalResponse ablation task 内把 `food_weight 4→0.5` 让 food 不再霸占 fitness、或加 food spawn near emitter 让进 halo 与活下来不冲突、或软化 halo 12→16m + window 15→25s。当前 5 轮 v3→v7 数据强烈指向：不是 perception/reward channel 缺口，是 task 全局比例失衡 + NEAT 30/60 代探索效率不足。
 2. 把 `Build / Hunt / Signal` 三条 credit 统一成一套 route-local `EventLineage / Contribution` 口径，避免 communication 继续缺因果归因。
 3. 基于新的 communication 指标与 ablation，优先完成一条真的成立的通信任务（`scout-worker` / `danger warning` / `build request` 三选一先收口）。
 4. 把 `supporting/METRICS_FIELD_GUIDE.html` 继续作为解释层基座维护，后续 communication / lineage / lifecycle 字段都要同步进去。

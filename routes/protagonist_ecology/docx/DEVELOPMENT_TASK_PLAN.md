@@ -19,10 +19,10 @@
 
 ### A1. Memory V2 收口
 
-- [ ] 为 `water_return` 重写 spatial 证据链：确认哪些 query、perception 或 assist 路径让 `no_spatial` 仍能完成任务
-- [ ] 为 `signal_response` 重写完整证据链：区分 `signal perceived`、`toward emitter movement`、`listener arrival`、`reward obtained`
-- [ ] 为 `signal_response` 增加 perception-driven shaping reward，避免只有进 halo 才有梯度
-- [ ] 为 `signal_response` 增加 trace 字段，单独记录 listener 的 signal 强度、朝向变化与响应轨迹
+- [x] 为 `water_return` 重写 spatial 证据链：cascade 解耦后 v4-v7 四轮均 `no_spatial=-78%~-100%`、`no_goal=-64%~-100%`，两通道独立，旧 `-44%` 是 cascade 假阳性（见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 7.3）
+- [~] 为 `signal_response` 重写完整证据链：v3-v7 五轮 `signal_response_events` 全为 0；perception dim 18-21 已专门化为 `peer_signal_heard` readback，TraceRecorder 已加 4 列归因，但根因诊断为 reward 全局比例失衡（§ 7.4），不是单点缺口
+- [x] 为 `signal_response` 增加 perception-driven shaping reward，避免只有进 halo 才有梯度（已加 `signal_response_dense_reward` 字段 + dense gradient `(1-dist/companion_radius)*dt`，但 v4-v7 数据显示量级仍不够撬动 NEAT 30/60 代探索；见 § 7.5 后续放大方向）
+- [x] 为 `signal_response` 增加 trace 字段，单独记录 listener 的 signal 强度、朝向变化与响应轨迹（`agent_trace.csv` 新增 `recent_signal_dx/dy/salience/age_seconds` 4 列）
 - [x] 为 `water_return / signal_response / worksite_return` 三个任务输出统一对照表，明确 primary metric 和 secondary metrics（见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 1）
 - [x] 把 `MemoryCognitionPerception` 当前 44 维重新审计一遍：标出哪些维度真被任务使用，哪些只是挂着（见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 2，结论：OK 9 / DEAD 14 / WEAK 5 / UNKNOWN-DNC 8 / 混合 entangled 2）
 - [x] 为 `Spatial / Episodic / Social / Goal` 四类 memory 分别补一条“最小有效 query”清单（见 `supporting/MEMORY_EVIDENCE_AUDIT.md` § 3）
