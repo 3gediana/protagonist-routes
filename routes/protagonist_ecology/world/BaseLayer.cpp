@@ -1,6 +1,8 @@
 #include "world/BaseLayer.h"
 
+#include "core/agent/Agent.h"
 #include "core/interfaces/IWorld.h"
+#include "core/world/layers/AgentLayer.h"
 
 #include <algorithm>
 
@@ -11,7 +13,8 @@ BaseLayer::BaseLayer(Vec2 center,
                      float stockpile_radius,
                      float nest_radius,
                      float stockpile_offset,
-                     float nest_offset)
+                     float nest_offset,
+                     float nest_predator_damage_per_second)
     : base_center_(center),
       stockpile_center_(center),
       nest_center_(center),
@@ -19,7 +22,8 @@ BaseLayer::BaseLayer(Vec2 center,
       stockpile_radius_(stockpile_radius),
       nest_radius_(nest_radius),
       stockpile_offset_(stockpile_offset),
-      nest_offset_(nest_offset) {}
+      nest_offset_(nest_offset),
+      nest_predator_damage_per_second_(std::max(0.0f, nest_predator_damage_per_second)) {}
 
 void BaseLayer::onAttach(IWorld& world) {
     base_center_ = clampToWorld(base_center_, world.size());
@@ -28,8 +32,26 @@ void BaseLayer::onAttach(IWorld& world) {
 }
 
 void BaseLayer::tick(IWorld& world, float dt) {
-    (void)world;
-    (void)dt;
+    if (nest_predator_damage_per_second_ <= 0.0f || dt <= 0.0f) {
+        return;
+    }
+    auto* agents = world.getLayer<AgentLayer>();
+    if (agents == nullptr) {
+        return;
+    }
+    const float dmg = nest_predator_damage_per_second_ * dt;
+    for (auto* agent : agents->agents()) {
+        if (agent == nullptr || !agent->alive()) {
+            continue;
+        }
+        if (!agent->isPredator()) {
+            continue;
+        }
+        if (!inNest(agent->position())) {
+            continue;
+        }
+        agent->setEnergy(agent->energy() - dmg);
+    }
 }
 
 bool BaseLayer::inBase(Vec2 pos) const {

@@ -17,6 +17,8 @@ namespace neuro::routes::protagonist {
 
 namespace {
 
+constexpr double kMaxRecentSignalCueAgeSeconds = 30.0;
+
 bool hasTarget(Vec2 target) {
     return target.x != 0.0f || target.y != 0.0f;
 }
@@ -45,11 +47,42 @@ Vec2 goalTarget(const ProtagonistBrain& brain, GoalType goal, Vec2 position) {
     }
 }
 
-Vec2 carryReturnTarget(const ProtagonistBrain& brain, Vec2 position) {
+bool hasIncompleteActiveWorksite(const WorksiteLayer* worksites) {
+    if (worksites == nullptr) {
+        return false;
+    }
+    for (const auto& site : worksites->sites()) {
+        if (site.active && !site.completed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Vec2 recentSignalTarget(const ProtagonistBrain& brain, const IWorld& world) {
+    const auto recent_signal = brain.episodicMemory().recentOfType("peer_signal_heard", 1);
+    if (recent_signal.empty()) {
+        return {};
+    }
+    const auto& signal = recent_signal.front();
+    const double now = world.currentTimeSeconds();
+    if (now <= signal.time_seconds || now - signal.time_seconds > kMaxRecentSignalCueAgeSeconds) {
+        return {};
+    }
+    return signal.pos;
+}
+
+Vec2 carryReturnTarget(const ProtagonistBrain& brain, const IWorld& world, Vec2 position) {
     const auto& spatial = brain.spatialMemory();
     Vec2 target = spatial.findNearestWorksite(position, 0.15f);
     if (hasTarget(target)) {
         return target;
+    }
+    if (hasIncompleteActiveWorksite(world.getLayer<WorksiteLayer>())) {
+        target = recentSignalTarget(brain, world);
+        if (hasTarget(target)) {
+            return target;
+        }
     }
     return spatial.findNearestBase(position, 0.15f);
 }
@@ -105,7 +138,7 @@ void GoalActionAssistCapability::apply(IAgent& agent, IWorld& world, std::span<c
                && (goal == GoalType::GatherStick
                    || goal == GoalType::GatherStone
                    || goal == GoalType::BuildWorksite)) {
-        target = carryReturnTarget(*brain, concrete->position());
+        target = carryReturnTarget(*brain, world, concrete->position());
     }
     if (hasTarget(target)) {
         steerToward(*concrete, world, target, assist_speed_, dt);

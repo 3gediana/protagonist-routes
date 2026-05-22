@@ -14,7 +14,8 @@ public:
               float stockpile_radius,
               float nest_radius,
               float stockpile_offset,
-              float nest_offset);
+              float nest_offset,
+              float nest_predator_damage_per_second = 0.0f);
 
     const char* layerName() const override { return kName; }
     void onAttach(IWorld& world) override;
@@ -43,6 +44,7 @@ private:
     float nest_radius_;
     float stockpile_offset_;
     float nest_offset_;
+    float nest_predator_damage_per_second_;
 };
 
 }  // namespace neuro::routes::protagonist

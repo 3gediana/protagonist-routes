@@ -170,6 +170,7 @@ TEST(GoalActionAssist, CarryingGatherMaterialFallsBackToRememberedBase) {
     auto agent_layer = std::make_unique<neuro::AgentLayer>(-1.0e9f, 0.0f, 1);
     auto* agents = agent_layer.get();
     world.addLayer(std::move(agent_layer));
+    world.tick(1.0f);
 
     auto fixture = makeStubProtagonist(AgentId{1}, Vec2{12.0f, 40.0f});
     fixture.raw_agent->setCarriedObject(99);
@@ -177,6 +178,12 @@ TEST(GoalActionAssist, CarryingGatherMaterialFallsBackToRememberedBase) {
 
     fixture.brain->spatialMemory().recordSighting(
         Vec2{30.0f, 40.0f}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+    fixture.brain->episodicMemory().recordEvent(
+        neuro::Tick{0},
+        0.0,
+        Vec2{55.0f, 40.0f},
+        "peer_signal_heard",
+        0.8f);
     fixture.brain->goalMemory().setGoal(GoalType::GatherStick, 0.70f);
 
     GoalActionAssistCapability assist;
@@ -185,6 +192,56 @@ TEST(GoalActionAssist, CarryingGatherMaterialFallsBackToRememberedBase) {
     const float after = Vec2::distanceSquared(fixture.raw_agent->position(), Vec2{30.0f, 40.0f});
 
     EXPECT_LT(after, before);
+}
+
+TEST(GoalActionAssist, CarryingGatherMaterialUsesRecentSignalCueForActiveWorksite) {
+    World2D world(WorldId{4}, Vec2{50.0f, 50.0f});
+    world.addLayer(std::make_unique<BaseLayer>(
+        Vec2{15.0f, 25.0f}, 6.0f, 4.0f, 3.0f, 12.0f, -8.0f));
+    auto agent_layer = std::make_unique<neuro::AgentLayer>(-1.0e9f, 0.0f, 1);
+    auto* agents = agent_layer.get();
+    world.addLayer(std::move(agent_layer));
+    auto object_layer = std::make_unique<neuro::ObjectLayer>(Vec2{50.0f, 50.0f}, 0, 0.9f);
+    auto* objects = object_layer.get();
+    world.addLayer(std::move(object_layer));
+    auto worksite_layer = std::make_unique<WorksiteLayer>(1, 6.0f, 5.0f, 1, 0, 0.10f, 0.0f, 1u);
+    auto* worksites = worksite_layer.get();
+    world.addLayer(std::move(worksite_layer));
+
+    ASSERT_TRUE(worksites->activateNextDormant());
+    const Vec2 site_pos = worksites->sites().front().position;
+    world.tick(1.0f);
+
+    auto fixture = makeStubProtagonist(AgentId{1}, Vec2{12.0f, 25.0f});
+    objects->objects().push_back(MovableObject{
+        objects->nextId(),
+        fixture.raw_agent->position(),
+        kZeroVec2,
+        1.0f,
+        ObjectType::Stick,
+        true,
+        false,
+        1u,
+    });
+    fixture.raw_agent->setCarriedObject(objects->objects().back().id);
+    agents->addAgent(std::move(fixture.agent), world);
+
+    fixture.brain->episodicMemory().recordEvent(
+        neuro::Tick{0},
+        0.0,
+        site_pos,
+        "peer_signal_heard",
+        0.8f);
+    fixture.brain->goalMemory().setGoal(GoalType::GatherStick, 0.70f);
+
+    GoalActionAssistCapability assist;
+    for (int step = 0; step < 12 && worksites->sites().front().stored_sticks == 0; ++step) {
+        assist.apply(*fixture.raw_agent, world, std::span<const float>{}, 0.5f);
+        worksites->tick(world, 0.5f);
+    }
+
+    EXPECT_EQ(worksites->sites().front().stored_sticks, 1u);
+    EXPECT_FALSE(fixture.raw_agent->isCarrying());
 }
 
 TEST(GoalAwareDropCapability, HoldsLogisticsMaterialUntilGoalChanges) {

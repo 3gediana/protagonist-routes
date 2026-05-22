@@ -86,6 +86,13 @@ struct BaseZoneConfig {
     float nest_radius{10.0f};
     float stockpile_offset{14.0f};
     float nest_offset{-8.0f};
+    // When > 0, BaseLayer.tick applies this damage/sec to any agent that
+    // both is a predator AND stands inside the nest radius. Predators thus
+    // self-destruct if they try to chase a protagonist into the nest, which
+    // is the cleanest way to give the nest a real physical-shelter
+    // semantics without modifying core/capability/PredatorHuntCapability.
+    // Default 0 keeps existing scenarios unchanged.
+    float nest_predator_damage_per_second{0.0f};
 };
 
 struct NurseryLogisticsConfig {
@@ -161,6 +168,11 @@ struct WorksiteConfig {
     float assembly_rate{0.08f};
     float shelter_energy_bonus{0.03f};
     bool direction_requires_visibility{false};
+    // When true the world factory activates the first dormant worksite at
+    // bootstrap regardless of world_role. Used by eval tasks that need a
+    // ready-to-build site without flipping the whole role to "live" (which
+    // would also re-seed objects with extra stones, ignite a campfire, etc).
+    bool preactivate{false};
 };
 
 struct InterventionConfig {

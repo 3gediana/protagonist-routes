@@ -152,6 +152,17 @@ def process_run(run_dir: Path, num_channels: int = 4) -> Path | None:
     """Process one run; write report; return report path or None on failure."""
     trace_paths = list((run_dir / "trace").glob("generation_*/episode_*/agent_trace.csv"))
     if not trace_paths:
+        # Memory ablation eval writes trace under
+        #   trace/<task>/<variant>/episode_*/agent_trace.csv
+        # so we fall back to a recursive glob if the training-style
+        # generation_* layout is empty.
+        trace_paths = list((run_dir / "trace").rglob("agent_trace.csv"))
+    if not trace_paths:
+        # Allow callers to point directly at a leaf <task>/<variant>
+        # subtree (so per-(task,variant) MI reports stay separable
+        # instead of being averaged together at run-root level).
+        trace_paths = list(run_dir.rglob("agent_trace.csv"))
+    if not trace_paths:
         print(f"[skip] no trace found under {run_dir}/trace/")
         return None
 

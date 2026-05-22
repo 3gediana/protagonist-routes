@@ -150,7 +150,8 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.base.stockpile_radius,
             config.base.nest_radius,
             config.base.stockpile_offset,
-            config.base.nest_offset));
+            config.base.nest_offset,
+            config.base.nest_predator_damage_per_second));
     }
 
     if (config.objects.enabled) {
@@ -284,6 +285,10 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
         if (auto* campfire = world->getLayer<CampfireLayer>(); campfire != nullptr) {
             campfire->igniteNextDormant();
         }
+        if (auto* worksite = world->getLayer<WorksiteLayer>(); worksite != nullptr) {
+            worksite->activateNextDormant();
+        }
+    } else if (config.worksite.preactivate) {
         if (auto* worksite = world->getLayer<WorksiteLayer>(); worksite != nullptr) {
             worksite->activateNextDormant();
         }

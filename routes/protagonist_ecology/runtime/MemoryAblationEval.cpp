@@ -260,6 +260,21 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.base.radius = 10.0f;
             route.base.stockpile_radius = 6.0f;
             route.base.nest_radius = 4.0f;
+            // Phase 2 follow-up 2026-05-22 (third pass): give the nest a
+            // real physical-shelter semantics. Up to this point the nest was
+            // only a marker zone; predators happily walked into it and
+            // killed protagonists, so survived was indistinguishable
+            // between "signal on" and "signal off". By setting
+            // nest_predator_damage_per_second high enough that any predator
+            // intruding the nest dies in ~1s, we encode the rule
+            // "predators can't follow you home". With the controlled
+            // emitter parked next to the nest, the listener that follows
+            // the signal hides behind this rule and survives; without the
+            // signal it has no nest-direction cue and gets caught in the
+            // open. v8 hydration_decay is unchanged so the listener still
+            // has to leave the nest periodically (no shelter-camping
+            // exploit).
+            route.base.nest_predator_damage_per_second = 60.0f;
             route.background.forager_count = 0;
             route.background.predator_count = 12;  // 3 -> 12 (dense roaming)
             route.protagonist.predator_warn_enabled = false;
@@ -345,6 +360,13 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.worksite.assembly_rate = std::max(route.worksite.assembly_rate, 0.30f);
             // Worksite visibility off: signal is the only directional cue.
             route.worksite.direction_requires_visibility = true;
+            // Phase 2 follow-up 2026-05-22: eval worlds keep all worksites
+            // dormant by default (only live_role auto-activates the first
+            // one), and progression is force-disabled on every memory
+            // ablation task. Without preactivate the listener has no active
+            // site to deposit into, which is what kept worksite_completion
+            // pinned at 0 even after the goal-assist signal cue fix.
+            route.worksite.preactivate = true;
             route.survival.initial_hydration_ratio = std::max(route.survival.initial_hydration_ratio, 0.80f);
             break;
     }

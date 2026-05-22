@@ -146,7 +146,7 @@ TraceRecorder::TraceRecorder(World2D& world,
     if (config_.agents_enabled) {
         agent_trace_.open(trace_dir_ / "agent_trace.csv", std::ios::out | std::ios::trunc);
         if (agent_trace_.is_open()) {
-            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills,goal_index,goal_name,goal_commitment,goal_elapsed_seconds,goal_progress,episodic_event_count,episodic_top_type,episodic_top_salience,social_relation_count,social_best_coop,social_best_comm,social_best_hostility,spatial_water_cells,spatial_food_cells,spatial_danger_cells,spatial_fire_cells,spatial_worksite_cells,dnc_usage_mean,dnc_usage_max,dnc_write_peak,dnc_read_peak,dnc_read_norm,dnc_precedence_peak,dnc_write_focus_slot,dnc_read_focus_slot,recent_signal_dx,recent_signal_dy,recent_signal_salience,recent_signal_age_seconds\n";
+            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills,goal_index,goal_name,goal_commitment,goal_elapsed_seconds,goal_progress,episodic_event_count,episodic_top_type,episodic_top_salience,social_relation_count,social_best_coop,social_best_comm,social_best_hostility,spatial_water_cells,spatial_food_cells,spatial_danger_cells,spatial_fire_cells,spatial_worksite_cells,dnc_usage_mean,dnc_usage_max,dnc_write_peak,dnc_read_peak,dnc_read_norm,dnc_precedence_peak,dnc_write_focus_slot,dnc_read_focus_slot,recent_signal_dx,recent_signal_dy,recent_signal_salience,recent_signal_age_seconds,nearest_food_dist,predator_nearby_count,worksite_distance\n";
         }
     }
     if (config_.world_enabled) {
@@ -446,6 +446,8 @@ void TraceRecorder::writeEvent(const events::Event& event) {
 void TraceRecorder::writeAgentSnapshot(World2D& world) {
     auto* agents = world.getLayer<AgentLayer>();
     auto* survival = world.getLayer<SurvivalStatusLayer>();
+    auto* resources = world.getLayer<ResourceLayer>();
+    auto* worksites = world.getLayer<WorksiteLayer>();
     if (agents == nullptr) {
         return;
     }
@@ -600,7 +602,50 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
                      << recent_signal_dx << ','
                      << recent_signal_dy << ','
                      << recent_signal_salience << ','
-                     << recent_signal_age_seconds << '\n';
+                     << recent_signal_age_seconds;
+
+        // A3.S5 MI inputs. Three env-state columns sourced from world
+        // layers (not from perception or memory) so the MI score
+        // measures correlation between channel activity and ground
+        // truth, not between channel and the listener's belief.
+        //   nearest_food_dist  -> ResourceLayer.nearestAvailable distance
+        //                         (-1 if no available resource)
+        //   predator_nearby_count -> #agents with isPredator() within 12m
+        //   worksite_distance  -> distance to nearest ACTIVE worksite
+        //                         (-1 if no active worksite)
+        float nearest_food_dist = -1.0f;
+        if (resources != nullptr) {
+            const auto nf = resources->nearestAvailable(pos);
+            if (nf.has_value()) {
+                nearest_food_dist = nf->distance;
+            }
+        }
+        std::size_t predator_nearby_count = 0;
+        constexpr float kPredatorNearbyRadius = 12.0f;
+        constexpr float kPredatorNearbyRadiusSq =
+            kPredatorNearbyRadius * kPredatorNearbyRadius;
+        for (const auto* other : agents->agents()) {
+            if (other == nullptr || other == agent || !other->alive()) {
+                continue;
+            }
+            if (!other->isPredator()) {
+                continue;
+            }
+            if (Vec2::distanceSquared(other->position(), pos) <= kPredatorNearbyRadiusSq) {
+                ++predator_nearby_count;
+            }
+        }
+        float worksite_distance = -1.0f;
+        if (worksites != nullptr) {
+            const auto site = worksites->nearestActiveSite(pos);
+            if (site.has_value()) {
+                worksite_distance = std::sqrt(Vec2::distanceSquared(site->position, pos));
+            }
+        }
+        agent_trace_ << ','
+                     << nearest_food_dist << ','
+                     << predator_nearby_count << ','
+                     << worksite_distance << '\n';
     }
     agent_trace_.flush();
 }
