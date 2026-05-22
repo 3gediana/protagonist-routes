@@ -185,6 +185,56 @@ public:
     bool isInCave() const { return is_in_cave_; }
     void setInCave(bool v) { is_in_cave_ = v; }
 
+    // ---- L2.2 homeostatic drive state v2 (SPECIES_DIFFERENTIATION_SPEC.md § 2) ----
+    // Five drives per Hull / Barto IMRL / City Univ eLife 2014 / HAL HRL 2021.
+    // Reward formula (per spec § 2.2):
+    //   reward_t = - sum_drives ( drive_i_t - setpoint_i )^2 + outcome_bonuses
+    // Each drive is in [0,1]; setpoint is the species-specific "comfortable"
+    // value (e.g. ApexPredator loneliness_setpoint=0.6 means apex prefers
+    // to be alone, peers nearby drop loneliness_drive below 0.6 and reward
+    // turns negative).
+    //
+    // hunger    : grows per second of metabolism, drops on food eaten
+    // thirst    : grows per second, drops on drink (mirrors `hydration` in
+    //             survival layer; we keep it as a separate normalised drive
+    //             value here so all drives share the same units)
+    // fatigue   : grows with movement / hunt activity; drops on rest
+    // fear      : grows when predator in sense radius; decays without
+    // loneliness: grows when no peer in sense radius; drops with peer near
+    struct DriveState {
+        float hunger     = 0.0f;
+        float thirst     = 0.0f;
+        float fatigue    = 0.0f;
+        float fear       = 0.0f;
+        float loneliness = 0.0f;
+    };
+    struct DriveSetpoints {
+        float hunger     = 0.0f;
+        float thirst     = 0.0f;
+        float fatigue    = 0.0f;
+        float fear       = 0.0f;
+        float loneliness = 0.0f;
+    };
+
+    const DriveState& driveState() const { return drives_; }
+    DriveState& driveState() { return drives_; }
+    void setDriveState(const DriveState& s) { drives_ = s; }
+
+    const DriveSetpoints& driveSetpoints() const { return drive_setpoints_; }
+    void setDriveSetpoints(const DriveSetpoints& s) { drive_setpoints_ = s; }
+
+    // Drive-delta reward at the current state (used by per-tick reward
+    // computation): -((d-s)^2) summed across the 5 drives. 0 when all
+    // drives are at their setpoints. Always <= 0.
+    float driveSetpointPenalty() const {
+        const float dh = drives_.hunger     - drive_setpoints_.hunger;
+        const float dt = drives_.thirst     - drive_setpoints_.thirst;
+        const float df = drives_.fatigue    - drive_setpoints_.fatigue;
+        const float dr = drives_.fear       - drive_setpoints_.fear;
+        const float dl = drives_.loneliness - drive_setpoints_.loneliness;
+        return -(dh*dh + dt*dt + df*df + dr*dr + dl*dl);
+    }
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -234,6 +284,9 @@ private:
     SimTimeSeconds digest_satiety_until_seconds_ = -1.0;
     float scavenge_efficiency_ = 1.0f;
     bool is_in_cave_ = false;
+    // L2.2 homeostatic drive state
+    DriveState drives_{};
+    DriveSetpoints drive_setpoints_{};
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };

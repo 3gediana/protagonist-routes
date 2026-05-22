@@ -16,6 +16,7 @@
 #include "core/brain/fixed/FixedTopologyBrain.h"
 #include "core/brain/fixed/FixedTopologyGenome.h"
 #include "core/capability/AttackCapability.h"
+#include "core/capability/DriveTickCapability.h"
 #include "core/capability/EatCapability.h"
 #include "core/capability/EmitSignalCapability.h"
 #include "core/capability/FleeCapability.h"
@@ -307,6 +308,16 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         agent->addCapability(std::make_unique<GoalAwareDropCapability>(kDropCost));
     }
 
+    // L2.2 v2: drive tick (last so it sees foodEatenThisTick from
+    // EatCapability). consumedOutputs = 0; safe to add unconditionally.
+    agent->addCapability(std::make_unique<DriveTickCapability>(kSocialSenseRadius));
+
+    // L2.2 v2: protagonist setpoint = 0 across all 5 drives ("all
+    // discomforts are bad"). The species comparison table in spec § 2.1
+    // is for background species; protagonist starts uniform-0.
+    Agent::DriveSetpoints sp{};
+    agent->setDriveSetpoints(sp);
+
     return agent;
 }
 
@@ -507,6 +518,29 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             throw std::runtime_error("makeNeatSpeciesAgent: unsupported archetype");
     }
 
+    // L2.2 v2: drive tick + species-specific setpoints. Setpoints
+    // table from SPECIES_DIFFERENTIATION_SPEC.md § 2.1. The 5 drives
+    // are hunger / thirst / fatigue / fear / loneliness. Default 0
+    // means "any deviation is uncomfortable"; a non-zero value means
+    // the species "is comfortable being slightly hungry / lonely /
+    // afraid". The biggest discriminator is loneliness: pure-pack
+    // species (LargeHerbivore, PackHunter) have setpoint 0
+    // (must be near peers); apex (ApexPredator, AmbushPredator) have
+    // 0.6 (territorial, comfortable alone).
+    agent->addCapability(std::make_unique<DriveTickCapability>(/*sense_radius=*/18.0f));
+    Agent::DriveSetpoints sp{};
+    switch (archetype) {
+        case SpeciesArchetype::LargeHerbivore: sp.loneliness = 0.0f; break;
+        case SpeciesArchetype::SmallForager:   sp.loneliness = 0.2f; break;
+        case SpeciesArchetype::ApexPredator:   sp.loneliness = 0.6f; break;
+        case SpeciesArchetype::PackHunter:     sp.loneliness = 0.0f; break;
+        case SpeciesArchetype::AmbushPredator: sp.loneliness = 0.6f; break;
+        case SpeciesArchetype::Scavenger:      sp.loneliness = 0.3f; break;
+        case SpeciesArchetype::Omnivore:       sp.loneliness = 0.0f; break;
+        default: break;
+    }
+    agent->setDriveSetpoints(sp);
+
     return agent;
 }
 
@@ -537,6 +571,7 @@ std::unique_ptr<Agent> makeBackgroundForager(AgentId id,
     agent->addPerception(std::make_unique<NearestFoodPerception>());
     agent->addCapability(std::make_unique<MoveCapability>(1.7f, 0.004f, 0.001f, 20));
     agent->addCapability(std::make_unique<EatCapability>(4.0f, 42.0f));
+    agent->addCapability(std::make_unique<DriveTickCapability>(/*sense_radius=*/18.0f));
     return agent;
 }
 
@@ -568,6 +603,7 @@ std::unique_ptr<Agent> makeBackgroundPredator(AgentId id,
     agent->addPerception(std::make_unique<NearestFoodPerception>());
     agent->addCapability(std::make_unique<MoveCapability>(2.0f, 0.006f, 0.0012f, 20));
     agent->addCapability(std::make_unique<PredatorHuntCapability>(5.0f, 12.0f, 8.0f, 0.02f));
+    agent->addCapability(std::make_unique<DriveTickCapability>(/*sense_radius=*/18.0f));
     return agent;
 }
 

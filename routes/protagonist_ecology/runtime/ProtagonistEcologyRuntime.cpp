@@ -195,6 +195,26 @@ struct TrainingParams {
     bool episodic_memory_writes_enabled{true};
     bool social_memory_writes_enabled{true};
     bool goal_manager_enabled{true};
+
+    // L2.2 v2 (SPECIES_DIFFERENTIATION_SPEC.md § 2.2). When > 0, the
+    // per-tick protagonist reward includes a drive-delta penalty term
+    // `drive_weight * agent.driveSetpointPenalty() * dt`. The penalty
+    // is non-positive (0 when drives are at setpoint, more negative
+    // otherwise), so adding it pulls fitness toward "stay homeostatic".
+    // Default 0 keeps existing reward distributions untouched.
+    double drive_weight{0.0};
+    // L2.2 v2: thirst drive sync. When true, each tick we copy
+    // (1 - hydration_ratio) from SurvivalStatusLayer into the
+    // protagonist's `thirst` drive, so the drive penalty captures
+    // "how dry am I". Background species don't have SurvivalStatusLayer
+    // so they keep thirst = 0.
+    bool drive_thirst_from_hydration{true};
+    // L2.2 v2: outcome-bonus scaling. When drive_weight > 0 we typically
+    // want to shrink the v9 reward components (food_weight, combat_*,
+    // worksite_*, etc.) so the drive-delta term is the primary signal,
+    // not yet another addition on top of the existing reward landscape.
+    // Set per-task in toml; default 1.0 = keep existing components.
+    double outcome_weight{1.0};
 };
 
 struct BehaviorAccumulator {
@@ -434,6 +454,10 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.worksite_completion_reward = config.getOr<float>("reward.worksite_completion_reward", params.worksite_completion_reward);
     params.shelter_camp_reward = config.getOr<float>("reward.shelter_camp_reward", params.shelter_camp_reward);
     params.shelter_camp_predator_radius = config.getOr<float>("reward.shelter_camp_predator_radius", params.shelter_camp_predator_radius);
+    // L2.2 v2: drive-delta reward toggles.
+    params.drive_weight = config.getOr<double>("reward.drive_weight", params.drive_weight);
+    params.outcome_weight = config.getOr<double>("reward.outcome_weight", params.outcome_weight);
+    params.drive_thirst_from_hydration = config.getOr<bool>("reward.drive_thirst_from_hydration", params.drive_thirst_from_hydration);
     params.social_proximity_reward = config.getOr<float>("reward.social_proximity_reward", params.social_proximity_reward);
     params.social_proximity_radius = config.getOr<float>("reward.social_proximity_radius", params.social_proximity_radius);
     params.signal_emit_reward = config.getOr<float>("reward.signal_emit_reward", params.signal_emit_reward);
@@ -1683,14 +1707,33 @@ void evaluatePopulation(World2D& world,
                 pending_signal_share_credit.erase(pend_it);
             }
             const bool alive_now = concrete->alive();
+            // L2.2 v2: outcome_weight scales the legacy v9 reward
+            // components down when drive_weight > 0 takes over as the
+            // primary signal. When drive_weight = 0 (default), this is
+            // a no-op pass-through (outcome_weight default = 1.0).
+            const double outcome_w = params.outcome_weight;
             if (alive_now) {
                 any_alive = true;
-                reward += params.survival_weight * 0.01 * static_cast<double>(dt_seconds);
-                reward += params.food_weight * evaluateFoodReward(*concrete, world);
-                reward += params.intrinsic_weight * evaluateIntrinsicReward(*concrete);
+                reward += outcome_w * params.survival_weight * 0.01 * static_cast<double>(dt_seconds);
+                reward += outcome_w * params.food_weight * evaluateFoodReward(*concrete, world);
+                reward += outcome_w * params.intrinsic_weight * evaluateIntrinsicReward(*concrete);
                 alive_last_tick.insert(agent->id());
+
+                // L2.2 v2: thirst drive sync from SurvivalStatusLayer.
+                // Done before the drive_weight penalty so the penalty
+                // reflects the up-to-date thirst.
+                if (params.drive_thirst_from_hydration && survival_layer != nullptr) {
+                    const float hydr = survival_layer->hydrationRatio(agent->id());
+                    concrete->driveState().thirst = std::clamp(1.0f - hydr, 0.0f, 1.0f);
+                }
+                // L2.2 v2: drive-delta reward.
+                if (params.drive_weight != 0.0) {
+                    reward += params.drive_weight
+                              * static_cast<double>(concrete->driveSetpointPenalty())
+                              * static_cast<double>(dt_seconds);
+                }
             } else if (alive_last_tick.contains(agent->id())) {
-                reward -= params.combat_weight * static_cast<double>(params.combat_death_penalty);
+                reward -= outcome_w * params.combat_weight * static_cast<double>(params.combat_death_penalty);
                 alive_last_tick.erase(agent->id());
             }
 
@@ -1703,8 +1746,8 @@ void evaluatePopulation(World2D& world,
                 : 0;
             previous_damage[agent->id()] = current_damage;
             previous_kills[agent->id()] = current_kills;
-            reward += params.combat_weight * static_cast<double>(std::max(0.0f, damage_delta) * params.combat_attack_reward);
-            reward += params.combat_weight * static_cast<double>(kill_delta) * params.combat_kill_bonus;
+            reward += outcome_w * params.combat_weight * static_cast<double>(std::max(0.0f, damage_delta) * params.combat_attack_reward);
+            reward += outcome_w * params.combat_weight * static_cast<double>(kill_delta) * params.combat_kill_bonus;
 
             if (alive_now) {
                 // Memory V2: Record sensory sightings & episodic events to brain banks
