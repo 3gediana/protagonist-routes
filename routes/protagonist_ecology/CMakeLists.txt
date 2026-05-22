@@ -31,6 +31,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     perception/WeaponPerception.cpp
     perception/WorksitePerception.cpp
     runtime/BootstrapPopulation.cpp
+    runtime/CreditLedger.cpp
     runtime/GoalManager.cpp
     runtime/MemoryAblationEval.cpp
     runtime/ProtagonistEcologyConfig.cpp

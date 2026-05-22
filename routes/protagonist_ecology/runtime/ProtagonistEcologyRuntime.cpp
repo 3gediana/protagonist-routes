@@ -33,6 +33,7 @@
 #include "runtime/headless/EvaluationPool.h"
 #include "runtime/ProtagonistEvolution.h"
 #include "runtime/BootstrapPopulation.h"
+#include "runtime/CreditLedger.h"
 #include "runtime/GoalManager.h"
 #include "runtime/MemoryAblationEval.h"
 #include "runtime/ProtagonistEcologyConfig.h"
@@ -1238,6 +1239,10 @@ void evaluatePopulation(World2D& world,
     };
     std::unordered_map<Tick, SignalLedgerEntry> signal_response_ledger;
     std::unordered_map<AgentId, double> pending_signal_share_credit;
+    // A2.Step2 CreditLedger: centralises share computation + payout log for
+    // build / hunt / signal credit. Per-evaluatePopulation lifecycle (no
+    // explicit clear needed; instance scoped to this function call).
+    CreditLedger credit_ledger;
     std::vector<AgentId> tick_deaths;
     tick_deaths.reserve(8);
     std::unordered_map<AgentId, float> previous_damage;
@@ -1995,48 +2000,43 @@ void evaluatePopulation(World2D& world,
                 // actually built together.
                 constexpr float kBuildCreditMinSeconds = 0.5f;
                 for (const auto& build : tick_build_completed) {
-                    int my_index = -1;
-                    for (std::size_t i = 0; i < build.contributors.size(); ++i) {
-                        if (build.contributors[i] == agent->id()) {
-                            my_index = static_cast<int>(i);
+                    const float build_reward_scale = static_cast<float>(
+                        params.cooperation_weight * static_cast<double>(params.worksite_completion_reward));
+                    const auto build_payouts = credit_ledger.settleBuild(
+                        world.currentTick(),
+                        build,
+                        kBuildCreditMinSeconds,
+                        build_reward_scale);
+                    // Find this protagonist's payout (if any) and apply.
+                    // settleBuild returns the full payout list every call
+                    // so we can pick out our own share without recomputing.
+                    const CreditPayout* my_payout = nullptr;
+                    for (const auto& p : build_payouts) {
+                        if (p.recipient == agent->id()) {
+                            my_payout = &p;
                             break;
                         }
                     }
-                    if (my_index < 0) continue;
-                    if (build.contribution_seconds.size() <= static_cast<std::size_t>(my_index)) continue;
-                    const float my_secs = build.contribution_seconds[static_cast<std::size_t>(my_index)];
-                    if (my_secs < kBuildCreditMinSeconds) continue;
-
-                    float total_secs = 0.0f;
-                    for (float s : build.contribution_seconds) {
-                        if (s >= kBuildCreditMinSeconds) total_secs += s;
-                    }
-                    if (total_secs <= 0.0f) continue;
-                    const float my_share = my_secs / total_secs;
-                    const double credit_reward = params.cooperation_weight
-                                                 * static_cast<double>(params.worksite_completion_reward)
-                                                 * static_cast<double>(my_share);
-                    reward += credit_reward;
+                    if (my_payout == nullptr) continue;
+                    reward += static_cast<double>(my_payout->reward);
                     world.eventBus().publish(events::Event{
                         events::EventType::CreditAssigned,
                         events::CreditAssigned{
                             agent->id(),
-                            /*source_kind=*/0u,    // 0 = worksite build
+                            /*source_kind=*/0u,
                             static_cast<std::uint64_t>(build.worksite_id),
-                            my_share,
-                            static_cast<float>(credit_reward)},
+                            my_payout->share,
+                            my_payout->reward},
                         world.currentTick(),
                         world.currentTimeSeconds()});
 
                     if (params.social_memory_writes_enabled) {
                         if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
-                            for (std::size_t j = 0; j < build.contributors.size(); ++j) {
-                                if (static_cast<int>(j) == my_index) continue;
-                                if (build.contribution_seconds[j] < kBuildCreditMinSeconds) continue;
-                                const float peer_share = build.contribution_seconds[j] / total_secs;
+                            for (const auto& peer_payout : build_payouts) {
+                                if (peer_payout.recipient == agent->id()) continue;
                                 protagonist_brain->socialMemory().rewardCooperation(
-                                    build.contributors[j],
-                                    0.20f * peer_share);
+                                    peer_payout.recipient,
+                                    0.20f * peer_payout.share);
                             }
                         }
                     }
@@ -2124,36 +2124,41 @@ void evaluatePopulation(World2D& world,
                     auto ledger_it = hunt_damage_ledger.find(victim_id);
                     if (ledger_it == hunt_damage_ledger.end()) continue;
                     const auto& damage_map = ledger_it->second;
-                    auto my_it = damage_map.find(agent->id());
-                    if (my_it == damage_map.end()) continue;
-
-                    float total_damage = 0.0f;
-                    for (const auto& [_, d] : damage_map) total_damage += d;
-                    if (total_damage <= 0.0f) continue;
-                    const float my_share = my_it->second / total_damage;
-                    if (my_share < kHuntCreditMinShare) continue;
-                    const double hunt_credit_reward = params.cooperation_weight
-                                                      * static_cast<double>(params.joint_hunt_reward)
-                                                      * static_cast<double>(my_share);
-                    reward += hunt_credit_reward;
+                    const float hunt_reward_scale = static_cast<float>(
+                        params.cooperation_weight * static_cast<double>(params.joint_hunt_reward));
+                    const auto hunt_payouts = credit_ledger.settleHunt(
+                        world.currentTick(),
+                        victim_id,
+                        damage_map,
+                        kHuntCreditMinShare,
+                        hunt_reward_scale);
+                    const CreditPayout* my_payout = nullptr;
+                    for (const auto& p : hunt_payouts) {
+                        if (p.recipient == agent->id()) {
+                            my_payout = &p;
+                            break;
+                        }
+                    }
+                    if (my_payout == nullptr) continue;
+                    reward += static_cast<double>(my_payout->reward);
                     world.eventBus().publish(events::Event{
                         events::EventType::CreditAssigned,
                         events::CreditAssigned{
                             agent->id(),
-                            /*source_kind=*/1u,    // 1 = hunt kill
+                            /*source_kind=*/1u,
                             static_cast<std::uint64_t>(victim_id.value),
-                            my_share,
-                            static_cast<float>(hunt_credit_reward)},
+                            my_payout->share,
+                            my_payout->reward},
                         world.currentTick(),
                         world.currentTimeSeconds()});
 
                     if (params.social_memory_writes_enabled) {
                         if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
-                            for (const auto& [other_id, other_dmg] : damage_map) {
-                                if (other_id == agent->id()) continue;
-                                const float peer_share = other_dmg / total_damage;
-                                if (peer_share < kHuntCreditMinShare) continue;
-                                protagonist_brain->socialMemory().rewardCooperation(other_id, 0.25f * peer_share);
+                            for (const auto& peer_payout : hunt_payouts) {
+                                if (peer_payout.recipient == agent->id()) continue;
+                                protagonist_brain->socialMemory().rewardCooperation(
+                                    peer_payout.recipient,
+                                    0.25f * peer_payout.share);
                             }
                         }
                     }
@@ -2278,44 +2283,40 @@ void evaluatePopulation(World2D& world,
         }
 
         // A2.signal credit ledger: settle any emit whose response window has
-        // fully closed (current_world_time > emit_time + window). We walk
-        // the ledger, compute total dwell time, then per-listener share, and
-        // publish CreditAssigned{kind=2}. share_reward is pushed into the
+        // fully closed (current_world_time > emit_time + window). We route
+        // share computation + payout log through CreditLedger (Step 2), then
+        // publish CreditAssigned events and push share_reward into the
         // deferred map so the listener's next protagonist-loop iter claims
-        // it. Event is published unconditionally (lineage carries even when
-        // share_reward = 0). Removed from ledger after settle to bound size.
+        // it. Removed from ledger after settle to bound size.
         {
             const SimTimeSeconds now_time = world.currentTimeSeconds();
             const SimTimeSeconds window = params.signal_co_attendance_window_seconds;
+            const float signal_reward_scale = static_cast<float>(
+                params.cooperation_weight * static_cast<double>(params.signal_response_share_reward));
             for (auto it = signal_response_ledger.begin(); it != signal_response_ledger.end(); ) {
                 auto& entry = it->second;
                 if (entry.settled || now_time <= entry.emit_time + window) {
                     ++it;
                     continue;
                 }
-                float total_seconds = 0.0f;
-                for (const auto& [_, secs] : entry.response_seconds) {
-                    total_seconds += secs;
-                }
-                if (total_seconds > 1.0e-6f) {
-                    for (const auto& [listener_id, secs] : entry.response_seconds) {
-                        const float share = secs / total_seconds;
-                        const double share_reward = params.cooperation_weight
-                                                  * static_cast<double>(params.signal_response_share_reward)
-                                                  * static_cast<double>(share);
-                        world.eventBus().publish(events::Event{
-                            events::EventType::CreditAssigned,
-                            events::CreditAssigned{
-                                listener_id,
-                                /*source_kind=*/2u,  // 2 = signal_response
-                                static_cast<std::uint64_t>(entry.emit_tick),
-                                share,
-                                static_cast<float>(share_reward)},
-                            world.currentTick(),
-                            world.currentTimeSeconds()});
-                        if (share_reward != 0.0) {
-                            pending_signal_share_credit[listener_id] += share_reward;
-                        }
+                const auto signal_payouts = credit_ledger.settleSignal(
+                    entry.emit_tick,
+                    entry.emitter_id,
+                    entry.response_seconds,
+                    signal_reward_scale);
+                for (const auto& p : signal_payouts) {
+                    world.eventBus().publish(events::Event{
+                        events::EventType::CreditAssigned,
+                        events::CreditAssigned{
+                            p.recipient,
+                            /*source_kind=*/2u,
+                            p.source_id,
+                            p.share,
+                            p.reward},
+                        world.currentTick(),
+                        world.currentTimeSeconds()});
+                    if (p.reward != 0.0f) {
+                        pending_signal_share_credit[p.recipient] += static_cast<double>(p.reward);
                     }
                 }
                 entry.settled = true;
@@ -2339,26 +2340,24 @@ void evaluatePopulation(World2D& world,
     // No pending credit map push because protagonists won't get another
     // loop iteration this episode; we just publish the lineage event.
     {
+        const float signal_reward_scale = static_cast<float>(
+            params.cooperation_weight * static_cast<double>(params.signal_response_share_reward));
         for (auto& [emit_tick, entry] : signal_response_ledger) {
             if (entry.settled) continue;
-            float total_seconds = 0.0f;
-            for (const auto& [_, secs] : entry.response_seconds) {
-                total_seconds += secs;
-            }
-            if (total_seconds <= 1.0e-6f) continue;
-            for (const auto& [listener_id, secs] : entry.response_seconds) {
-                const float share = secs / total_seconds;
-                const double share_reward = params.cooperation_weight
-                                          * static_cast<double>(params.signal_response_share_reward)
-                                          * static_cast<double>(share);
+            const auto signal_payouts = credit_ledger.settleSignal(
+                entry.emit_tick,
+                entry.emitter_id,
+                entry.response_seconds,
+                signal_reward_scale);
+            for (const auto& p : signal_payouts) {
                 world.eventBus().publish(events::Event{
                     events::EventType::CreditAssigned,
                     events::CreditAssigned{
-                        listener_id,
+                        p.recipient,
                         /*source_kind=*/2u,
-                        static_cast<std::uint64_t>(entry.emit_tick),
-                        share,
-                        static_cast<float>(share_reward)},
+                        p.source_id,
+                        p.share,
+                        p.reward},
                     world.currentTick(),
                     world.currentTimeSeconds()});
             }
@@ -2375,6 +2374,20 @@ void evaluatePopulation(World2D& world,
     }
     if (resource_layer != nullptr && subscribe_died != 0) {
         world.eventBus().unsubscribe(subscribe_died);
+    }
+
+    // A2.Step2: flush this episode's credit payouts to a single shared
+    // log file. Tag carries scenario_name AND a per-call timestamp so each
+    // evaluatePopulation call's payouts can be disambiguated from others
+    // sharing the same scenario_name (e.g. multiple episodes of the same
+    // ablation variant, or multiple variants of the same task).
+    {
+        const auto epoch_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::string credit_tag = route.scenario_name;
+        credit_tag += "/ep_";
+        credit_tag += std::to_string(epoch_us);
+        credit_ledger.appendCsv("data/runs/_credit_log.csv", credit_tag);
     }
 
     // DEBUG INSTRUMENTATION (audit § 7 - signal_response_events root cause probe)
