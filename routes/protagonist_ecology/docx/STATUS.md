@@ -1,10 +1,16 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-22（**v2 物种差异化 L2.1-L2.4 全套落地，30 gen smoke 验证通过**）
+> 最后巡检：2026-05-23 凌晨（**L2.6 v12 4-机制 literature-backed stack 替换 v10/v11 临时调参**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`7d978b6 L2.4: per-episode task template autocurriculum (POET-lite)`
+> 当前 HEAD：`d41a0ff L2.6 v12: 60-gen 4-mechanism stack validation results`
 >
+> **2026-05-23 凌晨 L2.6 v12 4-机制 literature-backed stack**（2 commits, +314/-10 代码 + 验证数据）：
+> - `422847f L2.6 v12: 4-mechanism literature-backed protagonist autocurriculum stack`
+> - `d41a0ff L2.6 v12: 60-gen 4-mechanism stack validation results`
+> - 用户反馈："不能为了某个指标好就舍弃信号 / 让我去查文献"。文献定位 4 个真名症状 (Lazy Agent / Negative Transfer / Multi-task Averaging / Sparse Long-horizon Reward) + 4 个对应正解：(1) Context-conditioned policy (PEARL/RL²) — 8-onehot template idx 加到 brain input；(2) Decoupled intrinsic motivation (Cuccu/Schmidhuber 2011) — 把 `intrinsic × novelty` 从 `outcome_w` 缩放里独立出来；(3) ACCEL regret-based weighting (Parker-Holder 2022) — 每代 EMA 更新 `(best - avg) / (\|avg\|+1)` 自动 upweight 高 regret template；(4) SMT Hard-Tasks-First (Cho 2024) — 早期 N 代用 difficulty 加权（线性 taper）。166/166 tests 全过。**v12 60-gen 验证 (seed=91, 同 v10/v11)**：alive 1.9→3.8 (+100%)、worksite 0.1→0.5 (+400%)、chops 7→18.6 (+166%)、craft 0.1→0.7 (+600%)、hunts 19→31 (+61%)；CV v10 327% → v11 103% → v12 88%；起步 fitness v11 -107 → **v12 +216**。仅 co_presence -49% (early-gen mixed_ecology 比例过高，参数调而非机制问题)。
+> - 没追上 v9 长链条 build/craft 数字 — 60 代不够 + 需要 hierarchical RL extension（不在本 commit 范围）。**4 机制是后续涌现任务的稳定底座**。
+
 > **2026-05-22 夜 v2 物种差异化全部落地**（4 commits, +2740 行）：
 > - `200ea1a L2.1: species differentiation v2` (damage threshold + stealth + scavenge eff + 8 species capability differentiation)
 > - `3896e90 L2.2: homeostatic drive state v2` (5 drives + drive-delta reward formula + per-species setpoints + 3 toml gates)
