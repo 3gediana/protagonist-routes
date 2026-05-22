@@ -29,11 +29,11 @@
 
 ### A2. Credit / EventLineage 收口
 
-- [ ] 把建造 credit、围猎 credit、signal credit 统一整理成同一套 route-local event lineage 口径
-- [ ] 为 `BuildCompleted / AgentDied / signal_response` 三条链输出统一 share-based reward 日志
-- [ ] 新增 `contribution fairness` 汇总指标，区分真实贡献者与路过者
-- [ ] 为 signal 线补 `producer / listener / responder` 三种角色贡献统计
-- [ ] 补 route 测试，覆盖“路过者不吃大分”“listener 真响应后才记 credit”
+- [x] 把建造 credit、围猎 credit、signal credit 统一整理成同一套 route-local event lineage 口径（Step 1+2：signal 加 ledger entry，三条链都走 CreditLedger.settleXxx，发 `CreditAssigned{kind=0|1|2}`，dedup 按 (kind, source_id)）
+- [x] 为 `BuildCompleted / AgentDied / signal_response` 三条链输出统一 share-based reward 日志（Step 2：`data/runs/_credit_log.csv`，每行 (tag, tick, kind, source_id, recipient_id, share, reward)，每次 evaluatePopulation 唯一时间戳 tag）
+- [~] 新增 `contribution fairness` 汇总指标，区分真实贡献者与路过者（Step 2：CreditLedger.computeFairness 已实现 freeloader_ratio / share_gini / top_share_mean / total_reward；已通过 4 个 gtest 覆盖；**但尚未暴露到 memory_ablation_results.csv**，可后续暴露）
+- [x] 为 signal 线补 `producer / listener / responder` 三种角色贡献统计（Step 3：results.csv 新增 3 列 `signal_producer_count_avg / signal_listener_count_avg / signal_responder_count_avg`，v7 ablation 实测 0 / 24 / 21.25 揭示 dedup 副作用）
+- [x] 补 route 测试，覆盖"路过者不吃大分""listener 真响应后才记 credit"（Step 3：`tests/route_protagonist/test_credit_ledger.cpp` 10 个 gtest，含 hunt 1% min_share filter / build 0.5s min_seconds filter / signal dwell share / dedup / fairness 三指标 / CSV writer，全部 PASS）
 
 ### A3. Communication semantics 收口
 
