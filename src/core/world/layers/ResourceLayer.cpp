@@ -18,15 +18,26 @@ ResourceLayer::ResourceLayer(std::size_t resource_count,
                              std::uint32_t seed,
                              bool dynamic,
                              float regen_rate,
-                             bool terrain_adjustment_enabled)
+                             bool terrain_adjustment_enabled,
+                             PlantSpawnWeights plant_weights)
     : resource_count_(resource_count),
       resource_amount_(resource_amount),
       respawn_seconds_(std::max<SimTimeSeconds>(0.0, respawn_seconds)),
       dynamic_(dynamic),
       regen_rate_(regen_rate),
       terrain_adjustment_enabled_(terrain_adjustment_enabled),
+      plant_weights_(plant_weights),
       rng_(seed == 0 ? std::random_device{}() : seed),
-      world_size_(0.0f, 0.0f) {}
+      world_size_(0.0f, 0.0f) {
+    // Sanitize weights: clamp negatives to 0; ensure at least Grass > 0.
+    if (plant_weights_.grass < 0.0f)  plant_weights_.grass  = 0.0f;
+    if (plant_weights_.browse < 0.0f) plant_weights_.browse = 0.0f;
+    if (plant_weights_.fruit < 0.0f)  plant_weights_.fruit  = 0.0f;
+    const float total = plant_weights_.grass + plant_weights_.browse + plant_weights_.fruit;
+    if (total <= 0.0f) {
+        plant_weights_.grass = 1.0f;
+    }
+}
 
 const char* ResourceLayer::layerName() const {
     return kName;
@@ -37,8 +48,17 @@ void ResourceLayer::onAttach(IWorld& world) {
     resources_.clear();
     resources_.reserve(resource_count_);
     for (std::size_t i = 0; i < resource_count_; ++i) {
-        const float adj = terrainAdjustedAmount(randomPosition(world_size_), world);
-        Resource resource{randomPosition(world_size_), adj, adj, regen_rate_, true, 0};
+        const auto pos = randomPosition(world_size_);
+        const float adj = terrainAdjustedAmount(pos, world);
+        Resource resource{};
+        resource.position = pos;
+        resource.amount = adj;
+        resource.max_amount = adj;
+        resource.regen_rate = regen_rate_;
+        resource.available = true;
+        resource.respawn_seconds_remaining = 0.0;
+        resource.kind = sampleKind();
+        resource.is_meat = (resource.kind == ResourceKind::Meat);
         resources_.push_back(resource);
         world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                                events::ResourceSpawned{resource.position, resource.amount},
@@ -117,6 +137,7 @@ ResourceLayer::ConsumeResult ResourceLayer::tryConsumeTyped(Vec2 position, float
 
     auto& resource = resources_[best_index];
     const bool was_meat = resource.is_meat;
+    const ResourceKind was_kind = resource.kind;
     const float consume_limit = amount_limit > 0.0f ? amount_limit : resource.amount;
     const float consumed = std::min(resource.amount, consume_limit);
     if (consumed <= 0.0f) {
@@ -135,16 +156,16 @@ ResourceLayer::ConsumeResult ResourceLayer::tryConsumeTyped(Vec2 position, float
                                                events::ResourceConsumed{resource.position},
                                                world.currentTick(),
                                                world.currentTimeSeconds()});
-        return ConsumeResult{consumed, was_meat};
+        return ConsumeResult{consumed, was_meat, was_kind};
     }
 
     if (dynamic_) {
         resource.available = true;
-        return ConsumeResult{consumed, was_meat};
+        return ConsumeResult{consumed, was_meat, was_kind};
     }
 
     resource.available = true;
-    return ConsumeResult{consumed, was_meat};
+    return ConsumeResult{consumed, was_meat, was_kind};
 }
 
 void ResourceLayer::addCorpse(Vec2 position, float amount, IWorld& world) {
@@ -158,6 +179,7 @@ void ResourceLayer::addCorpse(Vec2 position, float amount, IWorld& world) {
     corpse.respawn_seconds_remaining = 0.0;
     corpse.is_meat = true;
     corpse.is_transient = true;
+    corpse.kind = ResourceKind::Meat;
     resources_.push_back(corpse);
     world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                            events::ResourceSpawned{position, amount},
@@ -182,10 +204,23 @@ void ResourceLayer::respawnResource(Resource& resource, IWorld& world) {
     resource.max_amount = adj;
     resource.regen_rate = regen_rate_;
     resource.available = true;
+    resource.kind = sampleKind();
+    resource.is_meat = (resource.kind == ResourceKind::Meat);
     world.eventBus().publish(events::Event{events::EventType::ResourceSpawned,
                                            events::ResourceSpawned{resource.position, resource.amount},
                                            world.currentTick(),
                                            world.currentTimeSeconds()});
+}
+
+ResourceKind ResourceLayer::sampleKind() {
+    // Plant-only sampling. Corpse kind is reserved for addCorpse().
+    const float total = plant_weights_.grass + plant_weights_.browse + plant_weights_.fruit;
+    if (total <= 0.0f) return ResourceKind::Grass;
+    std::uniform_real_distribution<float> u(0.0f, total);
+    const float r = u(rng_);
+    if (r < plant_weights_.grass) return ResourceKind::Grass;
+    if (r < plant_weights_.grass + plant_weights_.browse) return ResourceKind::Browse;
+    return ResourceKind::Fruit;
 }
 
 float ResourceLayer::terrainAdjustedAmount(Vec2 position, IWorld& world) const {

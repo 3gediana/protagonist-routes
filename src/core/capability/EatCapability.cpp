@@ -46,6 +46,11 @@ void EatCapability::apply(IAgent& agent, IWorld& world, std::span<const float>, 
         const float diet = concrete->dietPreference();
         const float type_match = consume.is_meat ? diet : (1.0f - diet);
         gained *= 0.85f + 0.30f * type_match;
+        // L2.3 v2 (SPECIES_DIFFERENTIATION_SPEC.md § 3.1): per-kind
+        // efficiency multiplier on top of the existing diet match.
+        // Default 1.0 = neutral; species set non-1 values in
+        // BootstrapPopulation to encode their niche preference.
+        gained *= concrete->eatEfficiencyOf(consume.kind);
     }
 
     agent.setEnergy(previous_energy + gained);

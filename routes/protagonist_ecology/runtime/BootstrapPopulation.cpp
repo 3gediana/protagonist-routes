@@ -529,17 +529,45 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
     // 0.6 (territorial, comfortable alone).
     agent->addCapability(std::make_unique<DriveTickCapability>(/*sense_radius=*/18.0f));
     Agent::DriveSetpoints sp{};
+    Agent::EatEfficiencyByKind ee{};
     switch (archetype) {
-        case SpeciesArchetype::LargeHerbivore: sp.loneliness = 0.0f; break;
-        case SpeciesArchetype::SmallForager:   sp.loneliness = 0.2f; break;
-        case SpeciesArchetype::ApexPredator:   sp.loneliness = 0.6f; break;
-        case SpeciesArchetype::PackHunter:     sp.loneliness = 0.0f; break;
-        case SpeciesArchetype::AmbushPredator: sp.loneliness = 0.6f; break;
-        case SpeciesArchetype::Scavenger:      sp.loneliness = 0.3f; break;
-        case SpeciesArchetype::Omnivore:       sp.loneliness = 0.0f; break;
+        case SpeciesArchetype::LargeHerbivore:
+            sp.loneliness = 0.0f;
+            // Grass specialist: grass perfect, browse mediocre, fruit poor, meat nil.
+            ee.grass = 1.0f; ee.browse = 0.5f; ee.fruit = 0.3f; ee.meat = 0.0f;
+            break;
+        case SpeciesArchetype::SmallForager:
+            sp.loneliness = 0.2f;
+            // Browse specialist (e.g. nyala): browse perfect, fruit good, grass mediocre.
+            ee.grass = 0.5f; ee.browse = 1.0f; ee.fruit = 0.8f; ee.meat = 0.0f;
+            break;
+        case SpeciesArchetype::ApexPredator:
+            sp.loneliness = 0.6f;
+            ee.grass = 0.0f; ee.browse = 0.0f; ee.fruit = 0.0f; ee.meat = 1.0f;
+            break;
+        case SpeciesArchetype::PackHunter:
+            sp.loneliness = 0.0f;
+            ee.grass = 0.0f; ee.browse = 0.0f; ee.fruit = 0.0f; ee.meat = 1.0f;
+            break;
+        case SpeciesArchetype::AmbushPredator:
+            sp.loneliness = 0.6f;
+            ee.grass = 0.0f; ee.browse = 0.0f; ee.fruit = 0.0f; ee.meat = 1.0f;
+            break;
+        case SpeciesArchetype::Scavenger:
+            sp.loneliness = 0.3f;
+            // Carrion specialist + a bit of fruit (vultures eat fruit too).
+            ee.grass = 0.0f; ee.browse = 0.0f; ee.fruit = 0.5f; ee.meat = 1.0f;
+            break;
+        case SpeciesArchetype::Omnivore:
+            sp.loneliness = 0.0f;
+            // Fruit specialist + mid plant + some meat. Matches the
+            // boar / bear-cub design (spec: fruit_seasonal Omnivore 1.0).
+            ee.grass = 0.6f; ee.browse = 0.6f; ee.fruit = 1.0f; ee.meat = 0.4f;
+            break;
         default: break;
     }
     agent->setDriveSetpoints(sp);
+    agent->setEatEfficiency(ee);
 
     return agent;
 }

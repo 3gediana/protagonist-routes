@@ -126,14 +126,21 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
     const bool enable_curriculum_supply = !live_role && config.base.enabled && config.objects.enabled && config.nursery_supply.enabled;
     const bool enable_curriculum_progression = !live_role && config.base.enabled && config.objects.enabled && config.progression.enabled;
 
-    world->addLayer(std::make_unique<ResourceLayer>(
-        config.resources.count,
-        config.resources.amount,
-        config.resources.respawn_seconds,
-        config.random_seed + 1,
-        config.resources.dynamic,
-        config.resources.regen_rate,
-        config.resources.terrain_adjustment_enabled));
+    {
+        ResourceLayer::PlantSpawnWeights plant_weights{
+            config.resources.plant_grass_weight,
+            config.resources.plant_browse_weight,
+            config.resources.plant_fruit_weight};
+        world->addLayer(std::make_unique<ResourceLayer>(
+            config.resources.count,
+            config.resources.amount,
+            config.resources.respawn_seconds,
+            config.random_seed + 1,
+            config.resources.dynamic,
+            config.resources.regen_rate,
+            config.resources.terrain_adjustment_enabled,
+            plant_weights));
+    }
     world->addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, config.compute.agent_decision_threads));
     if (config.memory_trial.enabled) {
         world->addLayer(std::make_unique<MemoryTrialLayer>(config.memory_trial, config.random_seed + 907));

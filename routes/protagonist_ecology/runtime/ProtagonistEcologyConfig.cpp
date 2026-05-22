@@ -94,6 +94,9 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.resources.dynamic = config.getOr<bool>("world.resources.dynamic", out.resources.dynamic);
     out.resources.regen_rate = config.getOr<float>("world.resources.regen_rate", out.resources.regen_rate);
     out.resources.terrain_adjustment_enabled = config.getOr<bool>("world.resources.terrain_adjustment_enabled", out.resources.terrain_adjustment_enabled);
+    out.resources.plant_grass_weight = config.getOr<float>("world.resources.plant_weights.grass", out.resources.plant_grass_weight);
+    out.resources.plant_browse_weight = config.getOr<float>("world.resources.plant_weights.browse", out.resources.plant_browse_weight);
+    out.resources.plant_fruit_weight = config.getOr<float>("world.resources.plant_weights.fruit", out.resources.plant_fruit_weight);
 
     out.signal.enabled = config.getOr<bool>("world.signal.enabled", out.signal.enabled);
     out.signal.protagonist_emit_enabled = config.getOr<bool>("world.signal.protagonist_emit_enabled", out.signal.protagonist_emit_enabled);

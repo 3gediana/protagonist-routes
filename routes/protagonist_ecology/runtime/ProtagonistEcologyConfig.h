@@ -19,6 +19,14 @@ struct ResourceConfig {
     bool dynamic{true};
     float regen_rate{0.2f};
     bool terrain_adjustment_enabled{true};
+    // L2.3 v2 (SPECIES_DIFFERENTIATION_SPEC.md § 3.1): plant cell kind
+    // spawn weights. Defaults to grass=1.0 / browse=0 / fruit=0 so old
+    // tomls (and v9 training) behave exactly like before. Tomls opting
+    // into niche partitioning set the 3 weights explicitly under
+    // `[world.resources.plant_weights]`.
+    float plant_grass_weight{1.0f};
+    float plant_browse_weight{0.0f};
+    float plant_fruit_weight{0.0f};
 };
 
 // A3.S1 communication ablation knobs. Drives the four probes against

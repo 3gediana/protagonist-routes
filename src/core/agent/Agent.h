@@ -3,6 +3,7 @@
 #include "core/interfaces/IAgent.h"
 
 #include "core/pathogen/Pathogen.h"
+#include "core/world/layers/ResourceLayer.h"
 #include "core/world/layers/object/ObjectLayer.h"
 #include <memory>
 #include <span>
@@ -235,6 +236,31 @@ public:
         return -(dh*dh + dt*dt + df*df + dr*dr + dl*dl);
     }
 
+    // ---- L2.3 resource niche partitioning v2 (SPECIES_DIFFERENTIATION_SPEC.md § 3) ----
+    // Per-kind energy-gain multiplier when this agent eats. Default 1.0
+    // = neutral (no preference). EatCapability multiplies its gain by
+    // eatEfficiency(consume.kind), so e.g. LargeHerbivore with eat_eff_browse
+    // = 0.5 only gets half the energy from a Browse cell vs a Grass
+    // cell, capturing kudu / nyala / bushbuck-style niche separation
+    // (HHMI / Chesson 2000).
+    struct EatEfficiencyByKind {
+        float grass  = 1.0f;
+        float browse = 1.0f;
+        float fruit  = 1.0f;
+        float meat   = 1.0f;
+    };
+    const EatEfficiencyByKind& eatEfficiency() const { return eat_efficiency_; }
+    void setEatEfficiency(const EatEfficiencyByKind& e) { eat_efficiency_ = e; }
+    float eatEfficiencyOf(ResourceKind kind) const {
+        switch (kind) {
+            case ResourceKind::Grass:  return eat_efficiency_.grass;
+            case ResourceKind::Browse: return eat_efficiency_.browse;
+            case ResourceKind::Fruit:  return eat_efficiency_.fruit;
+            case ResourceKind::Meat:   return eat_efficiency_.meat;
+        }
+        return 1.0f;
+    }
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -287,6 +313,8 @@ private:
     // L2.2 homeostatic drive state
     DriveState drives_{};
     DriveSetpoints drive_setpoints_{};
+    // L2.3 resource niche
+    EatEfficiencyByKind eat_efficiency_{};
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };
