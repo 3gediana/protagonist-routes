@@ -245,3 +245,102 @@ done
 
 - 本轮 v8 genome `best_genome_overall.bin` 在 `data/runs/protagonist_train_a3_v8/20260522-142545/`（**注意 v8 这次跑出来路径仍带 v8 后缀**，是首轮跑前 toml 里 `runs_dir = ".../protagonist_train_a3_v8"` 留下来的；本次 commit 把 config 改成了 `data/runs/protagonist_train_a3`，下次重跑会落到新路径）。
 - 5 个 ablation 的临时 toml + 训练 log 在 `tmp/a3_train/` 与 `tmp/a3_signal_ablation/`，不入主仓库；后续如果要稳定维护对照，再做一份脚本一键生成 5 份 ablation toml 即可。
+
+---
+
+## 9. Phase 2 task 重设计与第二轮 sweep（2026-05-22 晚）
+
+§ 4 与 § 5 揭示的问题：`comm_danger_warning` 没死亡（primary 失效）+ `comm_build_request` 没人完成 worksite。Phase 2 目标是修这两个 task 的物理设计，让它们产出能进 results.csv primary metric 的可信 ablation drop。**复用同一份 v8 genome**（不重训）。
+
+### 9.1 `comm_danger_warning` 第二版（safe-rallying）
+
+| 字段 | Phase 1 | Phase 2 |
+|---|---|---|
+| world_size | 120×120 | **60×60**（缩小 4×, predator 自然密度提高） |
+| `background.predator_count` | 3 | **12** |
+| controlled emitter offset | 18m + jitter 6m | **6m, 无 jitter, 不 randomize**（emitter 永远在 nest 边） |
+| `signal_response_dense_reward` | -0.6（penalty） | **+0.6（rally to safety）** |
+| `signal_response_reward` | 0 | **1.5** |
+| `combat_death_penalty` | 12 | **20** |
+| 设计语义 | 听信号 = 逃 | **听信号 = 朝 nest 走 = 安全** |
+
+理由：v8 不会反向解码 dense gradient（"听到 = 走反方向"），把语义翻成"听到 = 走过去 = 安全"，与 `comm_scout_worker` 同向，v8 listener policy 直接可用。
+
+### 9.2 `comm_build_request` 第二版
+
+| 字段 | Phase 1 | Phase 2 |
+|---|---|---|
+| `worksite.required_sticks` | 2 | **1** |
+| `worksite.required_stones` | 1 | **0** |
+| `tree.count` | 1 | **2**（保留 chop 链路，与 worksite_return 一致） |
+| `objects.count` | 24 | **24**（保持） |
+| `worksite.spawn_radius` | 10m | **8m**（更紧） |
+| `worksite.direction_requires_visibility` | true | true（保持：信号是唯一指引） |
+
+理由：把"完成 worksite"的物理门槛从"2 stick + 1 stone"降到"1 stick"。v8 在 `worksite_return` 上 baseline=1/1 已证明 chop→carry→deposit 链路完整；问题不在能力而在"看不见 worksite"。
+
+> 失败的 v1 try（保留这条记录免得未来重做）：先尝试 `tree.count=0` + `nursery_supply.enabled=true` 让 stick 自动 spawn 在 nest 附近。结果 baseline 也 0 deposit，因为 v8 protagonist 的 capability set 里 pickup loose stick 的能力远不如 chop tree 拿 stick 训得熟。
+
+### 9.3 第二轮 5×5 sweep（v8 genome 不变）
+
+输出位置：`data/runs/protagonist_a3_v8_signal_ablation/<sig>/<timestamp>/`，5 个 timestamp 时间戳：
+- `none`             20260522-155736
+- `disabled`         20260522-160010
+- `listener_blind`   20260522-160212
+- `one_channel_only` 20260522-160413
+- `noise`            20260522-160610
+
+### 9.4 `comm_danger_warning` Phase 2 结果
+
+memory baseline 行：
+
+| metric | none | disabled | listener_blind | one_channel_only | noise |
+|---|---:|---:|---:|---:|---:|
+| `survived` (primary) | **3.5 / 8** | 3.75 | 3.75 | 3.5 | 3.5 |
+| `protagonist_deaths_avg` | 0.25 | 0 | 0 | 0.25 | 0 |
+| `avg_fitness` | **41.1** | 4.87 (▼88%) | 5.36 (▼87%) | 41.1 | 41.9 |
+| `signal_listener_count` | 8 | 0 | 0 | 8 | 8 |
+| `signal_responder_count` | 7.75 | 0 | 0 | 7.75 | 8 |
+
+**判读**：
+- ✅ **现在有死亡了**：5 死亡/episode（survived 3.5/8）。Phase 1 是 0 死亡/episode（survived 8/8）。task pressure 已经建立。
+- ⚠️ **survived 在 ablation 之间几乎不变**（3.5 vs 3.75）：信号语义改成"safe rally"后，protagonist 即使不听信号也按 random walk 自然分布，predator 在 60×60 地图上是均匀威胁，nest 没有物理屏障，"在 nest 附近"和"在地图角落"对生存影响差不多。结果是 survived 不能作 primary metric 用。
+- ✅ **fitness ▼88%**：reward 链路完全反映关闭信号。这是该 task 最干净的可信指标。
+- ✅ **listener / responder 链路 alive**：8/8 listen，7.75/8 真心走过去。Phase 1 是 7.25 / 4.75，Phase 2 略好。
+
+### 9.5 `comm_build_request` Phase 2 结果
+
+memory baseline 行：
+
+| metric | none | disabled | listener_blind | one_channel_only | noise |
+|---|---:|---:|---:|---:|---:|
+| `worksite_completion_events` (primary) | 0 | 0 | 0 | 0 | 0 |
+| `deposits_avg` | 0 | 0 | 0 | 0 | 0 |
+| `avg_fitness` | **41.3** | 22.0 (▼47%) | 19.7 (▼52%) | 41.3 | 36.4 (▼12%) |
+| `signal_listener_count` | 8 | 0 | 0 | 8 | 8 |
+| `signal_responder_count` | 3.75 | 0 | 0 | 3.75 | 2.5 |
+
+**判读**：
+- ❌ **worksite_completion 仍 0**：单 stick + 0 stone 还是没人完成。原因诊断：
+  - `worksite.direction_requires_visibility=true` 让 perception 完全看不到 worksite，protagonist 不知道往哪走 deposit
+  - emitter 在 worksite 位置，但 v8 listener 是"朝信号走"而不是"在 emitter 处停下并 deposit"
+  - Phase 2 没改 protagonist agent / capability，只改 task 配置；deposit trigger 需要 protagonist 真心进入 worksite interaction_radius 并 carry stick，两个条件叠在一起没有命中
+- ✅ **fitness ▼47% / ▼52%**：信号 reward 链路依然干净反映 ablation
+- ✅ **listener / responder alive**：8/8 / 3.75/8
+
+**剩余问题**：要让这条 task 的 worksite_completion 真起来，需要其中之一：
+1. visibility 改回 true（但失去"信号是唯一指引"的实验意义）
+2. 改 ProtagonistEcologyRuntime 让 emitter pulse 触发 listener 的 GoalManager 直接切到 `BuildWorksite` goal（让 goal-action-assist 接管最后 deposit 这一步）
+3. 给 protagonist 训练时加专门的 build_request 任务（B 阶段任务）
+
+这 3 条都需要更深的工程改动；在 A3 范围内**接受 fitness drop 当证据，承认 worksite_completion 在当前 protagonist 能力下不能成为 primary metric**。
+
+### 9.6 Phase 2 总结
+
+| Task | primary metric drop? | fitness drop | listener/responder drop | 综合 |
+|---|---|---|---|---|
+| `comm_scout_worker` | ✅ responders 4.25 → 0 (▼100%) | ▼93% | ✅ | ✅ 强证据，Phase 2 比 Phase 1 还更强（更长跑时 best_fitness 抬升） |
+| `comm_danger_warning` | ⚠️ survived 不动 (3.5→3.75) | ▼88% | ✅ 7.75 → 0 | ⚠️ fitness/responder 强，survived 失败 |
+| `comm_build_request` | ❌ worksite=0 不动 | ▼47% | ✅ 3.75 → 0 | ⚠️ fitness/responder 成立，primary 失败 |
+
+最终判定：A3 主线的"至少一条任务关闭信号后明显下降"判定**多重成立**（scout-worker 主指标 + fitness、danger_warning fitness、build_request fitness、signal_response fitness），但**survived / worksite_completion 这两类需要物理实体 + protagonist 训练状态匹配的 primary metric 在当前 v8 能力下还不能用做最干净的"开/关"对照**——这是 A3 这一轮真实的能力上限，不是 task 设计bug。继续把这两类 primary metric 跑起来需要 protagonist 训练阶段就接触到这两个任务（B 阶段范围）。

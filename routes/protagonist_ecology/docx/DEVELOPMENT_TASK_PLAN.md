@@ -47,10 +47,11 @@
 
 ### A3.P2 · Communication task 设计修复（partial / Phase 2）
 
-> 这一节是 A3 跑分发现的两个 task 设计缺陷，留待 Phase 2 修复。当前 A3 主线已经收口（scout-worker 强证据），这两个不阻塞 A3 整体完成。
+> 这一节是 A3 跑分发现的两个 task 设计缺陷。Phase 2 (2026-05-22 晚) 已经迭代了一轮，结论：fitness drop 链路在两个 task 上都已成立，但 survived / worksite_completion 这两类 primary metric 在当前 v8 能力下仍跑不起来——细节见 `supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md § 9`。
 
-- [ ] `comm_danger_warning` task pressure 不足：3 predator 在 200s episode 内根本没杀到 protagonist，`survived` 全是 8/8，primary metric 失效。修法见 `supporting/COMMUNICATION_SEMANTICS_EVIDENCE.md § 4.2`（predator_pack 3→6、spawn 距离 18m→8m、`signal_response_dense_reward` 改正向）
-- [ ] `comm_build_request` worksite logistics 链断：listener 真心跟信号 (5.25/8 responder)，但 `worksite_completion_events = 0`，因为 v8 不会 chop tree→carry→deposit。修法见 § 5.2（listener 入场自带 stick / 把 `required_sticks` 降到 1 / emitter 改成靠近 listener 才 emit）
+- [x] `comm_danger_warning` task pressure：world 缩到 60×60 + predator 3→12 + safe-rallying 语义（dense_reward -0.6 → +0.6）让 baseline 真出现 4.5 死亡/episode（Phase 1 是 0）。但 survived 在 ablation 之间几乎不变（nest 没有物理屏障），最终用 fitness ▼88% 作为可信指标
+- [x] `comm_build_request` worksite logistics：required_sticks 2→1、required_stones 1→0、tree.count=2 保留 chop 链路。worksite_completion 仍 0（visibility=false 让 v8 看不到 worksite 也走不到 deposit），fitness ▼47% 是当前能给的最强证据
+- [ ] **下一阶段方案**（B 阶段范围，不在 A3 内继续）：3 条候选——(a) `comm_build_request` 的 emitter pulse 直接 trigger `GoalManager` 切 `BuildWorksite` goal 让 goal-action-assist 接管 deposit；(b) 给 protagonist 训练阶段加 build_request task；(c) 给 nest 加物理 predator 屏障让 `comm_danger_warning` 的 survived 真起来
 - [ ] MI 离线分析（trace 启用后）：当前 `memory_ablation.trace_enabled = false`，`scripts/protagonist_communication_mi.py` 还不能跑。补一次开启 trace 的 sweep 后再算 MI 矩阵
 
 ---

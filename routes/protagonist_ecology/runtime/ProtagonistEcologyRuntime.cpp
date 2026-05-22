@@ -570,35 +570,36 @@ TrainingParams configureMemoryAblationTaskParams(const config::Config& config,
             break;
 
         case MemoryAblationTaskKind::CommDangerWarning:
-            // A3.S3 reward profile. Inverted: signal -> flee. We don't
-            // change the listener block (still pays for entering halo),
-            // BUT we set:
-            //   - heavy death penalty (combat_death_penalty)
-            //   - low survival reward (so just-stand-still doesn't dominate)
-            //   - signal_response_reward = 0 (don't pay for being in halo!)
-            //   - signal_response_dense_reward = -0.6 (penalty for being
-            //     near emitter -> agent learns "signal means RUN")
-            // The dense gradient sign is the key probe: a positive gradient
-            // means follow, a negative gradient means flee. Both are
-            // measurable via listener_policy_shift_l2.
-            params.survival_weight = 1.2;
-            params.food_weight = 1.0;
+            // A3.S3 reward profile - Phase 2 redesign 2026-05-22.
+            // Original Phase 1 used signal_response_dense_reward = -0.6
+            // (signal -> flee), but in 200s eval episodes v8 NEAT could
+            // not invert its learned positive listener gradient and the
+            // primary metric (survived) stayed pinned at 8/8 because
+            // randomPosition() spread predators too thin to ever kill.
+            //
+            // Phase 2 flips the semantics: signal = "rally to nest =
+            // safe direction". Combined with route changes (12 predators
+            // on a 60x60 map, emitter pinned near nest), without signal
+            // the protagonist wanders and gets caught; with signal it
+            // walks toward emitter (= near nest) and survives. Survived
+            // becomes the real primary metric again.
+            params.survival_weight = 2.0;            // bigger reward for living
+            params.food_weight = 0.5;                // small, just keep them eating
             params.intrinsic_weight = 0.0;
             params.combat_weight = 0.0;
-            params.combat_death_penalty = 12.0f;  // heavier than default 5
+            params.combat_death_penalty = 20.0f;     // 12 -> 20 (loud loss signal)
             params.cooperation_weight = 0.0;
             params.communication_weight = 6.0;
             params.worksite_proximity_reward = 0.0f;
             params.worksite_completion_reward = 0.0f;
             params.signal_emit_reward = 0.0f;
-            params.signal_co_attendance_reward = 0.0f;
+            params.signal_co_attendance_reward = 1.0f;
             params.signal_emit_companion_radius = 30.0f;
             params.signal_co_attendance_radius = 12.0f;
             params.signal_co_attendance_window_seconds = 12.0;
-            // Negative dense reward = penalty for staying near emitter.
-            // Halo entry pays nothing.
-            params.signal_response_reward = 0.0f;
-            params.signal_response_dense_reward = -0.6f;
+            // Positive halo + dense reward = "follow signal toward nest".
+            params.signal_response_reward = 1.5f;
+            params.signal_response_dense_reward = 0.6f;
             params.joint_hunt_reward = 0.0f;
             break;
 

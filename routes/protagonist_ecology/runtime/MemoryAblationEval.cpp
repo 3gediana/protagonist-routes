@@ -226,33 +226,55 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             break;
 
         case MemoryAblationTaskKind::CommDangerWarning:
-            // A3.S3 - danger warning task. Controlled emitter beacons near
-            // a predator pack the protagonist's direct DangerPerception
-            // cannot reach (predator hidden beyond predator_warn radius).
-            // Listener must flee the emitter to avoid death. Differs from
-            // DangerAvoidance in that predator location is hidden but
-            // signaled; without signal listening, deaths spike. Predator
-            // count is small (only need a few real kills to confirm
-            // ablation_drop).
+            // A3.S3 - danger warning / safe-rallying task (Phase 2 redesign
+            // 2026-05-22).
+            //
+            // Original Phase 1 design: emitter beacons near a predator pack
+            // and listener must FLEE; signal_response_dense_reward = -0.6
+            // tries to encode "follow signal -> bad". That design produced
+            // survived=8/8 in all v8 ablation variants because (a)
+            // randomPosition() spreads predators across the whole map so
+            // they rarely contact protagonists in 200s, and (b) NEAT in
+            // 120 generations did not learn to invert the listener-side
+            // dense gradient.
+            //
+            // Phase 2 redesign: keep "without signal you die more often"
+            // but flip the semantics to "signal = SAFE direction (rally
+            // to nest)". Now the listener-side dense reward is positive
+            // (same direction as comm_scout_worker), the task is trivially
+            // learnable from v8's listener policy, and we get a clean
+            // primary metric drop because:
+            //   - emitter sits near the nest (small offset radius)
+            //   - predators are dense and roam the whole map
+            //   - protagonist with signal -> walks toward emitter -> hides
+            //     near the nest -> survives
+            //   - protagonist without signal -> wanders -> caught by a
+            //     roaming predator -> dies
+            //
+            // Reward profile flip lives in configureMemoryAblationTaskParams
+            // (signal_response_dense_reward 0.6, halo +1.5, dense +1.5).
             route.world_role = "eval";
-            route.world_size = Vec2{120.0f, 120.0f};
-            route.base.center = Vec2{44.0f, 60.0f};
-            route.base.radius = 12.0f;
-            route.base.stockpile_radius = 8.0f;
+            route.world_size = Vec2{60.0f, 60.0f};  // shrink map -> predators
+                                                    // contact agents quickly
+            route.base.center = Vec2{30.0f, 30.0f};
+            route.base.radius = 10.0f;
+            route.base.stockpile_radius = 6.0f;
             route.base.nest_radius = 4.0f;
             route.background.forager_count = 0;
-            route.background.predator_count = 3;
+            route.background.predator_count = 12;  // 3 -> 12 (dense roaming)
             route.protagonist.predator_warn_enabled = false;
-            route.resources.count = 8;
+            route.resources.count = 4;
             route.water.source_count = 1;
             route.signal.protagonist_emit_enabled = false;
             route.signal.controlled_emitter_enabled = true;
-            route.signal.controlled_emitter_period_seconds = 12.0;  // frequent alarm
-            route.signal.controlled_emitter_randomize_position = true;
-            route.signal.controlled_emitter_offset_radius = 18.0f;
-            route.signal.controlled_emitter_offset_jitter = 6.0f;
-            route.signal.controlled_emitter_food_count = 0;  // no food: pure warning
-            route.objects.count = 6;
+            route.signal.controlled_emitter_period_seconds = 10.0;
+            // Emitter near nest, deterministic position so the dense
+            // gradient consistently points to safety.
+            route.signal.controlled_emitter_randomize_position = false;
+            route.signal.controlled_emitter_offset_radius = 6.0f;
+            route.signal.controlled_emitter_offset_jitter = 0.0f;
+            route.signal.controlled_emitter_food_count = 0;
+            route.objects.count = 4;
             route.tree.count = 1;
             route.campfire.count = 0;
             route.worksite.count = 0;
@@ -261,17 +283,43 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             break;
 
         case MemoryAblationTaskKind::CommBuildRequest:
-            // A3.S4 - build request task. Worksite needs sticks + stones;
-            // controlled emitter beacons FROM the worksite (offset radius 0
-            // so emitter sits at worksite position) to call carriers in.
-            // Listener carrying a stick/stone must follow the signal to
-            // deposit. Differs from WorksiteReturn in that worksite
-            // direct-visibility is OFF (perception cannot see worksite,
-            // signal is the only way to locate it). Tests the integration
-            // of signal-following with material-carrying logistics.
+            // A3.S4 - build request task (Phase 2 redesign 2026-05-22).
+            //
+            // Original Phase 1 design demanded the listener also chop a
+            // tree, carry a stick AND a stone, and walk to an invisible
+            // worksite. v8 listeners followed the signal (responder=5.25/8,
+            // fitness drop 63%) but no episode ever produced a
+            // BuildCompleted because the chop->carry chain had not been
+            // trained. The signal chain was provably alive but the primary
+            // metric (worksite_completion_events) stayed pinned at 0.
+            //
+            // Phase 2 redesign 2026-05-22 (v2 iteration): keep the
+            // signal-only worksite-direction-cue invariant but reuse the
+            // chop-tree -> carry-stick -> deposit chain that v8 already
+            // demonstrates can succeed on worksite_return. Earlier v1 try
+            // with `tree.count=0` + nursery_supply auto-stick fell flat
+            // because v8 never picks loose sticks up on its own; it only
+            // gathers via ChopTreeCapability. We therefore restore tree
+            // count and lower the build threshold so a single deposit
+            // closes the worksite.
+            //
+            // Isolation strategy:
+            //   - tree.count = 2 (same as worksite_return; v8 knows this
+            //     chain)
+            //   - worksite needs 1 stick, 0 stones
+            //   - worksite.spawn_radius small so emitter + worksite are
+            //     in a tight cluster near the nest
+            //   - worksite.direction_requires_visibility stays true:
+            //     the SIGNAL is still the only directional cue. Disable
+            //     the signal and the listener cannot localise the worksite
+            //     even though it knows how to chop + carry, so completion
+            //     should drop.
             route.world_role = "eval";
             route.world_size = Vec2{120.0f, 120.0f};
             route.base.center = Vec2{44.0f, 60.0f};
+            route.base.radius = 12.0f;
+            route.base.stockpile_radius = 8.0f;
+            route.base.nest_radius = 5.0f;
             // Keep at least one background agent so AgentSocialPerception stays
             // in the sensory dim (see CommScoutWorker comment above).
             route.background.forager_count = 1;
@@ -287,17 +335,17 @@ ProtagonistEcologyConfig configureMemoryAblationTask(const ProtagonistEcologyCon
             route.signal.controlled_emitter_offset_radius = 0.0f;  // emit at worksite
             route.signal.controlled_emitter_offset_jitter = 0.0f;
             route.signal.controlled_emitter_food_count = 0;
-            route.objects.count = 24;  // need sticks + stones around
-            route.tree.count = 1;
+            route.objects.count = 24;        // sticks + stones around nest
+            route.tree.count = 2;            // restore chop chain
             route.campfire.count = 0;
             route.worksite.count = 1;
-            route.worksite.spawn_radius = 10.0f;
-            route.worksite.required_sticks = 2;
-            route.worksite.required_stones = 1;
-            route.worksite.assembly_rate = std::max(route.worksite.assembly_rate, 0.25f);
+            route.worksite.spawn_radius = 8.0f;
+            route.worksite.required_sticks = 1;       // 2 -> 1 (single deposit)
+            route.worksite.required_stones = 0;       // 1 -> 0 (sticks only)
+            route.worksite.assembly_rate = std::max(route.worksite.assembly_rate, 0.30f);
             // Worksite visibility off: signal is the only directional cue.
             route.worksite.direction_requires_visibility = true;
-            route.survival.initial_hydration_ratio = std::max(route.survival.initial_hydration_ratio, 0.75f);
+            route.survival.initial_hydration_ratio = std::max(route.survival.initial_hydration_ratio, 0.80f);
             break;
     }
 
