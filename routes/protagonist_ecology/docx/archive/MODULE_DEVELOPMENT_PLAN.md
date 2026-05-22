@@ -1,5 +1,13 @@
 # Protagonist Ecology · 模块化开发总纲
 
+> 状态：**历史参考**。
+>
+> 当前默认开发顺序与任务清单已迁移到：
+> - `DEVELOPMENT_EXECUTION_GUIDE.md`
+> - `DEVELOPMENT_TASK_PLAN.md`
+>
+> 本文件保留的意义主要是追溯早期“按模块群拆 route”的设计思路，**不再作为当前项目的默认主导航**。
+
 > 这份文档 **只属于** `routes/protagonist_ecology/` 这个当前项目。
 > 它不沿用根目录早期 baseline 的“M0-M5 + MVP”推进方式，而采用：
 >

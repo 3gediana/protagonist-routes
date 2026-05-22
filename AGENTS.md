@@ -139,14 +139,16 @@
 
 | 文件 | 这份文档现在最重要的用途 | 什么时候读 |
 |---|---|---|
-| `routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md` | **当前项目总蓝图**；判断 Phase 完成度的最高口径，别再高估已完成部分 | 判断路线优先级、决定下一阶段前 |
-| `routes/protagonist_ecology/docx/MEMORY_SYSTEM_MASTERPLAN.md` | protagonist 记忆系统总设计；说明为什么 memory 不能只加容量，要和主脑一起扩 | 动 Memory / Brain / DNC / cognition 前 |
-| `routes/protagonist_ecology/docx/MEMORY_PHASE_A_EXECUTION_PLAN.md` | 说明 Memory Phase A 哪些已经接活、哪些仍是 partial | 动 memory ablation / Memory V2 证据链前 |
-| `routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md` | continuous-time 世界设计与 CT-0/1/2/3 语义 | 动 `dt`、持续动作、事件时间语义前 |
-| `routes/protagonist_ecology/docx/COMPUTE_SCALING_GPU_CPU_PLAN.md` | CPU/GPU 路线与 mixed compute 边界 | 动 CUDA / profiling / dense GPU 前 |
-| `routes/protagonist_ecology/docx/MEMORY_ABLATION_SMOKE_RESULT.md` | 早期 ablation smoke 的诚实结论；可看 wiring，但不能把 smoke 反常结果当最终科学结论 | 动 ablation 解释、补长训前 |
-| `routes/protagonist_ecology/docx/FINAL_STATE_VISION.md` | route 最终观感目标 | 需要校准“我们最终想看到什么”时 |
-| `routes/protagonist_ecology/docx/MODULE_DEVELOPMENT_PLAN.md` | protagonist route 自己的模块推进图 | 做 route 内新增机制前 |
+| `routes/protagonist_ecology/docx/DEVELOPMENT_EXECUTION_GUIDE.md` | **当前项目默认开发顺序与反绕路指南**；把长蓝图、用户需求和真实代码揉成一条可执行路线 | 开新机制前、决定下一阶段前 |
+| `routes/protagonist_ecology/docx/DEVELOPMENT_TASK_PLAN.md` | **当前项目任务清单**；按执行顺序勾选，避免主线失焦 | 开工前、会话结束前 |
+| `routes/protagonist_ecology/docx/supporting/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md` | **当前项目总蓝图**；判断 Phase 完成度的最高口径，别再高估已完成部分 | 判断路线优先级、决定下一阶段前 |
+| `routes/protagonist_ecology/docx/supporting/MEMORY_SYSTEM_MASTERPLAN.md` | protagonist 记忆系统总设计；说明为什么 memory 不能只加容量，要和主脑一起扩 | 动 Memory / Brain / DNC / cognition 前 |
+| `routes/protagonist_ecology/docx/supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md` | 说明 Memory Phase A 哪些已经接活、哪些仍是 partial | 动 memory ablation / Memory V2 证据链前 |
+| `routes/protagonist_ecology/docx/supporting/CONTINUOUS_TIME_WORLD_DESIGN.md` | continuous-time 世界设计与 CT-0/1/2/3 语义 | 动 `dt`、持续动作、事件时间语义前 |
+| `routes/protagonist_ecology/docx/supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md` | CPU/GPU 路线与 mixed compute 边界 | 动 CUDA / profiling / dense GPU 前 |
+| `routes/protagonist_ecology/docx/supporting/MEMORY_ABLATION_SMOKE_RESULT.md` | 早期 ablation smoke 的诚实结论；可看 wiring，但不能把 smoke 反常结果当最终科学结论 | 动 ablation 解释、补长训前 |
+| `routes/protagonist_ecology/docx/supporting/FINAL_STATE_VISION.md` | route 最终观感目标 | 需要校准“我们最终想看到什么”时 |
+| `routes/protagonist_ecology/docx/archive/MODULE_DEVELOPMENT_PLAN.md` | 早期模块化推进口径；当前默认只作历史参考，不再作为主导航 | 需要追老设计思路时 |
 
 ### 🟢 第 3 优先级 · 按需查阅
 
@@ -306,7 +308,7 @@ git tag                 # 列出所有完成 tag
 ### 当前项目真实状态与交接
 
 - `routes/protagonist_ecology/docx/STATUS.md`
-- `routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
+- `routes/protagonist_ecology/docx/supporting/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
 
 ### 调参与实验经验
 

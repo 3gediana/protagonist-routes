@@ -1,6 +1,6 @@
 # Protagonist Ecology · 计算扩展与 GPU / CPU 承接方案
 
-> 位置：`routes/protagonist_ecology/docx/COMPUTE_SCALING_GPU_CPU_PLAN.md`
+> 位置：`routes/protagonist_ecology/docx/supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md`
 >
 > 作用：承接 `MEMORY_SYSTEM_MASTERPLAN.md`。这份文档回答的问题不是“记忆系统怎么设计”，而是**当主角记忆系统和主行为脑一起变大之后，算力路线怎么接**。
 >

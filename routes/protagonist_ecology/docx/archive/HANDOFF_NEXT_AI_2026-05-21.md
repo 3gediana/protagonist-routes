@@ -1,5 +1,14 @@
 # Protagonist Ecology · 给下一位 AI 的短交接
 
+> 状态：**单次会话历史参考**。
+>
+> 当前默认入口已切换到：
+> - `DEVELOPMENT_EXECUTION_GUIDE.md`
+> - `DEVELOPMENT_TASK_PLAN.md`
+> - `STATUS.md`
+>
+> 本文件保留是为了追溯 2026-05-21 那次 fixed-task memory ablation 修复与交接语境，**不再作为 route 默认主导航**。
+
 > 日期：2026-05-21
 > 目的：用户准备换对话，这份文档用于让下一位 AI **快速接住当前项目**，不要再被上下文压缩带偏。
 
@@ -24,8 +33,8 @@
 4. **本文件**
 5. `docs/experience_log.md` 里这次新增的 memory ablation 记录
 6. 如果要深挖路线优先级，再读：
-   - `routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
-   - `routes/protagonist_ecology/docx/MEMORY_SYSTEM_MASTERPLAN.md`
+   - `routes/protagonist_ecology/docx/supporting/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
+   - `routes/protagonist_ecology/docx/supporting/MEMORY_SYSTEM_MASTERPLAN.md`
 
 补充说明：
 

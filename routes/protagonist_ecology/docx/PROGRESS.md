@@ -10,10 +10,10 @@
 
 | 项 | 值 |
 |---|---|
-| 最后更新 | 2026-05-21 |
+| 最后更新 | 2026-05-22 |
 | 当前阶段 | Phase 1 Trace/Resume 已完整收口；Phase 2/3/5/6/7 已有代码落点但仍是 **partial**；Phase 4/8 尚未真正开始；底座侧已接通 continuous-time / 标准 DNC / Memory Phase A / DNC micro-task / BrainV3 最小壳层 / mixed compute，**但这些不等于长蓝图已经完成** |
-| 当前项目优先级 | 当前优先级已从“先同步过时文档”推进到“基于 fixed-task memory ablation full run 结果继续收口 partial phase”：最近这轮 worksite logistics fix 已被 full run 证实有效，现阶段最重要的不是继续堆 `BrainV3` 壳层，而是顺着结果继续解释剩余分离不够干净的任务，并从 `Memory V2 / ContributionLedger / communication semantics` 中真正收口一条线 |
-| 最新用户新增问题 | 用户当前需要一份**能直接打开的单页 HTML 指标说明**：按模块把真实输出指标、字段含义、判读方式与常见误区讲清楚，尤其要解释记忆 / DNC / memory ablation 相关字段，并避免把事件计数、结果状态和代理指标混成一类。 |
+| 当前项目优先级 | 当前优先级已从“单点补 signal reward”上升为“按新执行文档统一收口主线”：先沿 `DEVELOPMENT_EXECUTION_GUIDE.md` / `DEVELOPMENT_TASK_PLAN.md` 收口 `Memory V2 -> ContributionLedger -> communication semantics`，确认 cognition-social 主链站稳后，再进入物种角色、生命周期、自动晋升闭环与 R-008 自长机制。 |
+| 最新用户新增问题 | 用户要求对照长蓝图、用户需求与真实代码，重写一份**最少绕路的开发执行文档**和一份**可勾选任务计划**，并清理 route 内过时文档入口。 |
 
 ---
 
@@ -21,18 +21,20 @@
 
 ### 1. protagonist 当前项目最终愿景
 
-- 已写：`FINAL_STATE_VISION.md`
+- 已写：`supporting/FINAL_STATE_VISION.md`
 - 目标：原始聚落沙盒世界，不是随机点生态箱。
 - 关键观感：采集、搬运、堆放、回巢、围火、建造、围猎、通信、代际进步。
 
-### 2. protagonist 模块发展计划
+### 2. protagonist 开发执行与任务计划
 
-- 已写：`MODULE_DEVELOPMENT_PLAN.md`
-- 目标：围绕当前项目按模块化方式推进。
+- 已写：`DEVELOPMENT_EXECUTION_GUIDE.md`
+- 已写：`DEVELOPMENT_TASK_PLAN.md`
+- 目标：把长蓝图、用户需求和真实代码揉成一条默认执行路线，并把任务与设计分离。
+- 当前文档地位：`archive/MODULE_DEVELOPMENT_PLAN.md` 降级为**历史参考**，不再作为默认主导航。
 
 ### 3. 世界理解与复杂行为长期研究工程方案
 
-- 已写：`WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
+- 已写：`supporting/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
 - 已列出核心瓶颈：
   - 记忆结构弱
   - 缺世界模型
@@ -57,8 +59,8 @@
 
 ### 4. 记忆系统总设计与 Phase A 接线方案
 
-- 已写：`MEMORY_SYSTEM_MASTERPLAN.md`
-- 已写：`MEMORY_PHASE_A_EXECUTION_PLAN.md`
+- 已写：`supporting/MEMORY_SYSTEM_MASTERPLAN.md`
+- 已写：`supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md`
 - 已完成对当前 protagonist Memory V2 的实况审计：
   - `MemoryBank` 是真闭环，但仍是无结构短期记忆
   - `SpatialMemoryBank` 已拆成 `water / food / tree / stone / stick / danger / base / fire / worksite` 9 个独立语义槽，runtime 写入已覆盖这些主要对象类型
@@ -70,7 +72,7 @@
   - 不能只把 memory 做大，主行为控制脑也必须同步变大
   - 先把现有 Memory V2 真接活，再做 `ProtagonistBrainV3`
   - 后续 protagonist dense brain 走 mixed GPU，世界逻辑和事件系统继续深挖 CPU 并行
-- 已写：`COMPUTE_SCALING_GPU_CPU_PLAN.md`
+- 已写：`supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md`
 - 已明确后续算力承接顺序：
   - 先做记忆系统真闭环与主角脑结构化扩容
   - CPU 先从 episode 级并行升级到 agent decision / batch 级
@@ -111,7 +113,7 @@
 
 ### 5. 连续时间世界前置规划
 
-- 已写：`CONTINUOUS_TIME_WORLD_DESIGN.md`
+- 已写：`supporting/CONTINUOUS_TIME_WORLD_DESIGN.md`
 - 已完成一次面向工程落地的外部资料调研，重点覆盖：
   - 固定上限子步长 / semi-fixed timestep
   - CTRNN 连续状态积分
@@ -166,14 +168,14 @@
 
 ### 8. Stage 1 · Memory Phase A 收口（2026-05-21）
 
-按 `MEMORY_PHASE_A_EXECUTION_PLAN.md` 完成 Phase A 的 6 个验收项。在大重构 commit `c7f1665` 中很多 Phase A 部件其实已经接好了，本会话主要做以下三件事：
+按 `supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md` 完成 Phase A 的 6 个验收项。在大重构 commit `c7f1665` 中很多 Phase A 部件其实已经接好了，本会话主要做以下三件事：
 
 **已落地（本会话补完）**：
 
 - 把 Stage 0 的 6 个结构化事件接进 EpisodicMemoryBank：在 runtime 评估循环新增 3 个 tick 收集器（`tick_chop_completed` / `tick_build_completed` / `tick_deposits`），通过 EventBus 订阅在每个 substep 收集，然后在已有的 per-agent memory 写入循环里转写成 `chopped_tree / built_worksite / deposited_stick / deposited_stone / signal_emitted` 这 5 类 episodic 事件，含 salience 模型（chop 按时长，build 按贡献排名）
 - 增加 TraceRecorder 对全部 6 个新事件的 payload 序列化，使 `event_trace.jsonl` 字段完整（之前只能看到 `{"type":"ChopCompleted"}` 没有 chopper / duration / wood_yield）
 - 新增 memory ablation smoke harness：`scripts/protagonist_memory_ablation.py` 一次跑完 baseline + 4 个 ablation（spatial/episodic/social/goal），自动生成对照表并保留各自 trace 目录，验证 4 个 `population.protagonist.*_enabled` 开关都可读、可执行、可观测
-- 写 `MEMORY_ABLATION_SMOKE_RESULT.md` 诚实记录首轮结果：4 开关都让 fitness 和行为指标显著移动（基础设施验收 PASS），但 ablation 反而 fitness 更高的反直觉现象需要长训才能反转，**不能当成"记忆有害"的科学结论**
+- 写 `supporting/MEMORY_ABLATION_SMOKE_RESULT.md` 诚实记录首轮结果：4 开关都让 fitness 和行为指标显著移动（基础设施验收 PASS），但 ablation 反而 fitness 更高的反直觉现象需要长训才能反转，**不能当成"记忆有害"的科学结论**
 
 **Phase A 验收清单（全 PASS）**：
 
@@ -251,7 +253,7 @@
   - `advanced_stats.csv`
   - `emergence_audit.csv`
   - `comprehensive/*.csv`
-- 已新增可直接双击打开的单页说明：`METRICS_FIELD_GUIDE.html`
+- 已新增可直接双击打开的单页说明：`supporting/METRICS_FIELD_GUIDE.html`
 - 页面内容已按模块整理：
   - 训练主指标
   - 主角行为指标
@@ -284,11 +286,11 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 - 已接入：`MemoryCognitionPerception`
 - 已完成当前编译错误修复，`neural-eco-protagonist` 重新可编译
 - 已重新跑通 protagonist smoke
-- 当前决策已更新：先不直接跳到完整 `ProtagonistBrainV3`，而是按 `MEMORY_PHASE_A_EXECUTION_PLAN.md` 先把现有 Memory V2 接活，再向更大脑结构推进
+- 当前决策已更新：先不直接跳到完整 `ProtagonistBrainV3`，而是按 `supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md` 先把现有 Memory V2 接活，再向更大脑结构推进
 
 ### Phase CT · 连续时间世界底座（当前项目重点）
 
-当前准备按 `CONTINUOUS_TIME_WORLD_DESIGN.md` 推进：
+当前准备按 `supporting/CONTINUOUS_TIME_WORLD_DESIGN.md` 推进：
 
 - CT-0：时间类型与兼容层（已完成）
 - CT-1：runtime 从 `episode_ticks` 迁到 `episode_duration_seconds`（已完成）
@@ -392,8 +394,8 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 
 ### P2 · Memory V2
 
-- [x] 记忆系统总设计文档：`MEMORY_SYSTEM_MASTERPLAN.md`
-- [x] Memory Phase A 接线计划：`MEMORY_PHASE_A_EXECUTION_PLAN.md`
+- [x] 记忆系统总设计文档：`supporting/MEMORY_SYSTEM_MASTERPLAN.md`
+- [x] Memory Phase A 接线计划：`supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md`
 - [~] WorkingMemoryBank（BrainV3 壳层与最小验证已完成，且已通过输入折叠方式进入现有 learnable path；仍未独立参数化）
 - [x] SpatialMemoryBank
 - [x] EpisodicMemoryBank
@@ -452,7 +454,7 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 
 后续需要专门研究并设计：
 
-- [x] 连续时间世界设计文档：`CONTINUOUS_TIME_WORLD_DESIGN.md`
+- [x] 连续时间世界设计文档：`supporting/CONTINUOUS_TIME_WORLD_DESIGN.md`
 - [ ] `Tick currentTick()` 与 `double currentTimeSeconds()` 的关系
 - [ ] `world.tick(dt)` 到 `world.advance(dt_seconds)` 的迁移策略
 - [x] CT-0 时间类型与兼容层
@@ -467,7 +469,7 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 
 ### P9 · Compute Scaling
 
-- [x] `COMPUTE_SCALING_GPU_CPU_PLAN.md`
+- [x] `supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md`
 - [x] `Agent` decision / apply 两相拆分
 - [x] `AgentLayer` per-world agent decision 并行
 - [x] protagonist route outer episode pool 与 inner decision threads 联动调度
@@ -480,9 +482,8 @@ commit `02d5a08`，针对前一轮 full run 留下的两个分离弱：
 
 ## 下一步
 
-1. 先围绕 fixed-task memory ablation full run 继续追 `signal_response` 分离偏弱与 `water_return/no_spatial` 残余，不要只因为 `worksite_return` 修好就停下来。
-2. 把新的 `METRICS_FIELD_GUIDE.html` 当成解释层基座继续维护，优先补 communication / signal 指标的专项说明，并确保后续新字段不会和现有页面口径脱节。
-3. 在 `Memory V2 / ContributionLedger / communication semantics` 里选一条真正收口；从 ablation 结果看，当前最值得优先 tightening 的反而是 communication / signal 这条线。
-4. 回头补 `DNC-forcing micro-task` 的 trace / ablation 解读，区分“任务 wiring 通了”和“DNC 真的学会了”。
-5. CT 线继续推进 `chop / build / worksite` 的持续进度语义，避免后续高阶记忆建立在残余离散动作之上。
-6. mixed compute 线当前不要再把“CUDA build 可运行”误写成“GPU 已带来训练加速”；若继续 GPU 线，应直接做更细粒度 dense-forward profiling 或 agent-batch 化。
+1. 按 `DEVELOPMENT_TASK_PLAN.md` 先收口 `signal_response`：补 perception-driven shaping reward、listener trace 字段和更干净的 primary metric。
+2. 把 `Build / Hunt / Signal` 三条 credit 统一成一套 route-local `EventLineage / Contribution` 口径，避免 communication 继续缺因果归因。
+3. 基于新的 communication 指标与 ablation，优先完成一条真的成立的通信任务（`scout-worker` / `danger warning` / `build request` 三选一先收口）。
+4. 把 `supporting/METRICS_FIELD_GUIDE.html` 继续作为解释层基座维护，后续 communication / lineage / lifecycle 字段都要同步进去。
+5. 在 cognition-social 主线没有收口前，不默认继续扩 `BrainV3`、GPU profiling、正式长训、3D replay 或 live world。

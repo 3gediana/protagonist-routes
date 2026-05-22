@@ -1,6 +1,6 @@
 # Protagonist Ecology · 连续时间世界重构设计
 
-> 位置：`routes/protagonist_ecology/docx/CONTINUOUS_TIME_WORLD_DESIGN.md`
+> 位置：`routes/protagonist_ecology/docx/supporting/CONTINUOUS_TIME_WORLD_DESIGN.md`
 >
 > 状态：设计文档；continuous-time 主链已落地到 route runtime / trace / memory（2026-05-21），但更强连续语义与部分 legacy tick 兼容仍待继续清理
 >

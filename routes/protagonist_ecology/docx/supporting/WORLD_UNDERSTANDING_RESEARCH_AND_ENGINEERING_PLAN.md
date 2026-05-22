@@ -1,6 +1,6 @@
 # Protagonist Ecology · 世界理解与复杂行为涌现长期研究工程方案
 
-> 位置：`routes/protagonist_ecology/docx/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
+> 位置：`routes/protagonist_ecology/docx/supporting/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
 >
 > 范围：只服务 `routes/protagonist_ecology/` 这个当前项目。
 >

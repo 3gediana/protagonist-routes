@@ -11,6 +11,8 @@
 > - `02d5a08 fix(protagonist): tighten memory ablation tasks + peer_signal_nearby fix`
 > - `71ddc9b wip(protagonist): prior session work - memory ablation infra + brainv3 shell + goal manager`
 > 交接目标：让新对话能在**不依赖旧上下文**的情况下，快速接手仓库真实状态。
+>
+> **2026-05-22 最新审计**：动 memory / perception / reward 前请先看 `supporting/MEMORY_EVIDENCE_AUDIT.md`（三任务对照表 + 44 维 perception 真用状态 + 四类 memory bank 最小有效 query + DEAD/WEAK 标记 + spatial→goal cascade 排雷）。
 
 > **本版本相对旧版 handoff 的关键修正（精简版）**：
 > - 继续保留已落地代码：CT 结构化事件、Memory Phase A、worksite/hunt credit、rule-based goal loop、world-model dataset builder、offline MAP-Elites、DNC micro-task、BrainV3 最小壳层
@@ -105,10 +107,16 @@ D:\claude-code\downloads\
 
 ### 2.2 接 protagonist 路线动手前
 
-1. `MEMORY_SYSTEM_MASTERPLAN.md` + `MEMORY_PHASE_A_EXECUTION_PLAN.md`
-2. `MEMORY_ABLATION_SMOKE_RESULT.md`（诚实结论：smoke 反向 != 记忆有害）
-3. `CONTINUOUS_TIME_WORLD_DESIGN.md`
-4. `COMPUTE_SCALING_GPU_CPU_PLAN.md`
+1. `DEVELOPMENT_EXECUTION_GUIDE.md` + `DEVELOPMENT_TASK_PLAN.md`
+2. `supporting/MEMORY_SYSTEM_MASTERPLAN.md` + `supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md`
+3. `supporting/MEMORY_ABLATION_SMOKE_RESULT.md`（诚实结论：smoke 反向 != 记忆有害）
+4. `supporting/CONTINUOUS_TIME_WORLD_DESIGN.md`
+5. `supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md`
+
+补充说明：
+
+- `archive/HANDOFF_NEXT_AI_2026-05-21.md` 只保留为单次会话历史参考，不再作为默认主入口
+- 当前 route 默认导航已切到 `DEVELOPMENT_EXECUTION_GUIDE.md` / `DEVELOPMENT_TASK_PLAN.md` / `STATUS.md`
 
 ### 2.3 接手第一件事不是写代码
 
@@ -158,7 +166,7 @@ D:\claude-code\downloads\activate_cuda_portable.bat
 - 在 runtime 评估循环新增 3 个 tick 收集器（`tick_chop_completed` / `tick_build_completed` / `tick_deposits`），订阅 EventBus 在每个 substep 收集
 - 在 per-agent memory 写入循环里转写 5 类 episodic：`chopped_tree`（按 duration salience）、`built_worksite`（按 contributor rank salience）、`deposited_stick` / `deposited_stone`（0.30）、`signal_emitted`（0.20）
 - `scripts/protagonist_memory_ablation.py`：一次跑 baseline + 4 个 ablation（spatial/episodic/social/goal），自动生成对照表
-- 写 `MEMORY_ABLATION_SMOKE_RESULT.md` 诚实记录：4 开关都让 fitness 显著移动（基础设施 PASS），但 ablation 反而 fitness 更高的反直觉现象需要长训才能反转，**不能当成"记忆有害"的科学结论**
+- 写 `supporting/MEMORY_ABLATION_SMOKE_RESULT.md` 诚实记录：4 开关都让 fitness 显著移动（基础设施 PASS），但 ablation 反而 fitness 更高的反直觉现象需要长训才能反转，**不能当成"记忆有害"的科学结论**
 
 **Phase A 7 项验收全部 PASS**（详见 PROGRESS.md 第 8 节表）。
 
@@ -497,7 +505,7 @@ protagonist EpisodicMemoryBank 现在记录这些事件，每条带 `(tick, time
 
 1. **不能擅自开正式训练**：所有"5 ablation × ≥100 代"或类似 1+ 小时训练任务必须先问用户。
 2. **不要悄悄改 CMakeLists.txt 第 22-28 行的生成器表达式**：nvcc 编不过会回到 Stage 6 之前。
-3. **不要把 smoke ablation 结果当成"记忆有害"的科学结论**。3 代不够，详见 MEMORY_ABLATION_SMOKE_RESULT.md。
+3. **不要把 smoke ablation 结果当成"记忆有害"的科学结论**。3 代不够，详见 `supporting/MEMORY_ABLATION_SMOKE_RESULT.md`。
 4. **不要回滚 / 重命名已经落地的 Stage / bonus 代码**。虽然文档口径已从“全部完成”修正为“多项 partial”，但这些代码路径现在仍是 load-bearing。
 5. **不要把 GPU build (`build_cuda/`) 提交到 git**。已 .gitignore，但万一新人手动 git add -f 会出事。
 6. **不要把 D:\NVIDIA\CUDA\v12.8 误装到 C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8**。我们故意走 D 盘 portable，C 盘那俩空壳是历史残留。

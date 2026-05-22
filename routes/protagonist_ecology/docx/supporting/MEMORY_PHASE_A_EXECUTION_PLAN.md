@@ -1,6 +1,6 @@
 # Protagonist Ecology · Memory Phase A 接线实施计划
 
-> 位置：`routes/protagonist_ecology/docx/MEMORY_PHASE_A_EXECUTION_PLAN.md`
+> 位置：`routes/protagonist_ecology/docx/supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md`
 >
 > 目标：把当前已经存在但未闭环的 `Spatial / Episodic / Social / Goal` 记忆区真正接通，作为 `MEMORY_SYSTEM_MASTERPLAN.md` 的第一落地阶段。
 >

@@ -1,6 +1,6 @@
 # Protagonist Ecology · 记忆系统总设计（Memory System Masterplan）
 
-> 位置：`routes/protagonist_ecology/docx/MEMORY_SYSTEM_MASTERPLAN.md`
+> 位置：`routes/protagonist_ecology/docx/supporting/MEMORY_SYSTEM_MASTERPLAN.md`
 >
 > 范围：只服务 `routes/protagonist_ecology/` 这个当前项目。
 >

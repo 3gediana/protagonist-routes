@@ -100,7 +100,7 @@
 
 ## 2026-05-21 · 指标说明单页 + 真实统计口径核对
 
-为 protagonist route 的 CSV 输出做了一份单页说明 `routes/protagonist_ecology/docx/METRICS_FIELD_GUIDE.html`，把所有指标按"训练主指标 / 主角行为 / 记忆DNC / 生态模块 / 研究统计"分类，明确每个字段是 events 计数 / 状态快照 / 跨 episode 平均 / DNC 摘要 / proxy。
+为 protagonist route 的 CSV 输出做了一份单页说明 `routes/protagonist_ecology/docx/supporting/METRICS_FIELD_GUIDE.html`，把所有指标按"训练主指标 / 主角行为 / 记忆DNC / 生态模块 / 研究统计"分类，明确每个字段是 events 计数 / 状态快照 / 跨 episode 平均 / DNC 摘要 / proxy。
 
 **高风险误读点**：
 - `signal_emits`（被记录到的 emitter 数）≠ `signal_emit_events_avg`（fixed-task probe 到的真实 emit 事件均值）
