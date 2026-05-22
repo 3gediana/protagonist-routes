@@ -34,6 +34,8 @@
 #include "runtime/headless/EvaluationPool.h"
 #include "runtime/ProtagonistBatchedDenseRunner.h"
 #include "runtime/ProtagonistEvolution.h"
+#include "runtime/QualityDiversityArchive.h"
+#include "brain/GoalMemory.h"
 #include "runtime/BootstrapPopulation.h"
 #include "runtime/CommunicationMetrics.h"
 #include "runtime/CreditLedger.h"
@@ -3090,6 +3092,46 @@ void accumulateGenomeFitness(World2D& world,
     }
 }
 
+// L2.8 v14 ME-NEAT: collect per-genome behavioural descriptor at the end
+// of an episode. We read each protagonist agent's lifetime
+// goalCompletionTotal counters (chops/builds/crafts/hunts/signal_emits)
+// which are reset every episode by Agent::reset, so a sum across episodes
+// equals the genome's generation-aggregate behaviour. The archive bins
+// these into 5x5 cells (chops x build+craft) and keeps one elite per
+// cell, preserving long-chain stepping stones that single-fitness NEAT
+// would discard.
+void accumulateGenomeBehavior(
+    World2D& world,
+    const std::vector<std::unique_ptr<IGenome>>& population,
+    std::unordered_map<GenomeId, BehaviorDescriptor>& behavior_per_genome) {
+    auto* agent_layer = world.getLayer<AgentLayer>();
+    if (agent_layer == nullptr) {
+        return;
+    }
+    std::unordered_set<GenomeId> protagonist_ids;
+    protagonist_ids.reserve(population.size());
+    for (const auto& genome : population) {
+        if (genome != nullptr) {
+            protagonist_ids.insert(genome->id());
+        }
+    }
+    for (const auto* a : agent_layer->agents()) {
+        if (a == nullptr || !protagonist_ids.contains(a->genomeId())) {
+            continue;
+        }
+        const auto* concrete = dynamic_cast<const Agent*>(a);
+        if (concrete == nullptr) {
+            continue;
+        }
+        auto& bd = behavior_per_genome[concrete->genomeId()];
+        bd.chop_count    += concrete->goalCompletionTotal(static_cast<int>(GoalType::ChopTree));
+        bd.build_count   += concrete->goalCompletionTotal(static_cast<int>(GoalType::BuildWorksite));
+        bd.craft_count   += concrete->goalCompletionTotal(static_cast<int>(GoalType::CraftWeapon));
+        bd.hunt_count    += concrete->goalCompletionTotal(static_cast<int>(GoalType::Hunt));
+        bd.signal_emits  += concrete->goalCompletionTotal(static_cast<int>(GoalType::EmitSignal));
+    }
+}
+
 std::vector<EvaluatedIndividual> collectEvaluated(const std::vector<std::unique_ptr<IGenome>>& population,
                                                   const std::unordered_map<GenomeId, double>& fitness_sum,
                                                   std::size_t episodes) {
@@ -3719,7 +3761,11 @@ int ProtagonistEcologyRuntime::runTraining() {
     evolution_metrics << '\n';
 
     std::ofstream fitness_csv(run_dir / "fitness.csv", std::ios::out | std::ios::trunc);
-    fitness_csv << "generation,min_fitness,avg_fitness,best_fitness\n";
+    // L2.8 v14 ME-NEAT: extra columns for the quality-diversity archive.
+    // me_coverage = number of filled cells / max cells (0..1); me_qd_score
+    // = sum of cell elite fitnesses; me_max_fitness = best cell elite
+    // fitness. When me_neat_enabled=false these columns are 0 / 0 / 0.
+    fitness_csv << "generation,min_fitness,avg_fitness,best_fitness,me_coverage,me_qd_score,me_max_fitness\n";
 
     std::ofstream behavior_csv(run_dir / "protagonist_behaviors.csv", std::ios::out | std::ios::trunc);
     if (!behavior_csv.is_open()) {
@@ -3798,6 +3844,10 @@ int ProtagonistEcologyRuntime::runTraining() {
             // L2.6 v12: which task_template ran in this episode (-1 = none).
             // Used after generation to update template_regret_score.
             int template_idx = -1;
+            // L2.8 v14 ME-NEAT: per-genome behavioural descriptor for this
+            // episode (chop/build/craft/hunt/signal counts). Merged across
+            // episodes into the generation-level archive after waitAll.
+            std::unordered_map<GenomeId, BehaviorDescriptor> behavior_per_genome;
         };
         std::vector<EpisodeResult> episode_results(episodes_per_generation);
         for (auto& r : episode_results) {
@@ -3894,6 +3944,13 @@ int ProtagonistEcologyRuntime::runTraining() {
                 EpisodeResult& result = episode_results[episode];
                 evaluatePopulation(*world, generation_route, episode_params, population, background_view, result.behavior, stop_requested_, trace_recorder.get());
                 accumulateGenomeFitness(*world, population, result.fitness_sum);
+                // L2.8 v14 ME-NEAT: harvest per-genome behavioural descriptor
+                // before the world is destroyed. Agent::goalCompletionTotal
+                // counters were accumulated by capability success paths
+                // throughout the episode (Agent::reset clears them on
+                // spawn). Run before world destruction; sums across
+                // episodes give a stable BD per genome.
+                accumulateGenomeBehavior(*world, population, result.behavior_per_genome);
                 for (std::size_t i = 0; i < background_view.size(); ++i) {
                     if (background_view[i].population != nullptr) {
                         accumulateGenomeFitness(*world, *background_view[i].population, result.species_fitness_sum[i]);
@@ -3943,6 +4000,12 @@ int ProtagonistEcologyRuntime::runTraining() {
             }
         }
 
+        // L2.8 v14 ME-NEAT: per-genome BD aggregated across episodes.
+        // Built up alongside the existing per-genome fitness_sum, then
+        // submitted to the QualityDiversityArchive after evaluated[] is
+        // assembled.
+        std::unordered_map<GenomeId, BehaviorDescriptor> behavior_per_genome;
+
         // Merge per-episode results into the generation's accumulators.
         for (auto& r : episode_results) {
             for (const auto& [id, fit] : r.fitness_sum) {
@@ -3952,6 +4015,14 @@ int ProtagonistEcologyRuntime::runTraining() {
                 for (const auto& [id, fit] : r.species_fitness_sum[i]) {
                     species_fitness_sum[i][id] += fit;
                 }
+            }
+            for (const auto& [id, bd] : r.behavior_per_genome) {
+                auto& dst = behavior_per_genome[id];
+                dst.chop_count    += bd.chop_count;
+                dst.build_count   += bd.build_count;
+                dst.craft_count   += bd.craft_count;
+                dst.hunt_count    += bd.hunt_count;
+                dst.signal_emits  += bd.signal_emits;
             }
             // Merge behavior counters.
             behavior.deposits_total += r.behavior.deposits_total;
@@ -3984,6 +4055,26 @@ int ProtagonistEcologyRuntime::runTraining() {
 
         const auto evaluated = collectEvaluated(population, fitness_sum, episodes_per_generation);
         const auto stats = computeStats(evaluated);
+
+        // L2.8 v14 ME-NEAT: build quality-diversity archive from this
+        // generation. Each evaluated individual's BD (chops, build+craft)
+        // bins it into one of N x N cells; only the highest-fitness
+        // genome per cell survives. evaluated_for_breeding clones
+        // evaluated and suppresses non-cell-elite fitness so EliteSelection
+        // + TournamentSelection in evolution.reproduce naturally bias
+        // toward cell elites. When me_neat_enabled=false the archive is
+        // empty, the breeding evaluated == evaluated, and selection is
+        // identical to v13.
+        QualityDiversityArchive me_archive(route.me_neat_chops_bin_size,
+                                           route.me_neat_workcraft_bin_size,
+                                           route.me_neat_max_bins);
+        if (route.me_neat_enabled) {
+            for (const auto& ev : evaluated) {
+                auto it = behavior_per_genome.find(ev.genome_id);
+                if (it == behavior_per_genome.end()) continue;
+                me_archive.submit(ev.genome_id, ev.fitness, it->second);
+            }
+        }
 
         std::vector<std::vector<EvaluatedIndividual>> species_evaluated;
         std::vector<GenerationStats> species_stats;
@@ -4022,10 +4113,16 @@ int ProtagonistEcologyRuntime::runTraining() {
         evolution_metrics.flush();
 
         // ---- write fitness.csv ----
+        const double me_coverage = me_archive.maxCells() > 0
+            ? static_cast<double>(me_archive.coverage()) / static_cast<double>(me_archive.maxCells())
+            : 0.0;
         fitness_csv << generation << ','
                     << stats.min_fitness << ','
                     << stats.avg_fitness << ','
-                    << stats.best_fitness << '\n';
+                    << stats.best_fitness << ','
+                    << me_coverage << ','
+                    << me_archive.qdScore() << ','
+                    << me_archive.maxFitness() << '\n';
         fitness_csv.flush();
 
         // ---- write protagonist_behaviors.csv ----
@@ -4091,7 +4188,7 @@ int ProtagonistEcologyRuntime::runTraining() {
             species_log += std::string(speciesArchetypeName(species_contexts[i].archetype))
                          + " avg=" + std::to_string(static_cast<int>(species_stats[i].avg_fitness * 100) / 100.0);
         }
-        LOG_INFO("Gen {} | protagonist avg={:.2f} best={:.2f} | {} | builds={} chops={} hunts={} signals={}",
+        LOG_INFO("Gen {} | protagonist avg={:.2f} best={:.2f} | {} | builds={} chops={} hunts={} signals={} | me_cov={}/{} qd={:.1f}",
                  generation,
                  stats.avg_fitness,
                  stats.best_fitness,
@@ -4099,7 +4196,10 @@ int ProtagonistEcologyRuntime::runTraining() {
                  behavior.completed_worksites,
                  behavior.chop_successes,
                  behavior.hunt_successes,
-                 behavior.signal_emits);
+                 behavior.signal_emits,
+                 me_archive.coverage(),
+                 me_archive.maxCells(),
+                 me_archive.qdScore());
 
         // L2 GPU-decision profile: per-generation phase breakdown.
         // gen_total = wall clock of this generation (CPU/CPU+GPU combined).
@@ -4173,7 +4273,27 @@ int ProtagonistEcologyRuntime::runTraining() {
         std::vector<std::vector<std::unique_ptr<IGenome>>> next_species_populations;
         if (need_post_reproduction_state) {
             auto raw = rawGenomePointers(population);
-            next_population = evolution.reproduce(evaluated, raw, nullptr);
+            // L2.8 v14 ME-NEAT: build evaluated_for_breeding by suppressing
+            // non-cell-elite fitness. EliteSelection (top elite_ratio) and
+            // TournamentSelection both order on .fitness, so suppressing
+            // non-elites by a factor of me_neat_non_elite_weight (e.g.
+            // 0.05) effectively makes cell elites the dominant survivor
+            // pool. Stepping-stone genomes ("modest chops + 1 worksite")
+            // hold their unique cell and propagate, instead of being
+            // out-fitnessed by a different cell's specialist.
+            const std::vector<EvaluatedIndividual>* breed_evaluated = &evaluated;
+            std::vector<EvaluatedIndividual> evaluated_for_breeding;
+            if (route.me_neat_enabled && !me_archive.cells().empty()) {
+                evaluated_for_breeding = evaluated;
+                const auto elite_set = me_archive.eliteIdSet();
+                for (auto& ev : evaluated_for_breeding) {
+                    if (!elite_set.contains(ev.genome_id)) {
+                        ev.fitness *= route.me_neat_non_elite_weight;
+                    }
+                }
+                breed_evaluated = &evaluated_for_breeding;
+            }
+            next_population = evolution.reproduce(*breed_evaluated, raw, nullptr);
             next_species_populations.reserve(species_contexts.size());
             for (std::size_t i = 0; i < species_contexts.size(); ++i) {
                 if (species_contexts[i].population.empty()) {

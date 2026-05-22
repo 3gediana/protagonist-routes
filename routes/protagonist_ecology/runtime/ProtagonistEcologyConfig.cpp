@@ -475,6 +475,25 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
         "evolution.task_template_hard_first_generations",
         out.task_template_hard_first_generations);
 
+    // L2.8 v14 ME-NEAT (MAP-Elites + NEAT) configuration. Toml block
+    // [evolution.me_neat] enabled=true switches breed selection to
+    // quality-diversity-shaped fitness. See Config.h for rationale.
+    out.me_neat_enabled = config.getOr<bool>(
+        "evolution.me_neat.enabled",
+        out.me_neat_enabled);
+    out.me_neat_chops_bin_size = config.getOr<int>(
+        "evolution.me_neat.chops_bin_size",
+        out.me_neat_chops_bin_size);
+    out.me_neat_workcraft_bin_size = config.getOr<int>(
+        "evolution.me_neat.workcraft_bin_size",
+        out.me_neat_workcraft_bin_size);
+    out.me_neat_max_bins = config.getOr<int>(
+        "evolution.me_neat.max_bins",
+        out.me_neat_max_bins);
+    out.me_neat_non_elite_weight = config.getOr<double>(
+        "evolution.me_neat.non_elite_weight",
+        out.me_neat_non_elite_weight);
+
     return out;
 }
 

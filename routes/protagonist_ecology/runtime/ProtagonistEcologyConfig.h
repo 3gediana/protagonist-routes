@@ -404,6 +404,28 @@ struct ProtagonistEcologyConfig {
     // weight equally. Disable by setting to 0.
     std::size_t task_template_hard_first_generations{20};
 
+    // L2.8 v14 ME-NEAT (MAP-Elites + NEAT). Replaces single-fitness NEAT
+    // selection with quality-diversity. When enabled, every generation a
+    // QualityDiversityArchive is built keyed on a 2D behaviour descriptor
+    // (chops x worksites+crafts). Each cell keeps the highest-fitness
+    // genome. For breed selection, evaluated[].fitness is shaped so that
+    // archive cell elites keep their fitness while non-elites are
+    // suppressed by me_neat_non_elite_weight, biasing EliteSelection +
+    // TournamentSelection toward cell elites. Stepping stones in long
+    // compositional chains (e.g. "chop a lot + build 1 worksite") are
+    // preserved because they hold a unique cell rather than being
+    // out-fitnessed by a different cell's specialist.
+    bool me_neat_enabled{false};
+    int me_neat_chops_bin_size{20};       // x-axis bucket: chops per cell
+    int me_neat_workcraft_bin_size{2};    // y-axis bucket: (build+craft) per cell
+    int me_neat_max_bins{5};              // grid is N x N (default 5x5 = 25 cells)
+    // When 0 < w < 1, non-elite genomes have their fitness multiplied
+    // by w during reproduce. EliteSelection then naturally lifts cell
+    // elites into the survivor set, and tournament samples favour them.
+    // 0.05 = strong suppression (close to "only cell elites survive");
+    // 1.0 = no suppression (archive only used for metrics).
+    double me_neat_non_elite_weight{0.05};
+
     bool isTrainRole() const;
     bool isEvalRole() const;
     bool isLiveRole() const;
