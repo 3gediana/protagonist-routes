@@ -1,10 +1,18 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-23 凌晨（**L2.7 v13 HRL sub-rewards + 3 细节修复, fitness 回正 + CV 回归 v9 水平**）
+> 最后巡检：2026-05-23 凌晨（**L2.8 v14 ME-NEAT 地基重构第一发：MAP-Elites + NEAT，min_fit +1478 但 me_cov=4% 调参不到位**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`1b0a985 L2.7 v13: 60-gen HRL+details validation results`
+> 当前 HEAD：`v14 commit (pending push)`
 >
+> **2026-05-23 凌晨 L2.8 v14 ME-NEAT 地基重构第一发**（2 commits 待 push, +766 行 + 验证数据）：
+> - `<v14-code-commit> L2.8 v14: ME-NEAT (MAP-Elites + NEAT) architectural pivot`
+> - `<v14-data-commit> L2.8 v14: 60-gen ME-NEAT validation - min_fit +1478, me_cov=4%调参不到位`
+> - 用户怀疑"地基从一开始就出错了"，让 AI 查文献。Tavily MCP 文献调研直接打脸 v9-v13：**Craftax ICML 2024** "UED fail to make material progress" 直接打死 v12 ACCEL；**Mouret 2019 GECCO** "NEAT 'success stories' need a lot of fitness shaping (not highlighted in videos/papers)" 完美描述 v9-v13 反复调参；**InstaDeep ICLR 2023 spotlight** 证明 QD-NeuroEvolution ≥ RL+intrinsic 在 skill discovery。诊断 3 个地基错：(1) single fitness vs Quality Diversity；(2) task-curriculum vs skill-discovery；(3) 纯 NEAT vs evolution+gradient hybrid。用户拒绝 PPO/Dreamer (4-6 周工程量)、选择 ME-NEAT 演化路线。
+> - **改造**：新增 `routes/protagonist_ecology/runtime/QualityDiversityArchive.{h,cpp}` (5x5 cell grid, BD = chops × build+craft, ~120 行)；ProtagonistEcologyRuntime 加 `BehaviorDescriptor` per-genome 累积 + `accumulateGenomeBehavior` + 评估完投入 archive + `evaluated_for_breeding` 把非 cell-elite fitness × 0.05 (implicit MAP-Elites)；fitness.csv 加 3 列 `me_coverage,me_qd_score,me_max_fitness`；`tmp/v14_qd/v14_qd.toml` 关掉 ACCEL/SMT 保留 v13 HRL 子奖励，me_neat_enabled=true。**166/166 tests 全过**。me_neat_enabled 默认 false 所以 v8-v13 配置零影响。
+> - **v14 60-gen 验证 (seed=91, 同 v10/v11/v12/v13)**：**min_fitness -385 → +1093 (+1478, CV 大幅下降)**、crafts 0.3→1.0 (+233%)、coop_s 4261→12203 (+186%)、hunts 36.6→42.9 (+17%)。avg_fitness 3191→3227 (+1% 持平)。**但 me_coverage 始终 1-2/25 (4%)** — bin_size=20 对早期数据太粗，archive 几乎没填，机制退化成"留 1 elite + 普通 NEAT"。chops 反而从 68→18 (-73%)、throws 4647→10962 (+136%)。地基方向被验证可行（min_fit 突破 + crafts 翻倍 + coop 翻倍），但首次 bin 调参不到位。
+> - 下次必须细化 bin_size (chops_bin=5, workcraft_bin=1) 或 BD 加 hunt 维度。
+
 > **2026-05-23 凌晨 L2.7 v13 HRL sub-rewards + 细节修复**（2 commits, +322/-9 代码 + 验证数据）：
 > - `084a2a8 L2.7 v13: HRL sub-rewards + weapon bonus + carry slowdown + stick throw`
 > - `1b0a985 L2.7 v13: 60-gen HRL+details validation results`
