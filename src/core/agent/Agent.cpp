@@ -399,4 +399,51 @@ void Agent::setPredator(bool v) {
     is_predator_ = v;
 }
 
+// ---- L2.1 species differentiation v2 ----
+void Agent::accumulateThreatDamage(AgentId attacker, float damage, SimTimeSeconds time) {
+    if (damage <= 0.0f) return;
+    threat_damage_window_.push_back(ThreatHit{attacker, damage, time});
+    // Soft cap to keep the vector small under sustained attack. The
+    // window query already filters by time; this just bounds memory.
+    if (threat_damage_window_.size() > 64) {
+        threat_damage_window_.erase(
+            threat_damage_window_.begin(),
+            threat_damage_window_.begin() + 32);
+    }
+}
+
+float Agent::threatDamageInWindow(SimTimeSeconds current_time, SimTimeSeconds window) const {
+    if (window <= 0.0) return 0.0f;
+    const SimTimeSeconds cutoff = current_time - window;
+    float total = 0.0f;
+    for (const auto& hit : threat_damage_window_) {
+        if (hit.time >= cutoff) total += hit.damage;
+    }
+    return total;
+}
+
+std::size_t Agent::threatDamageContributorCount(SimTimeSeconds current_time,
+                                                SimTimeSeconds window) const {
+    if (window <= 0.0) return 0;
+    const SimTimeSeconds cutoff = current_time - window;
+    // Linear scan + small set; expected window has < 8 distinct attackers
+    // even in pack scenarios, so std::vector dedup is fine.
+    std::vector<std::uint64_t> seen;
+    seen.reserve(8);
+    for (const auto& hit : threat_damage_window_) {
+        if (hit.time < cutoff) continue;
+        const auto v = hit.attacker.value;
+        bool found = false;
+        for (auto s : seen) {
+            if (s == v) { found = true; break; }
+        }
+        if (!found) seen.push_back(v);
+    }
+    return seen.size();
+}
+
+void Agent::clearThreatDamageWindow() {
+    threat_damage_window_.clear();
+}
+
 }  // namespace neuro

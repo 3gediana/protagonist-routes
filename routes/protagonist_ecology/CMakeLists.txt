@@ -1,4 +1,5 @@
 set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
+    capability/CaveHideCapability.cpp
     capability/ChopTreeCapability.cpp
     capability/CraftSpearCapability.cpp
     capability/DrinkWaterCapability.cpp
@@ -6,6 +7,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     capability/GoalAwareDropCapability.cpp
     capability/NurseryPickUpCapability.cpp
     capability/ProtagonistHuntCapability.cpp
+    capability/StealthCapability.cpp
     capability/ThrowCarriedObjectCapability.cpp
     brain/MemoryBank.cpp
     brain/DNCMemory.cpp
@@ -57,6 +59,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
 )
 
 set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
+    capability/CaveHideCapability.h
     capability/ChopTreeCapability.h
     capability/CraftSpearCapability.h
     capability/DrinkWaterCapability.h
@@ -64,6 +67,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     capability/GoalAwareDropCapability.h
     capability/NurseryPickUpCapability.h
     capability/ProtagonistHuntCapability.h
+    capability/StealthCapability.h
     capability/ThrowCarriedObjectCapability.h
     brain/MemoryBank.h
     brain/DNCMemory.h

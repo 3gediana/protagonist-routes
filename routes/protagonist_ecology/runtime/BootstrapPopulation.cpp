@@ -2,6 +2,7 @@
 
 #include "brain/ProtagonistBrain.h"
 #include "brain/ProtagonistGenome.h"
+#include "capability/CaveHideCapability.h"
 #include "capability/ChopTreeCapability.h"
 #include "capability/CraftSpearCapability.h"
 #include "capability/DrinkWaterCapability.h"
@@ -9,6 +10,7 @@
 #include "capability/GoalAwareDropCapability.h"
 #include "capability/NurseryPickUpCapability.h"
 #include "capability/ProtagonistHuntCapability.h"
+#include "capability/StealthCapability.h"
 #include "capability/ThrowCarriedObjectCapability.h"
 #include "core/agent/Agent.h"
 #include "core/brain/fixed/FixedTopologyBrain.h"
@@ -399,8 +401,13 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
 
     switch (archetype) {
         case SpeciesArchetype::LargeHerbivore:
-            // Large grazers: slow, defensive flee, plant diet
+            // Large grazers: slow, defensive flee, plant diet.
+            // L2.1 v2: damage_threshold=12 means a single PackHunter
+            // (4 dmg/sec) accumulates only 4 in a 1s window - below 12,
+            // can't kill alone. 3+ wolves simultaneously break the
+            // threshold, forcing emergent group hunting.
             agent->setDietPreference(0.05f);  // pure herbivore
+            agent->setDamageThreshold(12.0f);
             agent->addCapability(std::make_unique<MoveCapability>(1.8f, 0.0035f, 0.0009f, 20));
             agent->addCapability(std::make_unique<EatCapability>(4.5f, 40.0f));
             agent->addCapability(std::make_unique<FleeCapability>(10.0f, 0.7f, 0.012f));
@@ -408,16 +415,25 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             break;
 
         case SpeciesArchetype::SmallForager:
-            // Small fast rodents: high speed, quick flee, plant diet
+            // Small fast rodents: high speed, quick flee, plant diet.
+            // L2.1 v2: damage_threshold=0 (fragile, single-bite kill).
+            // CaveHideCapability makes them invisible to outside-cave
+            // observers when they actually enter a cave terrain cell.
             agent->setDietPreference(0.10f);
+            agent->setDamageThreshold(0.0f);
             agent->addCapability(std::make_unique<MoveCapability>(2.3f, 0.005f, 0.0011f, 20));
             agent->addCapability(std::make_unique<EatCapability>(3.5f, 44.0f));
             agent->addCapability(std::make_unique<FleeCapability>(6.0f, 1.0f, 0.012f));
-            // outputs: Move 2 + Eat 0 + Flee 1 = 3
+            agent->addCapability(std::make_unique<CaveHideCapability>());
+            // outputs: Move 2 + Eat 0 + Flee 1 + CaveHide 0 = 3
             break;
 
         case SpeciesArchetype::ApexPredator:
-            // Tiger/bear: slow but deadly, high single hit
+            // Tiger/bear: slow but deadly, high single hit.
+            // L2.1 v2: damage 18 still breaks LargeHerbivore threshold
+            // (12) solo. After landing such a kill, PredatorHuntCapability
+            // arms digest_satiety_until = now + 60s and damage scales
+            // to 0.2x during that window (apex sleeps it off).
             agent->setDietPreference(0.95f);
             agent->addCapability(std::make_unique<MoveCapability>(1.6f, 0.008f, 0.0014f, 20));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(6.0f, 18.0f, 14.0f, 0.025f));
@@ -426,38 +442,59 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             break;
 
         case SpeciesArchetype::PackHunter:
-            // Wolves: medium speed/damage, group bonus via reward shaping
+            // Wolves: medium speed, LOW damage (4) so a single wolf
+            // can't break LargeHerbivore threshold 12 alone. Pack of
+            // 3+ accumulates >= 12 in window and lands a kill burst,
+            // forcing emergent group attack.
             agent->setDietPreference(0.90f);
             agent->addCapability(std::make_unique<MoveCapability>(2.0f, 0.006f, 0.0012f, 20));
-            agent->addCapability(std::make_unique<PredatorHuntCapability>(5.0f, 10.0f, 9.0f, 0.02f));
+            agent->addCapability(std::make_unique<PredatorHuntCapability>(5.0f, 4.0f, 5.0f, 0.02f));
             agent->addCapability(std::make_unique<AttackCapability>(4.0f, 0.50f, 0.0f, 0.022f));
             // outputs: Move 2 + Hunt 1 + Attack 3 = 6
             break;
 
         case SpeciesArchetype::AmbushPredator:
-            // Leopard/cat: burst speed, high single damage, low HP
+            // Leopard/cat: burst speed, high single damage, low HP.
+            // L2.1 v2: StealthCapability flips stealth_state=true after
+            // 3s stationary. While stealth, AgentSocialPerception filters
+            // self out of distant observers' perception (line-of-sight).
+            // First strike out of stealth deals 2x damage, then stealth
+            // dissolves (handled in PredatorHuntCapability).
             agent->setDietPreference(0.92f);
             agent->addCapability(std::make_unique<MoveCapability>(2.6f, 0.009f, 0.0015f, 20));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(4.5f, 14.0f, 10.0f, 0.022f));
             agent->addCapability(std::make_unique<AttackCapability>(3.5f, 0.75f, 0.0f, 0.028f));
-            // outputs: Move 2 + Hunt 1 + Attack 3 = 6
+            agent->addCapability(std::make_unique<StealthCapability>(3.0f, 0.05f));
+            // outputs: Move 2 + Hunt 1 + Attack 3 + Stealth 0 = 6
             break;
 
         case SpeciesArchetype::Scavenger:
             // Vulture/crow: aerial — flies over terrain (no slope penalty).
             // Higher base speed in air, wider eat radius (spotting carrion from above).
-            // Carnivore diet preference (eats corpses) but weak fighter.
+            // L2.1 v2: scavenge_efficiency=3.0 means energy gain x3 on
+            // low-vitality prey (energy < threshold * 0.25) but only
+            // 1/3 on healthy prey - forces "wait for someone else to
+            // wound it, then feast" niche even before L2.3 corpse
+            // resource channel lands.
             agent->setDietPreference(0.85f);
+            agent->setScavengeEfficiency(3.0f);
             agent->addCapability(std::make_unique<MoveCapability>(2.2f, 0.004f, 0.001f, 20, /*aerial=*/true));
             agent->addCapability(std::make_unique<EatCapability>(5.0f, 54.0f));
+            agent->addCapability(std::make_unique<PredatorHuntCapability>(4.0f, 7.0f, 5.0f, 0.018f));
             agent->addCapability(std::make_unique<AttackCapability>(3.0f, 0.10f, 0.0f, 0.018f));
             agent->addCapability(std::make_unique<FleeCapability>(8.0f, 0.8f, 0.012f));
-            // outputs: Move 2 + Eat 0 + Attack 3 + Flee 1 = 6
+            // outputs: Move 2 + Eat 0 + Hunt 1 + Attack 3 + Flee 1 = 7
+            // NOTE: backgroundOutputDim must reflect this.
             break;
 
         case SpeciesArchetype::Omnivore:
-            // Boar/bear-cub: flexible diet, medium combat
+            // Boar/bear-cub: flexible diet, medium combat.
+            // L2.1 v2: damage_threshold=6 marks omnivore as a middle-
+            // toughness prey when itself attacked (between fragile
+            // forager and tough herbivore). Single wolf 4dmg < 6 -
+            // still needs help to kill an omnivore.
             agent->setDietPreference(0.50f);  // balanced omnivore
+            agent->setDamageThreshold(6.0f);
             agent->addCapability(std::make_unique<MoveCapability>(1.7f, 0.005f, 0.0011f, 20));
             agent->addCapability(std::make_unique<EatCapability>(4.0f, 42.0f));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(4.0f, 7.0f, 5.0f, 0.02f));
@@ -555,12 +592,16 @@ std::size_t backgroundSensoryDim(const ProtagonistEcologyConfig& config) {
 
 std::size_t backgroundOutputDim(SpeciesArchetype archetype) {
     switch (archetype) {
-        case SpeciesArchetype::LargeHerbivore: return 3;  // Move 2 + Flee 1
-        case SpeciesArchetype::SmallForager:   return 3;  // Move 2 + Flee 1
+        case SpeciesArchetype::LargeHerbivore: return 3;  // Move 2 + Flee 1 (CaveHide=0 not on this species)
+        case SpeciesArchetype::SmallForager:   return 3;  // Move 2 + Flee 1 (CaveHide consumed=0)
         case SpeciesArchetype::ApexPredator:   return 6;  // Move 2 + Hunt 1 + Attack 3
         case SpeciesArchetype::PackHunter:     return 6;
-        case SpeciesArchetype::AmbushPredator: return 6;
-        case SpeciesArchetype::Scavenger:      return 6;  // Move 2 + Attack 3 + Flee 1
+        case SpeciesArchetype::AmbushPredator: return 6;  // Stealth consumed=0
+        // L2.1 v2: Scavenger now has PredatorHuntCapability so it can
+        // chip-feed off low-vitality prey via scavenge_efficiency. That
+        // adds 1 consumed output (Hunt 1). 7 = Move 2 + Hunt 1 + Attack
+        // 3 + Flee 1 (Eat=0).
+        case SpeciesArchetype::Scavenger:      return 7;
         case SpeciesArchetype::Omnivore:       return 7;  // Move 2 + Hunt 1 + Attack 3 + Flee 1
         default: return 6;
     }

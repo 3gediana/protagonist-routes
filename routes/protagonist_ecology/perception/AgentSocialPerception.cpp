@@ -30,6 +30,18 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
     std::size_t peer_count = 0;
     std::size_t predator_count = 0;
 
+    // L2.1 v2 (SPECIES_DIFFERENTIATION_SPEC.md § 1.4): stealth + cave
+    // line-of-sight filter. A stealth attacker is invisible to anyone
+    // not directly adjacent (< 2m); a prey hiding in a cave is
+    // invisible to anyone outside the cave. Both gates are
+    // perception-side only - the attacker's hunt capability still
+    // checks alive() and proximity, so a brain that randomly walks
+    // into a stealth target can still hit it.
+    constexpr float kStealthAdjacentRadius = 2.0f;
+    constexpr float kStealthAdjacentSq = kStealthAdjacentRadius * kStealthAdjacentRadius;
+    const auto* self_concrete = dynamic_cast<const Agent*>(&self);
+    const bool self_in_cave = self_concrete != nullptr && self_concrete->isInCave();
+
     for (const auto* other : agent_layer->agents()) {
         if (other == nullptr || !other->alive() || other->id() == self.id()) {
             continue;
@@ -41,6 +53,19 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
 
         const float dist_sq = Vec2::distanceSquared(other->position(), self.position());
         if (dist_sq > sense_radius_ * sense_radius_) {
+            continue;
+        }
+
+        // Cave hide: prey/peer hiding inside a cave is invisible to
+        // observers that are outside the cave. Symmetric for any kind
+        // of role - a wolf inside a cave is also invisible to a deer
+        // outside, but in practice predators rarely hide.
+        if (concrete->isInCave() && !self_in_cave) {
+            continue;
+        }
+
+        // Stealth: invisible unless observer is directly adjacent.
+        if (concrete->isStealth() && dist_sq > kStealthAdjacentSq) {
             continue;
         }
 

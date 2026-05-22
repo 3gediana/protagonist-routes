@@ -41,6 +41,8 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
 
     concrete->setEnergy(concrete->energy() - cost_ * dt);
 
+    const SimTimeSeconds now = world.currentTimeSeconds();
+
     for (auto* other : agent_layer->agents()) {
         if (other == nullptr || other == &agent || !other->alive()) {
             continue;
@@ -69,7 +71,24 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
 
         const float actual_damage = damage_ * dt;
         const float actual_gain = energy_gain_ * dt;
-        target->setEnergy(target->energy() - actual_damage);
+
+        // L2.1 v2 (SPECIES_DIFFERENTIATION_SPEC.md): damage threshold.
+        // Same prey-side accumulator that PredatorHuntCapability uses;
+        // protagonist hunting LargeHerbivore alone faces the same
+        // wolfpack-style group requirement. Targets without threshold
+        // (foragers, predators) take direct damage.
+        constexpr SimTimeSeconds kThreatWindow = 1.0;
+        if (target->damageThreshold() > 0.0f) {
+            target->accumulateThreatDamage(agent.id(), actual_damage, now);
+            const float window_total = target->threatDamageInWindow(now, kThreatWindow);
+            if (window_total >= target->damageThreshold()) {
+                target->setEnergy(target->energy() - window_total);
+                target->clearThreatDamageWindow();
+            }
+        } else {
+            target->setEnergy(target->energy() - actual_damage);
+        }
+
         concrete->setEnergy(concrete->energy() + actual_gain);
         world.eventBus().publish(events::Event{
             events::EventType::AgentAttacked,

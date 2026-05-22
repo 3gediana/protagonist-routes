@@ -33,6 +33,16 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
 
     concrete->setEnergy(concrete->energy() - cost_ * dt);
 
+    // L2.1 v2 (SPECIES_DIFFERENTIATION_SPEC.md): apex digest satiety
+    // and ambush stealth strike. inDigestSatiety() drops attack power
+    // sharply (apex sleeping it off). Stealth attackers get a one-shot
+    // 2x damage strike on the first hit out of stealth, then exit
+    // stealth.
+    const SimTimeSeconds now = world.currentTimeSeconds();
+    const bool in_satiety = concrete->inDigestSatiety(now);
+    const float satiety_mult = in_satiety ? 0.2f : 1.0f;
+    const bool stealth_strike = concrete->isStealth();
+
     // Crepuscular hunting bonus: predators are most effective at dawn/dusk
     const auto* tod = world.getLayer<TimeOfDayLayer>();
     float time_damage_mult = 1.0f;
@@ -46,7 +56,7 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
     for (auto* other : agent_layer->agents()) {
         if (other == &agent || !other->alive()) continue;
 
-        const auto* other_concrete = dynamic_cast<const Agent*>(other);
+        auto* other_concrete = dynamic_cast<Agent*>(other);
         if (other_concrete == nullptr) continue;
 
         if (other_concrete->isPredator()) continue;
@@ -67,11 +77,59 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
                 shelter_mult = 0.3f;
             }
 
-            const float actual_damage = base_damage * time_damage_mult * shelter_mult * dt;
-            float actual_gain = base_gain * time_damage_mult * dt;
+            // L2.1 v2: stealth one-shot 2x damage. Note dt is per-tick
+            // (sub-step), so this multiplies the per-tick damage of the
+            // tick the strike lands on, not the entire window. Combined
+            // with leopard's already-high base damage (14) this gives
+            // the burst that breaks LargeHerbivore threshold solo.
+            const float stealth_mult = stealth_strike ? 2.0f : 1.0f;
+
+            const float actual_damage = base_damage * time_damage_mult * shelter_mult
+                                        * stealth_mult * satiety_mult * dt;
+            float actual_gain = base_gain * time_damage_mult * satiety_mult * dt;
             actual_gain *= 0.85f + 0.3f * concrete->dietPreference();
 
-            other->setEnergy(other->energy() - actual_damage);
+            // L2.1 v2: scavenger bonus on low-vitality prey. Prey is
+            // "low-vitality" if its energy is below 25% of its damage
+            // threshold (i.e. close to the kill burst threshold). For
+            // prey without a damage_threshold set we fall back to 25%
+            // of 100 energy. scavenge_efficiency > 1 boosts gain on
+            // dying prey, giving the scavenger species its "wait for
+            // a kill, then feast" niche even before L2.3 corpse
+            // resource channel lands.
+            const float scav_eff = concrete->scavengeEfficiency();
+            if (scav_eff != 1.0f) {
+                const float low_vit_floor = other_concrete->damageThreshold() > 0.0f
+                                                ? other_concrete->damageThreshold() * 0.25f
+                                                : 25.0f;
+                if (other->energy() < low_vit_floor) {
+                    actual_gain *= scav_eff;
+                } else if (scav_eff > 1.0f) {
+                    // Specialist scavenger taxes itself on healthy prey.
+                    actual_gain *= (1.0f / scav_eff);
+                }
+            }
+
+            // L2.1 v2: damage threshold gate. When prey has a non-zero
+            // damage_threshold, attackers accumulate hits in a sliding
+            // window; only when the window total >= threshold does the
+            // prey actually take the burst as energy loss. Single
+            // attacker with damage < threshold cannot break it alone.
+            constexpr SimTimeSeconds kThreatWindow = 1.0;
+            bool kill_burst_landed = false;
+            if (other_concrete->damageThreshold() > 0.0f) {
+                other_concrete->accumulateThreatDamage(agent.id(), actual_damage, now);
+                const float window_total = other_concrete->threatDamageInWindow(now, kThreatWindow);
+                if (window_total >= other_concrete->damageThreshold()) {
+                    other->setEnergy(other->energy() - window_total);
+                    other_concrete->clearThreatDamageWindow();
+                    kill_burst_landed = true;
+                }
+            } else {
+                // Legacy direct-damage path (fragile prey, predator-on-predator).
+                other->setEnergy(other->energy() - actual_damage);
+            }
+
             concrete->setEnergy(concrete->energy() + actual_gain);
             world.eventBus().publish(events::Event{
                 events::EventType::AgentAttacked,
@@ -81,6 +139,12 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
             concrete->noteDamageDealt(actual_damage);
             if (actual_gain > 0.0f) {
                 concrete->noteMeatFood(actual_gain);
+            }
+
+            // Stealth dissolves on the first strike out of stealth.
+            if (stealth_strike) {
+                concrete->setStealth(false);
+                concrete->setStationarySeconds(0.0);
             }
 
             // Predator can catch disease from infected prey (unless immune to that strain)
@@ -106,6 +170,15 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
                 other->kill("predation");
                 concrete->noteKill();
                 hunt_successes.fetch_add(1, std::memory_order_relaxed);
+                // L2.1 v2: apex digest satiety. After landing a kill on
+                // threshold-class prey (large herbivore), apex enters a
+                // 60s nerf window. Triggered by kill-burst path so a
+                // pure-luck-of-cooperation kill also triggers (avoids
+                // over-tuning to "apex damage >= threshold solo").
+                if (concrete->dietPreference() > 0.85f && kill_burst_landed
+                    && other_concrete->damageThreshold() >= 10.0f) {
+                    concrete->setDigestSatietyUntilSeconds(now + 60.0);
+                }
             }
         }
     }

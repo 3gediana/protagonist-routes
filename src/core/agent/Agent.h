@@ -130,6 +130,61 @@ public:
     float dietPreference() const { return diet_pref_; }
     void setDietPreference(float v) { diet_pref_ = v; }
 
+    // ---- L2.1 species differentiation v2 (SPECIES_DIFFERENTIATION_SPEC.md) ----
+    // Prey-side damage threshold. When > 0, attackers must accumulate
+    // damage in a sliding window >= threshold to land a "kill burst".
+    // Single attacker with damage_per_window < threshold cannot kill
+    // alone, forcing emergent group attack (wolfpack). When 0 (default),
+    // direct damage is applied (legacy path).
+    float damageThreshold() const { return damage_threshold_; }
+    void setDamageThreshold(float v) { damage_threshold_ = v; }
+
+    // Threat-damage window: per-attacker hits with timestamps. Used as
+    // the prey-side accumulator for damageThreshold(). Constant time
+    // O(W) where W is window size in ticks (typically <= 30 entries).
+    struct ThreatHit {
+        AgentId attacker;
+        float damage;
+        SimTimeSeconds time;
+    };
+    void accumulateThreatDamage(AgentId attacker, float damage, SimTimeSeconds time);
+    float threatDamageInWindow(SimTimeSeconds current_time, SimTimeSeconds window) const;
+    std::size_t threatDamageContributorCount(SimTimeSeconds current_time, SimTimeSeconds window) const;
+    void clearThreatDamageWindow();
+    const std::vector<ThreatHit>& threatDamageHistory() const { return threat_damage_window_; }
+
+    // Stealth state (leopard ambush). When true, AgentSocialPerception
+    // filters self out for observers that are not directly adjacent
+    // (< 2m). Set/cleared by StealthCapability based on stationary time.
+    bool isStealth() const { return stealth_state_; }
+    void setStealth(bool v) { stealth_state_ = v; }
+
+    // Stationary time accumulator (used by StealthCapability for the
+    // 3s static->stealth threshold). Reset whenever the agent moves
+    // faster than ~0.05 units/sec.
+    SimTimeSeconds stationarySeconds() const { return stationary_seconds_; }
+    void setStationarySeconds(SimTimeSeconds v) { stationary_seconds_ = v; }
+
+    // Digest satiety (apex predator). After a big kill, set a "satiety
+    // until" timestamp. While current_time < this value, hunt damage
+    // and energy gain are scaled down (apex sleeps off the kill, the
+    // base-state form of L1's fatigue drive).
+    SimTimeSeconds digestSatietyUntilSeconds() const { return digest_satiety_until_seconds_; }
+    void setDigestSatietyUntilSeconds(SimTimeSeconds t) { digest_satiety_until_seconds_ = t; }
+    bool inDigestSatiety(SimTimeSeconds now) const { return digest_satiety_until_seconds_ > now; }
+
+    // Scavenge efficiency. Multiplier applied to energy gain when this
+    // agent attacks low-vitality prey (energy below 20% of damage
+    // threshold). Default 1.0. Scavenger species set this to 3.0.
+    float scavengeEfficiency() const { return scavenge_efficiency_; }
+    void setScavengeEfficiency(float v) { scavenge_efficiency_ = v; }
+
+    // In-cave hide flag (small forager). Updated each tick by a small
+    // capability that queries TerrainLayer. AgentSocialPerception filters
+    // hidden prey out for observers that are themselves outside caves.
+    bool isInCave() const { return is_in_cave_; }
+    void setInCave(bool v) { is_in_cave_ = v; }
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -171,6 +226,14 @@ private:
     float habitat_pref_ = 0.5f;
     float activity_period_ = 0.5f;
     float diet_pref_ = 0.5f;
+    // L2.1 species differentiation
+    std::vector<ThreatHit> threat_damage_window_;
+    float damage_threshold_ = 0.0f;
+    bool stealth_state_ = false;
+    SimTimeSeconds stationary_seconds_ = 0.0;
+    SimTimeSeconds digest_satiety_until_seconds_ = -1.0;
+    float scavenge_efficiency_ = 1.0f;
+    bool is_in_cave_ = false;
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };
