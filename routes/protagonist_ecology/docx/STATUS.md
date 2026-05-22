@@ -1,10 +1,16 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-23 凌晨（**L2.6 v12 4-机制 literature-backed stack 替换 v10/v11 临时调参**）
+> 最后巡检：2026-05-23 凌晨（**L2.7 v13 HRL sub-rewards + 3 细节修复, fitness 回正 + CV 回归 v9 水平**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`d41a0ff L2.6 v12: 60-gen 4-mechanism stack validation results`
+> 当前 HEAD：`1b0a985 L2.7 v13: 60-gen HRL+details validation results`
 >
+> **2026-05-23 凌晨 L2.7 v13 HRL sub-rewards + 细节修复**（2 commits, +322/-9 代码 + 验证数据）：
+> - `084a2a8 L2.7 v13: HRL sub-rewards + weapon bonus + carry slowdown + stick throw`
+> - `1b0a985 L2.7 v13: 60-gen HRL+details validation results`
+> - 用户洞察："投出去的效果都是一样的，那做出毛的意义又是什么呢" 触发 8 个细节调查 + 同时建议 HRL。文献定位：Sutton & Barto Options framework + Vezhnevets FuN，配合现有 13-type GoalManager。修复：(1) 9 个 capability 在成功路径调 `agent.noteGoalCompletion()` → reward 公式加 sum(weight × this_tick_count) 与 outcome_w 解耦；(2) `GoalContextPerception` (13-onehot) 让 worker 看到 manager；(3) 武器加成 (spear×1.6/stone×1.3/stick×1.1) 在 melee + carry slowdown + stick throw。
+> - **v13 60-gen 验证 (seed=91)**：fitness avg avg **-924 → +3066** (从负转正)、CV **88% → 30%** (v9 水平)、chops **18→67** (+264%)、throws **0.4→1825** (×4500 emergent 投掷)、alive 3.8→8.1。peak_best 889→8941 (×10)。仍未追 v9: worksite 0.3 / craft 0.2 / drink 0 — 需 build chain phase-by-phase shaping (下次)。
+
 > **2026-05-23 凌晨 L2.6 v12 4-机制 literature-backed stack**（2 commits, +314/-10 代码 + 验证数据）：
 > - `422847f L2.6 v12: 4-mechanism literature-backed protagonist autocurriculum stack`
 > - `d41a0ff L2.6 v12: 60-gen 4-mechanism stack validation results`
