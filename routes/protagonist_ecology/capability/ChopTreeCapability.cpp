@@ -99,6 +99,8 @@ void ChopTreeCapability::apply(IAgent& agent, IWorld& world, std::span<const flo
     if (hit.felled) {
         chop_successes.fetch_add(1, std::memory_order_relaxed);
         chop_completed_events.fetch_add(1, std::memory_order_relaxed);
+        // L2.7 v13 HRL sub-reward: ChopTree (GoalType=5) completed.
+        concrete->noteGoalCompletion(5);
         world.eventBus().publish(events::Event{
             events::EventType::ChopCompleted,
             events::ChopCompleted{

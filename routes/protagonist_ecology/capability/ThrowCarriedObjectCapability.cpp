@@ -40,12 +40,14 @@ ThrowCarriedObjectCapability::ThrowCarriedObjectCapability(float throw_speed,
                                                            float throw_radius,
                                                            float stone_damage,
                                                            float spear_damage,
-                                                           float energy_cost)
+                                                           float energy_cost,
+                                                           float stick_damage)
     : throw_speed_(throw_speed),
       throw_radius_(throw_radius),
       stone_damage_(stone_damage),
       spear_damage_(spear_damage),
-      energy_cost_(energy_cost) {}
+      energy_cost_(energy_cost),
+      stick_damage_(stick_damage) {}
 
 void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) {
     if (outputs.size() < 2) {
@@ -72,14 +74,20 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
     if (shouldHoldStoneForLogistics(*concrete, *carried)) {
         return;
     }
-    if (carried->type != ObjectType::Stone && carried->type != ObjectType::Spear) {
+    // L2.7 v13 Detail #4 (stick throw): allow Stick as a weak thrown
+    // weapon (default 4 dmg vs stone's 10 / spear's 18). Without this
+    // a protagonist holding only a stick had no offensive option;
+    // sticks are abundant so this gives the network a cheap fallback.
+    if (carried->type != ObjectType::Stone && carried->type != ObjectType::Spear && carried->type != ObjectType::Stick) {
         return;
     }
     throw_attempts.fetch_add(1, std::memory_order_relaxed);
 
     const float mag = std::sqrt(mag_sq);
     const Vec2 dir{outputs[0] / mag, outputs[1] / mag};
-    const float damage = carried->type == ObjectType::Spear ? spear_damage_ : stone_damage_;
+    float damage = stone_damage_;
+    if (carried->type == ObjectType::Spear) damage = spear_damage_;
+    else if (carried->type == ObjectType::Stick) damage = stick_damage_;
 
     Agent* best_target = nullptr;
     float best_dist = throw_radius_;
@@ -119,8 +127,13 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
             world.currentTimeSeconds()});
         concrete->noteDamageDealt(actual_damage);
         if (best_target->energy() <= 0.0f) {
-            best_target->kill(carried->type == ObjectType::Spear ? "thrown_spear" : "thrown_stone");
+            const char* cause = "thrown_stone";
+            if (carried->type == ObjectType::Spear) cause = "thrown_spear";
+            else if (carried->type == ObjectType::Stick) cause = "thrown_stick";
+            best_target->kill(cause);
             concrete->noteKill();
+            // L2.7 v13 HRL: thrown kill also counts as Hunt (GoalType=8)
+            concrete->noteGoalCompletion(8);
         }
         throw_hits.fetch_add(1, std::memory_order_relaxed);
     }

@@ -107,6 +107,7 @@ void Agent::beginTick() {
     meat_food_this_tick_ = 0.0f;
     discovered_new_cell_this_tick_ = false;
     decision_triggered_this_tick_ = false;
+    clearGoalCompletionThisTick();
 }
 
 void Agent::decide(IWorld& world, float dt) {

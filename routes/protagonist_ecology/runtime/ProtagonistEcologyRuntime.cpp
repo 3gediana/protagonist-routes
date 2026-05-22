@@ -215,6 +215,12 @@ struct TrainingParams {
     // not yet another addition on top of the existing reward landscape.
     // Set per-task in toml; default 1.0 = keep existing components.
     double outcome_weight{1.0};
+    // L2.7 v13 (HRL sub-rewards): per-goal-type completion reward
+    // weight, mirrored from ProtagonistEcologyConfig.goal_completion_rewards.
+    // Reward per tick = goal_completion_rewards[g] * agent.goalCompletionThisTick(g).
+    // Decoupled from outcome_weight so dense HRL signals survive even
+    // when outcome_weight is small.
+    std::array<float, 13> goal_completion_rewards{};
 };
 
 struct BehaviorAccumulator {
@@ -458,6 +464,8 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.drive_weight = config.getOr<double>("reward.drive_weight", params.drive_weight);
     params.outcome_weight = config.getOr<double>("reward.outcome_weight", params.outcome_weight);
     params.drive_thirst_from_hydration = config.getOr<bool>("reward.drive_thirst_from_hydration", params.drive_thirst_from_hydration);
+    // L2.7 v13: HRL goal-completion sub-reward weights (mirrored from
+    // route config so the per-tick reward loop has them available).
     params.social_proximity_reward = config.getOr<float>("reward.social_proximity_reward", params.social_proximity_reward);
     params.social_proximity_radius = config.getOr<float>("reward.social_proximity_radius", params.social_proximity_radius);
     params.signal_emit_reward = config.getOr<float>("reward.signal_emit_reward", params.signal_emit_reward);
@@ -1825,6 +1833,29 @@ void evaluatePopulation(World2D& world,
                 completed_this_tick = current_completed - worksite_completion_running;
                 worksite_completion_running = current_completed;
                 behavior.worksite_completion_events += completed_this_tick;
+                // L2.7 v13 HRL sub-reward: BuildWorksite (GoalType=6).
+                // The completion is a team event (multiple protagonists
+                // contributed deposits), so reward all alive protagonists
+                // who are within 28m of any completed worksite this tick.
+                // Background NEAT species don't have GoalMemory, so we
+                // skip them; protagonists are filtered by genome id.
+                for (auto* agent : agent_layer->agents()) {
+                    if (agent == nullptr || !agent->alive()) continue;
+                    if (!protagonist_ids.contains(agent->genomeId())) continue;
+                    auto* concrete = dynamic_cast<Agent*>(agent);
+                    if (concrete == nullptr) continue;
+                    bool near_any_site = false;
+                    for (const auto& site : worksite_layer->sites()) {
+                        if (!site.completed) continue;
+                        if (Vec2::distanceSquared(concrete->position(), site.position) <= 28.0f * 28.0f) {
+                            near_any_site = true;
+                            break;
+                        }
+                    }
+                    if (near_any_site) {
+                        concrete->noteGoalCompletion(6, static_cast<int>(completed_this_tick));
+                    }
+                }
             }
         }
 
@@ -1878,6 +1909,19 @@ void evaluatePopulation(World2D& world,
                 // weak to overcome drive penalty. v10/v11 had it
                 // multiplied by outcome_w which silently zeroed it.
                 reward += params.intrinsic_weight * evaluateIntrinsicReward(*concrete);
+                // L2.7 v13: Hierarchical RL sub-rewards. Each goal-type
+                // completion event in this tick contributes a dense
+                // reward independent of outcome_weight, breaking the
+                // long chop->carry->deposit->build chain into 4 short
+                // sub-tasks each with its own learning signal.
+                for (std::size_t g = 0; g < params.goal_completion_rewards.size(); ++g) {
+                    const float w = params.goal_completion_rewards[g];
+                    if (w == 0.0f) continue;
+                    const int n = concrete->goalCompletionThisTick(static_cast<int>(g));
+                    if (n > 0) {
+                        reward += static_cast<double>(w) * static_cast<double>(n);
+                    }
+                }
                 alive_last_tick.insert(agent->id());
 
                 // L2.2 v2: thirst drive sync from SurvivalStatusLayer.
@@ -3493,7 +3537,10 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
 
 int ProtagonistEcologyRuntime::runTraining() {
     auto route = ProtagonistEcologyConfig::fromConfig(config_);
-    const auto params = loadTrainingParams(config_);
+    auto params = loadTrainingParams(config_);
+    // L2.7 v13: copy HRL goal-completion reward weights from route to
+    // training params so the per-tick reward loop has them by value.
+    params.goal_completion_rewards = route.goal_completion_rewards;
     if (params.generations == 0 || params.episode_duration_seconds <= 0.0 || params.substep_dt <= 0.0) {
         LOG_ERROR("ProtagonistEcologyRuntime: invalid training params generations={} episode_duration_seconds={} substep_dt={}",
                   params.generations,

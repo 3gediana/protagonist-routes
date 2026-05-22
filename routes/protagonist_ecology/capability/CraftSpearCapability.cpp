@@ -125,6 +125,8 @@ void CraftSpearCapability::apply(IAgent& agent, IWorld& world, std::span<const f
 
     concrete->setEnergy(concrete->energy() - energy_cost_ * dt);
     craft_successes.fetch_add(1, std::memory_order_relaxed);
+    // L2.7 v13 HRL sub-reward: CraftWeapon (GoalType=7) completed.
+    concrete->noteGoalCompletion(7);
 }
 
 }  // namespace neuro::routes::protagonist

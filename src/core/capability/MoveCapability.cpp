@@ -8,6 +8,7 @@
 #include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/world/layers/TimeOfDayLayer.h"
 #include "core/world/layers/SeasonLayer.h"
+#include "core/world/layers/object/ObjectLayer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -52,6 +53,23 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     auto* concrete_agent = dynamic_cast<Agent*>(&agent);
     if (concrete_agent && concrete_agent->infected()) {
         velocity = velocity * 0.6f;
+    }
+
+    // L2.7 v13 Detail #2 (carrying slowdown): the protagonist used to
+    // walk at full speed while carrying a heavy log or stone. Now
+    // a normal carried object multiplies speed by 0.9, a heavy one
+    // (carriers_required > 1) by 0.7. Forces a meaningful trade-off
+    // between "grab a stone for melee" and "stay fast for fleeing".
+    if (concrete_agent != nullptr && concrete_agent->isCarrying()) {
+        if (auto* objects = world.getLayer<ObjectLayer>(); objects != nullptr) {
+            if (const auto* carried = objects->findById(concrete_agent->carriedObject()); carried != nullptr) {
+                if (carried->heavy || carried->carriers_required > 1) {
+                    velocity = velocity * 0.7f;
+                } else {
+                    velocity = velocity * 0.9f;
+                }
+            }
+        }
     }
 
     auto* terrain = world.getLayer<TerrainLayer>();

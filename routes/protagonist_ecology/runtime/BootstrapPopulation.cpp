@@ -35,6 +35,7 @@
 #include "perception/BasePerception.h"
 #include "perception/CarriedObjectPerception.h"
 #include "perception/DangerPerception.h"
+#include "perception/GoalContextPerception.h"
 #include "perception/MemoryCognitionPerception.h"
 #include "perception/MemoryTrialPerception.h"
 #include "perception/ObjectLogisticsPerception.h"
@@ -153,6 +154,13 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
     // templates from the pool.
     if (config.task_context_perception_enabled) {
         sensory_dim += TaskContextPerception::kDim;
+    }
+
+    // L2.7 v13 (HRL goal-context input): 13-onehot of the protagonist's
+    // currently-active GoalType, so the worker policy can specialise
+    // to the manager's high-level directive (Build / Hunt / Flee /...).
+    if (config.goal_context_perception_enabled) {
+        sensory_dim += GoalContextPerception::kDim;
     }
 
     return sensory_dim;
@@ -288,6 +296,11 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // Always last so the order matches protagonistSensoryDim().
     if (config.task_context_perception_enabled) {
         agent->addPerception(std::make_unique<TaskContextPerception>());
+    }
+
+    // L2.7 v13 goal context perception (HRL worker conditioning).
+    if (config.goal_context_perception_enabled) {
+        agent->addPerception(std::make_unique<GoalContextPerception>());
     }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));

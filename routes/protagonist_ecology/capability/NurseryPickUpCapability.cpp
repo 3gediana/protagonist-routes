@@ -108,6 +108,12 @@ void NurseryPickUpCapability::apply(IAgent& agent, IWorld& world, std::span<cons
     obj->carried = true;
     concrete->setCarriedObject(obj->id);
     concrete->setEnergy(concrete->energy() - energy_cost_);
+    // L2.7 v13 HRL sub-reward: GatherStick (GoalType=3) / GatherStone (4)
+    if (obj->type == ObjectType::Stick) {
+        concrete->noteGoalCompletion(3);
+    } else if (obj->type == ObjectType::Stone) {
+        concrete->noteGoalCompletion(4);
+    }
     world.eventBus().publish(events::Event{events::EventType::ObjectPickedUp,
                                            events::ObjectPickedUp{agent.id(), obj->id},
                                            world.currentTick(),

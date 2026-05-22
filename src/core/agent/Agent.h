@@ -5,6 +5,8 @@
 #include "core/pathogen/Pathogen.h"
 #include "core/world/layers/ResourceLayer.h"
 #include "core/world/layers/object/ObjectLayer.h"
+#include <algorithm>
+#include <array>
 #include <memory>
 #include <span>
 #include <unordered_set>
@@ -176,6 +178,34 @@ public:
     int taskTemplateIndex() const { return task_template_idx_; }
     void setTaskTemplateIndex(int idx) { task_template_idx_ = idx; }
 
+    // L2.7 v13 (Hierarchical RL sub-reward signals): per-goal-type
+    // completion counters. Capabilities call noteGoalCompletion(int)
+    // when they accomplish something the high-level GoalManager
+    // recognises (chop tree, build worksite, craft spear, drink water,
+    // hunt kill, etc.). The Runtime reads these counters every tick to
+    // emit dense sub-rewards, breaking the long chop -> carry -> deposit
+    // -> build chain into 4 short sub-tasks each with its own dense
+    // reward signal. Goal index space is the protagonist-route
+    // GoalType enum (size <= 16). Agent itself does NOT depend on
+    // GoalType - callers cast to int.
+    static constexpr std::size_t kMaxGoalTypes = 16;
+    void noteGoalCompletion(int goal_id, int count = 1) {
+        if (goal_id < 0 || goal_id >= static_cast<int>(kMaxGoalTypes)) return;
+        goal_completion_count_[static_cast<std::size_t>(goal_id)] += count;
+        goal_completion_this_tick_[static_cast<std::size_t>(goal_id)] += count;
+    }
+    int goalCompletionThisTick(int goal_id) const {
+        if (goal_id < 0 || goal_id >= static_cast<int>(kMaxGoalTypes)) return 0;
+        return goal_completion_this_tick_[static_cast<std::size_t>(goal_id)];
+    }
+    int goalCompletionTotal(int goal_id) const {
+        if (goal_id < 0 || goal_id >= static_cast<int>(kMaxGoalTypes)) return 0;
+        return goal_completion_count_[static_cast<std::size_t>(goal_id)];
+    }
+    void clearGoalCompletionThisTick() {
+        std::fill(goal_completion_this_tick_.begin(), goal_completion_this_tick_.end(), 0);
+    }
+
     // Digest satiety (apex predator). After a big kill, set a "satiety
     // until" timestamp. While current_time < this value, hunt damage
     // and energy gain are scaled down (apex sleeps off the kill, the
@@ -317,6 +347,9 @@ private:
     float damage_threshold_ = 0.0f;
     bool stealth_state_ = false;
     int task_template_idx_ = -1;
+    // L2.7 v13: HRL goal completion counters.
+    std::array<std::int32_t, kMaxGoalTypes> goal_completion_count_{};
+    std::array<std::int32_t, kMaxGoalTypes> goal_completion_this_tick_{};
     SimTimeSeconds stationary_seconds_ = 0.0;
     SimTimeSeconds digest_satiety_until_seconds_ = -1.0;
     float scavenge_efficiency_ = 1.0f;

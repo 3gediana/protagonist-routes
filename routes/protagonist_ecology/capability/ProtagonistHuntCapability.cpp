@@ -7,6 +7,7 @@
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/object/ObjectLayer.h"
 
 #include <cmath>
 
@@ -43,6 +44,26 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
 
     const SimTimeSeconds now = world.currentTimeSeconds();
 
+    // L2.7 v13 Detail #1+#6 (weapon bonus in melee): the protagonist's
+    // carried object adds a damage multiplier. Spear is the strongest
+    // (you forged it on purpose), stone is moderate, stick is a small
+    // edge over bare hands. Without this, crafting a spear had zero
+    // melee benefit (only thrown), which made the chop->base->craft
+    // chain feel decorative.
+    float weapon_mult = 1.0f;
+    if (concrete->isCarrying()) {
+        if (auto* objects = world.getLayer<ObjectLayer>(); objects != nullptr) {
+            if (const auto* carried = objects->findById(concrete->carriedObject()); carried != nullptr) {
+                switch (carried->type) {
+                    case ObjectType::Spear: weapon_mult = 1.6f; break;
+                    case ObjectType::Stone: weapon_mult = 1.3f; break;
+                    case ObjectType::Stick: weapon_mult = 1.1f; break;
+                    default: break;
+                }
+            }
+        }
+    }
+
     for (auto* other : agent_layer->agents()) {
         if (other == nullptr || other == &agent || !other->alive()) {
             continue;
@@ -69,7 +90,7 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
             continue;
         }
 
-        const float actual_damage = damage_ * dt;
+        const float actual_damage = damage_ * weapon_mult * dt;
         const float actual_gain = energy_gain_ * dt;
 
         // L2.1 v2 (SPECIES_DIFFERENTIATION_SPEC.md): damage threshold.
@@ -103,6 +124,8 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
             target->kill("protagonist_predation");
             concrete->noteKill();
             hunt_successes.fetch_add(1, std::memory_order_relaxed);
+            // L2.7 v13 HRL sub-reward: Hunt (GoalType=8) kill achieved.
+            concrete->noteGoalCompletion(8);
         }
         break;
     }

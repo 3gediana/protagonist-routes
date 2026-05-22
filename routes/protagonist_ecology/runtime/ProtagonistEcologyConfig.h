@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -373,6 +374,22 @@ struct ProtagonistEcologyConfig {
     // wave_attack defends vs mixed_ecology survives) without needing
     // to delete templates from the pool. Set false for ablation.
     bool task_context_perception_enabled{true};
+    // L2.7 v13 (HRL worker conditioning): when true (default), the
+    // protagonist brain receives a 13-onehot of the current GoalType
+    // (Explore/FindWater/.../RestNearFire). Lets the network learn
+    // goal-conditioned worker policies on top of the rule-based
+    // GoalManager. Set false to ablate (network must reverse-engineer
+    // goal from the 1-scalar dim 32 of MemoryCognitionPerception).
+    bool goal_context_perception_enabled{true};
+    // L2.7 v13 (HRL sub-rewards): per-goal-type completion reward
+    // weights. Index = GoalType int value (0..12). reward delta per
+    // tick = goal_completion_rewards[g] * agent.goalCompletionThisTick(g).
+    // Default values are set in protagonistEcologyConfigFromConfig and
+    // tuned to balance roughly with v12 outcome_weight scale (so e.g.
+    // a worksite completion gives ~+20 here in addition to the v9-style
+    // worksite_completion_reward * outcome_weight). Toml keys live
+    // under [reward.goal_completion] (drink, food, gather_stick, etc.).
+    std::array<float, 13> goal_completion_rewards{};
     // L2.6 v12 (ACCEL regret-based curriculum): when true, the static
     // [[evolution.task_templates.weight]] is dynamically multiplied by
     // (1 + regret_score) where regret_score is a rolling estimate of

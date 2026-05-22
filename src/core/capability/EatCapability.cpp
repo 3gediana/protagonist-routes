@@ -69,6 +69,10 @@ void EatCapability::apply(IAgent& agent, IWorld& world, std::span<const float>, 
         } else {
             concrete->notePlantFood(gained);
         }
+        // L2.7 v13 HRL sub-reward: FindFood (GoalType=2) - any successful
+        // eating event counts. The protagonist route enum is the source
+        // of truth; src/core sees only the integer index.
+        concrete->noteGoalCompletion(2);
     }
 
     // Auto-emit signal at food location: signal field becomes a food map

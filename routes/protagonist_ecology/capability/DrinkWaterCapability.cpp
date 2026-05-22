@@ -1,5 +1,6 @@
 #include "capability/DrinkWaterCapability.h"
 
+#include "core/agent/Agent.h"
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "world/SurvivalStatusLayer.h"
@@ -25,6 +26,14 @@ void DrinkWaterCapability::apply(IAgent& agent, IWorld& world, std::span<const f
     }
 
     survival->drink(agent.id(), water->drinkRate() * dt);
+    // L2.7 v13 HRL sub-reward: FindWater / DrinkWater (GoalType=1)
+    // also clear thirst drive directly here so the drive penalty (L2.2)
+    // actually goes to 0 when the agent drinks. v10/v11 had drink_water
+    // events stuck at 0 partly because drinking didn't feed back to drives.
+    if (auto* concrete = dynamic_cast<Agent*>(&agent); concrete != nullptr) {
+        concrete->noteGoalCompletion(1);
+        concrete->driveState().thirst = 0.0f;
+    }
 }
 
 }  // namespace neuro::routes::protagonist

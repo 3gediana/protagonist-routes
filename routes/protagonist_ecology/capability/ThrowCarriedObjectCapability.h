@@ -9,7 +9,7 @@ namespace neuro::routes::protagonist {
 
 class ThrowCarriedObjectCapability final : public IAgentCapability {
 public:
-    ThrowCarriedObjectCapability(float throw_speed, float throw_radius, float stone_damage, float spear_damage, float energy_cost);
+    ThrowCarriedObjectCapability(float throw_speed, float throw_radius, float stone_damage, float spear_damage, float energy_cost, float stick_damage = 4.0f);
 
     std::size_t consumedOutputs() const override { return 2; }
     void apply(IAgent& agent, IWorld& world, std::span<const float> outputs, float dt) override;
@@ -29,6 +29,7 @@ private:
     float stone_damage_;
     float spear_damage_;
     float energy_cost_;
+    float stick_damage_;
 };
 
 }  // namespace neuro::routes::protagonist

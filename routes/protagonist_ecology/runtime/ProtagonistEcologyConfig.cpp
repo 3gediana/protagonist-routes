@@ -421,6 +421,51 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.task_context_perception_enabled = config.getOr<bool>(
         "evolution.task_context_perception_enabled",
         out.task_context_perception_enabled);
+    // L2.7 v13: HRL goal-context perception toggle (default true).
+    out.goal_context_perception_enabled = config.getOr<bool>(
+        "evolution.goal_context_perception_enabled",
+        out.goal_context_perception_enabled);
+    // L2.7 v13: per-goal-type sub-reward weights. Defaults reflect the
+    // relative difficulty of each goal: ChopTree/GatherStick/Stone are
+    // common and easy (small reward); BuildWorksite is the long
+    // chain's payoff (highest); CraftWeapon/Hunt/DrinkWater/FindFood
+    // sit in between. Explore/Flee/RespondSignal/EmitSignal/RestNearFire
+    // get 0 because they don't have a clean "completion" event we can
+    // count today (kept as toml-tunable knobs for future extension).
+    // The v12 outcome_weight still scales legacy worksite_completion_reward
+    // separately; these HRL sub-rewards are independent and ride on
+    // top, decoupled from outcome_weight on purpose (Cuccu/Schmidhuber
+    // 2011 NeuroEvolution-style intrinsic-style dense signal that
+    // doesn't get squashed when outcome_weight is small).
+    constexpr std::array<float, 13> kDefaultGoalRewards = {
+        0.0f,   // Explore (0)
+        3.0f,   // FindWater (1)
+        2.0f,   // FindFood (2)
+        1.0f,   // GatherStick (3)
+        1.0f,   // GatherStone (4)
+        4.0f,   // ChopTree (5)
+        20.0f,  // BuildWorksite (6)
+        8.0f,   // CraftWeapon (7)
+        10.0f,  // Hunt (8)
+        0.0f,   // Flee (9)
+        0.0f,   // RespondSignal (10)
+        0.0f,   // EmitSignal (11)
+        0.0f,   // RestNearFire (12)
+    };
+    out.goal_completion_rewards = kDefaultGoalRewards;
+    out.goal_completion_rewards[0]  = config.getOr<float>("reward.goal_completion.explore",         out.goal_completion_rewards[0]);
+    out.goal_completion_rewards[1]  = config.getOr<float>("reward.goal_completion.find_water",      out.goal_completion_rewards[1]);
+    out.goal_completion_rewards[2]  = config.getOr<float>("reward.goal_completion.find_food",       out.goal_completion_rewards[2]);
+    out.goal_completion_rewards[3]  = config.getOr<float>("reward.goal_completion.gather_stick",    out.goal_completion_rewards[3]);
+    out.goal_completion_rewards[4]  = config.getOr<float>("reward.goal_completion.gather_stone",    out.goal_completion_rewards[4]);
+    out.goal_completion_rewards[5]  = config.getOr<float>("reward.goal_completion.chop_tree",       out.goal_completion_rewards[5]);
+    out.goal_completion_rewards[6]  = config.getOr<float>("reward.goal_completion.build_worksite",  out.goal_completion_rewards[6]);
+    out.goal_completion_rewards[7]  = config.getOr<float>("reward.goal_completion.craft_weapon",    out.goal_completion_rewards[7]);
+    out.goal_completion_rewards[8]  = config.getOr<float>("reward.goal_completion.hunt",            out.goal_completion_rewards[8]);
+    out.goal_completion_rewards[9]  = config.getOr<float>("reward.goal_completion.flee",            out.goal_completion_rewards[9]);
+    out.goal_completion_rewards[10] = config.getOr<float>("reward.goal_completion.respond_signal",  out.goal_completion_rewards[10]);
+    out.goal_completion_rewards[11] = config.getOr<float>("reward.goal_completion.emit_signal",     out.goal_completion_rewards[11]);
+    out.goal_completion_rewards[12] = config.getOr<float>("reward.goal_completion.rest_near_fire",  out.goal_completion_rewards[12]);
     // L2.6 v12: ACCEL regret-based dynamic weight (default true).
     out.task_template_dynamic_weight = config.getOr<bool>(
         "evolution.task_template_dynamic_weight",

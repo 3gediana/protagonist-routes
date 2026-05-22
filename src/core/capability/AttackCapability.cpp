@@ -6,6 +6,7 @@
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/object/ObjectLayer.h"
 
 #include <cmath>
 
@@ -43,7 +44,29 @@ void AttackCapability::apply(IAgent& agent, IWorld& world, std::span<const float
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) return;
 
-    const float damage = intensity * damage_factor_ * dt;
+    // L2.7 v13 Detail #1+#6: weapon bonus in melee. If the attacker
+    // is carrying an object, the object type multiplies damage:
+    //   Spear x1.6 (forged tool, primary melee weapon)
+    //   Stone x1.3 (improvised weapon)
+    //   Stick x1.1 (small bonus over bare hands)
+    // Without this the v9 craft chain (chop->carry->craft spear) had
+    // zero melee benefit, so the network had no reason to invest in
+    // the spear loop.
+    float weapon_mult = 1.0f;
+    if (auto* attacker_concrete = dynamic_cast<Agent*>(&agent);
+        attacker_concrete != nullptr && attacker_concrete->isCarrying()) {
+        if (auto* objects = world.getLayer<ObjectLayer>(); objects != nullptr) {
+            if (const auto* carried = objects->findById(attacker_concrete->carriedObject()); carried != nullptr) {
+                switch (carried->type) {
+                    case ObjectType::Spear: weapon_mult = 1.6f; break;
+                    case ObjectType::Stone: weapon_mult = 1.3f; break;
+                    case ObjectType::Stick: weapon_mult = 1.1f; break;
+                    default: break;
+                }
+            }
+        }
+    }
+    const float damage = intensity * damage_factor_ * weapon_mult * dt;
     float total_damage_dealt = 0.0f;
 
     for (auto* other : agent_layer->agents()) {
