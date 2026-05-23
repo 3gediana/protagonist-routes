@@ -25,6 +25,23 @@
 
 ## 已完成
 
+### Layer 1-4 (FINAL_BLUEPRINT.md 蓝图，2026-05-23 ~ 2026-05-24)
+
+按 `docx/FINAL_BLUEPRINT.md` 的 Layer 1-8 依赖树，已落地 1-4：
+
+| Layer | 内容 | 数据 | Commit |
+|---|---|---|---|
+| 1 | 体温 R-001 + 600x600 + Hunger threshold | alive 0.45→0.79 | a0669f6, 7a098a6 |
+| 2 | WeatherLayer 6 type Markov + 雨/风/雷 集成 | avg_fit 990→1972 | 202186b |
+| 3 | Rabbit 物种 + 9 物种生态闭环 | avg_fit 1972→6685 (gen 25 best 12390) | e3d2b8b |
+| 4 | LifecycleStage + DeathCause + lineage_id + PopulationLayer | OldAge/Disease 路径 + 4 in-world births 验证 | 148b6d8 |
+
+**Layer 4 核心设计**：
+- Agent 加 `lineage_id_/parent_lineage_a/b_/birth_generation_/archetype_tag_/genome_archive_`
+- `PopulationLayer.tick`: phase1 cooldown/OldAge/Elder mortality, phase3 同物种 adult 配对
+- `makeChildFromParents`: clone better-fit parent NeatGenome → noise weight → makeNeatSpeciesAgent
+- 性能：每次 in-world birth ~100ms（NeatBrain reconstruction），Layer 8 优化
+
 ### 1. protagonist 当前项目最终愿景
 
 - 已写：`supporting/FINAL_STATE_VISION.md`
