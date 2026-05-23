@@ -8,6 +8,7 @@
 #include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/world/layers/TimeOfDayLayer.h"
 #include "core/world/layers/SeasonLayer.h"
+#include "core/world/layers/WeatherLayer.h"
 #include "core/world/layers/object/ObjectLayer.h"
 
 #include <algorithm>
@@ -131,7 +132,14 @@ void MoveCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
         season_cost = season->metabolismFactor();
     }
 
-    agent.setEnergy(previous_energy - move_cost * season_cost);
+    // Layer 2 (FINAL_BLUEPRINT.md §2.3): weather affects movement cost.
+    // High wind/typhoon: 1.5x / 1.8x (struggling against wind).
+    float weather_cost = 1.0f;
+    if (const auto* weather = world.getLayer<WeatherLayer>(); weather != nullptr) {
+        weather_cost = weather->moveCostMultiplier();
+    }
+
+    agent.setEnergy(previous_energy - move_cost * season_cost * weather_cost);
 
     world.eventBus().publish(events::Event{events::EventType::AgentMoved,
                                            events::AgentMoved{agent.id(), previous_position, next_position},

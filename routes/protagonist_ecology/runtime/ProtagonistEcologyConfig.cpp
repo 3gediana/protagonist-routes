@@ -285,6 +285,23 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
                                                       "world.season.start_tick",
                                                       out.season.start_time_seconds);
 
+    // Layer 2 (FINAL_BLUEPRINT): weather system.
+    out.weather.enabled = config.getOr<bool>("world.weather.enabled", out.weather.enabled);
+    out.weather.seed = static_cast<std::uint32_t>(config.getOr<int>("world.weather.seed", static_cast<int>(out.weather.seed)));
+    out.weather.average_duration_seconds = config.getOr<double>("world.weather.average_duration_seconds", out.weather.average_duration_seconds);
+    out.weather.min_duration_seconds = config.getOr<double>("world.weather.min_duration_seconds", out.weather.min_duration_seconds);
+    out.weather.max_duration_seconds = config.getOr<double>("world.weather.max_duration_seconds", out.weather.max_duration_seconds);
+    out.weather.base_prob_clear    = config.getOr<float>("world.weather.base_prob_clear",    out.weather.base_prob_clear);
+    out.weather.base_prob_cloudy   = config.getOr<float>("world.weather.base_prob_cloudy",   out.weather.base_prob_cloudy);
+    out.weather.base_prob_rain     = config.getOr<float>("world.weather.base_prob_rain",     out.weather.base_prob_rain);
+    out.weather.base_prob_storm    = config.getOr<float>("world.weather.base_prob_storm",    out.weather.base_prob_storm);
+    out.weather.base_prob_highwind = config.getOr<float>("world.weather.base_prob_highwind", out.weather.base_prob_highwind);
+    out.weather.base_prob_typhoon  = config.getOr<float>("world.weather.base_prob_typhoon",  out.weather.base_prob_typhoon);
+    out.weather.summer_storm_mult   = config.getOr<float>("world.weather.summer_storm_mult",   out.weather.summer_storm_mult);
+    out.weather.summer_typhoon_mult = config.getOr<float>("world.weather.summer_typhoon_mult", out.weather.summer_typhoon_mult);
+    out.weather.winter_typhoon_mult = config.getOr<float>("world.weather.winter_typhoon_mult", out.weather.winter_typhoon_mult);
+    out.weather.winter_rain_mult    = config.getOr<float>("world.weather.winter_rain_mult",    out.weather.winter_rain_mult);
+
     out.disease.enabled = config.getOr<bool>("world.disease.enabled", out.disease.enabled);
     out.disease.infection_radius = config.getOr<float>("world.disease.infection_radius", out.disease.infection_radius);
     out.disease.infection_prob = config.getOr<float>("world.disease.infection_prob", out.disease.infection_prob);

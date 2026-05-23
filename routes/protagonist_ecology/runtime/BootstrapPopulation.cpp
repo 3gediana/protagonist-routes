@@ -32,6 +32,7 @@
 #include "core/perception/SignalPerception.h"
 #include "core/perception/TerrainPerception.h"
 #include "core/perception/TimeOfDayPerception.h"
+#include "core/perception/WeatherPerception.h"
 #include "perception/AgentSocialPerception.h"
 #include "perception/BasePerception.h"
 #include "perception/CarriedObjectPerception.h"
@@ -368,6 +369,13 @@ std::size_t computeBackgroundSensoryDim(const ProtagonistEcologyConfig& config) 
     if (config.season.enabled) {
         dim += SeasonPerception::kDim;
     }
+    // Layer 2 (FINAL_BLUEPRINT.md §2.3): weather perception (6-dim one-hot).
+    // MUST match the addPerception ordering in addBackgroundCommonPerceptions
+    // below — otherwise brain sensory_dim mismatches actual perception
+    // output and we get OOB reads at first forward.
+    if (config.weather.enabled) {
+        dim += WeatherPerception::kDim;
+    }
     if (config.disease.enabled) {
         dim += InfectionPerception::kDim;
     }
@@ -393,6 +401,10 @@ void attachBackgroundCommonSensors(Agent& agent,
     }
     if (config.season.enabled) {
         agent.addPerception(std::make_unique<SeasonPerception>());
+    }
+    // Layer 2 (FINAL_BLUEPRINT.md §2.3): weather perception (6-dim one-hot).
+    if (config.weather.enabled) {
+        agent.addPerception(std::make_unique<WeatherPerception>());
     }
     if (config.disease.enabled) {
         agent.addPerception(std::make_unique<InfectionPerception>(8.0f));

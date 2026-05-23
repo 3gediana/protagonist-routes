@@ -6,6 +6,7 @@
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/WeatherLayer.h"
 #include "world/BaseLayer.h"
 #include "world/CampfireLayer.h"
 #include "world/WaterLayer.h"
@@ -96,7 +97,14 @@ void SurvivalStatusLayer::tick(IWorld& world, float dt) {
         const bool is_protag = isProtagonist(*agent);
         const float decay = is_protag ? hydration_decay_per_second_
                                       : background_hydration_decay_per_second_;
-        state.hydration = std::clamp(state.hydration - decay * dt, 0.0f, max_hydration_);
+        // Layer 2: rain auto-recovers hydration (rain on skin / drinking
+        // puddles). Query WeatherLayer; 0 when no rain.
+        float rain_recovery = 0.0f;
+        if (const auto* weather = world.getLayer<WeatherLayer>(); weather != nullptr) {
+            rain_recovery = weather->hydrationRecoveryPerSecond();
+        }
+        state.hydration = std::clamp(state.hydration + (rain_recovery - decay) * dt,
+                                     0.0f, max_hydration_);
 
         // Dehydration health damage (severity-continuous, R-001 "分阶段
         // 增强" — continuous severity ramp).

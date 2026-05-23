@@ -5,6 +5,7 @@
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IWorld.h"
 #include "core/world/layers/AgentLayer.h"
+#include "core/world/layers/WeatherLayer.h"
 #include "world/BaseLayer.h"
 
 #include <algorithm>
@@ -46,6 +47,30 @@ void CampfireLayer::onAttach(IWorld& world) {
 void CampfireLayer::tick(IWorld& world, float dt) {
     if (agents_ == nullptr || fires_.empty()) {
         return;
+    }
+
+    // Layer 2 (FINAL_BLUEPRINT.md §2.3): lightning during storm/typhoon
+    // can ignite a dormant fire. Probability per dormant fire per second
+    // = WeatherLayer::lightningPerTreePerSecond() (we treat each dormant
+    // fire as a "lightning candidate" — abstract: rather than modelling
+    // tree-by-tree lightning strikes we let storm pulses occasionally
+    // light up an existing campfire site).
+    if (const auto* weather = world.getLayer<WeatherLayer>(); weather != nullptr) {
+        const float p_per_sec = weather->lightningPerTreePerSecond();
+        if (p_per_sec > 0.0f && dt > 0.0f) {
+            std::uniform_real_distribution<float> u(0.0f, 1.0f);
+            // Aggregate probability across all dormant fires; on hit,
+            // ignite one. Roughly equivalent to per-fire sampling but
+            // simpler.
+            std::size_t dormant_count = 0;
+            for (const auto& fire : fires_) {
+                if (!fire.active) ++dormant_count;
+            }
+            const float total_p = p_per_sec * static_cast<float>(dormant_count) * dt;
+            if (total_p > 0.0f && u(rng_) < total_p) {
+                igniteNextDormant();  // existing helper
+            }
+        }
     }
 
     for (Agent* agent : agents_->agents()) {

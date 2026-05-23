@@ -206,6 +206,28 @@ struct SeasonConfig {
     SimTimeSeconds start_time_seconds{0.0};
 };
 
+// Layer 2 (FINAL_BLUEPRINT.md §2.3): weather system. 6 weather types
+// with stochastic transitions; biased by SeasonLayer when present.
+struct WeatherConfig {
+    bool enabled{true};
+    std::uint32_t seed{0};                            // 0 -> auto
+    SimTimeSeconds average_duration_seconds{600.0};   // mean state length
+    SimTimeSeconds min_duration_seconds{120.0};
+    SimTimeSeconds max_duration_seconds{1200.0};
+    // Per-type base probabilities (sum ~ 1.0). FINAL_BLUEPRINT defaults.
+    float base_prob_clear{0.70f};
+    float base_prob_cloudy{0.15f};
+    float base_prob_rain{0.10f};
+    float base_prob_storm{0.03f};
+    float base_prob_highwind{0.015f};
+    float base_prob_typhoon{0.005f};
+    // Season biases.
+    float summer_storm_mult{3.0f};
+    float summer_typhoon_mult{4.0f};
+    float winter_typhoon_mult{0.0f};
+    float winter_rain_mult{0.5f};
+};
+
 struct DiseaseConfig {
     bool enabled{true};
     float infection_radius{4.0f};
@@ -350,6 +372,7 @@ struct ProtagonistEcologyConfig {
     ProgressionConfig progression{};
     DayNightConfig day_night{};
     SeasonConfig season{};
+    WeatherConfig weather{};   // Layer 2 (FINAL_BLUEPRINT)
     DiseaseConfig disease{};
     MemoryTrialConfig memory_trial{};
     ProtagonistBrainConfig protagonist{};

@@ -10,6 +10,7 @@
 #include "core/world/layers/signal/SignalLayer.h"
 #include "core/world/layers/terrain/TerrainLayer.h"
 #include "core/world/layers/TimeOfDayLayer.h"
+#include "core/world/layers/WeatherLayer.h"
 #include "world/BaseLayer.h"
 #include "world/CampfireLayer.h"
 #include "world/InterventionDirectorLayer.h"
@@ -310,6 +311,28 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
         world->addLayer(std::make_unique<SeasonLayer>(
             config.season.season_length_seconds,
             config.season.start_time_seconds));
+    }
+
+    // Layer 2 (FINAL_BLUEPRINT.md §2.3): weather system.
+    if (config.weather.enabled) {
+        WeatherLayer::Coefficients wc;
+        wc.average_duration_seconds = config.weather.average_duration_seconds;
+        wc.min_duration_seconds     = config.weather.min_duration_seconds;
+        wc.max_duration_seconds     = config.weather.max_duration_seconds;
+        wc.base_prob_clear    = config.weather.base_prob_clear;
+        wc.base_prob_cloudy   = config.weather.base_prob_cloudy;
+        wc.base_prob_rain     = config.weather.base_prob_rain;
+        wc.base_prob_storm    = config.weather.base_prob_storm;
+        wc.base_prob_highwind = config.weather.base_prob_highwind;
+        wc.base_prob_typhoon  = config.weather.base_prob_typhoon;
+        wc.summer_storm_mult   = config.weather.summer_storm_mult;
+        wc.summer_typhoon_mult = config.weather.summer_typhoon_mult;
+        wc.winter_typhoon_mult = config.weather.winter_typhoon_mult;
+        wc.winter_rain_mult    = config.weather.winter_rain_mult;
+        const std::uint32_t weather_seed = config.weather.seed != 0
+            ? config.weather.seed
+            : static_cast<std::uint32_t>(config.random_seed + 7000u);
+        world->addLayer(std::make_unique<WeatherLayer>(wc, weather_seed));
     }
 
     if (config.disease.enabled) {
