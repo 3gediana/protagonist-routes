@@ -1,4 +1,5 @@
 #include "runtime/ProtagonistWorldFactory.h"
+#include "runtime/BootstrapPopulation.h"
 
 #include "core/agent/Agent.h"
 #include "core/world/World2D.h"
@@ -18,11 +19,14 @@
 #include "world/NurseryLogisticsLayer.h"
 #include "world/NurseryProgressionLayer.h"
 #include "world/NurserySupplyLayer.h"
+#include "world/PopulationLayer.h"
 #include "world/SandboxStatusLayer.h"
 #include "world/SurvivalStatusLayer.h"
 #include "world/TreeLayer.h"
 #include "world/WaterLayer.h"
 #include "world/WorksiteLayer.h"
+
+#include <random>
 
 #include <algorithm>
 #include <cmath>
@@ -343,6 +347,39 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.disease.death_prob,
             config.disease.initial_infection_rate,
             config.random_seed + 6000));
+    }
+
+    // Layer 4 (FINAL_BLUEPRINT.md): population / lifecycle / reproduction.
+    if (config.population.enabled) {
+        PopulationLayer::Coefficients pc;
+        pc.reproduction_check_interval     = config.population.reproduction_check_interval;
+        pc.reproduction_radius             = config.population.reproduction_radius;
+        pc.reproduction_min_energy         = config.population.reproduction_min_energy;
+        pc.reproduction_energy_cost        = config.population.reproduction_energy_cost;
+        pc.juvenile_initial_energy         = config.population.juvenile_initial_energy;
+        pc.reproduction_cooldown_sec       = config.population.reproduction_cooldown_sec;
+        pc.juvenile_initial_cooldown_sec   = config.population.juvenile_initial_cooldown_sec;
+        pc.elder_extra_mortality_per_sec   = config.population.elder_extra_mortality_per_sec;
+        pc.max_living_agents               = config.population.max_living_agents;
+        pc.max_spawns_per_tick             = config.population.max_spawns_per_tick;
+        pc.seed = config.population.seed != 0
+            ? config.population.seed
+            : static_cast<std::uint32_t>(config.random_seed + 9000u);
+
+        // Capture a copy of the full config so the spawn callback survives
+        // the factory's stack frame (the world owns the layer; the layer
+        // owns the callback's copy).
+        const ProtagonistEcologyConfig captured = config;
+        std::mt19937 child_rng(pc.seed ^ 0xABCDEF01u);
+
+        PopulationLayer::SpawnCallback cb =
+            [captured, child_rng](const Agent& a, const Agent& b,
+                                  AgentId new_aid, GenomeId new_gid) mutable
+            -> std::unique_ptr<Agent> {
+            return makeChildFromParents(a, b, new_aid, new_gid, captured, child_rng);
+        };
+
+        world->addLayer(std::make_unique<PopulationLayer>(pc, std::move(cb)));
     }
 
     world->addLayer(std::make_unique<SandboxStatusLayer>(20));

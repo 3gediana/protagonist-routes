@@ -237,6 +237,39 @@ struct DiseaseConfig {
     float initial_infection_rate{0.04f};
 };
 
+// Layer 4 (FINAL_BLUEPRINT.md §4): lifecycle + reproduction + lineage.
+// Per-species max age (sim sec) used by PopulationLayer to trigger
+// natural death (DeathCause::OldAge). Reproduction radius/energy are
+// global; each archetype has its own max_age below.
+struct PopulationConfig {
+    bool enabled{true};
+    SimTimeSeconds reproduction_check_interval{5.0};
+    float reproduction_radius{8.0f};
+    float reproduction_min_energy{60.0f};
+    float reproduction_energy_cost{25.0f};
+    float juvenile_initial_energy{30.0f};
+    float reproduction_cooldown_sec{90.0f};
+    float juvenile_initial_cooldown_sec{200.0f};
+    float elder_extra_mortality_per_sec{0.0005f};
+    std::size_t max_living_agents{600};
+    std::uint32_t seed{0};
+    // L4 perf throttle: max spawns per reproduction tick (default 1).
+    std::size_t max_spawns_per_tick{1};
+
+    // Per-archetype max age (sim sec). 0 disables aging. These are
+    // tuned so that species with long generation times (apex) live
+    // longer than rapid-turnover species (rabbit/forager).
+    SimTimeSeconds max_age_protagonist{2400.0};
+    SimTimeSeconds max_age_large_herbivore{1800.0};
+    SimTimeSeconds max_age_small_forager{900.0};
+    SimTimeSeconds max_age_apex_predator{2400.0};
+    SimTimeSeconds max_age_pack_hunter{1500.0};
+    SimTimeSeconds max_age_ambush_predator{1500.0};
+    SimTimeSeconds max_age_scavenger{1200.0};
+    SimTimeSeconds max_age_omnivore{1500.0};
+    SimTimeSeconds max_age_rabbit{600.0};
+};
+
 struct MemoryTrialConfig {
     bool enabled{false};
     SimTimeSeconds cue_duration_seconds{2.0};
@@ -374,6 +407,7 @@ struct ProtagonistEcologyConfig {
     SeasonConfig season{};
     WeatherConfig weather{};   // Layer 2 (FINAL_BLUEPRINT)
     DiseaseConfig disease{};
+    PopulationConfig population{};   // Layer 4 (FINAL_BLUEPRINT)
     MemoryTrialConfig memory_trial{};
     ProtagonistBrainConfig protagonist{};
     BackgroundBrainConfig background{};

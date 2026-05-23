@@ -309,6 +309,29 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.disease.death_prob = config.getOr<float>("world.disease.death_prob", out.disease.death_prob);
     out.disease.initial_infection_rate = config.getOr<float>("world.disease.initial_infection_rate", out.disease.initial_infection_rate);
 
+    // Layer 4 (FINAL_BLUEPRINT.md): population / lifecycle / reproduction.
+    out.population.enabled = config.getOr<bool>("world.population.enabled", out.population.enabled);
+    out.population.reproduction_check_interval = config.getOr<double>("world.population.reproduction_check_interval", out.population.reproduction_check_interval);
+    out.population.reproduction_radius = config.getOr<float>("world.population.reproduction_radius", out.population.reproduction_radius);
+    out.population.reproduction_min_energy = config.getOr<float>("world.population.reproduction_min_energy", out.population.reproduction_min_energy);
+    out.population.reproduction_energy_cost = config.getOr<float>("world.population.reproduction_energy_cost", out.population.reproduction_energy_cost);
+    out.population.juvenile_initial_energy = config.getOr<float>("world.population.juvenile_initial_energy", out.population.juvenile_initial_energy);
+    out.population.reproduction_cooldown_sec = config.getOr<float>("world.population.reproduction_cooldown_sec", out.population.reproduction_cooldown_sec);
+    out.population.juvenile_initial_cooldown_sec = config.getOr<float>("world.population.juvenile_initial_cooldown_sec", out.population.juvenile_initial_cooldown_sec);
+    out.population.elder_extra_mortality_per_sec = config.getOr<float>("world.population.elder_extra_mortality_per_sec", out.population.elder_extra_mortality_per_sec);
+    out.population.max_living_agents = static_cast<std::size_t>(config.getOr<int>("world.population.max_living_agents", static_cast<int>(out.population.max_living_agents)));
+    out.population.seed = static_cast<std::uint32_t>(config.getOr<int>("world.population.seed", static_cast<int>(out.population.seed)));
+    out.population.max_spawns_per_tick = static_cast<std::size_t>(config.getOr<int>("world.population.max_spawns_per_tick", static_cast<int>(out.population.max_spawns_per_tick)));
+    out.population.max_age_protagonist     = config.getOr<double>("world.population.max_age_protagonist",     out.population.max_age_protagonist);
+    out.population.max_age_large_herbivore = config.getOr<double>("world.population.max_age_large_herbivore", out.population.max_age_large_herbivore);
+    out.population.max_age_small_forager   = config.getOr<double>("world.population.max_age_small_forager",   out.population.max_age_small_forager);
+    out.population.max_age_apex_predator   = config.getOr<double>("world.population.max_age_apex_predator",   out.population.max_age_apex_predator);
+    out.population.max_age_pack_hunter     = config.getOr<double>("world.population.max_age_pack_hunter",     out.population.max_age_pack_hunter);
+    out.population.max_age_ambush_predator = config.getOr<double>("world.population.max_age_ambush_predator", out.population.max_age_ambush_predator);
+    out.population.max_age_scavenger       = config.getOr<double>("world.population.max_age_scavenger",       out.population.max_age_scavenger);
+    out.population.max_age_omnivore        = config.getOr<double>("world.population.max_age_omnivore",        out.population.max_age_omnivore);
+    out.population.max_age_rabbit          = config.getOr<double>("world.population.max_age_rabbit",          out.population.max_age_rabbit);
+
     out.memory_trial.enabled = config.getOr<bool>("world.memory_trial.enabled", out.memory_trial.enabled);
     out.memory_trial.cue_duration_seconds = config.getOr<double>("world.memory_trial.cue_duration_seconds", out.memory_trial.cue_duration_seconds);
     out.memory_trial.cue_radius = config.getOr<float>("world.memory_trial.cue_radius", out.memory_trial.cue_radius);
