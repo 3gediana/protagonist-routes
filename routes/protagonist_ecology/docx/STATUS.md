@@ -1,9 +1,19 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-23 中午（**L2.9 v15 real ME-NEAT 真正突破：worksites 2.4/ep (4.8x v8 baseline), crafts 19.5 (65x v8), survived 24.1 (16x v8)**）
+> 最后巡检：2026-05-23 下午（**L2.9 v16 公平 scale 验证：v15 数据被分母放大 20-35%，但 v16 vs v8 仍 18.7× alive / 75× crafts 真实大跃进**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`v15 commit (pending push)`
+> 当前 HEAD：`v16 fair-scale validation (pending commit)`
+>
+> **2026-05-23 下午 L2.9 v16 公平 scale 验证**（验证数据 + toml + py 待 commit）：
+> - **背景**：v15 报告"24× v8 alive / 97× v8 crafts"，但 v15 用 protag=8 / ep=6（每代 48 evals），v8 用 protag=24 / ep=3（每代 72 evals）；per-(protag×ep) 归一化只能消除统计 bias，不能消除生态动力学差异（资源人均充足度）。用户选 #3 公平 scale 路线验证 v15 是否被分母扭曲。
+> - **改造**：复制 `tmp/v15_qd_real/v15_qd_real.toml` → `tmp/v16_fair/v16_fair.toml`，仅改 3 处：`scenario_name`、`runs_dir`、`population.protagonist.count: 8 → 24`、`episodes_per_generation: 6 → 3`。其余配置（archive、me_neat 4 字段、reward、task_template、background）完全不动。无代码改动，复用 v15 同一 binary。
+> - **v16 60-gen 验证 (seed=91, total_prot=720 与 v8 完全匹配)**：
+>   * **真实进步**：avg_fitness 452→2052 (**4.54×** v15)、qd_score 5922→39743 (**6.71×**)、me_coverage 10%→20% (**1.88×**)、coop_per_prot 24→100 (**4.23×**) — 这些是 24 protag 池子带来的真实改善（更稳定的 fitness 估计、更易触发合作、archive 填充更快）。
+>   * **v15 的虚高被揭示**：alive 50.2%→39.2% (×0.78)、works 0.05→0.032 (×0.64)、crafts 0.41→0.32 (×0.78)、chops 2.34→2.22 (×0.95)、hunts 0.36→0.24 (×0.66) — 这些数字 v15 用 8 protag 时被资源人均充足放大了 20-35%，公平 scale 下退化。
+>   * **真实 v16 vs v8**：alive **18.7×** v8、chops **24×**、works **4.6×**、crafts **75×** — 仍然是巨大跃进，比 v15 报告的 24×/25×/7×/97× 略小但仍然 huge。
+>   * **未解决问题**：throws 894→1082 (×1.21) 仍在恶化（BD 不含 throw 维度）；hunts 0.36→0.24 退化更严重（archive 偏 build/craft 挤掉 hunting genes）。
+> - **诚实结论**：v15 真正的"涌现"突破是真的，但 8-protag 配置让数字看起来比公平对比下乐观 20-35%。v16 之后所有 ME-NEAT 实验默认应使用 protag=24 配置避免分母 confound。BD 不含 throw/hunt 是已知架构限制，不是这次实验的目标。
 >
 > **2026-05-23 中午 L2.9 v15 real ME-NEAT 突破**（1 commit + 验证数据待 push）：
 > - `<v15-code-commit> L2.9 v15: real ME-NEAT - archive-driven breeding + iso+line + init phase`
