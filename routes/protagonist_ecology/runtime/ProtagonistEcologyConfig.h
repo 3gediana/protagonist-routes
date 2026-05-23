@@ -426,6 +426,17 @@ struct ProtagonistEcologyConfig {
     // 0.66x-0.66x baseline). Default disabled for backward-compat.
     int me_neat_hunt_bin_size{0};         // z-axis bucket: hunts per cell (0 = disable)
     int me_neat_hunt_max_bins{1};         // z-axis cell count (1 = 2D)
+    // L2.9 v18 CVT-MAP-Elites (Vassiliades 2017 IEEE TEC). Grid mode
+    // suffers from curse of dimensionality (Vassiliades 2017 §6.B: "the
+    // performance of MAP-Elites deteriorates" beyond 2-6 dim). CVT
+    // replaces the fixed N x N x M grid with k Voronoi cells around k
+    // centroids placed by Lloyd's k-means, so selective pressure stays
+    // constant regardless of BD dimensionality. Default disabled for
+    // backward-compat with v14-v17.
+    bool me_neat_cvt_enabled{false};
+    int me_neat_cvt_num_centroids{64};       // k: number of Voronoi cells
+    int me_neat_cvt_samples_per_centroid{100};  // k-means initialisation density
+    int me_neat_cvt_kmeans_iters{32};        // Lloyd iterations
     // When 0 < w < 1, non-elite genomes have their fitness multiplied
     // by w during reproduce. EliteSelection then naturally lifts cell
     // elites into the survivor set, and tournament samples favour them.

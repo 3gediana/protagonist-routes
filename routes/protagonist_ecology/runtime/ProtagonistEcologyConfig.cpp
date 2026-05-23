@@ -497,6 +497,22 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.me_neat_hunt_max_bins = config.getOr<int>(
         "evolution.me_neat.hunt_max_bins",
         out.me_neat_hunt_max_bins);
+    // v18 CVT-MAP-Elites: opt-in replacement for grid mode. When
+    // enabled, ignores hunt_bin_size / hunt_max_bins / chops_bin_size
+    // grid layout - just uses bin_size * max_bins as the [0, max] range
+    // per axis for normalisation.
+    out.me_neat_cvt_enabled = config.getOr<bool>(
+        "evolution.me_neat.cvt_enabled",
+        out.me_neat_cvt_enabled);
+    out.me_neat_cvt_num_centroids = config.getOr<int>(
+        "evolution.me_neat.cvt_num_centroids",
+        out.me_neat_cvt_num_centroids);
+    out.me_neat_cvt_samples_per_centroid = config.getOr<int>(
+        "evolution.me_neat.cvt_samples_per_centroid",
+        out.me_neat_cvt_samples_per_centroid);
+    out.me_neat_cvt_kmeans_iters = config.getOr<int>(
+        "evolution.me_neat.cvt_kmeans_iters",
+        out.me_neat_cvt_kmeans_iters);
     out.me_neat_non_elite_weight = config.getOr<double>(
         "evolution.me_neat.non_elite_weight",
         out.me_neat_non_elite_weight);

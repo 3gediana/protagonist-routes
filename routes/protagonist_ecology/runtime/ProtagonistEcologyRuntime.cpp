@@ -4147,6 +4147,14 @@ int ProtagonistEcologyRuntime::runTraining() {
                                            route.me_neat_max_bins,
                                            route.me_neat_hunt_bin_size,
                                            route.me_neat_hunt_max_bins);
+        // v18 CVT-MAP-Elites: opt-in replacement for grid mode. Seeded
+        // from world tick so a resumed run reproduces the same centroids.
+        if (route.me_neat_enabled && route.me_neat_cvt_enabled) {
+            me_archive.initCvt(route.me_neat_cvt_num_centroids,
+                               route.me_neat_cvt_samples_per_centroid,
+                               route.me_neat_cvt_kmeans_iters,
+                               static_cast<std::uint32_t>(route.random_seed + 0x1A2B));
+        }
         if (route.me_neat_enabled) {
             for (const auto& ev : evaluated) {
                 auto it = behavior_per_genome.find(ev.genome_id);

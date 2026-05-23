@@ -35,11 +35,11 @@
 
 #include "core/types/Aliases.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <random>
-#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -57,30 +57,45 @@ struct BehaviorDescriptor {
 
 class QualityDiversityArchive {
 public:
-    // (chops_bin, workcraft_bin, hunt_bin). 3rd entry is always 0 when
-    // hunt_max_bins == 1 (backward-compat 2D).
-    using CellKey = std::tuple<int, int, int>;
+    // Cell index. In grid mode this is a packed (x, y, z) integer
+    // (x * max_bins * hunt_max_bins + y * hunt_max_bins + z); in CVT
+    // mode it's the index of the nearest centroid. The same downstream
+    // code (eliteIds / pickParent / submit) works for both.
+    using CellKey = int;
 
     struct Cell {
         GenomeId elite_id{kInvalidGenomeId};
         double elite_fitness = -std::numeric_limits<double>::infinity();
     };
 
-    // Configure the 2D-or-3D grid. chops_bin_size and workcraft_bin_size
-    // give discretisation granularity for the first two axes (max_bins on
-    // each = N). hunt_bin_size + hunt_max_bins control the 3rd axis. The
-    // 3rd axis is collapsed when hunt_max_bins <= 1 (backward-compat with
-    // v14/v15/v16 callers that don't pass these; default is 0/1).
+    // Default ctor: legacy grid mode. chops_bin_size + workcraft_bin_size
+    // + max_bins define the 2D N x N grid; hunt_bin_size + hunt_max_bins
+    // extend to a 3D N x N x M grid (v17). Backward-compat with
+    // v14/v15/v16 callers that don't pass hunt_* (default 0/1 collapses
+    // 3rd axis).
     //
-    // Example v15/v16 (2D): chops=5, wc=1, max=8, hunt_bin=0, hunt_max=1
-    //                       -> 8 x 8 x 1 = 64 cells
-    // Example v17  (3D):    chops=5, wc=1, max=8, hunt_bin=5, hunt_max=3
-    //                       -> 8 x 8 x 3 = 192 cells
+    // To switch to CVT mode (v18, Vassiliades 2017), call initCvt after
+    // construction. CVT mode replaces the grid with k Voronoi cells
+    // around k centroids placed by Lloyd's k-means - selective pressure
+    // is constant (k cells) regardless of BD dimensionality, fixing the
+    // "curse of dimensionality" that hits 3D+ grid MAP-Elites.
     QualityDiversityArchive(int chops_bin_size = 20,
                             int workcraft_bin_size = 2,
                             int max_bins = 5,
                             int hunt_bin_size = 0,
                             int hunt_max_bins = 1);
+
+    // Switch to CVT mode. Generates num_centroids x samples_per_centroid
+    // uniform-random points in the (chops, workcraft, hunt) feature
+    // space (range determined by bin_size * max_bins per axis), then
+    // runs Lloyd's k-means for kmeans_iters iterations to obtain the
+    // final centroids. Subsequent cellOf() calls find argmin distance
+    // to a centroid rather than discretising into bins. Calling this
+    // clears the existing archive.
+    void initCvt(int num_centroids,
+                 int samples_per_centroid,
+                 int kmeans_iters,
+                 std::uint32_t seed);
 
     void clear();
 
@@ -100,6 +115,7 @@ public:
     // QD metrics for csv logging.
     std::size_t coverage() const { return cells_.size(); }   // # filled cells
     std::size_t maxCells() const {
+        if (cvt_enabled_) return static_cast<std::size_t>(centroids_.size());
         return static_cast<std::size_t>(max_bins_)
              * static_cast<std::size_t>(max_bins_)
              * static_cast<std::size_t>(hunt_max_bins_);
@@ -108,17 +124,26 @@ public:
     double maxFitness() const;    // single best fitness across all cells
     double meanCellFitness() const;
 
+    bool cvtEnabled() const { return cvt_enabled_; }
+    std::size_t numCentroids() const { return centroids_.size(); }
+
     // Read access (mainly for debug / metrics export).
     const std::map<CellKey, Cell>& cells() const { return cells_; }
 
 private:
     CellKey cellOf(const BehaviorDescriptor& bd) const;
+    // Normalise raw BD (ints) to [0, 1]^3 using bin_size * max_bins per
+    // axis. Used by both grid mode (for CVT compat in metrics) and CVT
+    // mode (for distance computation).
+    std::array<float, 3> normaliseBd(const BehaviorDescriptor& bd) const;
 
     int chops_bin_size_;
     int workcraft_bin_size_;
     int max_bins_;
     int hunt_bin_size_;
     int hunt_max_bins_;
+    bool cvt_enabled_{false};
+    std::vector<std::array<float, 3>> centroids_;
     std::map<CellKey, Cell> cells_;
 };
 
