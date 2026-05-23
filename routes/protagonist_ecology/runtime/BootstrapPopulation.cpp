@@ -440,6 +440,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
         case SpeciesArchetype::AmbushPredator: initial_energy = 90.0f;  predator_flag = true; break;
         case SpeciesArchetype::Scavenger:      initial_energy = 65.0f;  break;
         case SpeciesArchetype::Omnivore:       initial_energy = 100.0f; break;
+        case SpeciesArchetype::Rabbit:         initial_energy = 50.0f;  break;  // Layer 3
         default: break;
     }
 
@@ -562,6 +563,19 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             // outputs: Move 2 + Eat 0 + Hunt 1 + Attack 3 + Flee 1 = 7
             break;
 
+        case SpeciesArchetype::Rabbit:
+            // Layer 3 (FINAL_BLUEPRINT.md D3): stable food-chain bottom.
+            // Tiny, fast, fragile (one-bite kill via damage_threshold=0).
+            // Pure grass diet; lives in colonies (loneliness setpoint 0
+            // applied below). High flee speed (3.0) but no combat.
+            agent->setDietPreference(0.05f);  // strict herbivore
+            agent->setDamageThreshold(0.0f);  // single-bite kill
+            agent->addCapability(std::make_unique<MoveCapability>(2.8f, 0.003f, 0.0008f, 20));  // very fast
+            agent->addCapability(std::make_unique<EatCapability>(3.0f, 38.0f));
+            agent->addCapability(std::make_unique<FleeCapability>(8.0f, 1.2f, 0.010f));
+            // outputs: Move 2 + Eat 0 + Flee 1 = 3
+            break;
+
         default:
             throw std::runtime_error("makeNeatSpeciesAgent: unsupported archetype");
     }
@@ -613,6 +627,11 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             // Fruit specialist + mid plant + some meat. Matches the
             // boar / bear-cub design (spec: fruit_seasonal Omnivore 1.0).
             ee.grass = 0.6f; ee.browse = 0.6f; ee.fruit = 1.0f; ee.meat = 0.4f;
+            break;
+        case SpeciesArchetype::Rabbit:
+            // Layer 3: colony-living strict herbivore.
+            sp.loneliness = 0.0f;   // strongly social
+            ee.grass = 1.0f; ee.browse = 0.4f; ee.fruit = 0.3f; ee.meat = 0.0f;
             break;
         default: break;
     }
@@ -721,6 +740,8 @@ std::size_t backgroundOutputDim(SpeciesArchetype archetype) {
         // 3 + Flee 1 (Eat=0).
         case SpeciesArchetype::Scavenger:      return 7;
         case SpeciesArchetype::Omnivore:       return 7;  // Move 2 + Hunt 1 + Attack 3 + Flee 1
+        // Layer 3: Rabbit has minimal capability stack - Move 2 + Flee 1.
+        case SpeciesArchetype::Rabbit:         return 3;
         default: return 6;
     }
 }
@@ -735,6 +756,7 @@ std::string_view speciesArchetypeName(SpeciesArchetype archetype) {
         case SpeciesArchetype::AmbushPredator: return "ambush_predator";
         case SpeciesArchetype::Scavenger:      return "scavenger";
         case SpeciesArchetype::Omnivore:       return "omnivore";
+        case SpeciesArchetype::Rabbit:         return "rabbit";
     }
     return "unknown";
 }
@@ -748,6 +770,7 @@ SpeciesArchetype parseSpeciesArchetype(std::string_view name) {
     if (name == "ambush_predator") return SpeciesArchetype::AmbushPredator;
     if (name == "scavenger")       return SpeciesArchetype::Scavenger;
     if (name == "omnivore")        return SpeciesArchetype::Omnivore;
+    if (name == "rabbit")          return SpeciesArchetype::Rabbit;
     throw std::runtime_error("parseSpeciesArchetype: unknown archetype name '" + std::string(name) + "'");
 }
 
@@ -759,7 +782,8 @@ bool isPredatorArchetype(SpeciesArchetype archetype) {
 
 bool isHerbivoreArchetype(SpeciesArchetype archetype) {
     return archetype == SpeciesArchetype::LargeHerbivore
-        || archetype == SpeciesArchetype::SmallForager;
+        || archetype == SpeciesArchetype::SmallForager
+        || archetype == SpeciesArchetype::Rabbit;  // Layer 3
 }
 
 std::unique_ptr<Agent> makeBackgroundAgent(AgentId id,

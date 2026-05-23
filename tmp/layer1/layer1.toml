@@ -234,6 +234,13 @@ count = 6
 archetype = "omnivore"
 count = 12
 
+# Layer 3 (FINAL_BLUEPRINT.md decision D3): rabbit as food-chain bottom.
+# 20 rabbits provide a stable prey base for all predators (apex/pack/
+# ambush/scavenger via meat efficiency).
+[[population.background.species]]
+archetype = "rabbit"
+count = 20
+
 [evolution]
 generations = 30
 episode_ticks = 1200

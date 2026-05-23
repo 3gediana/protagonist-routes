@@ -28,6 +28,11 @@ enum class SpeciesArchetype : std::uint8_t {
     AmbushPredator,
     Scavenger,
     Omnivore,
+    // Layer 3 (FINAL_BLUEPRINT.md decision D3): stable food-chain bottom.
+    // Fast-breeding small prey eaten by virtually every predator.
+    // Loneliness setpoint 0 (lives in colonies); damage_threshold tiny
+    // (one bite kill).
+    Rabbit,
 };
 
 std::string_view speciesArchetypeName(SpeciesArchetype archetype);
