@@ -494,6 +494,20 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
         "evolution.me_neat.non_elite_weight",
         out.me_neat_non_elite_weight);
 
+    // L2.9 v15: explicit archive-driven breeding (see Config.h).
+    out.me_neat_archive_breeding = config.getOr<bool>(
+        "evolution.me_neat.archive_breeding",
+        out.me_neat_archive_breeding);
+    out.me_neat_init_generations = config.getOr<std::size_t>(
+        "evolution.me_neat.init_generations",
+        out.me_neat_init_generations);
+    out.me_neat_line_sigma = config.getOr<double>(
+        "evolution.me_neat.line_sigma",
+        out.me_neat_line_sigma);
+    out.me_neat_mutation_boost = config.getOr<double>(
+        "evolution.me_neat.mutation_boost",
+        out.me_neat_mutation_boost);
+
     return out;
 }
 

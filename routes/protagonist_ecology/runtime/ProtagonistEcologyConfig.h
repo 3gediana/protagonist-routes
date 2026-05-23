@@ -426,6 +426,33 @@ struct ProtagonistEcologyConfig {
     // 1.0 = no suppression (archive only used for metrics).
     double me_neat_non_elite_weight{0.05};
 
+    // L2.9 v15 "real" ME-NEAT (Mouret 2015 Tutorial + Nilsson 2021 PGA-MAP-Elites
+    // + Vassiliades 2018 iso+line operator). v14/v14b's implicit fitness
+    // shaping kept me_coverage stuck at 4% because EliteSelection +
+    // Tournament still selected on the v13 fitness gradient; the archive
+    // never drove reproduction. v15 routes breeding through the archive
+    // itself when archive_breeding=true:
+    //
+    //   * me_neat_archive_breeding=true: parents are sampled uniformly
+    //     from filled archive cells (not tournament). Each cell elite
+    //     is preserved as-is (no fitness suppression dance needed).
+    //   * me_neat_init_generations: in the first N gens, *all* new
+    //     offspring come from random crossovers regardless of fitness,
+    //     to seed the archive (Nilsson 2021 "initialization phase").
+    //   * me_neat_line_sigma > 0: switch crossover from uniform pick
+    //     (a[i] or b[i]) to iso+line: child[i] = a[i] + alpha*(b[i]-a[i])
+    //     with alpha ~ N(0, line_sigma). Empirically extends along the
+    //     line between two elites, the "elite hypervolume" of Vassiliades
+    //     2018, giving 4x more coverage than uniform crossover.
+    //   * me_neat_mutation_boost: multiplier on weight_perturb_sigma
+    //     used only on v15 archive-breeding path. Default 1.0 = no
+    //     change; 2.0+ adds extra exploration noise to break premature
+    //     convergence.
+    bool me_neat_archive_breeding{false};
+    std::size_t me_neat_init_generations{10};
+    double me_neat_line_sigma{0.0};
+    double me_neat_mutation_boost{1.0};
+
     bool isTrainRole() const;
     bool isEvalRole() const;
     bool isLiveRole() const;

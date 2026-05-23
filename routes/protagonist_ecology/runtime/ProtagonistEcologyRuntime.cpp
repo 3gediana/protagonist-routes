@@ -4273,27 +4273,43 @@ int ProtagonistEcologyRuntime::runTraining() {
         std::vector<std::vector<std::unique_ptr<IGenome>>> next_species_populations;
         if (need_post_reproduction_state) {
             auto raw = rawGenomePointers(population);
-            // L2.8 v14 ME-NEAT: build evaluated_for_breeding by suppressing
-            // non-cell-elite fitness. EliteSelection (top elite_ratio) and
-            // TournamentSelection both order on .fitness, so suppressing
-            // non-elites by a factor of me_neat_non_elite_weight (e.g.
-            // 0.05) effectively makes cell elites the dominant survivor
-            // pool. Stepping-stone genomes ("modest chops + 1 worksite")
-            // hold their unique cell and propagate, instead of being
-            // out-fitnessed by a different cell's specialist.
-            const std::vector<EvaluatedIndividual>* breed_evaluated = &evaluated;
-            std::vector<EvaluatedIndividual> evaluated_for_breeding;
-            if (route.me_neat_enabled && !me_archive.cells().empty()) {
-                evaluated_for_breeding = evaluated;
-                const auto elite_set = me_archive.eliteIdSet();
-                for (auto& ev : evaluated_for_breeding) {
-                    if (!elite_set.contains(ev.genome_id)) {
-                        ev.fitness *= route.me_neat_non_elite_weight;
+            // L2.9 v15: if archive_breeding is on, bypass EliteSelection +
+            // Tournament entirely and breed by sampling parents uniformly
+            // from filled archive cells (standard MAP-Elites). v14's
+            // implicit fitness shaping path is retained for backward
+            // compat (me_neat_archive_breeding=false).
+            auto* protag_evolution = dynamic_cast<ProtagonistEvolution*>(&evolution);
+            const bool use_v15_archive_breeding = route.me_neat_enabled
+                && route.me_neat_archive_breeding
+                && protag_evolution != nullptr;
+            if (use_v15_archive_breeding) {
+                const auto archive_ids = me_archive.eliteIds();
+                next_population = protag_evolution->reproduceFromArchive(
+                    archive_ids,
+                    raw,
+                    evaluated.size(),
+                    generation,
+                    route.me_neat_init_generations,
+                    route.me_neat_line_sigma,
+                    route.me_neat_mutation_boost);
+            } else {
+                // L2.8 v14 ME-NEAT (implicit fitness-shaped) or v8-v13
+                // plain NEAT: suppress non-cell-elite fitness if archive
+                // is enabled, then call the standard reproduce path.
+                const std::vector<EvaluatedIndividual>* breed_evaluated = &evaluated;
+                std::vector<EvaluatedIndividual> evaluated_for_breeding;
+                if (route.me_neat_enabled && !me_archive.cells().empty()) {
+                    evaluated_for_breeding = evaluated;
+                    const auto elite_set = me_archive.eliteIdSet();
+                    for (auto& ev : evaluated_for_breeding) {
+                        if (!elite_set.contains(ev.genome_id)) {
+                            ev.fitness *= route.me_neat_non_elite_weight;
+                        }
                     }
+                    breed_evaluated = &evaluated_for_breeding;
                 }
-                breed_evaluated = &evaluated_for_breeding;
+                next_population = evolution.reproduce(*breed_evaluated, raw, nullptr);
             }
-            next_population = evolution.reproduce(*breed_evaluated, raw, nullptr);
             next_species_populations.reserve(species_contexts.size());
             for (std::size_t i = 0; i < species_contexts.size(); ++i) {
                 if (species_contexts[i].population.empty()) {
