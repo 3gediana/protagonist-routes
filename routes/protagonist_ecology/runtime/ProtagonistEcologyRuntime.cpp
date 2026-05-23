@@ -291,6 +291,18 @@ struct MemoryAblationAggregate {
     std::size_t protagonist_attack_events{0};
     std::size_t protagonist_deaths{0};
     std::size_t signal_emit_events{0};
+    // A2.4 fairness exposure: per-episode CreditFairnessMetrics summed,
+    // plus a count of episodes that actually had any payouts (so we can
+    // average freeloader_ratio / share_gini / top_share_mean only over
+    // non-empty episodes; empty-episode 0s would deflate the numbers
+    // and create a false signal of perfect equality).
+    double credit_freeloader_ratio_sum{0.0};
+    double credit_share_gini_sum{0.0};
+    double credit_top_share_mean_sum{0.0};
+    double credit_total_reward_sum{0.0};
+    std::size_t credit_episodes_with_payouts{0};
+    std::size_t credit_payout_count_sum{0};
+    std::size_t credit_source_count_sum{0};
 };
 
 struct MemoryAblationResultRow {
@@ -319,6 +331,14 @@ struct MemoryAblationResultRow {
     double signal_co_attendance_avg{0.0};
     double dnc_usage_mean_avg{0.0};
     double dnc_read_peak_avg{0.0};
+    // A2.4 fairness exposure (averaged over episodes that had at least
+    // one CreditPayout; 0.0 when no payouts at all in this variant).
+    double credit_freeloader_ratio{0.0};
+    double credit_share_gini{0.0};
+    double credit_top_share_mean{0.0};
+    double credit_total_reward{0.0};
+    double credit_payout_count_avg{0.0};
+    double credit_source_count_avg{0.0};
 };
 
 struct ResolvedBackgroundSlot {
@@ -1506,7 +1526,8 @@ void evaluatePopulation(World2D& world,
                         const std::vector<BackgroundSpecies>& background_species,
                         BehaviorAccumulator& behavior,
                         const std::atomic<bool>& stop_requested,
-                        TraceRecorder* trace_recorder) {
+                        TraceRecorder* trace_recorder,
+                        CreditFairnessMetrics* out_fairness = nullptr) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) {
         throw std::runtime_error("AgentLayer missing from protagonist training world");
@@ -2972,6 +2993,13 @@ void evaluatePopulation(World2D& world,
         std::string credit_tag = route.scenario_name;
         credit_tag += "/ep_";
         credit_tag += std::to_string(epoch_us);
+        // A2.4 expose: optional fairness aggregation for caller (e.g. memory
+        // ablation) to expose freeloader_ratio / share_gini / top_share_mean
+        // / total_reward in its result CSV without re-reading _credit_log.csv.
+        // Computed BEFORE appendCsv so payouts_ is the full episode log.
+        if (out_fairness != nullptr) {
+            *out_fairness = credit_ledger.computeFairness(0xFFu);
+        }
         credit_ledger.appendCsv("data/runs/_credit_log.csv", credit_tag);
         // A3.S1: flush this episode's communication metrics on the same tag.
         // Each row is a (scenario_name, generation, channel) tuple; the
@@ -3317,7 +3345,9 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
            "deposits_avg,completed_worksites_avg,worksite_completion_events_avg,signal_emitters_avg,"
            "signal_emit_events_avg,signal_response_events_avg,signal_co_attendance_avg,"
            "signal_producer_count_avg,signal_listener_count_avg,signal_responder_count_avg,"
-           "dnc_usage_mean_avg,dnc_read_peak_avg\n";
+           "dnc_usage_mean_avg,dnc_read_peak_avg,"
+           "credit_freeloader_ratio,credit_share_gini,credit_top_share_mean,"
+           "credit_total_reward,credit_payout_count_avg,credit_source_count_avg\n";
 
     std::vector<MemoryAblationResultRow> rows;
     rows.reserve(memoryAblationTasks().size() * memoryAblationVariants().size());
@@ -3441,6 +3471,7 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
 
                 BehaviorAccumulator episode_behavior;
                 const std::vector<BackgroundSpecies> no_background_species;
+                CreditFairnessMetrics episode_fairness;
                 evaluatePopulation(*world,
                                    episode_route,
                                    params,
@@ -3448,7 +3479,8 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                                    no_background_species,
                                    episode_behavior,
                                    stop_requested_,
-                                   trace_recorder.get());
+                                   trace_recorder.get(),
+                                   &episode_fairness);
                 world->eventBus().unsubscribe(sub_signal);
                 world->eventBus().unsubscribe(sub_died);
                 world->eventBus().unsubscribe(sub_attack);
@@ -3468,6 +3500,19 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                     aggregate.avg_health_ratio_sum += 1.0;
                     aggregate.avg_hydration_ratio_sum += 1.0;
                 }
+
+                // A2.4: accumulate fairness only over episodes with payouts
+                // (otherwise an empty episode injects 0 freeloader_ratio /
+                // 0 share_gini and would dilute the signal).
+                if (episode_fairness.payout_count > 0) {
+                    aggregate.credit_freeloader_ratio_sum += episode_fairness.freeloader_ratio;
+                    aggregate.credit_share_gini_sum       += episode_fairness.share_gini;
+                    aggregate.credit_top_share_mean_sum   += episode_fairness.top_share_mean;
+                    ++aggregate.credit_episodes_with_payouts;
+                }
+                aggregate.credit_total_reward_sum  += episode_fairness.total_reward;
+                aggregate.credit_payout_count_sum  += episode_fairness.payout_count;
+                aggregate.credit_source_count_sum  += episode_fairness.source_count;
             }
 
             const auto evaluated = collectEvaluated(population, aggregate.fitness_sum, settings.episodes_per_task);
@@ -3501,6 +3546,19 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
             row.dnc_read_peak_avg = aggregate.behavior.dnc_samples > 0
                 ? aggregate.behavior.dnc_read_peak_sum / static_cast<double>(aggregate.behavior.dnc_samples)
                 : 0.0;
+            // A2.4: average fairness across episodes with payouts only.
+            // total_reward / payout_count / source_count are averaged over
+            // episodes_per_task (these are sums, divide-by-0 not possible).
+            const double eps_with_pay = static_cast<double>(aggregate.credit_episodes_with_payouts);
+            row.credit_freeloader_ratio = eps_with_pay > 0.0
+                ? aggregate.credit_freeloader_ratio_sum / eps_with_pay : 0.0;
+            row.credit_share_gini = eps_with_pay > 0.0
+                ? aggregate.credit_share_gini_sum / eps_with_pay : 0.0;
+            row.credit_top_share_mean = eps_with_pay > 0.0
+                ? aggregate.credit_top_share_mean_sum / eps_with_pay : 0.0;
+            row.credit_total_reward = averagePerEpisode(aggregate.credit_total_reward_sum, settings.episodes_per_task);
+            row.credit_payout_count_avg = averagePerEpisode(static_cast<double>(aggregate.credit_payout_count_sum), settings.episodes_per_task);
+            row.credit_source_count_avg = averagePerEpisode(static_cast<double>(aggregate.credit_source_count_sum), settings.episodes_per_task);
             rows.push_back(row);
 
             csv << memoryAblationTaskName(row.task) << ','
@@ -3528,7 +3586,13 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                 << row.signal_listener_count_avg << ','
                 << row.signal_responder_count_avg << ','
                 << row.dnc_usage_mean_avg << ','
-                << row.dnc_read_peak_avg << '\n';
+                << row.dnc_read_peak_avg << ','
+                << row.credit_freeloader_ratio << ','
+                << row.credit_share_gini << ','
+                << row.credit_top_share_mean << ','
+                << row.credit_total_reward << ','
+                << row.credit_payout_count_avg << ','
+                << row.credit_source_count_avg << '\n';
             csv.flush();
         }
     }

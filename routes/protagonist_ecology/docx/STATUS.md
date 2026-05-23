@@ -1,11 +1,17 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-23 下午（**L2.9 v16 公平 scale 验证：v15 数据被分母放大 20-35%，但 v16 vs v8 仍 18.7× alive / 75× crafts 真实大跃进**）
+> 最后巡检：2026-05-23 下午（**A2.4 fairness 暴露 CSV 收口：Stage A 100% 完成；v16 公平 scale 验证完成**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`v16 fair-scale validation (pending commit)`
+> 当前 HEAD：`A2.4 fairness CSV exposure (pending commit)`
 >
-> **2026-05-23 下午 L2.9 v16 公平 scale 验证**（验证数据 + toml + py 待 commit）：
+> **2026-05-23 下午 A2.4 fairness 暴露到 memory_ablation_results.csv 收口**（Stage A 100% 完成，pending commit）：
+> - **背景**：A2 Credit/EventLineage 主线唯一剩的 [~] 是 fairness 指标暴露到 CSV。`CreditLedger::computeFairness` 已实现并 4 gtest 覆盖（freeloader_ratio / share_gini / top_share_mean / total_reward），但只写到 `data/runs/_credit_log.csv` 的逐 payout 行，没有 per-(task, variant) 聚合到 `memory_ablation_results.csv`。
+> - **改造**：7 处 surgical 编辑——`evaluatePopulation` 加可选 `CreditFairnessMetrics* out_fairness = nullptr` 参数（默认 nullptr，training call site 4009 零影响）；函数末尾在 `appendCsv` 前 `if (out_fairness) *out = computeFairness(0xFFu)`；`MemoryAblationAggregate` 加 4 sums + 3 计数；`MemoryAblationResultRow` 加 4 fairness + 2 count avg；memory ablation call site 传 `&episode_fairness`；episode loop 内"只在 payout_count>0 时累加 fairness 三指标"（避免空 episode 0s 注入假"完美平均"）；CSV header + write 加 6 列。
+> - **验证**：166/166 tests 全过；用 v16 best genome resume eval `tmp/a24_fairness_test/a24_test.toml`（5 ablation variants × 7 tasks × 2 episodes = 70 episodes）；35 行 csv 的 6 列全部正常生成；26 行 non-zero fairness 数据真实分化：`comm_build_request/baseline` gini=0.267 top_share=0.804 显示少数人扛 80% 工作；`signal_response/baseline` gini=0.475 freeloader=0.024 显示 2.4% free rider；`comm_danger_warning/baseline` 最活跃 payouts=37 sources=13；`water_return` total_reward=0 合理（该任务无 build/hunt/signal reward 输出）。
+> - **意义**：Stage A 主线 100% 完成（A1 全 [x]、A2 全 [x]、A3 全 [x]）。下一步默认进 Stage B（物种角色 R-005），但 v16 留的 hunting 退化（archive 偏 build 挤掉 hunt genes）会污染"群猎者"角色验证，建议先修后再进 B 阶段。
+>
+> **2026-05-23 下午 L2.9 v16 公平 scale 验证**（验证数据 + toml + py 已 commit 98f508f）：
 > - **背景**：v15 报告"24× v8 alive / 97× v8 crafts"，但 v15 用 protag=8 / ep=6（每代 48 evals），v8 用 protag=24 / ep=3（每代 72 evals）；per-(protag×ep) 归一化只能消除统计 bias，不能消除生态动力学差异（资源人均充足度）。用户选 #3 公平 scale 路线验证 v15 是否被分母扭曲。
 > - **改造**：复制 `tmp/v15_qd_real/v15_qd_real.toml` → `tmp/v16_fair/v16_fair.toml`，仅改 3 处：`scenario_name`、`runs_dir`、`population.protagonist.count: 8 → 24`、`episodes_per_generation: 6 → 3`。其余配置（archive、me_neat 4 字段、reward、task_template、background）完全不动。无代码改动，复用 v15 同一 binary。
 > - **v16 60-gen 验证 (seed=91, total_prot=720 与 v8 完全匹配)**：

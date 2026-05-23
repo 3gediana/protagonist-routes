@@ -5,11 +5,11 @@
 ## ⏱️ 顶部状态
 | 项 | 值 |
 |---|---|
-| **最后更新** | 2026-05-23 下午（**L2.9 v16 公平 scale 验证：v15 数据被分母放大 20-35%，但 v16 vs v8 仍 18.7× alive / 75× crafts 真跃进；avg_fit 4.5× / qd_score 6.7× / me_cov 1.9× 真实改善**） |
+| **最后更新** | 2026-05-23 下午（**A2.4 fairness 暴露 CSV 收口：Stage A 100% 完成；v16 公平 scale 验证**） |
 | **当前阶段** | 🟩 Baseline M0-M5 + 12 Modules MVP + protagonist 长路线 + B 阶段 L1 emergent shelter + L2.1-L2.5 v2 物种差异化 + L2.6 v12 4-机制 autocurriculum + L2.7 v13 HRL sub-rewards + L2.8 v14 ME-NEAT 第一发（implicit, me_cov=4%失败）+ **L2.9 v15 real ME-NEAT 真正突破**。v15 = archive-driven breeding + iso+line crossover + init phase + mutation boost (Mouret 2015 Tutorial + Nilsson 2021 PGA-MAP-Elites + Vassiliades 2018)。**首次出现 build chain 真实涌现** (worksites 2.4/ep vs v8 baseline 0.5; crafts 19.5 vs v8 0.3)。Phase 1 Trace/Resume 完整；Phase 2/3/5/6/7 partial；Phase 4/8 未开始 |
 | **整体进度** | 不再使用"100%"口径：基础仓库与 MVP 已完成，protagonist 长路线 A3 主线已收口、B 阶段 L1 + L2 stack 已上线，剩余 L2-L5 后续 + 行为训练 task 改造 + Phase 4/8 待启动 |
 | **最近会话摘要** | **本会话四阶段 (v14→v14b→v15→v16)**：用户怀疑"地基出错了"→ Tavily 文献调研打脸 v9-v13 → 诊断 3 个地基错 → 选 ME-NEAT。**v14/v14b** me_cov 死在 4%。**第二轮 Tavily 文献**：MAP-Elites 必须 init phase + archive-uniform sampling + Vassiliades 2018 iso+line。**v15 (commit 6c78076 / 4828b16)**：`reproduceFromArchive` + `crossoverLine` + `mutateBoosted` 651 行。60-gen worksites 0.1→2.4, crafts 0.3→19.5, alive 50.2%, me_cov 10%。代价 avg_fit 3191→452。**v16 公平 scale (本轮新增)**：用户质疑 v15 用 protag=8 / ep=6 vs v8 用 24/3，资源人均不公平。**仅改 toml** `v16_fair.toml`：protag.count 8→24, ep 6→3，其他 v15 配置完全不动，复用同 binary，无代码改动。60-gen total_prot=720 与 v8 完全匹配。**v16 真实改善**：avg_fit 452→2052 (×4.54)、qd_score 5922→39743 (×6.71)、me_cov 10%→20% (×1.88)、coop_per_prot 24→100 (×4.23)；**v15 数据被分母放大 20-35%**：alive 50.2%→39.2%, works 0.05→0.032, crafts 0.41→0.32, hunts 0.36→0.24 公平 scale 后退化；**v16 vs v8 真实**：alive 18.7×、chops 24×、works 4.6×、crafts 75× 仍是巨大跃进。**未解决**：throws 1082 仍恶化（BD 不含 throw）、hunts 0.24 退化更严重（archive 偏 build）。 |
-| **下一步建议** | v16 公平验证完成。下一步候选 (排序按代价/收益)：(a) **v15 真实"涌现"已立证**——可暂停迭代等用户决策；(b) **改 BD 设计** 加 hunt 或扩 4D 让 archive 真正铺满 + 防止 hunting genes 被挤掉；(c) **120-gen 长训** v16_fair 配置看 me_cov 是否能 30%+；(d) **解决 throws 失控** —— BD 加 throw 维度 或加 throw_penalty。**仍不要默认开 overnight 长训、不要扩 BrainV3、不要进 3D/live 线**。 |
+| **下一步建议** | **A2.4 收口 + v16 公平验证完成**，Stage A 100% 完成，下一步候选：(a) **进 Stage B B1（物种角色 R-005）** 写 4 个角色证据链模板 + audit BootstrapPopulation archetype 差距（按文档严格走，但 v16 hunting 退化会污染"群猎者"角色验证）；(b) **先修 v16 hunting 退化** —— BD 从 2D 扩到 3D 加 hunts 维度，让 archive 不再挤掉 hunting genes，再进 Stage B；(c) **120-gen 长训** v16_fair 配置看 me_cov 是否能 30%+。**仍不要默认开 overnight 长训、不要扩 BrainV3、不要进 3D/live 线**。 |
 
 ---
 
