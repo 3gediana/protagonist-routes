@@ -41,6 +41,17 @@ WorksiteLayer::WorksiteLayer(std::size_t site_count,
       shelter_energy_bonus_(shelter_energy_bonus),
       rng_(seed == 0 ? std::random_device{}() : seed) {}
 
+void WorksiteLayer::setBuildingTypeWeights(float wall, float shelter, float storage, float lookout) {
+    const float total = wall + shelter + storage + lookout;
+    if (total <= 0.0f) {
+        building_type_weights_ = {1.0f, 0.0f, 0.0f, 0.0f};
+        return;
+    }
+    building_type_weights_ = {
+        wall / total, shelter / total, storage / total, lookout / total
+    };
+}
+
 void WorksiteLayer::onAttach(IWorld& world) {
     base_ = world.getLayer<BaseLayer>();
     agents_ = world.getLayer<AgentLayer>();
@@ -52,6 +63,8 @@ void WorksiteLayer::tick(IWorld& world, float dt) {
     absorbCarriedMaterials(world);
     absorbNearbyMaterials();
     progressConstruction(world, dt);
+    // Layer 5 R2: completed Storage buildings keep absorbing.
+    absorbToCompletedStorages(world);
     // Emergent shelter L1: completed worksites act as collidable walls
     // for predators. Runs after AgentLayer (tickOrder 100 < 155) so the
     // movement positions for this tick are already in agent->position()
@@ -152,6 +165,71 @@ bool WorksiteLayer::isShelteredAt(Vec2 pos) const {
     return buildingAt(pos, BuildingType::Shelter).has_value();
 }
 
+std::size_t WorksiteLayer::totalStorageSticks() const {
+    std::size_t total = 0;
+    for (const auto& s : sites_) {
+        if (s.completed && s.building_type == BuildingType::Storage) {
+            total += s.stored_sticks_overflow;
+        }
+    }
+    return total;
+}
+
+std::size_t WorksiteLayer::totalStorageStones() const {
+    std::size_t total = 0;
+    for (const auto& s : sites_) {
+        if (s.completed && s.building_type == BuildingType::Storage) {
+            total += s.stored_stones_overflow;
+        }
+    }
+    return total;
+}
+
+void WorksiteLayer::absorbToCompletedStorages(IWorld& world) {
+    if (objects_ == nullptr || agents_ == nullptr) return;
+
+    const double now = world.currentTimeSeconds();
+    const Tick now_tick = world.currentTick();
+
+    for (auto& site : sites_) {
+        if (!site.completed || site.building_type != BuildingType::Storage) continue;
+
+        for (auto* agent : agents_->agents()) {
+            if (agent == nullptr || !agent->alive() || !agent->isCarrying()) continue;
+            if (Vec2::distanceSquared(agent->position(), site.position) > site.radius * site.radius) continue;
+
+            auto* object = objects_->findById(agent->carriedObject());
+            if (object == nullptr) {
+                agent->setCarriedObject(0);
+                continue;
+            }
+
+            std::uint8_t material_type = 0;
+            if (object->type == ObjectType::Stick) {
+                ++site.stored_sticks_overflow;
+                material_type = static_cast<std::uint8_t>(ObjectType::Stick);
+            } else if (object->type == ObjectType::Stone) {
+                ++site.stored_stones_overflow;
+                material_type = static_cast<std::uint8_t>(ObjectType::Stone);
+            } else {
+                continue;
+            }
+
+            object->velocity = kZeroVec2;
+            object->pos = site.position;
+            object->carried = true;
+            const AgentId depositor = agent->id();
+            agent->setCarriedObject(0);
+
+            world.eventBus().publish(events::Event{
+                events::EventType::WorksiteMaterialDeposited,
+                events::WorksiteMaterialDeposited{depositor, site.id, material_type, now},
+                now_tick,
+                now});
+        }
+    }
+}
+
 void WorksiteLayer::spawnCompletedAt(Vec2 position) {
     Worksite site{};
     site.id = sites_.size() + 1u;
@@ -241,7 +319,19 @@ void WorksiteLayer::seedSites(Vec2 world_size) {
         ws.radius = interaction_radius_;
         ws.active = false;
         ws.completed = false;
-        ws.building_type = BuildingType::Wall;
+        // L5 R2: sample building_type from configured distribution.
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const float roll = u(rng_);
+        float cum = 0.0f;
+        BuildingType chosen = BuildingType::Wall;
+        for (std::size_t bt = 0; bt < 4; ++bt) {
+            cum += building_type_weights_[bt];
+            if (roll <= cum) {
+                chosen = static_cast<BuildingType>(bt);
+                break;
+            }
+        }
+        ws.building_type = chosen;
         ws.stored_sticks = 0;
         ws.stored_stones = 0;
         ws.required_sticks = required_sticks_;

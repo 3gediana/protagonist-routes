@@ -233,7 +233,7 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
     }
 
     if (config.base.enabled && config.worksite.enabled) {
-        world->addLayer(std::make_unique<WorksiteLayer>(
+        auto worksite_layer = std::make_unique<WorksiteLayer>(
             config.worksite.count,
             config.worksite.spawn_radius,
             config.worksite.interaction_radius,
@@ -241,7 +241,14 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.worksite.required_stones,
             config.worksite.assembly_rate,
             config.worksite.shelter_energy_bonus,
-            config.random_seed + 903));
+            config.random_seed + 903);
+        // L5 R2: building type distribution (default: all Wall).
+        worksite_layer->setBuildingTypeWeights(
+            config.worksite.type_dist_wall,
+            config.worksite.type_dist_shelter,
+            config.worksite.type_dist_storage,
+            config.worksite.type_dist_lookout);
+        world->addLayer(std::move(worksite_layer));
     }
 
     if (config.intervention.enabled) {

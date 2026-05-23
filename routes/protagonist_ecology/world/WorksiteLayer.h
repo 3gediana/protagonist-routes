@@ -4,6 +4,7 @@
 #include "core/types/Aliases.h"
 #include "core/types/Vec2.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -50,6 +51,11 @@ struct Worksite {
     std::size_t stored_stones;
     std::size_t required_sticks;
     std::size_t required_stones;
+    // L5 R2: Storage building's overflow stockpile (after construction
+    // completes, agents can keep depositing into Storage; these are
+    // 'second-tier' resources protected from environmental loss).
+    std::size_t stored_sticks_overflow{0};
+    std::size_t stored_stones_overflow{0};
     float build_progress;
 
     // Continuous-time bookkeeping (CT-2/CT-3).
@@ -77,6 +83,11 @@ public:
                   float assembly_rate,
                   float shelter_energy_bonus,
                   std::uint32_t seed);
+
+    // Layer 5 R2: post-construction setter for building type weights.
+    // Factory calls this before onAttach if it wants non-default
+    // (all-Wall) distribution. Weights are normalized internally.
+    void setBuildingTypeWeights(float wall, float shelter, float storage, float lookout);
 
     const char* layerName() const override { return kName; }
     void onAttach(IWorld& world) override;
@@ -110,10 +121,18 @@ public:
     // recovery / thunderstorm ignition for sheltered agents.
     bool isShelteredAt(Vec2 pos) const;
 
+    // Layer 5 R2: total counts across all completed Storage buildings.
+    // Useful for protagonist stockpile-aware perception / reward logic.
+    std::size_t totalStorageSticks() const;
+    std::size_t totalStorageStones() const;
+
 private:
     void seedSites(Vec2 world_size);
     void absorbCarriedMaterials(IWorld& world);
     void absorbNearbyMaterials();
+    // L5 R2: completed Storage buildings keep absorbing carried sticks/stones
+    // into their overflow stockpile. Protected against tree-fall etc.
+    void absorbToCompletedStorages(IWorld& world);
     void progressConstruction(IWorld& world, float dt);
     // Pushes predators that walked into a completed wall back out to its
     // boundary. Called from tick() at tickOrder=155 (after AgentLayer
@@ -132,6 +151,8 @@ private:
     float shelter_energy_bonus_;
     std::mt19937 rng_;
     std::vector<Worksite> sites_;
+    // L5 R2: building type distribution. Normalized so it sums to 1.
+    std::array<float, 4> building_type_weights_{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
 }  // namespace neuro::routes::protagonist

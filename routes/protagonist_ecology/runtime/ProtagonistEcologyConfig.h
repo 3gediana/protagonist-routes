@@ -182,6 +182,13 @@ struct WorksiteConfig {
     // ready-to-build site without flipping the whole role to "live" (which
     // would also re-seed objects with extra stones, ignite a campfire, etc).
     bool preactivate{false};
+    // Layer 5 R2: distribution of building types when seeding worksites.
+    // Sum should be ~1.0; the factory normalizes anyway. Default = all Wall
+    // for backward compatibility with v1-v17 training configs.
+    float type_dist_wall{1.0f};
+    float type_dist_shelter{0.0f};
+    float type_dist_storage{0.0f};
+    float type_dist_lookout{0.0f};
 };
 
 struct InterventionConfig {

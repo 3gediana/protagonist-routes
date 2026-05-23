@@ -228,6 +228,10 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.worksite.shelter_energy_bonus = config.getOr<float>("world.worksite.shelter_energy_bonus", out.worksite.shelter_energy_bonus);
     out.worksite.direction_requires_visibility = config.getOr<bool>("world.worksite.direction_requires_visibility", out.worksite.direction_requires_visibility);
     out.worksite.preactivate = config.getOr<bool>("world.worksite.preactivate", out.worksite.preactivate);
+    out.worksite.type_dist_wall    = config.getOr<float>("world.worksite.type_dist_wall",    out.worksite.type_dist_wall);
+    out.worksite.type_dist_shelter = config.getOr<float>("world.worksite.type_dist_shelter", out.worksite.type_dist_shelter);
+    out.worksite.type_dist_storage = config.getOr<float>("world.worksite.type_dist_storage", out.worksite.type_dist_storage);
+    out.worksite.type_dist_lookout = config.getOr<float>("world.worksite.type_dist_lookout", out.worksite.type_dist_lookout);
 
     out.intervention.enabled = config.getOr<bool>("world.intervention.enabled", out.intervention.enabled);
     out.intervention.initial_budget = config.getOr<float>("world.intervention.initial_budget", out.intervention.initial_budget);
