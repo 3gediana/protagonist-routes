@@ -798,6 +798,37 @@ std::unique_ptr<Agent> makeBackgroundAgent(AgentId id,
     return makeNeatSpeciesAgent(id, archetype, *neat, config, rng);
 }
 
+void stampLifecycleAndLineage(Agent& agent,
+                              SpeciesArchetype archetype,
+                              const ProtagonistEcologyConfig& config,
+                              std::uint64_t lineage_id,
+                              std::mt19937& jitter_rng) {
+    agent.setArchetypeTag(static_cast<std::uint8_t>(archetype));
+    agent.setLineageId(lineage_id);
+    agent.setParentLineages(0, 0);  // founder
+    agent.setBirthGeneration(0);
+
+    // Per-archetype max_age with +-15% jitter for population age spread.
+    SimTimeSeconds base_max_age = 0.0;
+    switch (archetype) {
+        case SpeciesArchetype::Protagonist:    base_max_age = config.population.max_age_protagonist;     break;
+        case SpeciesArchetype::LargeHerbivore: base_max_age = config.population.max_age_large_herbivore; break;
+        case SpeciesArchetype::SmallForager:   base_max_age = config.population.max_age_small_forager;   break;
+        case SpeciesArchetype::ApexPredator:   base_max_age = config.population.max_age_apex_predator;   break;
+        case SpeciesArchetype::PackHunter:     base_max_age = config.population.max_age_pack_hunter;     break;
+        case SpeciesArchetype::AmbushPredator: base_max_age = config.population.max_age_ambush_predator; break;
+        case SpeciesArchetype::Scavenger:      base_max_age = config.population.max_age_scavenger;       break;
+        case SpeciesArchetype::Omnivore:       base_max_age = config.population.max_age_omnivore;        break;
+        case SpeciesArchetype::Rabbit:         base_max_age = config.population.max_age_rabbit;          break;
+    }
+    if (base_max_age > 0.0) {
+        std::uniform_real_distribution<double> u(0.85, 1.15);
+        agent.setMaxAgeSeconds(base_max_age * u(jitter_rng));
+    } else {
+        agent.setMaxAgeSeconds(0.0);
+    }
+}
+
 void seedBootstrapPopulation(World2D& world,
                              const ProtagonistEcologyConfig& config,
                              std::uint64_t& next_agent_id,
@@ -809,29 +840,34 @@ void seedBootstrapPopulation(World2D& world,
 
     std::mt19937 rng(config.random_seed == 0 ? std::random_device{}() : config.random_seed + 7000);
     std::uint64_t next_genome_id = 1;
+    std::uint64_t next_lineage = 1;
     const auto* base_layer = world.getLayer<BaseLayer>();
 
     if (protagonist_population != nullptr) {
         for (const auto& genome : *protagonist_population) {
             if (genome == nullptr) continue;
             auto agent = makeProtagonistAgent(AgentId{next_agent_id++}, *genome, config, rng, base_layer);
+            stampLifecycleAndLineage(*agent, SpeciesArchetype::Protagonist, config, next_lineage++, rng);
             agent_layer->addAgent(std::move(agent), world);
             next_genome_id = std::max(next_genome_id, genome->id().value + 1);
         }
     } else {
         for (std::size_t i = 0; i < config.protagonist.count; ++i) {
             auto agent = makeProtagonistAgent(AgentId{next_agent_id++}, GenomeId{next_genome_id++}, nullptr, config, base_layer, rng);
+            stampLifecycleAndLineage(*agent, SpeciesArchetype::Protagonist, config, next_lineage++, rng);
             agent_layer->addAgent(std::move(agent), world);
         }
     }
 
     for (std::size_t i = 0; i < config.background.forager_count; ++i) {
         auto agent = makeBackgroundForager(AgentId{next_agent_id++}, GenomeId{next_genome_id++}, config, rng);
+        stampLifecycleAndLineage(*agent, SpeciesArchetype::SmallForager, config, next_lineage++, rng);
         agent_layer->addAgent(std::move(agent), world);
     }
 
     for (std::size_t i = 0; i < config.background.predator_count; ++i) {
         auto agent = makeBackgroundPredator(AgentId{next_agent_id++}, GenomeId{next_genome_id++}, config, rng);
+        stampLifecycleAndLineage(*agent, SpeciesArchetype::PackHunter, config, next_lineage++, rng);
         agent_layer->addAgent(std::move(agent), world);
     }
 }
@@ -847,6 +883,7 @@ void seedTrainingPopulation(World2D& world,
     }
 
     std::mt19937 rng(config.random_seed == 0 ? std::random_device{}() : config.random_seed + 7000);
+    std::uint64_t next_lineage = 1;
     const auto* base_layer = world.getLayer<BaseLayer>();
 
     for (const auto& genome : protagonist_population) {
@@ -854,6 +891,7 @@ void seedTrainingPopulation(World2D& world,
             continue;
         }
         auto agent = makeProtagonistAgent(AgentId{next_agent_id++}, *genome, config, rng, base_layer);
+        stampLifecycleAndLineage(*agent, SpeciesArchetype::Protagonist, config, next_lineage++, rng);
         agent_layer->addAgent(std::move(agent), world);
     }
 
@@ -862,9 +900,63 @@ void seedTrainingPopulation(World2D& world,
         for (const auto& genome : *species.population) {
             if (genome == nullptr) continue;
             auto agent = makeBackgroundAgent(AgentId{next_agent_id++}, species.archetype, *genome, config, rng);
+            stampLifecycleAndLineage(*agent, species.archetype, config, next_lineage++, rng);
+            // L4: archive genome clone for in-world reproduction.
+            agent->setGenomeArchive(genome->clone());
             agent_layer->addAgent(std::move(agent), world);
         }
     }
+}
+
+std::unique_ptr<Agent> makeChildFromParents(const Agent& parent_a,
+                                            const Agent& parent_b,
+                                            AgentId new_agent_id,
+                                            GenomeId new_genome_id,
+                                            const ProtagonistEcologyConfig& config,
+                                            std::mt19937& rng) {
+    // Protagonist breeding happens cross-episode through ProtagonistEvolution;
+    // skip in-world for now.
+    const auto archetype = static_cast<SpeciesArchetype>(parent_a.archetypeTag());
+    if (archetype == SpeciesArchetype::Protagonist) return nullptr;
+
+    // Pick the more fit parent's genome as the source for cloning.
+    const Agent& src = (parent_a.fitness() >= parent_b.fitness()) ? parent_a : parent_b;
+    const IGenome* src_genome = src.genomeArchive();
+    if (src_genome == nullptr) return nullptr;
+
+    auto child_genome_base = src_genome->clone();
+    auto* child_neat = dynamic_cast<NeatGenome*>(child_genome_base.get());
+    if (child_neat == nullptr) return nullptr;
+    child_neat->setId(new_genome_id);
+
+    // Apply small Gaussian noise to weights (in-world micro-mutation).
+    // Cross-episode evolution still does proper NEAT crossover/mutate.
+    std::normal_distribution<float> noise(0.0f, 0.08f);
+    auto& conns = child_neat->connections();
+    for (auto& c : conns) {
+        c.weight += noise(rng);
+        if (c.weight > 5.0f) c.weight = 5.0f;
+        if (c.weight < -5.0f) c.weight = -5.0f;
+    }
+
+    // Build the child Agent using the proper archetype wiring.
+    auto child = makeNeatSpeciesAgent(new_agent_id, archetype, *child_neat, config, rng);
+    if (child == nullptr) return nullptr;
+
+    // Place the child near the midpoint of its parents.
+    const Vec2 pa = parent_a.position();
+    const Vec2 pb = parent_b.position();
+    std::uniform_real_distribution<float> jitter(-1.5f, 1.5f);
+    child->setPosition(Vec2{(pa.x + pb.x) * 0.5f + jitter(rng),
+                            (pa.y + pb.y) * 0.5f + jitter(rng)});
+
+    // Copy archetype tag and assign max_age (with jitter for spread).
+    stampLifecycleAndLineage(*child, archetype, config, /*lineage=*/0, rng);
+    // PopulationLayer will overwrite lineage_id / parents / generation.
+
+    // Archive the (mutated) genome for the child's own future breeding.
+    child->setGenomeArchive(std::move(child_genome_base));
+    return child;
 }
 
 }  // namespace neuro::routes::protagonist

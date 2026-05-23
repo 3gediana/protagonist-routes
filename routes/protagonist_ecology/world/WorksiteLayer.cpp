@@ -118,11 +118,38 @@ bool WorksiteLayer::blocksPredatorAt(Vec2 pos) const {
         if (!site.completed) {
             continue;
         }
+        // Layer 5: only Wall-type buildings block predators.
+        if (site.building_type != BuildingType::Wall) continue;
         if (Vec2::distanceSquared(site.position, pos) < site.radius * site.radius) {
             return true;
         }
     }
     return false;
+}
+
+const char* buildingTypeName(BuildingType t) {
+    switch (t) {
+        case BuildingType::Wall:    return "wall";
+        case BuildingType::Shelter: return "shelter";
+        case BuildingType::Storage: return "storage";
+        case BuildingType::Lookout: return "lookout";
+    }
+    return "unknown";
+}
+
+std::optional<Worksite> WorksiteLayer::buildingAt(Vec2 pos, BuildingType type) const {
+    for (const auto& site : sites_) {
+        if (!site.completed) continue;
+        if (site.building_type != type) continue;
+        if (Vec2::distanceSquared(site.position, pos) < site.radius * site.radius) {
+            return site;
+        }
+    }
+    return std::nullopt;
+}
+
+bool WorksiteLayer::isShelteredAt(Vec2 pos) const {
+    return buildingAt(pos, BuildingType::Shelter).has_value();
 }
 
 void WorksiteLayer::spawnCompletedAt(Vec2 position) {
@@ -208,17 +235,19 @@ void WorksiteLayer::seedSites(Vec2 world_size) {
             const float radius = radius_dist(rng_);
             position = anchor + Vec2{std::cos(angle) * radius, std::sin(angle) * radius};
         }
-        sites_.push_back(Worksite{
-            i + 1u,
-            clampToWorld(position, world_size),
-            interaction_radius_,
-            false,
-            false,
-            0,
-            0,
-            required_sticks_,
-            required_stones_,
-            0.0f});
+        Worksite ws{};
+        ws.id = i + 1u;
+        ws.position = clampToWorld(position, world_size);
+        ws.radius = interaction_radius_;
+        ws.active = false;
+        ws.completed = false;
+        ws.building_type = BuildingType::Wall;
+        ws.stored_sticks = 0;
+        ws.stored_stones = 0;
+        ws.required_sticks = required_sticks_;
+        ws.required_stones = required_stones_;
+        ws.build_progress = 0.0f;
+        sites_.push_back(std::move(ws));
     }
 }
 

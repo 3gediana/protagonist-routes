@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/interfaces/IAgent.h"
+#include "core/interfaces/IGenome.h"
 
 #include "core/pathogen/Pathogen.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -318,6 +319,77 @@ public:
         return 1.0f;
     }
 
+    // ---- Layer 4 (Final Blueprint, 2026-05-24) lifecycle + lineage ----
+    // R-006 lifecycle: agent has explicit life stage derived from
+    // ageSeconds() vs maxAgeSeconds(). PopulationLayer auto-kills with
+    // DeathCause::OldAge when age exceeds max_age.
+    enum class LifecycleStage : std::uint8_t {
+        Juvenile = 0,  // 0..25% of max_age - cannot reproduce, lower metabolism
+        Adult    = 1,  // 25..90% - reproductive, full metabolism
+        Elder    = 2,  // 90..100% - cannot reproduce, increased mortality
+    };
+
+    enum class DeathCause : std::uint8_t {
+        Unknown      = 0,
+        Starvation   = 1,
+        Dehydration  = 2,
+        Predation    = 3,
+        Combat       = 4,
+        OldAge       = 5,
+        Disease      = 6,
+        Thermal      = 7,  // hypo/hyperthermia
+        Drowning     = 8,  // (reserved)
+    };
+
+    // Archetype tag (uint8_t for core/route decoupling). Protagonist=0,
+    // background species 1..N. PopulationLayer reads this tag via its
+    // SpawnCallback to dispatch the right factory.
+    std::uint8_t archetypeTag() const { return archetype_tag_; }
+    void setArchetypeTag(std::uint8_t tag) { archetype_tag_ = tag; }
+
+    SimTimeSeconds maxAgeSeconds() const { return max_age_seconds_; }
+    void setMaxAgeSeconds(SimTimeSeconds v) { max_age_seconds_ = v; }
+    LifecycleStage lifecycleStage() const {
+        if (max_age_seconds_ <= 0.0) return LifecycleStage::Adult;
+        const double r = age_seconds_ / max_age_seconds_;
+        if (r < 0.25) return LifecycleStage::Juvenile;
+        if (r > 0.90) return LifecycleStage::Elder;
+        return LifecycleStage::Adult;
+    }
+
+    // Lineage tracking: lineage_id is unique per founder bloodline.
+    // parent_ids = (mother_lineage, father_lineage); 0 = founder.
+    // birth_generation increments at every reproduction event.
+    std::uint64_t lineageId() const { return lineage_id_; }
+    void setLineageId(std::uint64_t v) { lineage_id_ = v; }
+    std::uint64_t parentLineageA() const { return parent_lineage_a_; }
+    std::uint64_t parentLineageB() const { return parent_lineage_b_; }
+    void setParentLineages(std::uint64_t a, std::uint64_t b) { parent_lineage_a_ = a; parent_lineage_b_ = b; }
+    std::uint32_t birthGeneration() const { return birth_generation_; }
+    void setBirthGeneration(std::uint32_t v) { birth_generation_ = v; }
+
+    DeathCause deathCause() const { return death_cause_; }
+    void killWithCause(DeathCause cause) {
+        alive_ = false;
+        death_cause_ = cause;
+    }
+
+    // Reproduction cooldown timer (sim seconds). When > 0, agent cannot
+    // be a reproductive parent; decremented each tick by PopulationLayer.
+    float reproductionCooldown() const { return reproduction_cooldown_; }
+    void setReproductionCooldown(float v) { reproduction_cooldown_ = std::max(0.0f, v); }
+    void decrementReproductionCooldown(float dt) { reproduction_cooldown_ = std::max(0.0f, reproduction_cooldown_ - dt); }
+    std::uint32_t offspringCount() const { return offspring_count_; }
+    void incrementOffspringCount() { ++offspring_count_; }
+
+    // Owning archive of the genome this agent was born with. Used by
+    // PopulationLayer (Layer 4) to build offspring via clone + small
+    // mutation. Optional: set only for archetypes that participate in
+    // in-world reproduction (not protagonist - that path uses cross-episode
+    // ProtagonistEvolution). Empty by default.
+    const IGenome* genomeArchive() const { return genome_archive_.get(); }
+    void setGenomeArchive(std::unique_ptr<IGenome> g) { genome_archive_ = std::move(g); }
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -378,6 +450,17 @@ private:
     float core_temperature_ = 37.0f;  // °C
     // L2.3 resource niche
     EatEfficiencyByKind eat_efficiency_{};
+    // L4 (Final Blueprint) lifecycle + lineage
+    SimTimeSeconds max_age_seconds_ = 0.0;  // 0 => no aging
+    std::uint64_t lineage_id_ = 0;
+    std::uint64_t parent_lineage_a_ = 0;
+    std::uint64_t parent_lineage_b_ = 0;
+    std::uint32_t birth_generation_ = 0;
+    std::uint32_t offspring_count_ = 0;
+    float reproduction_cooldown_ = 0.0f;  // sec
+    DeathCause death_cause_ = DeathCause::Unknown;
+    std::uint8_t archetype_tag_ = 0;  // 0 = protagonist; 1..N = background
+    std::unique_ptr<IGenome> genome_archive_;  // L4 in-world reproduction
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };

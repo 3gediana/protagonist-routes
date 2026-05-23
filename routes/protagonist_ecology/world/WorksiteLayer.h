@@ -22,12 +22,30 @@ namespace neuro::routes::protagonist {
 
 class BaseLayer;
 
+// Layer 5 (FINAL_BLUEPRINT.md §5): building typology. A worksite/building
+// has one of these types; each affords different gameplay buffs:
+//   Wall      — predator-blocking circle (existing v9 behaviour, default)
+//   Shelter   — yurt-like enclosure: rain protection (no hydration recovery,
+//               no thunderstorm fires inside; visual = Mongolian-yurt-level)
+//   Storage   — material stockpile: nearby agents auto-deposit carried sticks
+//   Lookout   — perception bonus: agents inside see further (PerceptionLayer
+//               can read worksite-of-type-Lookout to widen sight radius)
+enum class BuildingType : std::uint8_t {
+    Wall    = 0,
+    Shelter = 1,
+    Storage = 2,
+    Lookout = 3,
+};
+
+const char* buildingTypeName(BuildingType t);
+
 struct Worksite {
     std::size_t id;
     Vec2 position;
     float radius;
     bool active;
     bool completed;
+    BuildingType building_type{BuildingType::Wall};  // L5
     std::size_t stored_sticks;
     std::size_t stored_stones;
     std::size_t required_sticks;
@@ -83,6 +101,14 @@ public:
     // by tasks that need a pre-built wall in the eval (e.g. before the
     // protagonists themselves can build).
     void spawnCompletedAt(Vec2 position);
+
+    // Layer 5: returns the highest-priority building of `type` whose radius
+    // contains `pos`, or nullopt. Used by other layers to query buffs.
+    std::optional<Worksite> buildingAt(Vec2 pos, BuildingType type) const;
+    // Returns true iff `pos` is sheltered from rain (i.e. inside a completed
+    // Shelter-type building). WeatherLayer reads this to skip hydration
+    // recovery / thunderstorm ignition for sheltered agents.
+    bool isShelteredAt(Vec2 pos) const;
 
 private:
     void seedSites(Vec2 world_size);

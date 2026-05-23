@@ -55,6 +55,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     world/NurseryLogisticsLayer.cpp
     world/NurseryProgressionLayer.cpp
     world/NurserySupplyLayer.cpp
+    world/PopulationLayer.cpp
     world/SandboxStatusLayer.cpp
     world/SurvivalStatusLayer.cpp
     world/TreeLayer.cpp
@@ -117,6 +118,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     world/NurseryLogisticsLayer.h
     world/NurseryProgressionLayer.h
     world/NurserySupplyLayer.h
+    world/PopulationLayer.h
     world/SandboxStatusLayer.h
     world/SurvivalStatusLayer.h
     world/TreeLayer.h

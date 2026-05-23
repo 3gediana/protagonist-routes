@@ -10,6 +10,7 @@
 #include "world/BaseLayer.h"
 #include "world/CampfireLayer.h"
 #include "world/WaterLayer.h"
+#include "world/WorksiteLayer.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -99,9 +100,20 @@ void SurvivalStatusLayer::tick(IWorld& world, float dt) {
                                       : background_hydration_decay_per_second_;
         // Layer 2: rain auto-recovers hydration (rain on skin / drinking
         // puddles). Query WeatherLayer; 0 when no rain.
+        // Layer 5: agents inside a Shelter (yurt) are sheltered from rain
+        // and therefore don't gain rain_recovery — encourages "build shelter
+        // for yourself but stay outside in rain" tradeoff (rain pays back if
+        // you don't have stockpiled water nearby).
         float rain_recovery = 0.0f;
         if (const auto* weather = world.getLayer<WeatherLayer>(); weather != nullptr) {
             rain_recovery = weather->hydrationRecoveryPerSecond();
+            if (rain_recovery > 0.0f) {
+                if (const auto* worksite = world.getLayer<WorksiteLayer>(); worksite != nullptr) {
+                    if (worksite->isShelteredAt(agent->position())) {
+                        rain_recovery = 0.0f;
+                    }
+                }
+            }
         }
         state.hydration = std::clamp(state.hydration + (rain_recovery - decay) * dt,
                                      0.0f, max_hydration_);

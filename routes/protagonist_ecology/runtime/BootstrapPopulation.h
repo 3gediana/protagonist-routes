@@ -74,4 +74,28 @@ void seedTrainingPopulation(World2D& world,
                             const std::vector<BackgroundSpecies>& background_species,
                             std::uint64_t& next_agent_id);
 
+// Layer 4 (FINAL_BLUEPRINT.md): tag founder agents with archetype +
+// per-species max_age. Each founder gets a unique lineage_id seeded
+// from a counter. Call this AFTER makeProtagonistAgent /
+// makeBackgroundAgent and BEFORE addAgent.
+void stampLifecycleAndLineage(Agent& agent,
+                              SpeciesArchetype archetype,
+                              const ProtagonistEcologyConfig& config,
+                              std::uint64_t lineage_id,
+                              std::mt19937& jitter_rng);
+
+// Layer 4: build a child agent given two parent agents. PopulationLayer
+// uses this in its SpawnCallback. Currently asexual: clones the
+// better-fit parent's NEAT genome, applies small Gaussian weight noise,
+// builds an Agent with the correct archetype's perceptions/capabilities,
+// and stamps lifecycle metadata. Returns nullptr for archetypes that
+// don't support in-world breeding (e.g. Protagonist - protag breeding
+// happens cross-episode through ProtagonistEvolution).
+std::unique_ptr<Agent> makeChildFromParents(const Agent& parent_a,
+                                            const Agent& parent_b,
+                                            AgentId new_agent_id,
+                                            GenomeId new_genome_id,
+                                            const ProtagonistEcologyConfig& config,
+                                            std::mt19937& rng);
+
 }  // namespace neuro::routes::protagonist
