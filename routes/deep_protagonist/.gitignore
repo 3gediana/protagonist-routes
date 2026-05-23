@@ -1,0 +1,9 @@
+third_party/libtorch/
+third_party/assets/
+build/
+*.exp
+*.lib
+*.pdb
+*.ilk
+.vs/
+out/
