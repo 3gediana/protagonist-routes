@@ -11,6 +11,7 @@
 #include "capability/NurseryPickUpCapability.h"
 #include "capability/ProtagonistHuntCapability.h"
 #include "capability/StealthCapability.h"
+#include "capability/ThermalTickCapability.h"
 #include "capability/ThrowCarriedObjectCapability.h"
 #include "core/agent/Agent.h"
 #include "core/brain/fixed/FixedTopologyBrain.h"
@@ -342,6 +343,11 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // EatCapability). consumedOutputs = 0; safe to add unconditionally.
     agent->addCapability(std::make_unique<DriveTickCapability>(kSocialSenseRadius));
 
+    // L1 (Final Blueprint): thermal regulation per R-001. All living
+    // entities have core_temperature_; ThermalTickCapability integrates
+    // season + day-night + fire warming + metabolic heat each tick.
+    agent->addCapability(std::make_unique<ThermalTickCapability>());
+
     // L2.2 v2: protagonist setpoint = 0 across all 5 drives ("all
     // discomforts are bad"). The species comparison table in spec § 2.1
     // is for background species; protagonist starts uniform-0.
@@ -558,6 +564,8 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
     // (must be near peers); apex (ApexPredator, AmbushPredator) have
     // 0.6 (territorial, comfortable alone).
     agent->addCapability(std::make_unique<DriveTickCapability>(/*sense_radius=*/18.0f));
+    // L1 (Final Blueprint): thermal regulation R-001 also for background.
+    agent->addCapability(std::make_unique<ThermalTickCapability>());
     Agent::DriveSetpoints sp{};
     Agent::EatEfficiencyByKind ee{};
     switch (archetype) {
@@ -630,6 +638,8 @@ std::unique_ptr<Agent> makeBackgroundForager(AgentId id,
     agent->addCapability(std::make_unique<MoveCapability>(1.7f, 0.004f, 0.001f, 20));
     agent->addCapability(std::make_unique<EatCapability>(4.0f, 42.0f));
     agent->addCapability(std::make_unique<DriveTickCapability>(/*sense_radius=*/18.0f));
+    // L1 (Final Blueprint): thermal regulation R-001 for forager.
+    agent->addCapability(std::make_unique<ThermalTickCapability>());
     return agent;
 }
 
@@ -662,6 +672,8 @@ std::unique_ptr<Agent> makeBackgroundPredator(AgentId id,
     agent->addCapability(std::make_unique<MoveCapability>(2.0f, 0.006f, 0.0012f, 20));
     agent->addCapability(std::make_unique<PredatorHuntCapability>(5.0f, 12.0f, 8.0f, 0.02f));
     agent->addCapability(std::make_unique<DriveTickCapability>(/*sense_radius=*/18.0f));
+    // L1 (Final Blueprint): thermal regulation R-001 for predator.
+    agent->addCapability(std::make_unique<ThermalTickCapability>());
     return agent;
 }
 

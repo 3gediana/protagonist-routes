@@ -276,6 +276,23 @@ public:
         return -(dh*dh + dt*dt + df*df + dr*dr + dl*dl);
     }
 
+    // ---- Layer 1 (Final Blueprint, 2026-05-23) thermal state ----
+    // R-001 core_temperature: physical body core temperature in °C.
+    // Updated each tick by ThermalTickCapability, which integrates:
+    //   - season ambient (SeasonLayer)
+    //   - day-night ambient delta (TimeOfDayLayer.ambientTemperatureDelta)
+    //   - campfire warming (CampfireLayer.inWarmthZone)
+    //   - metabolic heat from movement (|velocity|)
+    //   - radiative loss to ambient
+    // Healthy range: ~36-38°C. Outside this, severity-graded debuffs
+    // apply via SurvivalStatusLayer (Layer 1 B1.3).
+    static constexpr float kHealthyCoreTemperature = 37.0f;
+    static constexpr float kMinCoreTemperature = 20.0f;   // below = death rapid
+    static constexpr float kMaxCoreTemperature = 50.0f;   // above = death rapid
+
+    float coreTemperature() const { return core_temperature_; }
+    void setCoreTemperature(float v) { core_temperature_ = v; }
+
     // ---- L2.3 resource niche partitioning v2 (SPECIES_DIFFERENTIATION_SPEC.md § 3) ----
     // Per-kind energy-gain multiplier when this agent eats. Default 1.0
     // = neutral (no preference). EatCapability multiplies its gain by
@@ -357,6 +374,8 @@ private:
     // L2.2 homeostatic drive state
     DriveState drives_{};
     DriveSetpoints drive_setpoints_{};
+    // L1 (Final Blueprint) thermal state
+    float core_temperature_ = 37.0f;  // °C
     // L2.3 resource niche
     EatEfficiencyByKind eat_efficiency_{};
     std::vector<std::unique_ptr<IPerception>> perceptions_;

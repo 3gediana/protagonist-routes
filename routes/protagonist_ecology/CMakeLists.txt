@@ -8,6 +8,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     capability/NurseryPickUpCapability.cpp
     capability/ProtagonistHuntCapability.cpp
     capability/StealthCapability.cpp
+    capability/ThermalTickCapability.cpp
     capability/ThrowCarriedObjectCapability.cpp
     brain/MemoryBank.cpp
     brain/DNCMemory.cpp
@@ -71,6 +72,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     capability/NurseryPickUpCapability.h
     capability/ProtagonistHuntCapability.h
     capability/StealthCapability.h
+    capability/ThermalTickCapability.h
     capability/ThrowCarriedObjectCapability.h
     brain/MemoryBank.h
     brain/DNCMemory.h

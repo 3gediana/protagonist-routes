@@ -31,7 +31,24 @@ public:
                         float fire_health_damage_per_second,
                         float warmth_recovery_per_second,
                         float nest_recovery_per_second,
-                        float injured_threshold_ratio);
+                        float injured_threshold_ratio,
+                        // === Layer 1 (Final Blueprint, 2026-05-23) ===
+                        // R-001: extend physiology to all living entities
+                        // (not protagonist-only). Background species
+                        // can't actively drink (no DrinkWaterCapability),
+                        // so they use a separate lower decay rate to
+                        // avoid mass dehydration deaths.
+                        bool track_all_living = true,
+                        float background_hydration_decay_per_second = 0.0f,
+                        // R-001: hunger-driven hp damage (high hunger
+                        // starts attacking health). Reads Agent.drives_.hunger.
+                        float hunger_damage_threshold = 0.7f,    // start at 70% hunger
+                        float hunger_damage_per_second = 0.25f,  // °C/s at full hunger
+                        // R-001: core_temperature-driven hp damage.
+                        // Reads Agent.coreTemperature() (°C).
+                        float cold_temp_threshold = 32.0f,        // hypothermia onset
+                        float hot_temp_threshold = 42.0f,         // hyperthermia onset
+                        float thermal_damage_per_second = 0.4f);
 
     const char* layerName() const override { return kName; }
     void onAttach(IWorld& world) override;
@@ -73,6 +90,14 @@ private:
     float warmth_recovery_per_second_;
     float nest_recovery_per_second_;
     float injured_threshold_ratio_;
+    // Layer 1 (Final Blueprint) extensions.
+    bool track_all_living_;
+    float background_hydration_decay_per_second_;
+    float hunger_damage_threshold_;
+    float hunger_damage_per_second_;
+    float cold_temp_threshold_;
+    float hot_temp_threshold_;
+    float thermal_damage_per_second_;
     std::unordered_map<AgentId, SurvivalState> states_;
 };
 
