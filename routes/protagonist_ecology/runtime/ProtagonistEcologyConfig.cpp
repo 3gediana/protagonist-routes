@@ -490,6 +490,13 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.me_neat_max_bins = config.getOr<int>(
         "evolution.me_neat.max_bins",
         out.me_neat_max_bins);
+    // v17 P2: optional 3rd BD axis (hunt count); default 0/1 = 2D backward-compat.
+    out.me_neat_hunt_bin_size = config.getOr<int>(
+        "evolution.me_neat.hunt_bin_size",
+        out.me_neat_hunt_bin_size);
+    out.me_neat_hunt_max_bins = config.getOr<int>(
+        "evolution.me_neat.hunt_max_bins",
+        out.me_neat_hunt_max_bins);
     out.me_neat_non_elite_weight = config.getOr<double>(
         "evolution.me_neat.non_elite_weight",
         out.me_neat_non_elite_weight);

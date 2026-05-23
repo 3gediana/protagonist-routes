@@ -1527,7 +1527,8 @@ void evaluatePopulation(World2D& world,
                         BehaviorAccumulator& behavior,
                         const std::atomic<bool>& stop_requested,
                         TraceRecorder* trace_recorder,
-                        CreditFairnessMetrics* out_fairness = nullptr) {
+                        CreditFairnessMetrics* out_fairness = nullptr,
+                        bool append_episode_debug_csv = false) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) {
         throw std::runtime_error("AgentLayer missing from protagonist training world");
@@ -3000,16 +3001,20 @@ void evaluatePopulation(World2D& world,
         if (out_fairness != nullptr) {
             *out_fairness = credit_ledger.computeFairness(0xFFu);
         }
-        credit_ledger.appendCsv("data/runs/_credit_log.csv", credit_tag);
-        // A3.S1: flush this episode's communication metrics on the same tag.
-        // Each row is a (scenario_name, generation, channel) tuple; the
-        // generation_index here is the world tick at episode end (best
-        // available proxy when this layer doesn't know the global gen num).
-        // The downstream analysis script can pick up either generation
-        // axis from scenario_name's epoch_us or the column.
-        if (comm_num_channels > 0) {
-            comm_metrics.summarise(static_cast<std::size_t>(world.currentTick()));
-            comm_metrics.appendCsv("data/runs/_communication_metrics.csv", credit_tag);
+        // Append to global _credit_log.csv ONLY when caller explicitly
+        // requests it (ablation runs need per-payout lineage; training
+        // runs accumulate millions of payouts per generation and would
+        // grow this file to GBs in a few hours - see 2026-05-23 incident
+        // where it hit 7.07 GB / 110M rows). The same gate covers
+        // _communication_metrics.csv and _signal_debug.csv below.
+        if (append_episode_debug_csv) {
+            credit_ledger.appendCsv("data/runs/_credit_log.csv", credit_tag);
+            // A3.S1: flush this episode's communication metrics on the
+            // same tag. Each row is (scenario_name, generation, channel).
+            if (comm_num_channels > 0) {
+                comm_metrics.summarise(static_cast<std::size_t>(world.currentTick()));
+                comm_metrics.appendCsv("data/runs/_communication_metrics.csv", credit_tag);
+            }
         }
     }
 
@@ -3022,7 +3027,9 @@ void evaluatePopulation(World2D& world,
     // DEBUG INSTRUMENTATION (audit § 7 - signal_response_events root cause probe)
     // Append one row per evaluatePopulation call to data/runs/_signal_debug.csv.
     // Header is written once when the file is empty / does not exist.
-    {
+    // Gated by append_episode_debug_csv so training runs (which write
+    // millions of rows over 60+ generations) don't accumulate.
+    if (append_episode_debug_csv) {
         std::error_code ec;
         std::filesystem::path debug_path = "data/runs/_signal_debug.csv";
         std::filesystem::create_directories(debug_path.parent_path(), ec);
@@ -3472,6 +3479,11 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                 BehaviorAccumulator episode_behavior;
                 const std::vector<BackgroundSpecies> no_background_species;
                 CreditFairnessMetrics episode_fairness;
+                // append_episode_debug_csv=true: ablation runs need
+                // per-payout lineage in data/runs/_credit_log.csv (plus
+                // _communication_metrics.csv / _signal_debug.csv). Training
+                // runs (the other call site) leave it false to avoid
+                // 7+GB log file growth.
                 evaluatePopulation(*world,
                                    episode_route,
                                    params,
@@ -3480,7 +3492,8 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                                    episode_behavior,
                                    stop_requested_,
                                    trace_recorder.get(),
-                                   &episode_fairness);
+                                   &episode_fairness,
+                                   /*append_episode_debug_csv=*/true);
                 world->eventBus().unsubscribe(sub_signal);
                 world->eventBus().unsubscribe(sub_died);
                 world->eventBus().unsubscribe(sub_attack);
@@ -4131,7 +4144,9 @@ int ProtagonistEcologyRuntime::runTraining() {
         // identical to v13.
         QualityDiversityArchive me_archive(route.me_neat_chops_bin_size,
                                            route.me_neat_workcraft_bin_size,
-                                           route.me_neat_max_bins);
+                                           route.me_neat_max_bins,
+                                           route.me_neat_hunt_bin_size,
+                                           route.me_neat_hunt_max_bins);
         if (route.me_neat_enabled) {
             for (const auto& ev : evaluated) {
                 auto it = behavior_per_genome.find(ev.genome_id);

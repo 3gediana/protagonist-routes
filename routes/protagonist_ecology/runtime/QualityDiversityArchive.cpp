@@ -8,10 +8,16 @@ namespace neuro::routes::protagonist {
 
 QualityDiversityArchive::QualityDiversityArchive(int chops_bin_size,
                                                  int workcraft_bin_size,
-                                                 int max_bins)
+                                                 int max_bins,
+                                                 int hunt_bin_size,
+                                                 int hunt_max_bins)
     : chops_bin_size_(std::max(1, chops_bin_size)),
       workcraft_bin_size_(std::max(1, workcraft_bin_size)),
-      max_bins_(std::max(1, max_bins)) {}
+      max_bins_(std::max(1, max_bins)),
+      // hunt_bin_size_=0 is allowed; combined with hunt_max_bins_=1 it
+      // forces every genome into the z=0 slice (2D backward-compat).
+      hunt_bin_size_(std::max(0, hunt_bin_size)),
+      hunt_max_bins_(std::max(1, hunt_max_bins)) {}
 
 void QualityDiversityArchive::clear() {
     cells_.clear();
@@ -22,7 +28,13 @@ QualityDiversityArchive::cellOf(const BehaviorDescriptor& bd) const {
     int x = std::min(max_bins_ - 1, std::max(0, bd.chop_count / chops_bin_size_));
     int y_raw = bd.build_count + bd.craft_count;
     int y = std::min(max_bins_ - 1, std::max(0, y_raw / workcraft_bin_size_));
-    return {x, y};
+    // 3rd axis: when hunt_max_bins_ == 1 (or hunt_bin_size_ == 0) z is
+    // always 0 -> archive degenerates to 2D, identical to v14-v16.
+    int z = 0;
+    if (hunt_max_bins_ > 1 && hunt_bin_size_ > 0) {
+        z = std::min(hunt_max_bins_ - 1, std::max(0, bd.hunt_count / hunt_bin_size_));
+    }
+    return {x, y, z};
 }
 
 void QualityDiversityArchive::submit(GenomeId id,

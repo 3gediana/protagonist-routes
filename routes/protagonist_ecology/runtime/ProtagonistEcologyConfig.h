@@ -419,6 +419,13 @@ struct ProtagonistEcologyConfig {
     int me_neat_chops_bin_size{20};       // x-axis bucket: chops per cell
     int me_neat_workcraft_bin_size{2};    // y-axis bucket: (build+craft) per cell
     int me_neat_max_bins{5};              // grid is N x N (default 5x5 = 25 cells)
+    // L2.9 v17: optional 3rd BD axis (hunt count). When hunt_max_bins=1
+    // (default) the archive is the legacy 2D N x N grid; when > 1 the
+    // archive becomes N x N x hunt_max_bins. Used to prevent ME-NEAT
+    // archive from squeezing out hunting genes (v15/v16 hunts regression
+    // 0.66x-0.66x baseline). Default disabled for backward-compat.
+    int me_neat_hunt_bin_size{0};         // z-axis bucket: hunts per cell (0 = disable)
+    int me_neat_hunt_max_bins{1};         // z-axis cell count (1 = 2D)
     // When 0 < w < 1, non-elite genomes have their fitness multiplied
     // by w during reproduce. EliteSelection then naturally lifts cell
     // elites into the survivor set, and tournament samples favour them.

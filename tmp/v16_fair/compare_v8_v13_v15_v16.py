@@ -15,6 +15,7 @@ RUNS = {
     "v13": ROOT / "v13_hrl"                 / "20260523-013533",
     "v15": ROOT / "v15_qd_real"             / "20260523-120522",
     "v16": ROOT / "v16_fair"                / "20260523-124640",
+    "v17": ROOT / "v17_hunt_bd"             / "20260523-135327",
 }
 
 LAST_N = 10  # 末尾 10 代
@@ -107,7 +108,7 @@ def main():
         ("me_coverage",   "{:.3f}", 1.0),
         ("qd_score",      "{:.0f}", 1.0),
     ]
-    cols = ["v8", "v13", "v15", "v16"]
+    cols = ["v8", "v13", "v15", "v16", "v17"]
 
     print(f"\n{'metric':<16}" + "".join(f"{c:>14}" for c in cols))
     print("-" * 92)
@@ -120,18 +121,18 @@ def main():
                 row += f"{'-':>14}"
         print(row)
 
-    # v16 vs v15 ratio
-    if "v15" in results and "v16" in results:
-        print(f"\n{'v16/v15':<16}" + " " * 14 * 3 + " "*8)
+    # v17 vs v16 ratio (focus: hunts recovery)
+    if "v16" in results and "v17" in results:
+        print(f"\n{'v17 vs v16 (3D BD impact)':<28}")
         for key, fmt, _ in metrics:
-            if key in results["v15"] and key in results["v16"]:
-                v15v = results["v15"][key]
+            if key in results["v16"] and key in results["v17"]:
                 v16v = results["v16"][key]
-                if abs(v15v) < 1e-9:
-                    ratio = "inf" if v16v > 0 else "0"
+                v17v = results["v17"][key]
+                if abs(v16v) < 1e-9:
+                    ratio = "inf" if v17v > 0 else "0"
                 else:
-                    ratio = f"{v16v / v15v:.2f}x"
-                print(f"  {key:<14}: v15={fmt.format(v15v):<10} v16={fmt.format(v16v):<10} -> {ratio}")
+                    ratio = f"{v17v / v16v:.2f}x"
+                print(f"  {key:<14}: v16={fmt.format(v16v):<10} v17={fmt.format(v17v):<10} -> {ratio}")
 
     # 每跑总 protag-eps（确认公平 scale）
     print(f"\n{'total_prot (last 10 gen)':<28}")
