@@ -175,25 +175,64 @@ void AnimalSystem::tick_deer(AnimalInstance& a, const World& world,
     integrate_with_terrain(a, world, dt);
 }
 
-void AnimalSystem::tick_wolf(AnimalInstance& a, const World& world,
-                             float ax, float ay, float dt, float night_factor) {
+void AnimalSystem::tick_wolf(AnimalInstance& a, int self_idx, const World& world,
+                             float ax, float ay, float dt, float night_factor,
+                             float agent_perception_scale,
+                             float agent_speed_scale) {
     auto t = traits_for(AnimalKind::Wolf);
     // Nocturnal aggression: at night, wolves notice the agent up to 50%
     // farther away and chase 20% faster. night_factor is clamped [0,1].
     if (night_factor < 0.0f) night_factor = 0.0f;
     if (night_factor > 1.0f) night_factor = 1.0f;
-    float perception = t.perception_range * (1.0f + 0.5f * night_factor);
-    float speed      = t.panic_speed     * (1.0f + 0.2f * night_factor);
+    float perception_base = t.perception_range * (1.0f + 0.5f * night_factor);
+    float speed_base      = t.panic_speed     * (1.0f + 0.2f * night_factor);
+    // Shelter dampening only applies to *agent* detection, not prey.
+    float perception_agent = perception_base * agent_perception_scale;
+    float speed_agent      = speed_base      * agent_speed_scale;
 
-    float dx = ax - a.pos_x, dy = ay - a.pos_y;
-    float d2 = dx * dx + dy * dy;
-    bool agent_in_range = d2 < perception * perception;
+    // Look for the closest live rabbit/deer first; that prey gets
+    // priority over the agent if it's closer.
+    int   best_prey   = -1;
+    float best_prey_d2 = perception_base * perception_base;
+    for (int i = 0; i < int(animals_.size()); ++i) {
+        if (i == self_idx) continue;
+        const auto& p = animals_[i];
+        if (p.state == AnimalState::Dead) continue;
+        if (p.kind != AnimalKind::Rabbit && p.kind != AnimalKind::Deer) continue;
+        float dx = p.pos_x - a.pos_x;
+        float dy = p.pos_y - a.pos_y;
+        float d2 = dx*dx + dy*dy;
+        if (d2 < best_prey_d2) {
+            best_prey_d2 = d2;
+            best_prey    = i;
+        }
+    }
 
-    if (agent_in_range) {
+    float dx_a = ax - a.pos_x, dy_a = ay - a.pos_y;
+    float d2_a = dx_a * dx_a + dy_a * dy_a;
+    bool agent_in_range = d2_a < perception_agent * perception_agent;
+
+    // Decide: attack closer of (agent, best_prey)
+    bool   chase_prey = (best_prey >= 0)
+                       && (!agent_in_range || best_prey_d2 < d2_a);
+
+    if (chase_prey) {
+        const auto& p = animals_[best_prey];
+        float dx = p.pos_x - a.pos_x;
+        float dy = p.pos_y - a.pos_y;
+        float d  = std::sqrt(dx*dx + dy*dy) + 1e-3f;
         a.state = AnimalState::Hunt;
-        float d = std::sqrt(d2) + 1e-3f;
-        a.vel_x = dx / d * speed;
-        a.vel_y = dy / d * speed;
+        a.vel_x = dx / d * speed_base;
+        a.vel_y = dy / d * speed_base;
+        // If close enough, kill prey immediately (one-shot bite).
+        if (d < 1.5f) {
+            kill(best_prey);
+        }
+    } else if (agent_in_range) {
+        a.state = AnimalState::Hunt;
+        float d = std::sqrt(d2_a) + 1e-3f;
+        a.vel_x = dx_a / d * speed_agent;
+        a.vel_y = dy_a / d * speed_agent;
     } else {
         a.state_timer -= dt;
         if (a.state_timer <= 0.0f) {
@@ -258,13 +297,19 @@ void AnimalSystem::tick_eagle(AnimalInstance& a, const World& world, float dt) {
 void AnimalSystem::tick(const World& world,
                         float agent_x, float agent_y, float /*agent_z*/,
                         float dt,
-                        float night_factor) {
-    for (auto& a : animals_) {
+                        float night_factor,
+                        float agent_perception_scale,
+                        float agent_speed_scale) {
+    for (int i = 0; i < int(animals_.size()); ++i) {
+        auto& a = animals_[i];
         if (a.state == AnimalState::Dead) continue;
         switch (a.kind) {
             case AnimalKind::Rabbit: tick_rabbit(a, world, agent_x, agent_y, dt); break;
             case AnimalKind::Deer:   tick_deer  (a, world, agent_x, agent_y, dt); break;
-            case AnimalKind::Wolf:   tick_wolf  (a, world, agent_x, agent_y, dt, night_factor); break;
+            case AnimalKind::Wolf:   tick_wolf  (a, i, world, agent_x, agent_y, dt,
+                                                 night_factor,
+                                                 agent_perception_scale,
+                                                 agent_speed_scale); break;
             case AnimalKind::Fish:   tick_fish  (a, world, dt); break;
             case AnimalKind::Eagle:  tick_eagle (a, world, dt); break;
         }
@@ -300,6 +345,47 @@ void AnimalSystem::kill(int idx) {
     animals_[idx].state = AnimalState::Dead;
     animals_[idx].vel_x = 0.0f;
     animals_[idx].vel_y = 0.0f;
+}
+
+AnimalSystem::AttackResult AnimalSystem::agent_attack(
+        float ax, float ay, float yaw,
+        float reach, float damage) {
+    AttackResult res;
+    float fx = std::cos(yaw);
+    float fy = std::sin(yaw);
+    float reach2 = reach * reach;
+    float best_d2 = reach2;
+    for (int i = 0; i < int(animals_.size()); ++i) {
+        auto& a = animals_[i];
+        if (a.state == AnimalState::Dead) continue;
+        // Eagles are out of melee reach (~25m above ground)
+        if (a.kind == AnimalKind::Eagle) continue;
+        float dx = a.pos_x - ax;
+        float dy = a.pos_y - ay;
+        float d2 = dx*dx + dy*dy;
+        if (d2 > reach2) continue;
+        // Forward arc: dot(facing, toward_target) > 0 (>=90 deg cone)
+        if (dx * fx + dy * fy < 0.0f) continue;
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            res.index = i;
+        }
+    }
+    if (res.index < 0) return res;
+    auto& tgt = animals_[res.index];
+    tgt.health -= damage;
+    if (tgt.health <= 0.0f) {
+        tgt.health = 0.0f;
+        tgt.state = AnimalState::Dead;
+        tgt.vel_x = 0.0f;
+        tgt.vel_y = 0.0f;
+        res.killed = true;
+    } else {
+        // Hurt animal flees
+        tgt.state = AnimalState::Flee;
+        tgt.state_timer = 1.5f;
+    }
+    return res;
 }
 
 }  // namespace dp::world

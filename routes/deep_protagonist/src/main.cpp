@@ -541,6 +541,34 @@ int run_self_tests() {
               "Shelter: covers() respects radius");
     }
 
+    // --- Agent attack ---
+    {
+        dp::world::World::Config cfg;
+        cfg.heightmap_cells_x = 64;
+        cfg.heightmap_cells_y = 64;
+        cfg.cave_count = 0;
+        cfg.river_count = 0;
+        dp::world::World w(cfg);
+
+        dp::world::AnimalSystem animals;
+        animals.initialize(33, w, 1, 0, 1, 0, 0);  // 1 rabbit + 1 wolf
+        // Pull positions out and attack from a known location
+        const auto& a0 = animals.animals()[0];
+        // Aim straight at it from 1m back
+        float ax = a0.pos_x - 1.0f;
+        float ay = a0.pos_y;
+        float yaw = 0.0f;  // facing +x
+        auto miss = animals.agent_attack(ax, ay, yaw, 0.5f, 999.0f);
+        check(miss.index < 0,
+              "agent_attack: out-of-reach attack misses");
+        auto hit = animals.agent_attack(ax, ay, yaw, 2.0f, 30.0f);
+        check(hit.index >= 0 && !hit.killed,
+              "agent_attack: in-range hit damages but doesn't kill on first blow");
+        auto kill_blow = animals.agent_attack(ax, ay, yaw, 2.0f, 999.0f);
+        check(kill_blow.index >= 0 && kill_blow.killed,
+              "agent_attack: heavy follow-up kills the target");
+    }
+
     // --- Wolf night-time aggression ---
     {
         dp::world::World::Config cfg;
@@ -792,9 +820,16 @@ int main(int argc, char** argv) {
             reward.event_alive(dt);
 
             // Animals follow the agent's position; wolves at night get
-            // boosted perception+speed via night_factor.
+            // boosted perception+speed via night_factor. Shelter dampens
+            // wolf detection of the agent (S3.8c).
             float night_factor = std::max(0.0f, -day.sun_height_normalized());
-            animals.tick(world, as.pos_x, as.pos_y, as.pos_z, dt, night_factor);
+            float perc_scale = 1.0f, spd_scale = 1.0f;
+            if (shelter.covers(as.pos_x, as.pos_y)) {
+                perc_scale = 0.3f;
+                spd_scale  = 0.7f;
+            }
+            animals.tick(world, as.pos_x, as.pos_y, as.pos_z, dt, night_factor,
+                         perc_scale, spd_scale);
 
             // Plants regrow timers
             plants.tick(dt);
@@ -810,7 +845,8 @@ int main(int argc, char** argv) {
             }
             reward.event_vital_pressure(vital_state, dt);
 
-            // E key: harvest any nearby ripe plant
+            // E key: harvest any nearby ripe plant. Mushrooms have a
+            // 30% chance to poison instead of feed (blueprint line 16).
             if (IsKeyPressed(KEY_E)) {
                 auto got = plants.try_harvest(as.pos_x, as.pos_y,
                                               as.pos_z + as.height * 0.5f, 2.5f);
@@ -822,8 +858,29 @@ int main(int argc, char** argv) {
                         case dp::world::PlantKind::Cactus:   kcal =  8.0f; ml = 30.0f; break;
                         case dp::world::PlantKind::Mushroom: kcal = 18.0f; break;
                     }
-                    if (kcal > 0.0f) { vitals.eat(vital_state, kcal); reward.event_eat(kcal); }
-                    if (ml > 0.0f)   { vitals.drink(vital_state, ml); reward.event_drink(ml); }
+                    bool poisoned = false;
+                    if (k == dp::world::PlantKind::Mushroom) {
+                        // Cheap PRNG using vital state hash (deterministic but
+                        // varied). 0..1 from low bits of pos+time.
+                        unsigned r = static_cast<unsigned>(
+                            (uint64_t)(as.pos_x*1000.0f) * 7919ULL
+                          ^ (uint64_t)(GetFrameTime() * 1e6f) * 31337ULL
+                          ^ (uint64_t)(GetTime()      * 1e6f));
+                        if ((r % 100u) < 30u) {
+                            poisoned = true;
+                        }
+                    }
+                    if (poisoned) {
+                        // Drop hunger and stamina; reward also takes a hit
+                        // through the "negative eat" payload so the agent
+                        // learns mushrooms are risky.
+                        vital_state.hunger  = std::max(0.0f, vital_state.hunger  - 12.0f);
+                        vital_state.stamina = std::max(0.0f, vital_state.stamina - 25.0f);
+                        reward.event_eat(-15.0f);
+                    } else {
+                        if (kcal > 0.0f) { vitals.eat(vital_state, kcal);  reward.event_eat(kcal); }
+                        if (ml   > 0.0f) { vitals.drink(vital_state, ml);  reward.event_drink(ml); }
+                    }
                     ++total_harvested;
                 }
             }
@@ -834,6 +891,15 @@ int main(int argc, char** argv) {
                 if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
                     vitals.drink(vital_state, 35.0f);
                     reward.event_drink(35.0f);
+                    // Same key: try to catch a fish in arm's reach.
+                    auto fish = animals.agent_attack(as.pos_x, as.pos_y,
+                                                     agent.yaw(), 2.0f, 100.0f);
+                    if (fish.killed
+                        && animals.animals()[fish.index].kind
+                            == dp::world::AnimalKind::Fish) {
+                        vitals.eat(vital_state, 20.0f);
+                        reward.event_eat(20.0f);
+                    }
                 }
             }
 
@@ -863,6 +929,33 @@ int main(int argc, char** argv) {
                 if (shelter.try_place(inventory,
                                       as.pos_x, as.pos_y, as.pos_z)) {
                     reward.event_built_shelter();
+                }
+            }
+
+            // F key: melee attack the closest animal in front (90 deg arc).
+            // Spear in inventory boosts reach and damage.
+            if (IsKeyPressed(KEY_F)) {
+                bool has_spear = inventory.num_of(dp::agent::ItemKind::Spear) > 0;
+                float reach  = has_spear ? 2.5f : 1.5f;
+                float damage = has_spear ? 50.0f : 20.0f;
+                auto hit = animals.agent_attack(as.pos_x, as.pos_y,
+                                                agent.yaw(), reach, damage);
+                if (hit.killed) {
+                    auto kind = animals.animals()[hit.index].kind;
+                    if (kind == dp::world::AnimalKind::Wolf) {
+                        reward.event_wolf_killed();
+                        vitals.eat(vital_state, 40.0f);
+                        reward.event_eat(40.0f);
+                    } else if (kind == dp::world::AnimalKind::Rabbit) {
+                        vitals.eat(vital_state, 15.0f);
+                        reward.event_eat(15.0f);
+                    } else if (kind == dp::world::AnimalKind::Deer) {
+                        vitals.eat(vital_state, 40.0f);
+                        reward.event_eat(40.0f);
+                    } else if (kind == dp::world::AnimalKind::Fish) {
+                        vitals.eat(vital_state, 20.0f);
+                        reward.event_eat(20.0f);
+                    }
                 }
             }
 
@@ -997,9 +1090,9 @@ int main(int argc, char** argv) {
             DrawText(TextFormat("Camera: %s   [G] toggle follow",
                                 follow_agent ? "follow" : "fly"),
                      12, 256, 16, RAYWHITE);
-            DrawText("E=harvest plant   Q=drink water   R=collect resource",
+            DrawText("E=harvest plant   Q=drink/catch fish   R=collect resource",
                      12, 280, 14, Color{ 220, 220, 100, 255});
-            DrawText("C=craft spear (W+S)   B=build shelter (W+G)",
+            DrawText("C=craft spear (W+S)   B=build shelter (W+G)   F=attack",
                      12, 298, 14, Color{ 220, 220, 100, 255});
             DrawText("WASD/Space/Shift fly  Ctrl=fast  T/Y=time speed",
                      12, 316, 14, Color{ 180, 180, 180, 255 });

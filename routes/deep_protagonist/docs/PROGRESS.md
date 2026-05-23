@@ -58,6 +58,15 @@ S4 = 用 libtorch 实现 PPO，让 agent 自己学会觅食/喝水/躲狼。
 
 ## 最近会话摘要
 
+### 2026-05-24 凌晨 03:35 · S3.8 蓝图覆盖度补全
+- 5 个机制让蓝图 line 16-25 都落地
+  - **8a** Agent attack（F 键，spear 加 reach+damage）
+  - **8b** Wolf 狩猎 rabbit/deer（生态链）
+  - **8c** Shelter 防狼（窝内 perception×0.3, speed×0.7）
+  - **8d** 抓鱼（Q 键 in river/swamp 同时抓 fish）
+  - **8e** Mushroom 中毒 30%
+- **67 self-test 全过**（原 64 + 新 3）
+
 ### 2026-05-24 凌晨 03:30 · S3.7 训练前置机制
 - 用户睡前指示："美化不重要，机制完善优先"
 - AI 重读最终蓝图，发现 S3.5 视觉整改违反 line 79 蓝图条款，**推翻**

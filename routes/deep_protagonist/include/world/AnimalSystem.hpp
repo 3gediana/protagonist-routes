@@ -58,10 +58,17 @@ public:
     // wolves/deer/rabbits can react to it. `night_factor` is in [0,1]
     // and is used to amp up nocturnal predators (wolves get +20% speed
     // and a wider perception range at night).
+    //
+    // Optional `agent_perception_scale` and `agent_speed_scale` reduce
+    // how aggressively predators react to the agent (e.g. when the agent
+    // is sheltered: scale=0.3 means wolves only see them at 30% of
+    // normal range and chase at 30% of normal speed).
     void tick(const World& world,
               float agent_x, float agent_y, float agent_z,
               float dt,
-              float night_factor = 0.0f);
+              float night_factor = 0.0f,
+              float agent_perception_scale = 1.0f,
+              float agent_speed_scale = 1.0f);
 
     const std::vector<AnimalInstance>& animals() const { return animals_; }
 
@@ -76,6 +83,19 @@ public:
     // Mark dead so it stops moving and rendering pulls a "dead" colour.
     void kill(int idx);
 
+    struct AttackResult {
+        int   index   = -1;     // index of the animal hit; -1 = miss
+        bool  killed  = false;  // health dropped to 0 this tick
+    };
+
+    // Agent-initiated attack. Picks the closest live animal within `reach`
+    // metres in front of the agent (a 90-degree forward arc relative to
+    // `facing_yaw`). Subtracts `damage` from its health and, if the kill
+    // happens this tick, sets state=Dead.
+    AttackResult agent_attack(float agent_x, float agent_y,
+                              float facing_yaw, float reach,
+                              float damage);
+
 private:
     std::vector<AnimalInstance> animals_;
     uint64_t rng_state_ = 1;
@@ -88,8 +108,10 @@ private:
                      float ax, float ay, float dt);
     void tick_deer(AnimalInstance& a, const World& world,
                    float ax, float ay, float dt);
-    void tick_wolf(AnimalInstance& a, const World& world,
-                   float ax, float ay, float dt, float night_factor);
+    void tick_wolf(AnimalInstance& a, int self_idx, const World& world,
+                   float ax, float ay, float dt, float night_factor,
+                   float agent_perception_scale,
+                   float agent_speed_scale);
     void tick_fish(AnimalInstance& a, const World& world, float dt);
     void tick_eagle(AnimalInstance& a, const World& world, float dt);
 
