@@ -1,9 +1,16 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-23 凌晨（**L2.8 v14 ME-NEAT 地基重构第一发：MAP-Elites + NEAT，min_fit +1478 但 me_cov=4% 调参不到位**）
+> 最后巡检：2026-05-23 中午（**L2.9 v15 real ME-NEAT 真正突破：worksites 2.4/ep (4.8x v8 baseline), crafts 19.5 (65x v8), survived 24.1 (16x v8)**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`v14 commit (pending push)`
+> 当前 HEAD：`v15 commit (pending push)`
+>
+> **2026-05-23 中午 L2.9 v15 real ME-NEAT 突破**（1 commit + 验证数据待 push）：
+> - `<v15-code-commit> L2.9 v15: real ME-NEAT - archive-driven breeding + iso+line + init phase`
+> - **背景**：v14 implicit fitness shaping + v14b 细化 bin 都没用，me_coverage 死在 4%。第二轮 Tavily 文献定位真问题：MAP-Elites 必须有 init phase (Nilsson 2021) + 必须 archive-uniform sampling (Mouret 2015) + Vassiliades 2018 iso+line operator 比 uniform crossover 多 3-4x coverage。
+> - **改造**：`ProtagonistEvolution` 加 public `reproduceFromArchive` + `crossoverLine` + `mutateBoosted` ~140 行；Config 加 4 个新字段 (`me_neat_archive_breeding`/`init_generations`/`line_sigma`/`mutation_boost`)；Runtime 在 reproduce 调用点 dynamic_cast 分流 archive_breeding=true 路径。`v15_qd_real.toml`: chops_bin=5, workcraft_bin=1, max_bins=8, archive_breeding=true, init_generations=10, line_sigma=0.15, mutation_boost=2.0。
+> - **v15 60-gen 验证 (seed=91)**：**worksites 0.1→2.4 (24x v13, 4.8x v8 baseline)**、**crafts 0.3→19.5 (65x)**、**survived 7.6→24.1 (3.2x v13, 16x v8)**、chops 68→112 (+65%)、me_cov 4%→10%。代价：avg_fit 3191→452, coop_s 4261→1131 - fitness 公式不奖励 worksite/craft 中段步骤导致数字看不出来，但 build chain 第一次真正涌现。
+> - **地基重构方向被验证**：v8-v13 single-fitness NEAT 死局被 v15 真正的 MAP-Elites 流程突破，文献预测的 QD 优势在 60 代内可见。下次需要：调 fitness 公式让 worksite/craft 中段也奖励 + BD 扩到 3D + 120-gen 长训。
 >
 > **2026-05-23 凌晨 L2.8 v14 ME-NEAT 地基重构第一发**（2 commits 待 push, +766 行 + 验证数据）：
 > - `<v14-code-commit> L2.8 v14: ME-NEAT (MAP-Elites + NEAT) architectural pivot`
