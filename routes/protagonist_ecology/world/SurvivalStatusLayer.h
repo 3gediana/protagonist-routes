@@ -42,13 +42,19 @@ public:
                         float background_hydration_decay_per_second = 0.0f,
                         // R-001: hunger-driven hp damage (high hunger
                         // starts attacking health). Reads Agent.drives_.hunger.
-                        float hunger_damage_threshold = 0.7f,    // start at 70% hunger
-                        float hunger_damage_per_second = 0.25f,  // °C/s at full hunger
+                        // Tuned 2026-05-24 from L1 smoke (alive=0): threshold
+                        // 0.7 -> 0.9 (only severe hunger), damage 0.25 -> 0.08
+                        // (3x slower) so it acts as a floor not a knife.
+                        float hunger_damage_threshold = 0.9f,    // start at 90% hunger
+                        float hunger_damage_per_second = 0.08f,  // hp/s at full hunger
                         // R-001: core_temperature-driven hp damage.
                         // Reads Agent.coreTemperature() (°C).
-                        float cold_temp_threshold = 32.0f,        // hypothermia onset
-                        float hot_temp_threshold = 42.0f,         // hyperthermia onset
-                        float thermal_damage_per_second = 0.4f);
+                        // Tuned 2026-05-24: widened band (was 32/42 -> 25/45)
+                        // to give protagonist room to discover fire / nest
+                        // before thermal damage kicks in; damage 0.4 -> 0.15.
+                        float cold_temp_threshold = 25.0f,        // hypothermia onset
+                        float hot_temp_threshold = 45.0f,         // hyperthermia onset
+                        float thermal_damage_per_second = 0.15f);
 
     const char* layerName() const override { return kName; }
     void onAttach(IWorld& world) override;
