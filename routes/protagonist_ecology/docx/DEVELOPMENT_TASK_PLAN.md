@@ -54,22 +54,34 @@
 - [ ] **下一阶段方案**（B 阶段范围，不在 A3 内继续）：3 条候选——(a) `comm_build_request` 的 emitter pulse 直接 trigger `GoalManager` 切 `BuildWorksite` goal 让 goal-action-assist 接管 deposit；(b) 给 protagonist 训练阶段加 build_request task；(c) 给 nest 加物理 predator 屏障让 `comm_danger_warning` 的 survived 真起来
 - [ ] MI 离线分析（trace 启用后）：当前 `memory_ablation.trace_enabled = false`，`scripts/protagonist_communication_mi.py` 还不能跑。补一次开启 trace 的 sweep 后再算 MI 矩阵
 
+### A4. ME-NEAT 训练能力重构（v14/v15/v16，2026-05-23）
+
+> 起因：用户怀疑"地基出错了"。Tavily 文献调研定位 3 个 v9-v13 的真问题：(1) single fitness vs Quality Diversity (Mouret 2019)；(2) multi-task curriculum 在 long-chain compositional benchmarks 失败 (Craftax ICML 2024)；(3) 纯 NEAT vs evolution+gradient hybrid (InstaDeep ICLR 2023)。用户拒绝 PPO/Dreamer 工程量，选择 ME-NEAT 演化路线。本节是 Stage A 之外、平行于 A1-A3 的训练能力重构线，已带出真实涌现突破。
+
+- [x] **v14 ME-NEAT 第一发**（commit 42fd90b + bbe896b，2026-05-23 凌晨）：新增 `runtime/QualityDiversityArchive.{h,cpp}` ~150 行，5×5 grid，BD=(chops, build+craft)。`ProtagonistEcologyConfig` 加 `me_neat_enabled / chops_bin_size / workcraft_bin_size / max_bins / non_elite_weight` 5 个字段。`ProtagonistEcologyRuntime.cpp` 加 `accumulateGenomeBehavior` per-genome BD 收集 + archive submit + `evaluated_for_breeding` 把非 cell-elite × 0.05（implicit MAP-Elites）；fitness.csv 加 `me_coverage / me_qd_score / me_max_fitness` 3 列。166/166 tests 全过。**60-gen 验证 (seed=91)**：min_fit -385→+1093 ✓、crafts +233% ✓、coop +186% ✓，但 me_coverage 死在 4%（5×5 bin_size=20 太粗 + implicit shaping 不够强）。
+- [x] **v14b 细化 bin 失败回归**：8×8=64 cells，bin_size=5 也没用，me_cov 仍 4%。诊断：种群同质化 + NEAT 早熟收敛，需要显式 archive-uniform sampling。
+- [x] **v15 真正 ME-NEAT**（commit 4828b16 + 6c78076，2026-05-23 中午）：`ProtagonistEvolution` 加 public `reproduceFromArchive(archive, evaluated, current, total, is_init) / crossoverLine(a, b, child, iso=0.01, line=0.15) / mutateBoosted(genome, boost=2.0)` 共 ~140 行（Vassiliades 2018 iso+line + Nilsson 2021 PGA-MAP-Elites init phase）。Config 加 `me_neat_archive_breeding / init_generations / line_sigma / mutation_boost` 4 个字段。Runtime 在 reproduce 调用点 dynamic_cast 分流 archive_breeding 路径。`v15_qd_real.toml`: chops_bin=5, workcraft_bin=1, max_bins=8, init_generations=10, mutation_boost=2.0。166/166 tests 全过。**60-gen 验证 (seed=91, protag=8/ep=6)**：worksites/gen 0.1→2.4、crafts/gen 0.3→19.5、survived/gen 7.6→24.1、me_cov 4%→10%。代价 avg_fit 3191→452（fitness 公式不奖 worksite/craft 中段）。
+- [x] **v16 公平 scale 验证**（commit 98f508f，2026-05-23 下午）：用户质疑 v15 用 protag=8/ep=6 vs v8 用 24/3，资源人均不公平。**仅改 toml**（无代码改动）`tmp/v16_fair/v16_fair.toml`：protag.count 8→24、ep 6→3，复用 v15 同 binary。total_prot=720 与 v8 完全匹配。**60-gen 结果**：avg_fit 452→2052 (×4.54)、qd_score 5922→39743 (×6.71)、me_cov 10%→20% (×1.88)、coop_per_prot 24→100 (×4.23) 真实改善；但 alive 50.2%→39.2% (×0.78)、works/protep 0.05→0.032 (×0.64)、crafts 0.41→0.32 (×0.78)、hunts 0.36→0.24 (×0.66) — **揭示 v15 数据被 8-protag 资源富裕放大 20-35%**。v16 vs v8 真实 18.7×alive / 24×chops / 4.6×works / 75×crafts。
+- [ ] **v15/v16 留的隐患**：(a) throws 894→1082 仍恶化（BD 不含 throw 维度）；(b) hunts 0.36→0.24 退化更严重（archive 偏 build/craft 挤掉 hunting genes）；(c) 60-gen 太短，works/crafts 涌现是 gen 38+ 才出现，只 22 代连续。下一步候选：BD 扩 3D 加 hunts 维度，或 120-gen 长训。
+
 ---
 
 ## B. 第二主线：鲜明物种生态角色（R-005）
 
+> **2026-05-23 audit 修正**：原文档说"全 [ ]"，但 L2.1-L2.5 v2 物种差异化（commits 200ea1a/3896e90/06daaf0/7d978b6）已经把 7 archetype 的物质条件（initial_energy / damage / threshold / digest / scavenge_eff）做完了。B 阶段真正未做的是"角色机制"（territory / pack spacing / signal-assisted hunt 等行为级规则），不是"角色不存在"。
+
 ### B1. 角色定义
 
-- [ ] 固定四个第一批角色：独居顶级掠食者 / 群猎者 / 食腐者 / 协作人类系
+- [ ] 固定四个第一批角色：独居顶级掠食者 / 群猎者 / 食腐者 / 协作人类系（**注**：7 archetype 已在 BootstrapPopulation 数值差异化，但"4 个第一批"清单 + 证据链模板未正式定稿）
 - [ ] 为每个角色写一页 route-local 证据链模板：食性、社会性、空间性、风险偏好、资源利用
-- [ ] 审计当前 `BootstrapPopulation` 中各 archetype 与目标角色的差距
+- [ ] 审计当前 `BootstrapPopulation` 中各 archetype 与目标角色的差距（**部分**：L2.1 已做物质条件 audit，但行为级 audit 未做）
 
 ### B2. 生态位落地
 
-- [ ] 独居顶级掠食者：加入 territory / home range / 同类排斥规则
-- [ ] 群猎者：加入 shared target / spacing / surround 规则
-- [ ] 食腐者：加入 carcass-first / producer-scrounger / 高空巡航规则
-- [ ] 人类系：加入 signal-assisted group converge / assist / hunt coordination
+- [ ] 独居顶级掠食者：加入 territory / home range / 同类排斥规则（**未实现**：grep `territory_radius/home_range` 0 hits）
+- [ ] 群猎者：加入 shared target / spacing / surround 规则（**部分**：L2.1 PredatorHuntCapability 1s 滑动窗口累积 dmg threshold 让"4 狼同时打"成为门槛，但 spacing/surround 未做）
+- [ ] 食腐者：加入 carcass-first / producer-scrounger / 高空巡航规则（**部分**：L2.1 + L2.3 已做食腐 ×3 / 鲜肉 ×0.33 efficiency，scavenger 加 PredatorHuntCapability，但 producer-scrounger 与高空巡航未做）
+- [ ] 人类系：加入 signal-assisted group converge / assist / hunt coordination（**部分**：A3 通信任务已上线 + L1 emergent shelter 已上线，但 signal-assisted hunt coordination 未做）
 
 ### B3. 验收与展示
 
@@ -135,11 +147,11 @@
 
 ## E. 第五主线：自长技能与开放式增殖（R-008）
 
-### E1. Quality Diversity
+### E1. Quality Diversity（v14/v15/v16 部分已落地，详见 A4）
 
-- [ ] 把 `MapElitesArchive` 从离线报告接进在线 reproduction
-- [ ] 明确 behavior descriptor
-- [ ] 把 archive coverage 纳入训练报告
+- [x] 把 `MapElitesArchive` 从离线报告接进在线 reproduction（v15 commit 4828b16：`QualityDiversityArchive` + `ProtagonistEvolution::reproduceFromArchive` archive-uniform parent sampling + iso+line crossover + init phase 全链已通；v16 公平 scale 验证 me_coverage 20%）
+- [x] 明确 behavior descriptor（v15 BD = (chops_bin=5, workcraft_bin=1)，8×8=64 cells；**已知架构限制**：BD 不含 throw/hunt 维度，导致 v15/v16 throws 失控 + hunts 退化，下一步候选扩 3D BD）
+- [x] 把 archive coverage 纳入训练报告（fitness.csv 加 3 列 `me_coverage / me_qd_score / me_max_fitness`，runtime LOG_INFO 每代输出 me_cov）
 
 ### E2. World Model
 
