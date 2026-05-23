@@ -28,9 +28,16 @@ void VitalSystem::tick(VitalState& s,
 
     const float dt_min = dt / 60.0f;
 
-    // Hunger and thirst decay continuously
+    // Hunger and thirst decay continuously. Desert daylight accelerates
+    // thirst by 2x (blueprint line 20: "沙漠快速失水").
+    auto biome_now = world.biome_at(wx, wy);
+    float sun_now  = day.sun_height_normalized();
+    float thirst_mult = 1.0f;
+    if (biome_now == dp::world::Biome::Desert && sun_now > 0.4f) {
+        thirst_mult = 2.0f;
+    }
     s.hunger -= cfg_.hunger_decay_per_min * dt_min;
-    s.thirst -= cfg_.thirst_decay_per_min * dt_min;
+    s.thirst -= cfg_.thirst_decay_per_min * dt_min * thirst_mult;
 
     // Stamina depends on movement speed
     if (agent_speed > cfg_.run_speed_threshold) {
@@ -42,8 +49,8 @@ void VitalSystem::tick(VitalState& s,
     }
 
     // Temperature depends on biome and time of day
-    auto biome = world.biome_at(wx, wy);
-    float sun_h = day.sun_height_normalized();   // [-1,1]; +1 noon, -1 midnight
+    auto biome = biome_now;
+    float sun_h = sun_now;
     bool is_night = sun_h < -0.1f;
     bool desert_day = (biome == dp::world::Biome::Desert) && (sun_h > 0.4f);
     bool mountain = (biome == dp::world::Biome::Mountain);

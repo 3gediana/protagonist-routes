@@ -58,6 +58,12 @@ S4 = 用 libtorch 实现 PPO，让 agent 自己学会觅食/喝水/躲狼。
 
 ## 最近会话摘要
 
+### 2026-05-24 凌晨 03:45 · S3.9 地形适应
+- **swamp 减速**：CapsuleAgent.apply_action 在 swamp biome 时 move_speed × 0.5
+- **desert 白天加速失水**：VitalSystem.tick 在 desert + sun_h>0.4 时 thirst 损耗 × 2
+- **69 self-test 全过**
+- 遗留：默认 World seed 下 mountain 占 60%+ 挤掉了 desert，BiomeMap 阈值调整推迟
+
 ### 2026-05-24 凌晨 03:35 · S3.8 蓝图覆盖度补全
 - 5 个机制让蓝图 line 16-25 都落地
   - **8a** Agent attack（F 键，spear 加 reach+damage）

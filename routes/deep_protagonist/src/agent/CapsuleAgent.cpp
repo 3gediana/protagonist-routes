@@ -67,10 +67,19 @@ void CapsuleAgent::apply_action(const AgentAction& a,
     while (yaw_ >  3.14159265f) yaw_ -= 6.2831853f;
     while (yaw_ < -3.14159265f) yaw_ += 6.2831853f;
 
+    // Biome-modulated max speed. Swamp halves the speed (blueprint
+    // line 20: "沼泽减速"). Other biomes ride at the base value.
+    float speed_mult = 1.0f;
+    auto biome = world.biome_at(state_.pos_x, state_.pos_y);
+    if (biome == dp::world::Biome::Swamp) {
+        speed_mult = 0.5f;
+    }
+    float effective_speed = move_speed_ * speed_mult;
+
     // Drive horizontal velocity toward action target (ground only).
     if (state_.on_ground) {
-        state_.vel_x = mx * move_speed_;
-        state_.vel_y = my * move_speed_;
+        state_.vel_x = mx * effective_speed;
+        state_.vel_y = my * effective_speed;
     }
 
     phys.step(world, state_, dt);

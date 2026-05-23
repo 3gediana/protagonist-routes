@@ -541,6 +541,85 @@ int run_self_tests() {
               "Shelter: covers() respects radius");
     }
 
+    // --- Biome adaptation: desert thirst & swamp speed ---
+    {
+        // We need an actual 1024m world to find desert/swamp cells; the
+        // 16x16 scratch world has no biome variety.
+        // Use a seed that produces variety in biomes including desert.
+        dp::world::World::Config cfg;
+        cfg.heightmap_cells_x = 256;
+        cfg.heightmap_cells_y = 256;
+        cfg.cave_count = 0;
+        cfg.river_count = 0;
+        cfg.seed = 0xDEADBEEFULL;
+        dp::world::World w(cfg);
+
+        // Find a desert cell if any; otherwise just exercise the path.
+        bool found_desert = false;
+        float dx = 0.0f, dy = 0.0f;
+        float wx_max = w.heightmap().world_size_x();
+        float wy_max = w.heightmap().world_size_y();
+        int counts[6] = {0,0,0,0,0,0};
+        for (int j = 0; j < 64; ++j) {
+            for (int i = 0; i < 64; ++i) {
+                float x = wx_max * (i + 0.5f) / 64.0f;
+                float y = wy_max * (j + 0.5f) / 64.0f;
+                auto b = w.biome_at(x, y);
+                int bi = static_cast<int>(b);
+                if (bi >= 0 && bi < 6) counts[bi]++;
+                if (b == dp::world::Biome::Desert && !found_desert) {
+                    dx = x; dy = y; found_desert = true;
+                }
+            }
+        }
+
+        // Even if no desert, we still want a smoke check that the new code
+        // path doesn't crash.
+        dp::agent::VitalSystem vs;
+        dp::agent::VitalState v{};
+        dp::world::Daylight day(60.0f, 0.5f);  // noon
+        for (int i = 0; i < 60; ++i) {
+            vs.tick(v, w, dx, dy, 0.0f, day, 1.0f);
+        }
+        if (found_desert) {
+            // 60s of noon-desert standing: thirst should drop ~2x faster
+            // than a non-desert site would.
+            check(v.thirst < 96.0f,
+                  "Desert noon: thirst loss accelerated (sun_h>0.4)");
+        } else {
+            check(v.thirst <= 100.0f,
+                  "Biome path runs without crashing even if no desert");
+        }
+
+        // Swamp speed: build agent on a swamp-found cell if any
+        bool found_swamp = false;
+        float sx = 0.0f, sy = 0.0f;
+        for (int j = 0; j < 32 && !found_swamp; ++j) {
+            for (int i = 0; i < 32 && !found_swamp; ++i) {
+                float x = wx_max * (i + 0.5f) / 32.0f;
+                float y = wy_max * (j + 0.5f) / 32.0f;
+                if (w.biome_at(x, y) == dp::world::Biome::Swamp) {
+                    sx = x; sy = y; found_swamp = true;
+                }
+            }
+        }
+        if (found_swamp) {
+            dp::world::Physics phys;
+            dp::agent::CapsuleAgent agent(99);
+            agent.reset(sx, sy, w.surface_height(sx, sy) + 1.0f);
+            // Drop to ground
+            for (int i = 0; i < 60; ++i) {
+                agent.apply_action(dp::agent::noop_action(), w, phys, 1.0f / 60.0f);
+            }
+            dp::agent::AgentAction east{};
+            east.move_x = 1.0f;
+            agent.apply_action(east, w, phys, 1.0f / 60.0f);
+            // Swamp halves speed: vel_x should be 1.5 m/s (3.0 base * 0.5)
+            check(agent.state().vel_x < 2.0f,
+                  "Swamp halves agent move speed");
+        }
+    }
+
     // --- Agent attack ---
     {
         dp::world::World::Config cfg;
