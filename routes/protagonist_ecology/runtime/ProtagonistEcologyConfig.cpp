@@ -366,6 +366,7 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.triple_world.extinction_rescue_top_k = config.getOr<std::size_t>("runtime.triple_world.extinction_rescue_top_k", out.triple_world.extinction_rescue_top_k);
     out.triple_world.borderland_eval_period_gens = config.getOr<std::size_t>("runtime.triple_world.borderland_eval_period_gens", out.triple_world.borderland_eval_period_gens);
     out.triple_world.borderland_eval_aging_factor = config.getOr<double>("runtime.triple_world.borderland_eval_aging_factor", out.triple_world.borderland_eval_aging_factor);
+    out.triple_world.borderland_min_continuity_gens = config.getOr<std::size_t>("runtime.triple_world.borderland_min_continuity_gens", out.triple_world.borderland_min_continuity_gens);
 
     out.memory_trial.enabled = config.getOr<bool>("world.memory_trial.enabled", out.memory_trial.enabled);
     out.memory_trial.cue_duration_seconds = config.getOr<double>("world.memory_trial.cue_duration_seconds", out.memory_trial.cue_duration_seconds);

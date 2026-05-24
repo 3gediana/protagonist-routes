@@ -501,6 +501,14 @@ struct ProtagonistEcologyConfig {
         // gradually loses its lead. Recorded fitness is always
         // max(aged_old, fresh).
         double borderland_eval_aging_factor{1.0};
+        // L6 R3 stage 3 commit C: 50-generation 物种延续 gate (spec
+        // § 1.2). When > 0, an archetype's borderland pool must have
+        // accumulated at least this many evaluateBorderland calls
+        // before its genomes are eligible for promoteBorderlandToMain.
+        // The pool is otherwise valid (top-K still computed), just
+        // skipped for that one promote window. Default 0 = disabled =
+        // legacy behavior (any borderland pool can promote).
+        std::size_t borderland_min_continuity_gens{0};
     };
     TripleWorldConfig triple_world{};
     MemoryTrialConfig memory_trial{};

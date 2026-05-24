@@ -381,3 +381,60 @@ TEST(Layer6Migration, EvaluateBorderlandAgingFactor) {
                   /*aging_factor=*/1.0),
               0u);
 }
+
+// L6 R3 stage 3 commit C: each evaluateBorderland call bumps
+// borderland_eval_count for that archetype's pool. The continuity gate
+// in the runtime uses this counter as a 物种延续 condition.
+TEST(Layer6Migration, EvaluateBorderlandIncrementsEvalCount) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 2; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 900u}));
+    }
+    std::vector<double> fits = {1.0, 2.0};
+    std::vector<std::uint64_t> lineages = {910u, 911u};
+    trio.promoteExternalToBorderland(/*archetype=*/5, external_pop, fits, lineages, 2);
+    EXPECT_EQ(trio.borderland().pools_by_archetype.at(5).borderland_eval_count, 0u);
+
+    // Five evaluations → counter reaches 5.
+    auto identity = [](const IGenome&) { return 0.0; };
+    for (int i = 0; i < 5; ++i) {
+        trio.evaluateBorderland(/*archetype=*/5, identity, /*aging_factor=*/1.0);
+    }
+    EXPECT_EQ(trio.borderland().pools_by_archetype.at(5).borderland_eval_count, 5u);
+
+    // A different archetype's counter is independent.
+    std::vector<std::unique_ptr<IGenome>> pop6;
+    pop6.push_back(makeTinyGenome(GenomeId{950u}));
+    std::vector<double> fits6 = {3.0};
+    std::vector<std::uint64_t> lin6 = {960u};
+    trio.promoteExternalToBorderland(/*archetype=*/6, pop6, fits6, lin6, 1);
+    trio.evaluateBorderland(/*archetype=*/6, identity, /*aging_factor=*/1.0);
+    EXPECT_EQ(trio.borderland().pools_by_archetype.at(6).borderland_eval_count, 1u);
+    EXPECT_EQ(trio.borderland().pools_by_archetype.at(5).borderland_eval_count, 5u);
+}
+
+// Empty pool / null eval_fn must NOT bump the counter — early return.
+TEST(Layer6Migration, EvaluateBorderlandEarlyReturnDoesNotBumpEvalCount) {
+    TripleWorldRuntime trio;
+    // archetype 7 has nothing in borderland.
+    EXPECT_EQ(trio.evaluateBorderland(/*archetype=*/7,
+                                      [](const IGenome&) { return 1.0; },
+                                      /*aging_factor=*/1.0),
+              0u);
+    // ensurePool will have created the (empty) slot, but the counter
+    // must still be 0 because evaluateBorderland early-returned.
+    EXPECT_EQ(trio.borderland().pools_by_archetype.at(7).borderland_eval_count, 0u);
+
+    // Seed a pool, then call with a null eval_fn — also early return.
+    std::vector<std::unique_ptr<IGenome>> pop;
+    pop.push_back(makeTinyGenome(GenomeId{980u}));
+    std::vector<double> fits = {4.0};
+    std::vector<std::uint64_t> lin = {990u};
+    trio.promoteExternalToBorderland(/*archetype=*/7, pop, fits, lin, 1);
+    EXPECT_EQ(trio.evaluateBorderland(/*archetype=*/7,
+                                      /*eval_fn=*/nullptr,
+                                      /*aging_factor=*/1.0),
+              0u);
+    EXPECT_EQ(trio.borderland().pools_by_archetype.at(7).borderland_eval_count, 0u);
+}

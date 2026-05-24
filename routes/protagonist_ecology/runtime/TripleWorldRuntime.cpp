@@ -153,6 +153,11 @@ std::size_t TripleWorldRuntime::evaluateBorderland(
         pool.fitnesses[i] = std::max(aged, fresh);
         ++evaluated;
     }
+    // L6 R3 stage 3 commit C: bump the per-archetype eval counter even
+    // if the pool was non-empty but every entry was nulled out (rare
+    // defensive path). The counter is used by the 50-gen 物种延续 gate
+    // in promoteBorderlandToMain.
+    ++pool.borderland_eval_count;
     return evaluated;
 }
 

@@ -4556,15 +4556,44 @@ int ProtagonistEcologyRuntime::runTraining() {
 
             // Border -> Main on configured period (1-indexed: first promote
             // happens at end of gen `period`, not at gen 0).
+            //
+            // L6 R3 stage 3 commit C: 50-generation 物种延续 gate. Each
+            // archetype's borderland pool must have accumulated at least
+            // borderland_min_continuity_gens evaluateBorderland calls
+            // before any of its genomes are eligible for promotion to
+            // main_world. Archetypes that fail the gate stay in borderland
+            // for this promote window (their pool isn't touched, just
+            // skipped). Default 0 = disabled = any pool can promote.
             std::size_t b2m_protag_promoted = 0;
             std::size_t b2m_bg_promoted_total = 0;
+            std::size_t b2m_gated_total = 0;
             const std::size_t period = tw_cfg.borderland_to_main_period_gens;
             if (period > 0 && (generation + 1) % period == 0) {
-                b2m_protag_promoted = triple_world.promoteBorderlandToMain(
-                    /*archetype=*/0, tw_cfg.borderland_to_main_top_k_protagonist);
+                const auto& bp = triple_world.borderland().pools_by_archetype;
+                const std::size_t min_cont = tw_cfg.borderland_min_continuity_gens;
+                auto isReady = [&](std::size_t a) {
+                    if (min_cont == 0) return true;
+                    if (a >= bp.size()) return false;
+                    return bp[a].borderland_eval_count >= min_cont;
+                };
+                if (isReady(0)) {
+                    b2m_protag_promoted = triple_world.promoteBorderlandToMain(
+                        /*archetype=*/0, tw_cfg.borderland_to_main_top_k_protagonist);
+                } else {
+                    ++b2m_gated_total;
+                }
                 for (std::size_t i = 0; i < species_contexts.size(); ++i) {
-                    b2m_bg_promoted_total += triple_world.promoteBorderlandToMain(
-                        /*archetype=*/i + 1, tw_cfg.borderland_to_main_top_k_background);
+                    if (isReady(i + 1)) {
+                        b2m_bg_promoted_total += triple_world.promoteBorderlandToMain(
+                            /*archetype=*/i + 1, tw_cfg.borderland_to_main_top_k_background);
+                    } else {
+                        ++b2m_gated_total;
+                    }
+                }
+                if (b2m_gated_total > 0) {
+                    spdlog::info("TripleWorld gen {}: borderland continuity gate "
+                                 "blocked {} archetype(s) from main promote (min={} evals required)",
+                                 generation, b2m_gated_total, min_cont);
                 }
                 main_total = 0;
                 for (const auto& pool : triple_world.mainWorld().pools_by_archetype) {

@@ -34,10 +34,18 @@ const char* worldRoleName(WorldRole role);
 // L6 R2 stage 2: also carry the fitness that earned each genome its
 // promotion. The borderland slot needs this so that the next promote
 // (borderland→main_world) can re-rank without re-evaluation.
+//
+// L6 R3 stage 3 commit C: borderland_eval_count tracks how many times
+// evaluateBorderland has been called for this archetype's pool. The
+// 50-generation 物种延续 gate (spec § 1.2) uses this to decide whether
+// the archetype has spent enough time in borderland to be promoted to
+// main_world. Only borderland slots care about this field; sandbox and
+// main_world leave it at 0.
 struct WorldPopulationPool {
     std::vector<std::unique_ptr<IGenome>> genomes;
     std::vector<std::uint64_t> lineage_ids;
     std::vector<double> fitnesses;
+    std::size_t borderland_eval_count{0};
 };
 
 // All NEAT pools that belong to one of the three worlds. Map key is
