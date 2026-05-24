@@ -1112,8 +1112,27 @@ int main(int argc, char** argv) {
             day.advance(day_dt);
 
             // Tick world: sample a wander action (placeholder for the
-            // PPO policy we will plug in at S4) and apply it to the agent.
+            // PPO policy we will plug in at S4) and overlay every keyboard
+            // trigger onto the same AgentAction. From this point forward
+            // *no system reads IsKeyPressed directly* - everything goes
+            // through agent.last_action(), which means PPO at S4 only has
+            // to replace this single line.
             dp::agent::AgentAction action = agent.sample_wander_action(dt);
+            action.eat                 = IsKeyPressed(KEY_E);
+            action.drink               = IsKeyPressed(KEY_Q);
+            action.attack              = IsKeyPressed(KEY_F);
+            action.collect             = IsKeyPressed(KEY_R);  // shared key
+            action.deposit_to_site     = IsKeyPressed(KEY_R);  // R prioritises deposit
+            action.place_shelter       = IsKeyPressed(KEY_B);
+            action.craft_spear         = IsKeyPressed(KEY_C);
+            action.craft_grass_dress   = IsKeyPressed(KEY_X);
+            action.craft_fur_cloak     = IsKeyPressed(KEY_Z);
+            action.wear_clothes        = IsKeyPressed(KEY_V);
+            action.place_blueprint     = IsKeyPressed(KEY_P);
+            action.cycle_building_type = IsKeyPressed(KEY_TAB);
+            action.plant_seed          = IsKeyPressed(KEY_N);
+            action.water_plot          = IsKeyPressed(KEY_J);
+            action.feed_tame           = IsKeyPressed(KEY_K);
             agent.apply_action(action, world, physics, dt);
             const auto& as = agent.state();
 
@@ -1163,10 +1182,11 @@ int main(int argc, char** argv) {
             }
             reward.event_vital_pressure(vital_state, dt);
 
-            // E key: harvest any nearby ripe plant. Mushrooms have a
-            // 30% chance to poison instead of feed (blueprint line 16).
-            // Late stage: same key also picks up ripe farm plots.
-            if (IsKeyPressed(KEY_E)) {
+            // E -> action.eat: harvest any nearby ripe plant. Mushrooms
+            // have a 30% chance to poison instead of feed (blueprint
+            // line 16). Late stage: same trigger also picks up ripe farm
+            // plots.
+            if (action.eat) {
                 auto got = plants.try_harvest(as.pos_x, as.pos_y,
                                               as.pos_z + as.height * 0.5f, 2.5f);
                 if (progress.can_farm()) {
@@ -1224,8 +1244,9 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // Q key: drink water if standing in/near a river or swamp
-            if (IsKeyPressed(KEY_Q)) {
+            // Q -> action.drink: drink water if standing in/near a
+            // river or swamp; same tick can also catch a fish in arm's reach.
+            if (action.drink) {
                 auto b = world.biome_at(as.pos_x, as.pos_y);
                 if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
                     vitals.drink(vital_state, 35.0f);
@@ -1242,13 +1263,14 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // R key: priority is to deposit at a nearby construction
-            // site if the agent is carrying matching materials; otherwise
-            // fall back to picking up resources off the ground.
-            if (IsKeyPressed(KEY_R)) {
-                // Try deposit first (mid stage+)
+            // R -> action.deposit_to_site (priority) OR action.collect
+            // (fallback). The two flags share the keyboard so for human
+            // play they fire together; PPO can fire them independently
+            // (which lets a learnt policy choose to ONLY pick up or ONLY
+            // deposit per tick).
+            if (action.deposit_to_site || action.collect) {
                 bool deposited = false;
-                if (progress.can_build()) {
+                if (action.deposit_to_site && progress.can_build()) {
                     for (int slot = 0; slot < inventory.size(); ++slot) {
                         auto k = inventory.at(slot);
                         if (k != dp::agent::ItemKind::Wood
@@ -1265,7 +1287,7 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-                if (!deposited) {
+                if (!deposited && action.collect) {
                     auto picked = resources.try_collect(as.pos_x, as.pos_y,
                                                         as.pos_z + as.height * 0.5f,
                                                         2.0f);
@@ -1278,17 +1300,18 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // P key: place a new construction site at the agent's feet,
-            // using the currently selected BuildingType. Gated by Mid stage.
-            if (IsKeyPressed(KEY_P)) {
+            // P -> action.place_blueprint: place a new construction site
+            // at the agent's feet, using the currently selected
+            // BuildingType. Gated by Mid stage inside place_site.
+            if (action.place_blueprint) {
                 int site = buildings.place_site(selected_building,
                                                 as.pos_x, as.pos_y, as.pos_z,
                                                 progress);
                 (void)site;  // success/failure read from buildings.sites()
             }
 
-            // Tab cycles the next-to-place building type.
-            if (IsKeyPressed(KEY_TAB)) {
+            // Tab -> action.cycle_building_type: rotate next-to-place type.
+            if (action.cycle_building_type) {
                 int t = static_cast<int>(selected_building);
                 t = (t + 1) % 4;
                 selected_building = static_cast<dp::world::BuildingType>(t);
@@ -1314,26 +1337,26 @@ int main(int argc, char** argv) {
                 reward.event_milestone();
             }
 
-            // C key: craft a spear (consumes 1 wood + 1 stone, frees a slot)
-            if (IsKeyPressed(KEY_C)) {
+            // C -> action.craft_spear: 1 Wood + 1 Stone -> 1 Spear.
+            if (action.craft_spear) {
                 if (inventory.craft_spear()) {
                     reward.event_crafted_tool();
                 }
             }
 
-            // B key: build a shelter at the agent's feet (consumes 1 wood
-            // + 1 grass). Replaces any existing anchor.
-            if (IsKeyPressed(KEY_B)) {
+            // B -> action.place_shelter: 1 Wood + 1 Grass -> lean-to
+            // anchor at feet. Replaces any existing anchor.
+            if (action.place_shelter) {
                 if (shelter.try_place(inventory,
                                       as.pos_x, as.pos_y, as.pos_z)) {
                     reward.event_built_shelter();
                 }
             }
 
-            // F key: melee attack the closest animal in front (90 deg arc).
-            // Spear in inventory boosts reach and damage. Killed mammals
-            // also drop a Fur into the inventory (if there's room).
-            if (IsKeyPressed(KEY_F)) {
+            // F -> action.attack: melee attack the closest animal in
+            // front (90 deg arc). Spear in inventory boosts reach and
+            // damage. Killed mammals also drop a Fur if room.
+            if (action.attack) {
                 bool has_spear = inventory.num_of(dp::agent::ItemKind::Spear) > 0;
                 float reach  = has_spear ? 2.5f : 1.5f;
                 float damage = has_spear ? 50.0f : 20.0f;
@@ -1361,20 +1384,21 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // X key: craft a grass dress (3 grass -> 1 dress)
-            if (IsKeyPressed(KEY_X)) {
+            // X -> action.craft_grass_dress: 3 Grass -> 1 GrassDress.
+            if (action.craft_grass_dress) {
                 if (inventory.craft_grass_dress()) {
                     reward.event_crafted_tool();
                 }
             }
-            // Z key: craft a fur cloak (2 fur -> 1 cloak)
-            if (IsKeyPressed(KEY_Z)) {
+            // Z -> action.craft_fur_cloak: 2 Fur -> 1 FurCloak.
+            if (action.craft_fur_cloak) {
                 if (inventory.craft_fur_cloak()) {
                     reward.event_crafted_tool();
                 }
             }
-            // V key: put on the best available clothing (cloak > dress).
-            if (IsKeyPressed(KEY_V)) {
+            // V -> action.wear_clothes: put on the best available
+            // clothing (cloak > dress).
+            if (action.wear_clothes) {
                 if (inventory.num_of(dp::agent::ItemKind::FurCloak) > 0) {
                     wardrobe.wear(inventory, dp::agent::ItemKind::FurCloak);
                 } else if (inventory.num_of(dp::agent::ItemKind::GrassDress) > 0) {
@@ -1382,10 +1406,10 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // N key (Late only): plant the seed in inventory at the
-            // agent's feet, creating a FarmPlot of the same kind as the
-            // last fruit/berry harvested.
-            if (IsKeyPressed(KEY_N) && progress.can_farm()) {
+            // N -> action.plant_seed (Late only): plant the seed in
+            // inventory at the agent's feet, creating a FarmPlot of the
+            // same kind as the last fruit/berry harvested.
+            if (action.plant_seed && progress.can_farm()) {
                 if (inventory.num_of(dp::agent::ItemKind::Seed) > 0) {
                     inventory.remove_one(dp::agent::ItemKind::Seed);
                     farming.plant_seed(as.pos_x, as.pos_y, as.pos_z,
@@ -1393,8 +1417,9 @@ int main(int argc, char** argv) {
                     reward.event_collected_resource();  // small reward for planting
                 }
             }
-            // J key (Late only): water the nearest plot within 2m.
-            if (IsKeyPressed(KEY_J) && progress.can_farm()) {
+            // J -> action.water_plot (Late only): water nearest plot
+            // within 2m.
+            if (action.water_plot && progress.can_farm()) {
                 if (farming.water_at(as.pos_x, as.pos_y, 2.0f)) {
                     // Small stamina cost so spamming isn't free.
                     vital_state.stamina = std::max(0.0f,
@@ -1402,9 +1427,10 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // K key (Late only): feed grass to nearest prey or fur to a
-            // wolf. Builds trust; once trust >= 0.5 the animal follows.
-            if (IsKeyPressed(KEY_K) && progress.can_tame()) {
+            // K -> action.feed_tame (Late only): feed grass to nearest
+            // prey or fur to a wolf. Builds trust; once trust >= 0.5 the
+            // animal follows.
+            if (action.feed_tame && progress.can_tame()) {
                 auto fr = tame.try_feed(animals, inventory,
                                         as.pos_x, as.pos_y, 3.0f);
                 if (fr.animal_idx >= 0) {

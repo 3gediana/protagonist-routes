@@ -7,13 +7,20 @@ namespace dp::agent {
 // One tick worth of "what does the agent want to do".
 //
 // This is the single contract between any controller (hand-coded wander,
-// keyboard input, or PPO policy) and CapsuleAgent. Keeping it tight makes
-// it cheap to feed PPO outputs straight into apply_action() in S4.
+// keyboard input, or PPO policy) and the rest of the simulation.
+// Keeping it tight makes it cheap to feed PPO outputs straight into the
+// consumer loop in S4.
 //
 // Continuous channels are clamped by CapsuleAgent::apply_action; callers do
-// not need to clip themselves.
+// not need to clip themselves. Discrete triggers are read out by the
+// outer loop (or Environment) via agent.last_action().
+//
+// IMPORTANT: every key in main.cpp must end up as a flag here.
+// If you add a new keyboard binding, you MUST add a matching bool below
+// AND consume agent.last_action().<bool> in the loop. PPO can only fire
+// flags that exist in this struct.
 struct AgentAction {
-    // ---- Continuous channels ----------------------------------------------
+    // ---- Continuous channels (3) ------------------------------------------
     // Desired horizontal move direction in world XY plane. (move_x, move_y)
     // is treated as a 2D vector: its length encodes "how hard to push" in
     // [0, 1] (anything > 1 gets normalized down). 0 = stand still.
@@ -24,18 +31,39 @@ struct AgentAction {
     // down from +Z). Used for steering / camera headings.
     float yaw_rate = 0.0f;
 
-    // ---- Discrete one-tick triggers ---------------------------------------
+    // ---- Basic triggers (7, S3.7) -----------------------------------------
     // True = "try this action this tick"; false = ignore. Multiple flags
     // can be true at once (e.g. eat + collect on the same tick), but only
     // one resolves per system.
-    bool eat            = false;  // harvest nearby ripe plants
-    bool drink          = false;  // drink from river/swamp under feet
-    bool attack         = false;  // attack closest hostile animal in arc
-    bool collect        = false;  // pick up nearby resource (wood/stone/grass)
-    bool place_shelter  = false;  // build/anchor shelter at current location
-    bool craft_spear    = false;  // combine inventory items into spear
-    bool sleep          = false;  // rest at shelter (recovers stamina)
+    bool eat            = false;  // E: harvest nearby ripe plants/farm
+    bool drink          = false;  // Q: drink from river/swamp + catch fish
+    bool attack         = false;  // F: melee attack closest hostile in arc
+    bool collect        = false;  // R fallback: pick up resource
+    bool place_shelter  = false;  // B: anchor lean-to shelter (1W+1G)
+    bool craft_spear    = false;  // C: craft 1 Wood + 1 Stone -> Spear
+    bool sleep          = false;  // (reserved) rest at shelter
+
+    // ---- S3.10 expansion (9) ---------------------------------------------
+    // Crafting & wardrobe (early/mid)
+    bool craft_grass_dress = false;  // X: 3 Grass -> GrassDress
+    bool craft_fur_cloak   = false;  // Z: 2 Fur   -> FurCloak
+    bool wear_clothes      = false;  // V: put on best available
+
+    // Real construction (mid)
+    bool place_blueprint     = false;  // P: place ConstructionSite at feet
+    bool cycle_building_type = false;  // Tab: rotate Shed->Wood->Stone->Big
+    bool deposit_to_site     = false;  // R primary: drop matching mats in site
+
+    // Farming & taming (late)
+    bool plant_seed = false;  // N: plant seed at feet (Late only)
+    bool water_plot = false;  // J: water nearest plot (Late only)
+    bool feed_tame  = false;  // K: feed nearest animal to build trust (Late only)
 };
+
+// Total channel count for sizing PPO action heads.
+//   3 continuous + 16 discrete triggers = 19 channels.
+constexpr int ACTION_CONTINUOUS_DIM = 3;
+constexpr int ACTION_DISCRETE_DIM   = 16;
 
 // Convenience: a no-op action (the default) means "stand still, do nothing".
 inline AgentAction noop_action() { return AgentAction{}; }

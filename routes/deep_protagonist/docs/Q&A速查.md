@@ -166,3 +166,36 @@ PPO 的"输入向量"。神经网络一帧就吃这 145 个数字然后吐出动
 - 累积到 **0.5** 触发"follower" 状态
 - 之后该动物就自动跟着你跑，不再自由乱走
 - 蓝图原话"长期喂食 → 建立 trust → 跟随"
+
+## Q-016 · "可以开训练了吗？训练环境和指标都搞定了吗？"（2026-05-24 12:45）
+
+**当时状态**：S3.10 机制层全完，但 4 个硬缺口让训练根本启动不了：
+1. **AgentAction 接口缺一半**：S3.10 加的 9 个动作（造衣/穿衣/种植/浇水/驯服/建房）只在 main.cpp 监听键盘，没进 AgentAction → PPO 物理上无法触发它们
+2. **训练框架完全没写**：没有 PPO、rollout、checkpoint，main.cpp 还是 raylib 手玩循环
+3. **没 headless 模式**：开窗口 60 fps 跑训练，PPO 至少要每秒几千步
+4. **指标 = 0**：reward 有但没记录、没分行为统计、没 wander baseline 对比
+
+**S4-pre 5 步补完**（这次会话做的）：
+1. ✅ AgentAction 扩到 19 通道（3 连续 + 16 离散），main.cpp 全部走 action 路径
+2. ✅ 新建 `dp::env::Environment` headless 包装，44k steps/s
+3. ✅ MetricsLogger 写 JSONL，Python 统计脚本
+4. ✅ Wander baseline 100 局：mean -37 / median +15 / 死亡率 29%（写 `BASELINE.md`）
+5. ✅ PPO 骨架（108k 参数，CUDA）跑通 10000 步 smoke test，loss 不 NaN
+
+**现在能开训练了**：`build/bin/deep_protagonist_train.exe --policy ppo --steps 1000000 --metrics runs/ppo_run1.jsonl`
+
+## Q-017 · "怎么判断 PPO 真的学到了？"（2026-05-24 12:45）
+
+四档判定，对照 `docs/BASELINE.md`：
+
+| 指标 | 必须达到 | 含义 |
+|---|---|---|
+| 🟥 mean reward < -37 | 失败 | PPO 比 wander 还差，肯定有 bug |
+| 🟨 mean reward > 0 | 起步 | 学会基本求生（少死） |
+| 🟧 mean reward > +50 | 学到点 | 主动找食/水/避狼 |
+| 🟩 mean reward > +100 | 真有成果 | 进入中期建造 |
+
+附加单项指标（任一明显超 wander）：
+- 死亡率 < 10%（wander 29%）→ 学会避狼
+- r_kills > 5（wander 0）→ 学会主动战斗
+- r_milestone > 20（wander 0.4）→ 解锁了中期

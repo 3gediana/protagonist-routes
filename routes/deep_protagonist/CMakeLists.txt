@@ -72,10 +72,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(tomlplusplus spdlog raylib)
 
 # ============================================================================
-# Main executable
+# Shared core sources (used by both viewer and trainer)
 # ============================================================================
-add_executable(deep_protagonist
-    src/main.cpp
+set(DP_CORE_SOURCES
     src/world/Heightmap.cpp
     src/world/BiomeMap.cpp
     src/world/RiverSystem.cpp
@@ -101,6 +100,16 @@ add_executable(deep_protagonist
     src/agent/TameSystem.cpp
     src/agent/VitalSystem.cpp
     src/agent/Wardrobe.cpp
+    src/env/Environment.cpp
+    src/policy/PPO.cpp
+)
+
+# ============================================================================
+# Main executable (raylib viewer + self-tests)
+# ============================================================================
+add_executable(deep_protagonist
+    src/main.cpp
+    ${DP_CORE_SOURCES}
     src/render/WorldRenderer.cpp
     src/render/FlyCamera.cpp
 )
@@ -129,6 +138,34 @@ if(MSVC)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${TORCH_DLLS}
         $<TARGET_FILE_DIR:deep_protagonist>)
+endif()
+
+# ============================================================================
+# Headless trainer executable (no raylib, drives Environment directly)
+# ============================================================================
+add_executable(deep_protagonist_train
+    src/main_train.cpp
+    ${DP_CORE_SOURCES}
+)
+target_include_directories(deep_protagonist_train PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_link_libraries(deep_protagonist_train PRIVATE
+    ${TORCH_LIBRARIES}
+    tomlplusplus::tomlplusplus
+    spdlog::spdlog
+    raylib  # headers only - we never call InitWindow() so no graphics
+            # context is created at runtime; needed because Daylight.hpp
+            # exposes Color in its public API.
+)
+target_compile_features(deep_protagonist_train PRIVATE cxx_std_20)
+
+# Same DLL drop next to the trainer .exe so it can find libtorch dlls.
+if(MSVC)
+    add_custom_command(TARGET deep_protagonist_train POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${TORCH_DLLS}
+        $<TARGET_FILE_DIR:deep_protagonist_train>)
 endif()
 
 # ============================================================================

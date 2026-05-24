@@ -1,10 +1,52 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-24 上午 11:30
-> 当前阶段：**S3.10 完整生存模拟主线 ✅（蓝图 v2 二次升级）**
-> Self-test：**100 个全过**
+> 最后更新：2026-05-24 中午 13:10
+> 当前阶段：**S4-pre 训练前置补完 ✅（PPO 骨架已通）**
+> Self-test：**102 个全过**
+> Wander baseline：100 局，mean -37 / median +15 / 死亡率 29%（`docs/BASELINE.md`）
+> PPO smoke：CUDA 108k 参数，10000 步无 NaN，ep0 reward +19
 
-## ✅ 最新会话完成：S3.10 完整生存模拟（蓝图 v2 升级）
+## ✅ 最新会话完成：S4-pre 训练前置 5 步
+
+用户原话："可以开始训练了吗，训练环境和指标都搞定了吗"。AI 评估发现 4 个硬缺口（AgentAction 缺 9 动作 / 没 PPO 框架 / 没 headless / 没指标看板），决策做 S4-pre 5 步前置补完，再进 S4 主体长训。
+
+### S4-pre 完成清单
+
+| 步 | 内容 | 状态 |
+|---|---|---|
+| 1 | AgentAction 扩到 19 通道（3 cont + 16 disc）；main.cpp 全部走 action 路径 | ✅ |
+| 2 | 新建 `dp::env::Environment` headless 包装；新建 `deep_protagonist_train.exe`；50k steps/s | ✅ |
+| 3 | MetricsLogger 写 JSONL（11 reward 分量 + episode 信息）；Python 统计脚本 | ✅ |
+| 4 | Wander baseline 100 局；写 `docs/BASELINE.md` 评判口径锚点 | ✅ |
+| 5 | PPO 骨架（MLP 145→256→256 + actor/critic head + GAE-λ + clip update + Adam）；CUDA smoke 10000 步通过 | ✅ |
+
+### 新增模块
+
+- `include/agent/AgentAction.hpp`：扩展为 19 通道
+- `include/env/Environment.hpp` + `src/env/Environment.cpp`：headless 环境包装
+- `include/policy/PPO.hpp` + `src/policy/PPO.cpp`：完整 PPO 实现（108k 参数）
+- `src/main_train.cpp`：headless trainer 入口
+- `scripts/summarize_metrics.py`：JSONL 统计工具
+- `docs/BASELINE.md`：训练成功 / 失败的判定基线
+
+### 二进制
+- `build/bin/deep_protagonist.exe` - raylib viewer + self-test
+- `build/bin/deep_protagonist_train.exe` - headless trainer
+
+### CLI
+```
+deep_protagonist_train.exe --policy {wander|noop|ppo}
+                           --steps N --episodes N --seed S
+                           --metrics path.jsonl
+```
+
+### 现在能做什么
+1. 跑 PPO smoke：`--policy ppo --steps 10000`（10 秒）
+2. 跑 wander baseline：`--policy wander --steps 1000000 --episodes 100 --metrics runs/wander_baseline.jsonl`（17 秒）
+3. 统计：`python3 scripts/summarize_metrics.py runs/wander_baseline.jsonl`
+4. **下一步 S4 主体**：长训 1M-10M 步，看 PPO 是否打败 wander median +15 → +50 → +100
+
+## ✅ 之前会话完成：S3.10 完整生存模拟（蓝图 v2 升级）
 
 用户原话："让它行为遵循一个主线，前期采草造衣，中期建房子（真实建造材料堆到那系统自动建好 3D，多种类型按需选择），后期农耕饲养驯服"。
 
@@ -84,8 +126,9 @@ AI 上网查了 Don't Starve / Minecraft / Construction Simulator / Berkeley BAI
 | **S3.7** | 训练前置机制（action/reward/episode/obs/资源/背包/庇护/夜狼）| ✅ |
 | **S3.8** | 蓝图战斗/狩猎/抓鱼/中毒/防狼覆盖 | ✅ |
 | **S3.9** | 地形适应（沼泽减速 + 沙漠加速失水）| ✅ |
-| **S3.10** | **完整生存模拟主线**（进度/建造/衣服/农耕/驯服）| ✅ 本次完成 |
-| **S4** | PPO + 课程学习训练 + 5-10M 模型 | ⬜ **下一阶段** |
+| **S3.10** | 完整生存模拟主线（进度/建造/衣服/农耕/驯服）| ✅ |
+| **S4-pre** | **训练前置补完**（19-action 接口/headless/PPO 骨架/baseline）| ✅ 本次完成 |
+| **S4** | PPO 长训 + 课程学习 + 5-10M 模型扩容 | ⬜ **下一阶段** |
 | **S5** | 生火 + 扩 50M + 长训（8-16 周）| ⬜ |
 | **S6** | 视觉美化 + 用户干预 + 答辩预演 | ⬜ |
 
