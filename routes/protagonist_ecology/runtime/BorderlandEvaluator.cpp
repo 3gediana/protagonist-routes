@@ -92,6 +92,19 @@ double miniTickProtagonist(const IGenome& g,
     return tickAndScore(*world, *eval_agent);
 }
 
+// Commit O: meat-eating archetypes that benefit from a LargeHerbivore
+// prey peer in the borderland mini-tick. Strict predators (commit N
+// triggers via isPredatorArchetype) plus Omnivore — Omnivore is a
+// real meat-eater with a hunt capability, so a herbivore peer is a
+// valid evolutionary target for it too. Scavenger deliberately stays
+// off this list for now: scavengers feed on carrion (dead bodies),
+// which a live herbivore peer doesn't supply within a 100-substep
+// mini-tick. Adding a corpse spawner is a separate commit.
+bool benefitsFromPreyPeer(SpeciesArchetype a) {
+    return isPredatorArchetype(a)
+        || a == SpeciesArchetype::Omnivore;
+}
+
 // Commit F: same shape but for background species. The caller supplies
 // the concrete SpeciesArchetype so makeBackgroundAgent picks the right
 // capability mix. Returns 0.0 if the agent can't be built (e.g. a
@@ -108,6 +121,10 @@ double miniTickProtagonist(const IGenome& g,
 // back silently if prey_pool is null / empty (e.g. early
 // generations before the LargeHerbivore borderland is populated),
 // or if makeBackgroundAgent throws (genome layout mismatch).
+//
+// Commit O: extended trigger to also fire for Omnivore. Scavenger is
+// excluded (needs carrion not live prey) and stays at the commit-F
+// empty-world default until a corpse spawner is wired.
 double miniTickBackground(const IGenome& g,
                           SpeciesArchetype archetype,
                           const ProtagonistEcologyConfig& route,
@@ -129,8 +146,8 @@ double miniTickBackground(const IGenome& g,
     Agent* agent = agent_owned.get();
     agent_layer->addAgent(std::move(agent_owned), *world);
 
-    // Commit N: prey peer injection (predator-only).
-    if (prey_pool != nullptr && !prey_pool->empty() && isPredatorArchetype(archetype)) {
+    // Commit N: prey peer injection (predators); commit O: + Omnivore.
+    if (prey_pool != nullptr && !prey_pool->empty() && benefitsFromPreyPeer(archetype)) {
         // Walk the pool top-down for the first non-null genome.
         // Pools are append-only (commit B/F protocol) so position 0
         // is the earliest entry; promoteExternalToBorderland inserts
@@ -334,13 +351,14 @@ std::size_t BorderlandEvaluator::evaluatePool(
         && (archetype - 1) < background_archetypes->size()) {
         const SpeciesArchetype sa = (*background_archetypes)[archetype - 1];
         // Commit N: predators get a LargeHerbivore prey peer drawn
-        // from the herbivore borderland pool. We look up the pool
-        // index by walking background_archetypes for LargeHerbivore;
-        // if it's not in this run's background mix, prey_pool stays
-        // null and miniTickBackground falls back to the empty
-        // mini-world (commit F default).
+        // from the herbivore borderland pool. Commit O: also fires
+        // for Omnivore. We look up the pool index by walking
+        // background_archetypes for LargeHerbivore; if it's not in
+        // this run's background mix, prey_pool stays null and
+        // miniTickBackground falls back to the empty mini-world
+        // (commit F default).
         const std::vector<std::unique_ptr<IGenome>>* prey_pool = nullptr;
-        if (isPredatorArchetype(sa)) {
+        if (benefitsFromPreyPeer(sa)) {
             for (std::size_t i = 0; i < background_archetypes->size(); ++i) {
                 if ((*background_archetypes)[i] == SpeciesArchetype::LargeHerbivore) {
                     const std::size_t herb_idx = i + 1;  // archetype index = bg_index+1
