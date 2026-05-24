@@ -1,9 +1,16 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-24 深夜（**Layer 1-5 全部 + Layer 6 R2 stage 2 已接入主循环 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 凌晨（**Layer 1-5 全部 + Layer 6 R2 stage 3 三件齐全 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`3254e9e Layer 6 R2 stage 2: wire TripleWorldRuntime into the training loop`
+> 当前 HEAD：`39cd7da Layer 6 R2 stage 3 commit 3: extinction rescue`
+>
+> **2026-05-25 凌晨 Layer 6 R2 stage 3 三件全做完**（commits `45f56a6` + `2e24abf` + `39cd7da`）：
+> - **Commit 1 borderland cull cap** (`45f56a6`)：stage 2 留下 borderland 永远只增不减，60 代后能涨到 240+ genome/archetype。新 `TripleWorldRuntime::cullBorderland(archetype, max_pool_size)` 按 stashed fitness 留 top-N 砍其余，每次 sandbox→borderland promote 之后调一次。toml gate `[runtime.triple_world] borderland_max_pool_per_archetype` 默认 0=关。Smoke (`tmp/layer1/smoke_tw_cull.toml`, cap=4) 验证：每 archetype 稳定 4，border 总 36 = 9 archetype × 4，culled 数学完全对应。**未做 (R3 deferred)**：真正的 "borderland 进化" 即独立 World2D + 50 代物种延续 test。这次只做 pruning。
+> - **Commit 2 MainWorldPersistence pool-only snapshot** (`2e24abf`)：spec invariant #1 "主世界永不 reset" 之前只是进程内保证。新 `MainWorldPersistence::save/load` 把 borderland + main_world pool 写到 JSON manifest + per-genome 二进制 blob (复用现有 `NeatGenome::saveToFile` / `ProtagonistGenome::saveToFile`)。toml gate `persist_dir` 默认空=关；启用时启动 load + 结束 save 自动。Smoke (`tmp/layer1/smoke_tw_persist.toml`, 2 次顺序运行)：run1 end border=36 main=56，run2 start "loaded snapshot border=36 main=56"，run2 end border=36 main=112 — **第一次用具体数字证明 invariant #1 跨进程**。**未做 (R3 deferred)**：完整 World2D snapshot 即 agent/worksite/tree/water/weather/season 字段；当前 borderland/main_world 还是 pool accumulator，只能诚实持久化 pool。
+> - **Commit 3 extinction rescue** (`39cd7da`)：spec invariant #4 "灭绝 → fallback drift"。新 `rescueExtinctSpecies(archetype, k)`：main_world[archetype] 空时从 borderland 同 archetype 取 top-K 克隆进 main_world (borderland 不消耗)；非空时 no-op。主循环每代 promote 之前 sweep 所有 archetype。toml gate `extinction_rescue_top_k` 默认 0=关。Smoke (`tmp/layer1/smoke_tw_rescue.toml`, period=999 让 border->main 不触发, rescue=2)：gen 0 rescue 18 = 9 archetype × 2，gen 1-3 main 已非空 rescue 全 no-op，main 稳定 18。
+> - **Layer 6 R2 完整收口**：borderland 有界 + main_world 跨进程 + 灭绝自愈三件齐全。R3 仍 deferred 的：(a) borderland 独立 World2D + 50 代评估循环；(b) full World2D snapshot (agent/worksite/tree/water 等)；(c) 完整 incident → challenge → 训练 → 边境 → 迁徙闭环。
+> - **测试总数**：192/192（185 + 7 = stage 3 三个 commit 各加 2/3/2 共 7）。
 >
 > **2026-05-24 深夜 Layer 6 R2 stage 2: 主循环接入**（commit `3254e9e`）：
 > - 不再只是 isolated skeleton，TripleWorldRuntime 现在**在真实训练循环里**每代触发 promote。
