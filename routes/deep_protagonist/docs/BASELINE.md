@@ -63,7 +63,9 @@
 | 2026-05-24 | smoke | MLP 145→256 | 10k | +19.0 (1ep) | 0% | 0 | 0 | 1 ep smoke 验证 | 🟦 |
 | 2026-05-24 | **ppo_run1_buggy** | MLP | ~600k(killed) | reward hacking | 0% | +6000 spam | 0 | drink reward 无 cap，PPO 锁定刷水路径，发现并修复 D-036 | 🟥 |
 | 2026-05-24 | **ppo_run2** | MLP 145→256 | 1M | +16.29 | 0% | 0 | -7.17 | reward hacking 修复后 baseline。1M 步 plateau，找水靠运气 | 🟨 |
-| 2026-05-24 | **ppo_run3_gru_sm** | **GRU+SpatMem 564→256→GRU(256)** | 1M | **+18.57** | **0%** | **+1.79** | **-2.17** | **稳定学会找水！避狼 -70%，但 milestone 频率没起来。1M 步对 GRU 不够** | �↑ |
+| 2026-05-24 | **ppo_run3_gru_sm** | **GRU+SpatMem 564→256→GRU(256)** | 1M | **+18.57** | **0%** | **+1.79** | **-2.17** | **稳定学会找水！避狼 -70%，但 milestone 频率没起来。1M 步对 GRU 不够** | 🟨 |
+| 2026-05-24 | **ppo_run5_multi_cost** (killed) | + multinomial(17) + trigger_cost 0.001 | ~1.5M | +16.13 (surv) | 14% | +1.36 | -14.27 | D-039：Bernoulli sigmoid 全 0.5 病修复。drink 锁死 32%（用户嫌烦）→ kill 调 thirst | 🟨 |
+| 2026-05-24 | **ppo_run6_thirst_slow** | 同上 + thirst_decay 12→4/min | 2M | -29.75 (surv +10.82) | 24% | +0.99 | -34.00 | D-040：drink 5%（用户目标 ✅）但 NOOP 22%→52% 飙升，milestone 0，死亡率高。thirst 调慢过头了 | 🟧→🟨退化 |
 
 ### ppo_run3 vs ppo_run2 详细对比（last 20 ep）
 

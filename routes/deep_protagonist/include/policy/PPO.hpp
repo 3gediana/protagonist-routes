@@ -13,7 +13,12 @@ namespace dp::policy {
 // =============================================================================
 // Network. obs -> MLP encoder -> GRU recurrent core -> three heads:
 //   * cont mean      (3) for continuous actions (move_x, move_y, yaw_rate)
-//   * disc logits    (16) for discrete-trigger actions (eat, drink, ...)
+//   * disc logits    (17) for discrete categorical action: index in
+//                    [0..15] picks one trigger from AgentAction; index
+//                    16 = NOOP (don't trigger anything this tick).
+//                    Multinomial / softmax replaces the older 16x
+//                    independent Bernoulli heads, which suffered from a
+//                    "every button half-pressed" collapse (see D-039).
 //   * value          (1) state-value baseline for advantage estimation
 //
 // log_std is a state-independent learnable parameter vector (3), the
@@ -27,10 +32,12 @@ namespace dp::policy {
 // an episode; reset to zero at episode boundary.
 // =============================================================================
 struct ActorCriticImpl : torch::nn::Module {
-    static constexpr int OBS_DIM  = dp::agent::ObservationBuilder::SIZE;
-    static constexpr int CONT_DIM = dp::agent::ACTION_CONTINUOUS_DIM;
-    static constexpr int DISC_DIM = dp::agent::ACTION_DISCRETE_DIM;
-    static constexpr int HIDDEN   = 256;
+    static constexpr int OBS_DIM   = dp::agent::ObservationBuilder::SIZE;
+    static constexpr int CONT_DIM  = dp::agent::ACTION_CONTINUOUS_DIM;
+    static constexpr int DISC_DIM  = dp::agent::ACTION_DISCRETE_DIM;   // 16 trigger ids
+    static constexpr int DISC_CATS = DISC_DIM + 1;                     // 17 = 16 + NOOP
+    static constexpr int NOOP_IDX  = DISC_DIM;                         // 16
+    static constexpr int HIDDEN    = 256;
 
     torch::nn::Linear   encoder{nullptr};
     torch::nn::GRUCell  gru{nullptr};
@@ -56,7 +63,7 @@ TORCH_MODULE(ActorCritic);
 struct Transition {
     std::vector<float>  obs;        // OBS_DIM floats
     std::vector<float>  cont_act;   // CONT_DIM floats
-    std::vector<float>  disc_act;   // DISC_DIM floats (0/1)
+    int                 disc_act = ActorCriticImpl::NOOP_IDX;  // category index in [0..DISC_CATS)
     std::vector<float>  h_in;       // HIDDEN floats - GRU hidden BEFORE this step
     float               reward = 0.0f;
     float               value  = 0.0f;
@@ -77,7 +84,7 @@ struct PPOConfig {
     float  lambda_         = 0.95f;
     float  clip_eps        = 0.2f;
     float  vf_coef         = 0.5f;
-    float  ent_coef        = 0.01f;
+    float  ent_coef        = 0.005f;  // D-039 v2: 0.01->0.001 over-collapsed to wear_clothes 65%, dial back to 0.005
     float  lr              = 3e-4f;
     float  max_grad_norm   = 0.5f;
     bool   use_cuda        = true;
@@ -100,7 +107,7 @@ public:
     dp::agent::AgentAction sample_action(
         const dp::agent::ObservationBuilder::Vector& obs,
         std::vector<float>&  out_cont,
-        std::vector<float>&  out_disc,
+        int&                 out_disc_idx,
         float& out_log_prob,
         float& out_value);
 

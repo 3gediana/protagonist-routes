@@ -39,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 .\build\bin\deep_protagonist.exe
 ```
 
-Self-test should report `SELF-TESTS PASSED` with 102 PASS lines.
+Self-test should report `SELF-TESTS PASSED` with 110 PASS lines.
 
 ## Headless training (S4-pre and beyond)
 
@@ -60,6 +60,17 @@ Self-test should report `SELF-TESTS PASSED` with 102 PASS lines.
 # Resume from a checkpoint.
 .\build\bin\deep_protagonist_train.exe --policy ppo --steps 1000000 `
     --load runs\ppo_run1.pt --metrics runs\ppo_run1_cont.jsonl
+
+# Pure-eval (load checkpoint, no PPO update -- D-039 diagnostic).
+.\build\bin\deep_protagonist_train.exe --policy ppo --no-update `
+    --load runs\ppo_run3_gru_sm.pt --steps 50000 --episodes 5 `
+    --metrics runs\diag.jsonl
+
+# Sweep an env tunable (D-040 toolkit). Requires recompile so the
+# binary contains --thirst-decay / --trigger-cost flags.
+.\build\bin\deep_protagonist_train.exe --policy ppo --steps 100000 `
+    --thirst-decay 8.0 --trigger-cost 0.001 `
+    --metrics runs\sweep_thirst_8.jsonl
 ```
 
 ## Inspect a trained checkpoint visually
@@ -71,15 +82,33 @@ Self-test should report `SELF-TESTS PASSED` with 102 PASS lines.
 Camera & day-speed keys still work; agent-action keys are disabled
 in PPO mode (network has full control).
 
-## Plot results
+## Inspect results
 
 ```powershell
-python3 scripts\summarize_metrics.py runs\ppo_run1.jsonl
-python3 scripts\plot_training.py runs\ppo_run1.jsonl --window 20
-```
+# Per-run summary (mean, p10/p50/p90, deaths).
+python3 scripts\summarize_metrics.py runs\ppo_run3_gru_sm.jsonl
 
-`plot_training.py` shows an ASCII reward curve plus a four-tier
-"learning verdict" tag against the wander baseline.
+# ASCII reward curve + four-tier verdict (red/amber/yellow/orange/green
+# vs wander baseline).
+python3 scripts\plot_training.py runs\ppo_run3_gru_sm.jsonl --window 20
+
+# Compare multiple runs side-by-side (last N stats + verdict per run).
+python3 scripts\compare_runs.py runs\wander_baseline.jsonl runs\ppo_run3_gru_sm.jsonl runs\ppo_run6_thirst_slow.jsonl
+
+# Per-action breakdown: shows how often each of the 16 discrete
+# triggers fired (D-039 diagnostic). Optional last-N to focus on
+# late-stage policy.
+python3 scripts\analyze_actions.py runs\ppo_run3_gru_sm.jsonl
+python3 scripts\analyze_actions.py runs\ppo_run3_gru_sm.jsonl 20
+
+# Trend: action distribution change first 25% of episodes vs last 25%.
+# Reveals "policy collapse" or "habit formation" at a glance.
+python3 scripts\analyze_actions.py runs\ppo_run6_thirst_slow.jsonl trend
+
+# Sweep one env parameter with auto-compare. Saves jsonl per value.
+python3 scripts\sweep_env.py --param thirst-decay --values 4 6 8 10 12 --steps 100000
+python3 scripts\sweep_env.py --param trigger-cost --values 0.0005 0.001 0.002 0.005 --steps 100000
+```
 
 ## Viewer key bindings
 
@@ -137,8 +166,25 @@ deep_protagonist/
   include/             # C++ headers
   configs/             # *.toml runtime configs
   docs/                # PROGRESS + 4 quick-reference docs (Chinese)
-  scripts/             # PowerShell helpers
-  third_party/         # libtorch goes here
+                       # decisions log / Q&A / param ref / glossary
+  scripts/             # build / training / analysis helpers
+                       # *.ps1 = build, *.py = analysis
+  third_party/         # libtorch goes here (gitignored, ~2.6GB)
+  runs/                # jsonl metrics + .pt checkpoints (gitignored)
+                       # naming convention: ppo_run{N}_{tag}.{jsonl,pt}
   cmake/               # custom CMake modules (later)
   build/               # generated, gitignored
 ```
+
+## Decision log shortcut
+
+| Decision | Date | TL;DR |
+|---|---|---|
+| D-035 | 2026-05-24 | S4-pre: action 19 + Environment + PPO skeleton + baseline |
+| D-036 | 2026-05-24 | reward hacking fix: `eat/drink` return actual_delta |
+| D-037 | 2026-05-24 | Memory: GRU + SpatialMemory (not DNC) |
+| D-038 | 2026-05-24 | Visualisation deferred until training stabilises |
+| D-039 | 2026-05-24 | Discrete head Bernoulli → Categorical (4-version sweep) |
+| D-040 | 2026-05-24 | thirst_decay 12 → 4/min so drink stops dominating |
+
+Full text in `docs/决策记录.md`.

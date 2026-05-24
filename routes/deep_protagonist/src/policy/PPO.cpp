@@ -21,7 +21,7 @@ ActorCriticImpl::ActorCriticImpl() {
     cont_mean   = register_module("cont_mean",
                                   torch::nn::Linear(HIDDEN, CONT_DIM));
     disc_logits = register_module("disc_logits",
-                                  torch::nn::Linear(HIDDEN, DISC_DIM));
+                                  torch::nn::Linear(HIDDEN, DISC_CATS));  // 17-way categorical
     value       = register_module("value",
                                   torch::nn::Linear(HIDDEN, 1));
 
@@ -102,13 +102,12 @@ std::vector<float> PPO::current_hidden() const {
 dp::agent::AgentAction PPO::sample_action(
     const dp::agent::ObservationBuilder::Vector& obs,
     std::vector<float>& out_cont,
-    std::vector<float>& out_disc,
+    int&                out_disc_idx,
     float& out_log_prob,
     float& out_value)
 {
     constexpr int O = ActorCriticImpl::OBS_DIM;
     constexpr int C = ActorCriticImpl::CONT_DIM;
-    constexpr int D = ActorCriticImpl::DISC_DIM;
 
     torch::NoGradGuard ng;
     auto t_obs = torch::from_blob(
@@ -128,25 +127,20 @@ dp::agent::AgentAction PPO::sample_action(
          - 0.5f * std::log(2.0f * static_cast<float>(M_PI)))
             .sum(1);                             // [1]
 
-    // Discrete: independent Bernoulli per channel.
-    auto probs = torch::sigmoid(dl);             // [1, D]
-    auto u     = torch::rand_like(probs);
-    auto disc  = (u < probs).to(torch::kFloat32);
-    // Bernoulli log-prob with logits (numerically stable).
-    auto disc_log_prob = -torch::nn::functional::binary_cross_entropy_with_logits(
-        dl, disc,
-        torch::nn::functional::BinaryCrossEntropyWithLogitsFuncOptions()
-            .reduction(torch::kNone))
-        .sum(1);                                 // [1]
+    // Discrete: 17-way categorical (16 triggers + NOOP). Multinomial
+    // sample one index, log_prob = log p(a). Replaces independent
+    // Bernoulli heads to break the "press every button" collapse.
+    auto log_probs_d = torch::log_softmax(dl, /*dim=*/1);   // [1, 17]
+    auto probs_d     = log_probs_d.exp();                    // [1, 17]
+    auto idx         = probs_d.multinomial(1, /*replacement=*/true);  // [1, 1]
+    auto disc_log_prob = log_probs_d.gather(1, idx).squeeze(1);       // [1]
 
     auto log_prob = cont_log_prob + disc_log_prob;
 
     auto cont_cpu = cont.to(torch::kCPU).contiguous();
-    auto disc_cpu = disc.to(torch::kCPU).contiguous();
     out_cont.assign(cont_cpu.data_ptr<float>(),
                     cont_cpu.data_ptr<float>() + C);
-    out_disc.assign(disc_cpu.data_ptr<float>(),
-                    disc_cpu.data_ptr<float>() + D);
+    out_disc_idx = static_cast<int>(idx.to(torch::kCPU).item<int64_t>());
     out_log_prob = log_prob.item<float>();
     out_value    = v.item<float>();
 
@@ -157,22 +151,26 @@ dp::agent::AgentAction PPO::sample_action(
     a.move_x   = std::tanh(out_cont[0]);
     a.move_y   = std::tanh(out_cont[1]);
     a.yaw_rate = std::tanh(out_cont[2]) * 3.0f;    // up to 3 rad/s
-    a.eat                  = out_disc[0]  > 0.5f;
-    a.drink                = out_disc[1]  > 0.5f;
-    a.attack               = out_disc[2]  > 0.5f;
-    a.collect              = out_disc[3]  > 0.5f;
-    a.place_shelter        = out_disc[4]  > 0.5f;
-    a.craft_spear          = out_disc[5]  > 0.5f;
-    a.sleep                = out_disc[6]  > 0.5f;
-    a.craft_grass_dress    = out_disc[7]  > 0.5f;
-    a.craft_fur_cloak      = out_disc[8]  > 0.5f;
-    a.wear_clothes         = out_disc[9]  > 0.5f;
-    a.place_blueprint      = out_disc[10] > 0.5f;
-    a.cycle_building_type  = out_disc[11] > 0.5f;
-    a.deposit_to_site      = out_disc[12] > 0.5f;
-    a.plant_seed           = out_disc[13] > 0.5f;
-    a.water_plot           = out_disc[14] > 0.5f;
-    a.feed_tame            = out_disc[15] > 0.5f;
+    // Categorical fan-out: exactly one trigger is set, or NOOP (idx=16).
+    switch (out_disc_idx) {
+        case  0: a.eat                  = true; break;
+        case  1: a.drink                = true; break;
+        case  2: a.attack               = true; break;
+        case  3: a.collect              = true; break;
+        case  4: a.place_shelter        = true; break;
+        case  5: a.craft_spear          = true; break;
+        case  6: a.sleep                = true; break;
+        case  7: a.craft_grass_dress    = true; break;
+        case  8: a.craft_fur_cloak      = true; break;
+        case  9: a.wear_clothes         = true; break;
+        case 10: a.place_blueprint      = true; break;
+        case 11: a.cycle_building_type  = true; break;
+        case 12: a.deposit_to_site      = true; break;
+        case 13: a.plant_seed           = true; break;
+        case 14: a.water_plot           = true; break;
+        case 15: a.feed_tame            = true; break;
+        default: /* NOOP */ break;
+    }
     return a;
 }
 
@@ -181,7 +179,6 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
 {
     constexpr int O = ActorCriticImpl::OBS_DIM;
     constexpr int C = ActorCriticImpl::CONT_DIM;
-    constexpr int D = ActorCriticImpl::DISC_DIM;
     constexpr int H = ActorCriticImpl::HIDDEN;
 
     const int N = static_cast<int>(rollout.size());
@@ -191,17 +188,17 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     // We use "stale-hidden" PPO (CleanRL-style): the hidden state passed
     // to forward during update is the one cached at rollout time. This
     // is slightly off-policy but is the simplest correct PPO+GRU.
-    std::vector<float> obs_flat;       obs_flat.reserve(N * O);
-    std::vector<float> cont_flat;      cont_flat.reserve(N * C);
-    std::vector<float> disc_flat;      disc_flat.reserve(N * D);
-    std::vector<float> hin_flat;       hin_flat.reserve(N * H);
-    std::vector<float> rew(N), val(N), lp(N);
-    std::vector<float> done(N);
+    std::vector<float>   obs_flat;   obs_flat.reserve(N * O);
+    std::vector<float>   cont_flat;  cont_flat.reserve(N * C);
+    std::vector<int64_t> disc_idx(N);
+    std::vector<float>   hin_flat;   hin_flat.reserve(N * H);
+    std::vector<float>   rew(N), val(N), lp(N);
+    std::vector<float>   done(N);
     for (int i = 0; i < N; ++i) {
         const auto& tr = rollout[i];
         obs_flat.insert(obs_flat.end(), tr.obs.begin(), tr.obs.end());
         cont_flat.insert(cont_flat.end(), tr.cont_act.begin(), tr.cont_act.end());
-        disc_flat.insert(disc_flat.end(), tr.disc_act.begin(), tr.disc_act.end());
+        disc_idx[i] = static_cast<int64_t>(tr.disc_act);
         hin_flat.insert(hin_flat.end(), tr.h_in.begin(), tr.h_in.end());
         rew[i]  = tr.reward;
         val[i]  = tr.value;
@@ -233,7 +230,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
 
     auto t_obs   = torch::from_blob(obs_flat.data(),  {N, O}, torch::kFloat32).clone().to(device_);
     auto t_cont  = torch::from_blob(cont_flat.data(), {N, C}, torch::kFloat32).clone().to(device_);
-    auto t_disc  = torch::from_blob(disc_flat.data(), {N, D}, torch::kFloat32).clone().to(device_);
+    auto t_disc  = torch::from_blob(disc_idx.data(),  {N},    torch::kInt64).clone().to(device_);
     auto t_hin   = torch::from_blob(hin_flat.data(),  {N, H}, torch::kFloat32).clone().to(device_);
     auto t_lpold = torch::from_blob(lp.data(),        {N},    torch::kFloat32).clone().to(device_);
     auto t_adv   = torch::from_blob(adv.data(),       {N},    torch::kFloat32).clone().to(device_);
@@ -270,21 +267,17 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                 (-0.5f * ((b_cont - cm) / std_).pow(2)
                  - cs
                  - 0.5f * std::log(2.0f * static_cast<float>(M_PI))).sum(1);
-            auto disc_lp =
-                -torch::nn::functional::binary_cross_entropy_with_logits(
-                    dl, b_disc,
-                    torch::nn::functional::BinaryCrossEntropyWithLogitsFuncOptions()
-                        .reduction(torch::kNone)).sum(1);
-            auto lp_new = cont_lp + disc_lp;
+            // Categorical log-prob: log_softmax(dl)[chosen_idx]
+            auto log_p_d = torch::log_softmax(dl, /*dim=*/1);   // [B, 17]
+            auto disc_lp = log_p_d.gather(1, b_disc.unsqueeze(1)).squeeze(1);  // [B]
+            auto lp_new  = cont_lp + disc_lp;
 
-            // Continuous Gaussian entropy + Bernoulli entropy summed over channels.
+            // Continuous Gaussian entropy + Categorical entropy.
             auto cont_ent = (cs + 0.5f
                              * std::log(2.0f * static_cast<float>(M_PI) * static_cast<float>(M_E)))
                             .sum(1);
-            auto p = torch::sigmoid(dl);
-            auto eps = 1e-7f;
-            auto disc_ent = (-(p * (p + eps).log()
-                              + (1.0f - p) * (1.0f - p + eps).log())).sum(1);
+            auto p_d      = log_p_d.exp();
+            auto disc_ent = -(p_d * log_p_d).sum(1);            // [B]
             auto entropy  = (cont_ent + disc_ent).mean();
 
             auto ratio = (lp_new - b_lpold).exp();

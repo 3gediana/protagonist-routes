@@ -244,3 +244,77 @@ PPO 在 ep39 偶然探索到河岸 + 反复按 Q 的组合，立刻锁死这条�
 **修复**（D-036）：让 `vitals.drink/eat` 返回 actual_delta，调用方传给 `reward.event_X(actual)`。这样喝不进去的水不给 reward。`runs/ppo_run1_buggy.jsonl` 留作教学样本。
 
 **RL 工程师必须记住的铁律**："奖励应该等于 agent 实际获得的，不是试图获得的"。所有 reward 函数设计前先问自己：这个量有上限吗？上限到了还会触发 reward 吗？如果会，就是 reward hacking 漏洞。
+
+## Q-021 · "PPO 跑了 1M 步 mean +18 卡住，是不是网络太小？该扩到 5M 参数吗？"（2026-05-24 15:20）
+
+**不一定**。决策 D-039 之前我也以为是参数不够，差点盲投 20× 算力（HIDDEN 512 + 5M 步）。先做了 30 分钟"行为直方图"诊断救了这一脚。
+
+**诊断方法**（`scripts/analyze_actions.py`）：
+- main_train.cpp 给每个 episode 写 act:[16 个动作触发次数] 进 jsonl
+- 用 ppo_run3 checkpoint 跑 5 局 eval，看每个动作的触发频率
+- 同时算 mean |move| 和 mean |yaw_rate|
+
+**当时看到的真相**：
+- 16 个离散动作触发率 35-73%，**每步同时按多个键**
+- mean |move|=0.9（一直满速跑）/ |yaw|=1.7 rad/s（一直疯转）
+- r_water 看起来稳 +1.8 是因为"站河边乱按必中"，不是学会找水
+- r_craft / r_milestone 永远 0 因为多步条件链永远凑不齐
+
+**根因**：PPO 离散头是 16 个独立 Bernoulli sigmoid，sigmoid 全收敛到 0.5（"每个键 50% 概率"是局部最优）。**这不是参数问题，是架构问题**。盲投扩参没用。
+
+**正确解决**（D-039）：sigmoid → softmax + multinomial，每步互斥选 1 个动作（+ NOOP）。改完 100k 步就观察到"每步累计 95% + NOOP 5%"，move 从 0.9→0.6 不再瞎跑。
+
+**教训**：调参的第一性原则不是"加更多"，是"先抓 action histogram 看 agent 真正在做什么"。诊断便宜，盲投贵。1 小时诊断省 4 小时盲训。
+
+## Q-022 · "改完 multinomial 还是塌缩怎么办？"（2026-05-24 16:00）
+
+D-039 发现 multinomial 不是免费午餐。改完后发现 4 轮迭代踩 3 个坑：
+
+| 版本 | 配置 | 100k 步看到的塌缩 |
+|---|---|---|
+| v1 | ent_coef=0.001（10× 下调） | last 10 wear_clothes 64.6%（按 V 不亏的免费 noop） |
+| v2 | ent_coef=0.005 + 不加 cost | craft_spear 19% / feed_tame 13%（多个免费 noop 共同上涨） |
+| v3 | + trigger cost 0.005/step | NOOP 98%（cost > alive 收益，agent 学到不动最赚） |
+| **v4** | **ent_coef=0.005 + trigger cost 0.001/step** ✅ | **16 动作 2.55-9.78% 平均，drink 6.87%，NOOP 11%。健康** |
+
+**关键洞察 1：multinomial 也会塌缩到"廉价 noop"**。比 Bernoulli "全 0.5" 好但不是不会塌缩。
+
+**关键洞察 2：堵塌缩用 trigger cost 是真根因修复**。它给"按了无效"扣钱，让"按了有效"的动作（drink 在水边、craft 在有材料时）才划算。NOOP 不收费，仍是安全选项。
+
+**关键洞察 3：cost 数值必须 100k smoke 校准**：
+- alive 收益 +0.05/s = +0.00167/step
+- cost 0.005 → 远 > alive 收益 → NOOP 锁死
+- cost 0.001 → < alive 收益 → 鼓励行动但惩罚瞎按
+- 校准方法：跑 100k smoke 看 last_n=10 的 NOOP%。NOOP 5-15% 是健康区间，>50% 太高，<3% 太低
+
+**v4 早期成果**（200k 步）：ep 12 突破 +49.3 含 milestone +40（第一次解锁阶段），死亡率 1/22 = 4.5%（vs wander 29%）。
+
+## Q-023 · "agent 为什么这么频繁喝水？"（2026-05-24 16:30）
+
+**根本原因**：drink 是这游戏里**最便宜的高密度稳定奖励**。
+
+奖励密度对比（每秒收益）：
+
+| 行为 | 系数 | 触发条件 | 每秒收益 | 风险 |
+|---|---|---|---|---|
+| **drink** | +0.03/ml × 60ml/s | 站河里按 Q | **+1.8/s** | 河边狼少 |
+| eat | +0.04/kcal × 偶尔 25kcal | 走到 ripe 植物按 E | +0.5~1/局 | 找植物 |
+| collect | +0.5/件 | 走到资源按 R | +1.5~3/局 | 中等 |
+| shelter | +5/次 | 1W+1G + 按 B | +5/局（一次性）| 低 |
+| kills | +5/狼 | 用 spear 攻击 | +5/局，但被咬 -25/s | **极高** |
+| milestone | +20/次 | 解锁阶段 | 一局可能 0-1 次 | — |
+
+drink 折算成单步 +0.06/step。这是所有可控行为里最高的稳定收益。PPO 是贪心的，找到 +0.06/step 的 plateau 就锁死。
+
+**修复尝试 D-040**：调慢 thirst 衰减 12/min → 4/min（3× 慢）。r_water 上限从 +1.8/局 → +0.6/局。
+
+**结果**：drink 触发率从 32% → 5%（用户目标达成 ✅），但**副作用严重**：
+- agent 失去"必须找水"的隐式导航信号 → 四处乱走 → 撞狼死亡率 24%（vs ppo_run3 0%）
+- last 51 ep NOOP 从 22% 飙到 **52%**（一半时间什么都不做）
+- craft 系列归零（craft_spear 9%→0.5%）
+- r_milestone 退化到 0（之前能偶发 +40）
+
+**教训**：单数值调整有连带效应。drink 退场后 agent 学到"NOOP + 偶尔采集"这个更糟的局部最优。下一步候选 D-041：
+- 折中 thirst_decay = 6-8/min（原 12 与新 4 之间）
+- 或保留 4，加避狼 reward shaping 对冲死亡率
+- 或加 NOOP cost 防 agent 完全摆烂

@@ -1,15 +1,54 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-24 下午 15:00
-> 当前阶段：**S4.0 完成；S4.1 准备扩网络长训（D-038：可视化全部延后）**
+> 最后更新：2026-05-24 下午 17:55
+> 当前阶段：**S4.1 D-041 主线驱动 reward 重塑（11 个 first_X milestone + satiation scale），2M 训练中**
 > Self-test：**110 个全过**
 >
 > ⚠️ **未来 AI 必读**：用户决策 D-038 —— 所有 HUD / mini-map / 视觉化推迟到训练完毕接口冻结后。具体待办清单见 `docs/待办_视觉化与打磨.md`，**不要现在动手加 HUD**
 > Wander baseline：mean -37 / 死亡率 29%
-> PPO run2 (MLP, 1M): mean +16.3 / 死亡率 0% / water 0
-> **PPO run3 (GRU+SpatMem, 1M): mean +18.6 / 死亡率 0% / water +1.79 (稳定找水) / bites -2.17 (避狼 +92%)**
+> PPO run3 (GRU+SpatMem, 1M, Bernoulli): mean +18.6 / 死亡率 0%
+> PPO run5 (multinomial, killed): drink 锁死 32%
+> PPO run6 (thirst 12→4): NOOP 52%, milestone 0, deaths 24%
+> **PPO run7 (D-041, 2M 训练中): 100k smoke ep 11 R=+66.8 含 milestone +60，首次破 🟧**
 
-## ✅ 最新会话完成：S4.0 记忆架构（GRU + SpatialMemory）+ 第一次 1M 训练对比
+## ✅ 最新会话完成：S4.1 D-039 multinomial 架构修复 + 4 轮迭代 + 2M 训练
+
+用户原话"规划下一步"。AI 没有盲投扩参，先做 30 分钟 **C 行为诊断** 抓 ppo_run3 5 局 act 直方图，发现"16 个 sigmoid 全 0.5"病——根因是架构问题不是参数不够。
+
+### S4.1 实施清单
+
+| 步 | 内容 | 状态 |
+|---|---|---|
+| 1 | 加 main_train.cpp ActionStats（16 离散动作触发计数 + mean \|move\| / \|yaw\|）；写入 jsonl | ✅ |
+| 2 | scripts/analyze_actions.py：分析 act 直方图 + NOOP%（支持 last_n） | ✅ |
+| 3 | PPO 离散头 16 Bernoulli → 17 Categorical（softmax + multinomial.sample）| ✅ |
+| 4 | Transition.disc_act vector<float>[16] → int；update 用 log_softmax.gather + categorical entropy | ✅ |
+| 5 | 4 轮 100k smoke 校准 ent_coef + trigger_cost：v1 0.001/无cost → wear 65% / v2 0.005/无cost → craft_spear 19% / v3 0.005/cost 0.005 → NOOP 98% / **v4 0.005/cost 0.001 → 16 动作 2.55-9.78% 平均** ✅ | ✅ |
+| 6 | RewardSystem.event_action_cost：每按一个 trigger 扣 0.001（计入 vital） | ✅ |
+| 7 | 2M 步训练 ppo_run5_multi_cost（进行中） | 🔄 |
+
+### v4 早期成果（200k 步 / ep22）
+
+- ep 12: R=**+49.3** 含 milestone +40（解锁阶段，ppo_run3 1M 没出现过）
+- ep 5/6/7 shelter +10 / +10 / +5
+- 死亡率 1/22 ≈ **4.5%**（vs ppo_run3 0% / wander 29%）— 略高但可接受
+- ent 4.7 维持，act drink 25.7% (top 1)，wear_clothes 0.82%（消亡）
+
+### 700k 步 / ep83 阶段（plateau 期）
+
+- mean reward -6.72（被 7 死拖累），中位数 +11.30
+- r_water +1.36 / r_food +0.96 / r_collect +2.74（健康）
+- r_shelter / r_craft / r_milestone 全 0（plateau，没再触发新建造）
+- 死亡率 8.4%
+
+### 关键洞察（D-039）
+
+**multinomial 不是免费午餐**——任何"廉价 noop"（如 wear_clothes 没衣服时静默）都会被找出来当默认。修复：
+- categorical 互斥选 1 个动作（vs sigmoid 同时按多个）
+- ent_coef 0.005（而非 0.001 过激或 0.01 太散）
+- **trigger cost 0.001/step**（按了无效就扣钱，按了有效仍 net 正），堵廉价 noop 漏洞
+
+## ✅ 之前会话完成：S4.0 记忆架构（GRU + SpatialMemory）+ 第一次 1M 训练对比
 
 用户问"并行项目用 DNC 我们要不要用"。AI 查文献（Memory Gym ICLR'24, RLBenchNet'25, Parisotto-Salakhutdinov "Neural Map" 2017, MERLIN）+ 对比 protagonist_ecology 场景，得出 5 条证据：DNC 训练困难、PPO 无主流先例、需要绝对坐标、甜点是图谱推理不是实时控制、场景需求不同。决策 D-037：**用 GRU + SpatialMemory（Neural Map 路线），不用 DNC**。
 

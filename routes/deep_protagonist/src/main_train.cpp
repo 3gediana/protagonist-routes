@@ -58,6 +58,49 @@ dp::world::World::Config load_world_config(const std::string& path) {
 // wander), 5% chance per step to fire each interaction trigger. Gives a
 // noisy baseline policy that DOES touch every action channel - useful
 // for shaking out env bugs.
+// Per-episode action histogram for C-diagnostic. Counts how many ticks
+// each of the 16 discrete triggers was set, plus mean |move| and |yaw|.
+// Index map (matches AgentAction discrete order):
+//   0:eat 1:drink 2:attack 3:collect 4:place_shelter 5:craft_spear 6:sleep
+//   7:craft_grass_dress 8:craft_fur_cloak 9:wear_clothes
+//   10:place_blueprint 11:cycle_building_type 12:deposit_to_site
+//   13:plant_seed 14:water_plot 15:feed_tame
+struct ActionStats {
+    int disc_count[16] = {0};
+    double move_mag_sum = 0.0;
+    double yaw_abs_sum  = 0.0;
+    int    ticks        = 0;
+
+    void accumulate(const dp::agent::AgentAction& a) {
+        disc_count[ 0] += a.eat                 ? 1 : 0;
+        disc_count[ 1] += a.drink               ? 1 : 0;
+        disc_count[ 2] += a.attack              ? 1 : 0;
+        disc_count[ 3] += a.collect             ? 1 : 0;
+        disc_count[ 4] += a.place_shelter       ? 1 : 0;
+        disc_count[ 5] += a.craft_spear         ? 1 : 0;
+        disc_count[ 6] += a.sleep               ? 1 : 0;
+        disc_count[ 7] += a.craft_grass_dress   ? 1 : 0;
+        disc_count[ 8] += a.craft_fur_cloak     ? 1 : 0;
+        disc_count[ 9] += a.wear_clothes        ? 1 : 0;
+        disc_count[10] += a.place_blueprint     ? 1 : 0;
+        disc_count[11] += a.cycle_building_type ? 1 : 0;
+        disc_count[12] += a.deposit_to_site     ? 1 : 0;
+        disc_count[13] += a.plant_seed          ? 1 : 0;
+        disc_count[14] += a.water_plot          ? 1 : 0;
+        disc_count[15] += a.feed_tame           ? 1 : 0;
+        move_mag_sum += std::sqrt(a.move_x * a.move_x + a.move_y * a.move_y);
+        yaw_abs_sum  += std::fabs(a.yaw_rate);
+        ++ticks;
+    }
+
+    void reset() {
+        for (int i = 0; i < 16; ++i) disc_count[i] = 0;
+        move_mag_sum = 0.0;
+        yaw_abs_sum  = 0.0;
+        ticks        = 0;
+    }
+};
+
 struct WanderPolicy {
     std::mt19937_64 rng;
     float dirx = 1.0f, diry = 0.0f;
@@ -118,6 +161,9 @@ int main(int argc, char** argv) {
     std::string save_path;                // checkpoint output (PPO only)
     int         save_every = 0;           // save every N updates (0=off)
     std::string load_path;                // resume from this checkpoint
+    bool        no_update  = false;       // pure-eval: skip rollout collection and PPO update
+    float       thirst_decay = 8.0f;       // EnvConfig.thirst_decay_per_min (D-041 sweet spot)
+    float       trigger_cost = 0.001f;     // EnvConfig.trigger_cost
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -136,13 +182,17 @@ int main(int argc, char** argv) {
         else if (a == "--save-path")  save_path    = next();
         else if (a == "--save-every") save_every   = std::stoi(next());
         else if (a == "--load")       load_path    = next();
+        else if (a == "--no-update")  no_update    = true;
+        else if (a == "--thirst-decay") thirst_decay = std::stof(next());
+        else if (a == "--trigger-cost") trigger_cost = std::stof(next());
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
                 "       [--policy wander|noop|ppo]\n"
                 "       [--metrics path.jsonl]\n"
                 "       [--save-path file.pt --save-every N]\n"
-                "       [--load file.pt]\n",
+                "       [--load file.pt]\n"
+                "       [--thirst-decay X --trigger-cost Y]\n",
                 argv[0]);
             return 0;
         } else {
@@ -161,6 +211,10 @@ int main(int argc, char** argv) {
     ecfg.world      = load_world_config("configs/default.toml");
     ecfg.world.seed = seed;
     ecfg.fixed_dt   = 1.0f / 30.0f;
+    ecfg.thirst_decay_per_min = thirst_decay;
+    ecfg.trigger_cost         = trigger_cost;
+    spdlog::info("Env tunables: thirst_decay={}/min, trigger_cost={}/step",
+                 thirst_decay, trigger_cost);
 
     spdlog::info("Building world: {}x{} cells @ {}m, max_height={}m",
                  ecfg.world.heightmap_cells_x, ecfg.world.heightmap_cells_y,
@@ -199,6 +253,8 @@ int main(int argc, char** argv) {
     int updates_since_save = 0;
     int total_updates      = 0;
 
+    ActionStats astats;
+
     auto log_episode = [&](int episode_id,
                            const dp::agent::RewardSystem::EpisodeStats& s) {
         spdlog::info("ep {}: steps={} R={:+.1f} (alive={:+.1f} "
@@ -211,21 +267,30 @@ int main(int argc, char** argv) {
                      s.r_bites, s.r_death, s.r_vital,
                      s.r_collect, s.r_shelter, s.r_craft, s.r_milestone);
         if (mf) {
+            double mv = astats.ticks > 0 ? astats.move_mag_sum / astats.ticks : 0.0;
+            double yw = astats.ticks > 0 ? astats.yaw_abs_sum  / astats.ticks : 0.0;
             std::fprintf(mf,
                 "{\"episode\":%d,\"steps\":%d,\"reward\":%.3f,"
                 "\"r_alive\":%.3f,\"r_food\":%.3f,\"r_water\":%.3f,"
                 "\"r_kills\":%.3f,\"r_bites\":%.3f,\"r_death\":%.3f,"
                 "\"r_vital\":%.3f,\"r_collect\":%.3f,\"r_shelter\":%.3f,"
                 "\"r_craft\":%.3f,\"r_milestone\":%.3f,"
-                "\"deaths\":%d,\"policy\":\"%s\",\"seed\":%llu}\n",
+                "\"deaths\":%d,\"policy\":\"%s\",\"seed\":%llu,"
+                "\"mv\":%.3f,\"yw\":%.3f,\"act\":[",
                 episode_id, s.steps, s.total_reward,
                 s.r_alive, s.r_food, s.r_water, s.r_kills,
                 s.r_bites, s.r_death, s.r_vital,
                 s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
                 env.vitals().deaths, policy.c_str(),
-                static_cast<unsigned long long>(seed));
+                static_cast<unsigned long long>(seed),
+                mv, yw);
+            for (int i = 0; i < 16; ++i) {
+                std::fprintf(mf, "%s%d", i == 0 ? "" : ",", astats.disc_count[i]);
+            }
+            std::fprintf(mf, "]}\n");
             std::fflush(mf);
         }
+        astats.reset();
     };
 
     auto t0 = std::chrono::steady_clock::now();
@@ -236,7 +301,8 @@ int main(int argc, char** argv) {
     std::vector<float> ppo_h_in_snapshot;   // h_in for current step
     while (steps_done < max_steps) {
         dp::agent::AgentAction action;
-        std::vector<float> cont_act, disc_act;
+        std::vector<float> cont_act;
+        int  disc_idx = dp::policy::ActorCriticImpl::NOOP_IDX;
         float lp = 0.0f, vv = 0.0f;
         if (policy == "noop") {
             // stand still
@@ -248,20 +314,21 @@ int main(int argc, char** argv) {
             // forward pass, so it has to match the hidden the GRU saw
             // on entry to this step.
             ppo_h_in_snapshot = ppo->current_hidden();
-            action = ppo->sample_action(obs, cont_act, disc_act, lp, vv);
+            action = ppo->sample_action(obs, cont_act, disc_idx, lp, vv);
         } else {
             spdlog::error("Unknown policy '{}'", policy);
             return 1;
         }
 
+        astats.accumulate(action);
         auto sr = env.step(action);
         ++steps_done;
 
-        if (policy == "ppo") {
+        if (policy == "ppo" && !no_update) {
             dp::policy::Transition tr;
             tr.obs.assign(obs.begin(), obs.end());
             tr.cont_act = std::move(cont_act);
-            tr.disc_act = std::move(disc_act);
+            tr.disc_act = disc_idx;
             tr.h_in     = std::move(ppo_h_in_snapshot);
             tr.reward   = sr.reward;
             tr.value    = vv;
@@ -273,9 +340,10 @@ int main(int argc, char** argv) {
                 // Bootstrap value for last state if it didn't end in done.
                 float last_v = 0.0f;
                 if (!rollout.back().done) {
-                    std::vector<float> dummy_c, dummy_d;
+                    std::vector<float> dummy_c;
+                    int   dummy_idx = 0;
                     float dummy_lp;
-                    ppo->sample_action(sr.obs, dummy_c, dummy_d,
+                    ppo->sample_action(sr.obs, dummy_c, dummy_idx,
                                        dummy_lp, last_v);
                 }
                 auto stats = ppo->update(rollout, last_v);

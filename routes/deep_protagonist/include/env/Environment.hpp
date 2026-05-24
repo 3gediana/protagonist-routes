@@ -42,6 +42,16 @@ struct EnvConfig {
     // Per-instance seed offset (lets multiple envs share a world but not
     // animal layout / RNG).
     uint64_t instance_seed_xor   = 0xA9E1ULL;
+
+    // ---- Tunable per-run parameters (sweep-able from CLI) -----------------
+    // D-040: thirst_decay default 4.0/min ≈ 0.067/s. Original was 12.0/min
+    // (drink dominant). 8.0/min looks like a folder middle-ground. Pass the
+    // value at construction time so we don't have to recompile to sweep.
+    float    thirst_decay_per_min = 4.0f;
+
+    // D-039 v4: per-trigger fee (calibrated by 100k smoke). 0.001 keeps NOOP
+    // ≈10%, 0.005 collapses to NOOP 98%, 0 lets cheap noop triggers dominate.
+    float    trigger_cost         = 0.001f;
 };
 
 // One step worth of "what happened" for a learner to consume.
@@ -145,6 +155,18 @@ private:
     // S3.10 main-loop scratch state (matches main.cpp local vars).
     dp::world::BuildingType         selected_building_ = dp::world::BuildingType::Shed;
     dp::world::PlantKind            last_seed_kind_    = dp::world::PlantKind::Berry;
+    // D-041: 10 first_X milestones drive the agent to walk through the
+    // main-line progression (first drink -> eat -> collect -> spear ->
+    // shelter -> clothing -> hunt -> seed -> house -> crop -> follower).
+    // Each fires +20 reward exactly once per episode.
+    bool                            first_drink_fired_          = false;
+    bool                            first_eat_fired_            = false;
+    bool                            first_collect_fired_        = false;
+    bool                            first_spear_fired_          = false;
+    bool                            first_shelter_fired_        = false;
+    bool                            first_clothing_fired_       = false;
+    bool                            first_hunt_fired_           = false;
+    bool                            first_seed_planted_fired_   = false;
     bool                            first_house_built_fired_    = false;
     bool                            first_crop_harvested_fired_ = false;
     bool                            first_follower_fired_       = false;

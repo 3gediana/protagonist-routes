@@ -54,6 +54,12 @@ void RewardSystem::event_death() {
     step_.death += w_.death;
 }
 
+void RewardSystem::event_action_cost(float cost) {
+    // Pay a small fee for *trying* a discrete trigger. Folded into the
+    // vital bucket so we don't have to grow the 11-component schema.
+    step_.vital -= cost;
+}
+
 void RewardSystem::event_vital_pressure(const VitalState& v, float dt) {
     // Sum of "how far off comfortable" across the four vitals. Each is
     // in [0, 100]. For temperature we anchor on 50 (the "neutral" point

@@ -1223,9 +1223,10 @@ int main(int argc, char** argv) {
                     inventory, shelter, episodes, progress,
                     buildings, wardrobe, farming, tame,
                     selected_building, viewer_spatial, obs);
-                std::vector<float> cont, disc;
+                std::vector<float> cont;
+                int  disc_idx = dp::policy::ActorCriticImpl::NOOP_IDX;
                 float lp = 0.0f, vv = 0.0f;
-                action = ppo_policy->sample_action(obs, cont, disc, lp, vv);
+                action = ppo_policy->sample_action(obs, cont, disc_idx, lp, vv);
             } else {
                 action = agent.sample_wander_action(dt);
                 action.eat                 = IsKeyPressed(KEY_E);

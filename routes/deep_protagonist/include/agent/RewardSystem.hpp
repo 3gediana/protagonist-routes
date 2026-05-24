@@ -120,6 +120,13 @@ public:
     void   event_collected_resource();
     void   event_built_shelter();
     void   event_crafted_tool();
+    // D-039 v3: every discrete trigger fired this tick costs a small fee
+    // regardless of whether it produced a real effect. This breaks the
+    // "cheap noop trigger" local optimum (sigmoid/categorical settling on
+    // craft_spear or wear_clothes because they're free no-ops when the
+    // inventory is empty). NOOP (no trigger) is unaffected.
+    // Accumulates into step_.vital so the schema stays at 11 components.
+    void   event_action_cost(float cost = 0.001f);
     // S3.10 milestone: fires once per "first" of a kind (first house,
     // first crop, first follower) plus stage unlocks. Magnitude defaults
     // to the weight defined in Weights::milestone (+20).

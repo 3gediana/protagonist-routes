@@ -21,7 +21,14 @@ struct VitalState {
 struct VitalConfig {
     // Per-minute base decay
     float hunger_decay_per_min = 8.0f;
-    float thirst_decay_per_min = 12.0f;
+    // D-040 → D-041 evolution:
+    //   12.0/min: drink dominant (r_water +1.8/ep) → agent locks into drinking
+    //   4.0/min:  drink dies (r_water 0) → agent loses spatial nav cue → NOOP 52% / death 40%
+    //   8.0/min:  middle ground (r_water +1.2/ep, ~half of food magnitude).
+    // Combined with D-041 satiation scaling in Environment.cpp (drink reward
+    // tapers as thirst rises) and per-episode first_X milestones, this lets
+    // PPO chase 8 main-line rewards instead of locking on a single one.
+    float thirst_decay_per_min = 8.0f;
     // Stamina dynamics (per second)
     float stamina_run_decay   = 8.0f;   // when speed > run_threshold
     float stamina_walk_decay  = 0.5f;   // when moving normally

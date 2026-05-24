@@ -11,6 +11,7 @@ namespace dp::world {
 
 // Four house tiers the agent can construct from collected resources.
 // Each one unlocks more shelter benefits and storage capacity.
+// D-042 plans: add Pen (animal pen) + Storage (chest) - see docs/D-042_PHASE2_DESIGN.md.
 enum class BuildingType : uint8_t {
     Shed       = 0,  // smallest, fastest to build (mid-stage starter)
     WoodHouse  = 1,  // mid-stage: timber-only walls

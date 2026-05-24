@@ -24,7 +24,12 @@ Environment::Environment(const EnvConfig& cfg)
     : cfg_(cfg),
       world_(cfg.world),
       day_(600.0f, 0.30f),
-      agent_(cfg.world.seed ^ cfg.instance_seed_xor)
+      agent_(cfg.world.seed ^ cfg.instance_seed_xor),
+      vitals_([&]() {
+          dp::agent::VitalConfig vc;
+          vc.thirst_decay_per_min = cfg.thirst_decay_per_min;
+          return vc;
+      }())
 {
     // Match main.cpp's deterministic init order so we get the exact same
     // world layout for given seed.
@@ -72,10 +77,41 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     selected_building_ = dp::world::BuildingType::Shed;
     last_seed_kind_    = dp::world::PlantKind::Berry;
     spatial_.clear();   // cognitive map is per-life (one episode)
-    // milestone flags persist across resets on purpose (curriculum
-    // signals are once-per-training-run, matching main.cpp behaviour).
+
+    // D-041: reset all first_X milestone flags PER episode (not per
+    // training run as before). This is the core fix for v6's "milestone
+    // mean=0" plateau: the agent had used up all milestones in episode 0
+    // and had no carrot to chase in subsequent episodes. Per-episode
+    // milestones turn the main line into a recurring +20*N reward signal
+    // worth competing with drink density.
+    first_drink_fired_          = false;
+    first_eat_fired_            = false;
+    first_collect_fired_        = false;
+    first_spear_fired_          = false;
+    first_shelter_fired_        = false;
+    first_clothing_fired_       = false;
+    first_hunt_fired_           = false;
+    first_seed_planted_fired_   = false;
+    first_house_built_fired_    = false;
+    first_crop_harvested_fired_ = false;
+    first_follower_fired_       = false;
 
     rebuild_observation_(obs_out);
+}
+
+// D-041 satiation scale: when a vital is already mostly full, the reward
+// for further consumption fades. Stops the "drink at full thirst" loop
+// without forbidding the action physically.
+//
+//   vital >= 90 -> scale 0.0  (no reward)
+//   vital >= 80 -> scale 0.2
+//   vital >= 50 -> scale 0.5
+//   vital <  50 -> scale 1.0  (full reward, agent really needs this)
+static float satiation_scale_(float vital) {
+    if (vital >= 90.0f) return 0.0f;
+    if (vital >= 80.0f) return 0.2f;
+    if (vital >= 50.0f) return 0.5f;
+    return 1.0f;
 }
 
 void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
@@ -84,6 +120,30 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
 
     reward_.begin_step();
     reward_.event_alive(dt);
+
+    // D-041: helper to fire a per-episode milestone exactly once. The flag
+    // resets every episode (see Environment::reset). Each fire = +20 reward.
+    auto fire_once = [&](bool& flag) {
+        if (!flag) {
+            flag = true;
+            reward_.event_milestone();
+        }
+    };
+
+    // D-039 v3: any discrete trigger pressed this tick pays a small fee.
+    // Breaks "cheap noop trigger" local optima where the policy collapses
+    // to e.g. always-pressing craft_spear (it's free when inventory is
+    // empty). NOOP (no trigger) avoids the fee, so the agent has to learn
+    // *when* to press each key. Fee << real reward signals (drink ~1.8/s,
+    // milestone +20) so successful triggers still net strongly positive.
+    if (action.eat || action.drink || action.attack || action.collect
+     || action.place_shelter || action.craft_spear || action.sleep
+     || action.craft_grass_dress || action.craft_fur_cloak
+     || action.wear_clothes || action.place_blueprint
+     || action.cycle_building_type || action.deposit_to_site
+     || action.plant_seed || action.water_plot || action.feed_tame) {
+        reward_.event_action_cost(cfg_.trigger_cost);
+    }
 
     // Progression: every metre travelled while alive counts.
     float step_speed = std::sqrt(as.vel_x * as.vel_x + as.vel_y * as.vel_y);
@@ -151,10 +211,16 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 reward_.event_eat(-15.0f);
             } else {
                 if (kcal > 0.0f) {
-                    reward_.event_eat(vitals_.eat(vital_state_, kcal));
+                    float scale = satiation_scale_(vital_state_.hunger);
+                    float ate   = vitals_.eat(vital_state_, kcal);
+                    reward_.event_eat(ate * scale);
+                    if (ate > 0.5f) fire_once(first_eat_fired_);
                 }
                 if (ml   > 0.0f) {
-                    reward_.event_drink(vitals_.drink(vital_state_, ml));
+                    float scale = satiation_scale_(vital_state_.thirst);
+                    float drunk = vitals_.drink(vital_state_, ml);
+                    reward_.event_drink(drunk * scale);
+                    if (drunk > 0.5f) fire_once(first_drink_fired_);
                 }
             }
             // 30% chance Fruit/Berry drops a Seed for late-stage farming.
@@ -176,13 +242,20 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     if (action.drink) {
         auto b = world_.biome_at(as.pos_x, as.pos_y);
         if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
-            reward_.event_drink(vitals_.drink(vital_state_, 35.0f));
+            float scale = satiation_scale_(vital_state_.thirst);
+            float drunk = vitals_.drink(vital_state_, 35.0f);
+            reward_.event_drink(drunk * scale);
+            if (drunk > 0.5f) fire_once(first_drink_fired_);
             auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
                                               agent_.yaw(), 2.0f, 100.0f);
             if (fish.killed
                 && animals_.animals()[fish.index].kind
                     == dp::world::AnimalKind::Fish) {
-                reward_.event_eat(vitals_.eat(vital_state_, 20.0f));
+                float fscale = satiation_scale_(vital_state_.hunger);
+                float ate    = vitals_.eat(vital_state_, 20.0f);
+                reward_.event_eat(ate * fscale);
+                if (ate > 0.5f) fire_once(first_eat_fired_);
+                fire_once(first_hunt_fired_);
             }
         }
     }
@@ -201,6 +274,7 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 if (site_idx >= 0) {
                     inventory_.remove_one(k);
                     reward_.event_collected_resource();
+                    fire_once(first_collect_fired_);
                     deposited = true;
                     break;
                 }
@@ -214,6 +288,7 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 if (inventory_.add(dp::agent::item_from_resource(rk))) {
                     reward_.event_collected_resource();
                     progress_.on_collect();
+                    fire_once(first_collect_fired_);
                 }
             }
         }
@@ -250,11 +325,15 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     }
 
     if (action.craft_spear) {
-        if (inventory_.craft_spear()) reward_.event_crafted_tool();
+        if (inventory_.craft_spear()) {
+            reward_.event_crafted_tool();
+            fire_once(first_spear_fired_);
+        }
     }
     if (action.place_shelter) {
         if (shelter_.try_place(inventory_, as.pos_x, as.pos_y, as.pos_z)) {
             reward_.event_built_shelter();
+            fire_once(first_shelter_fired_);
         }
     }
     if (action.attack) {
@@ -265,19 +344,29 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                                          agent_.yaw(), reach, damage);
         if (hit.killed) {
             auto kind = animals_.animals()[hit.index].kind;
+            float hscale = satiation_scale_(vital_state_.hunger);
             if (kind == dp::world::AnimalKind::Wolf) {
                 reward_.event_wolf_killed();
-                reward_.event_eat(vitals_.eat(vital_state_, 40.0f));
+                float ate = vitals_.eat(vital_state_, 40.0f);
+                reward_.event_eat(ate * hscale);
+                if (ate > 0.5f) fire_once(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Rabbit) {
-                reward_.event_eat(vitals_.eat(vital_state_, 15.0f));
+                float ate = vitals_.eat(vital_state_, 15.0f);
+                reward_.event_eat(ate * hscale);
+                if (ate > 0.5f) fire_once(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Deer) {
-                reward_.event_eat(vitals_.eat(vital_state_, 40.0f));
+                float ate = vitals_.eat(vital_state_, 40.0f);
+                reward_.event_eat(ate * hscale);
+                if (ate > 0.5f) fire_once(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Fish) {
-                reward_.event_eat(vitals_.eat(vital_state_, 20.0f));
+                float ate = vitals_.eat(vital_state_, 20.0f);
+                reward_.event_eat(ate * hscale);
+                if (ate > 0.5f) fire_once(first_eat_fired_);
             }
+            fire_once(first_hunt_fired_);
         }
     }
 
@@ -288,11 +377,15 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         if (inventory_.craft_fur_cloak()) reward_.event_crafted_tool();
     }
     if (action.wear_clothes) {
+        bool worn = false;
         if (inventory_.num_of(dp::agent::ItemKind::FurCloak) > 0) {
             wardrobe_.wear(inventory_, dp::agent::ItemKind::FurCloak);
+            worn = true;
         } else if (inventory_.num_of(dp::agent::ItemKind::GrassDress) > 0) {
             wardrobe_.wear(inventory_, dp::agent::ItemKind::GrassDress);
+            worn = true;
         }
+        if (worn) fire_once(first_clothing_fired_);
     }
 
     if (action.plant_seed && progress_.can_farm()) {
@@ -300,6 +393,7 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             inventory_.remove_one(dp::agent::ItemKind::Seed);
             farming_.plant_seed(as.pos_x, as.pos_y, as.pos_z, last_seed_kind_);
             reward_.event_collected_resource();
+            fire_once(first_seed_planted_fired_);
         }
     }
     if (action.water_plot && progress_.can_farm()) {
