@@ -55,6 +55,14 @@ private:
     // cave volume visible from outside.
     std::vector<BoundingBox> cave_boxes_;
 
+    // S3.10 polish B: optional GLB models for the four building types.
+    // Loaded from DP_ASSET_DIR (Quaternius Medieval_Village_Pack). If a
+    // model fails to load (meshCount == 0) we fall back to the original
+    // geometry boxes.
+    Model  building_models_[4]{};
+    bool   building_models_loaded_[4] = { false, false, false, false };
+    void   load_building_models_();
+
     void build_terrain_mesh(const dp::world::Heightmap& hm);
 };
 

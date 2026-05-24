@@ -107,6 +107,11 @@ add_executable(deep_protagonist
 target_include_directories(deep_protagonist PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
+# Inject absolute asset path so WorldRenderer can find Quaternius GLB
+# files regardless of where the .exe is run from.
+target_compile_definitions(deep_protagonist PRIVATE
+    DP_ASSET_DIR="${CMAKE_SOURCE_DIR}/third_party/assets"
+)
 target_link_libraries(deep_protagonist PRIVATE
     ${TORCH_LIBRARIES}
     tomlplusplus::tomlplusplus

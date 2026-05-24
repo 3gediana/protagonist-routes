@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <string>
 
 namespace dp::render {
 
@@ -14,6 +15,42 @@ WorldRenderer::~WorldRenderer() {
     if (built_) {
         UnloadModel(terrain_model_);  // also unloads its mesh
     }
+    for (int i = 0; i < 4; ++i) {
+        if (building_models_loaded_[i]) {
+            UnloadModel(building_models_[i]);
+        }
+    }
+}
+
+namespace {
+// 4 candidate Quaternius GLB files - one per BuildingType. Chosen from
+// Medieval_Village_Pack at varying file sizes (small to large) so they
+// visually map to "small cottage -> wood house -> stone house -> big".
+// If raylib can't load one, we drop back to the colored geometry box.
+constexpr const char* kBuildingModelRel[4] = {
+    "/quaternius/Medieval_Village_Pack/alxTTFjKDM_alxTTFjKDM.glb",  // Shed
+    "/quaternius/Medieval_Village_Pack/he3p42mUTH_he3p42mUTH.glb",  // WoodHouse
+    "/quaternius/Medieval_Village_Pack/qhNQSOGGbi_qhNQSOGGbi.glb",  // StoneHouse
+    "/quaternius/Medieval_Village_Pack/ux44tbeQvj_ux44tbeQvj.glb",  // BigHouse
+};
+}  // namespace
+
+void WorldRenderer::load_building_models_() {
+#ifdef DP_ASSET_DIR
+    for (int i = 0; i < 4; ++i) {
+        std::string path = std::string(DP_ASSET_DIR) + kBuildingModelRel[i];
+        Model m = LoadModel(path.c_str());
+        // raylib marks a failed load with meshCount == 0
+        if (m.meshCount > 0) {
+            building_models_[i] = m;
+            building_models_loaded_[i] = true;
+        } else {
+            // Free any partial state and stay in fallback mode.
+            UnloadModel(m);
+            building_models_loaded_[i] = false;
+        }
+    }
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +173,10 @@ void WorldRenderer::build(const dp::world::World& world,
         bb.max = Vector3{ c.center_x + c.half_x, c.center_y + c.half_y, c.ceiling_z };
         cave_boxes_.push_back(bb);
     }
+
+    // Load GLB building models if available. Failures stay silent and
+    // we keep using the geometry fallback for the missing slots.
+    load_building_models_();
 
     built_ = true;
 }
@@ -411,44 +452,59 @@ void WorldRenderer::draw(const FlyCamera& cam,
         bar(2, s.grass_deposited, r.grass_required, Color{ 80, 200, 80, 255});
     }
 
-    // Buildings: completed houses. Each type gets a distinct footprint
-    // and roof. Geometry-only for now; S3.10b+ replaces with GLB models.
+    // Buildings: completed houses. If a Quaternius GLB loaded for the
+    // type, render it; otherwise fall back to the colored geometry box.
     for (const auto& b : buildings.buildings()) {
         const auto& r = dp::world::building_recipe(b.type);
         float w  = r.foot_radius * 2.0f;
-        float h;
-        Color wall_col, roof_col;
-        switch (b.type) {
-            case dp::world::BuildingType::Shed:
-                h = 1.6f;
-                wall_col = Color{180, 130, 70, 255};
-                roof_col = Color{120,  80, 50, 255};
-                break;
-            case dp::world::BuildingType::WoodHouse:
-                h = 2.6f;
-                wall_col = Color{160, 110, 60, 255};
-                roof_col = Color{100,  70, 40, 255};
-                break;
-            case dp::world::BuildingType::StoneHouse:
-                h = 2.6f;
-                wall_col = Color{160, 160, 165, 255};
-                roof_col = Color{120, 120, 130, 255};
-                break;
-            case dp::world::BuildingType::BigHouse:
-                h = 3.4f;
-                wall_col = Color{170, 150, 120, 255};
-                roof_col = Color{100, 100, 130, 255};
-                break;
+        int   tidx = static_cast<int>(b.type);
+
+        if (tidx >= 0 && tidx < 4 && building_models_loaded_[tidx]) {
+            // Per-type uniform scale: Quaternius assets are roughly
+            // unit-sized, so we scale by foot_radius to match the
+            // recipe's footprint.
+            float scale = r.foot_radius * 1.6f;
+            DrawModelEx(building_models_[tidx],
+                        Vector3{ b.x, b.y, b.z },
+                        Vector3{ 1.0f, 0.0f, 0.0f },  // X axis
+                        90.0f,                         // rotate to Z-up
+                        Vector3{ scale, scale, scale },
+                        tint);
+        } else {
+            float h;
+            Color wall_col, roof_col;
+            switch (b.type) {
+                case dp::world::BuildingType::Shed:
+                    h = 1.6f;
+                    wall_col = Color{180, 130, 70, 255};
+                    roof_col = Color{120,  80, 50, 255};
+                    break;
+                case dp::world::BuildingType::WoodHouse:
+                    h = 2.6f;
+                    wall_col = Color{160, 110, 60, 255};
+                    roof_col = Color{100,  70, 40, 255};
+                    break;
+                case dp::world::BuildingType::StoneHouse:
+                    h = 2.6f;
+                    wall_col = Color{160, 160, 165, 255};
+                    roof_col = Color{120, 120, 130, 255};
+                    break;
+                case dp::world::BuildingType::BigHouse:
+                    h = 3.4f;
+                    wall_col = Color{170, 150, 120, 255};
+                    roof_col = Color{100, 100, 130, 255};
+                    break;
+            }
+            Vector3 walls_c = Vector3{ b.x, b.y, b.z + h * 0.5f };
+            Vector3 walls_s = Vector3{ w, w, h };
+            DrawCubeV(walls_c, walls_s, tint_mul(wall_col, tint));
+            DrawCubeWiresV(walls_c, walls_s, Color{50, 40, 30, 200});
+            Vector3 roof_c = Vector3{ b.x, b.y, b.z + h + 0.15f };
+            Vector3 roof_s = Vector3{ w * 1.15f, w * 1.15f, 0.30f };
+            DrawCubeV(roof_c, roof_s, tint_mul(roof_col, tint));
         }
-        Vector3 walls_c = Vector3{ b.x, b.y, b.z + h * 0.5f };
-        Vector3 walls_s = Vector3{ w, w, h };
-        DrawCubeV(walls_c, walls_s, tint_mul(wall_col, tint));
-        DrawCubeWiresV(walls_c, walls_s, Color{50, 40, 30, 200});
-        // Roof: a flat slab a bit wider
-        Vector3 roof_c = Vector3{ b.x, b.y, b.z + h + 0.15f };
-        Vector3 roof_s = Vector3{ w * 1.15f, w * 1.15f, 0.30f };
-        DrawCubeV(roof_c, roof_s, tint_mul(roof_col, tint));
-        // Coverage ring on ground (faded yellow circle)
+
+        // Coverage ring on ground (faded yellow circle) - always shown
         DrawCircle3D(Vector3{ b.x, b.y, b.z + 0.05f }, b.coverage_radius,
                      Vector3{1, 0, 0}, 90.0f,
                      Color{ 240, 220, 120, 100 });
