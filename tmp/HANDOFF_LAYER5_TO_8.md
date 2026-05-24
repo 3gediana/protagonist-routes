@@ -45,17 +45,22 @@
 - **性能问题**: 每次 in-world spawn ~100ms（NeatBrain reconstruction），
   100 agent + reproduction 让 tick rate 5/s vs no-reproduction 40/s。Layer 8 优化。
 
-### Layer 5 lite (commit 25658fa) — Building 类型 + reward shift
-- WorksiteLayer 加 `BuildingType { Wall=default, Shelter, Storage, Lookout }`
-- `Worksite.building_type` 字段 + `buildingAt(pos, type)` + `isShelteredAt(pos)` API
-- `blocksPredatorAt` 仅 Wall 类型生效（其他建筑不阻挡 predator）
-- SurvivalStatusLayer: 雨天 sheltered agent 不收 hydration buff
-- `tmp/layer1/layer5.toml` reward paradigm shift:
-  - survival_weight 1.0→0.3 (不奖励"没死"自身)
-  - food_weight 10→3 (食物只通过 drive penalty 给奖励)
-  - worksite_completion_reward 60→150 (建造是高级成就)
-  - cooperation 6→12, communication 4→8, joint_hunt 8→18
-- 验证: 3 代跑通，avg 751→1093，best 10336
+### Layer 5 (commits 3501070, da86050, e598450, 5824eb7, b8326ee) — Building 闭环 + reward shift
+- R1 (lite): WorksiteLayer 加 `BuildingType { Wall=default, Shelter, Storage, Lookout }`
+  + `buildingAt(pos, type)` + `isShelteredAt(pos)` API + blocksPredatorAt 仅 Wall 类型
+  + SurvivalStatusLayer 雨天 sheltered agent 不收 hydration buff
+  + layer5.toml reward paradigm shift
+- R2 (5824eb7): WorksiteConfig.type_dist_* 4 个 weight toml 字段 + setBuildingTypeWeights
+  + Worksite.stored_sticks_overflow/stones_overflow + absorbToCompletedStorages
+  + totalStorageSticks/Stones aggregators
+- R3 (b8326ee): Agent::sense_radius_scale_ + WorksiteLayer tick 更新 (1.5 in Lookout)
+  + AgentSocialPerception 用 effective_r2 = sense_radius² × scale²
+
+- **Layer 5 30-gen 长跑数据 (建议 baseline)**:
+  - Gen 27 peak: protagonist avg=4543 best=18451
+  - Gen 23 builds=3 (首次稳定建造涌现)
+  - vs v17 baseline avg 737 = **6.2x improvement**
+  - 所有 8 物种 30 代均未灭绝
 
 ---
 
