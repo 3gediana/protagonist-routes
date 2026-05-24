@@ -1,9 +1,19 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-24 傍晚（**Layer 1-5 全部 + Layer 6/7/8 R1 + 训练就绪审计 12/12 项全部收口**）
+> 最后巡检：2026-05-24 晚（**Layer 1-5 全部 + Layer 6 R2 skeleton + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`34aef3a STATUS.md: sync 2026-05-24 PM training-readiness audit (9/12 items closed)` (此后 PM 收口 #6 / #9 / #10 三项)
+> 当前 HEAD：`2570aa9 Layer 6 R2 skeleton: TripleWorldRuntime + MigrationScheduler`
+>
+> **2026-05-24 晚 Layer 6 R2 + Layer 7 R3**：
+> - **Layer 7 R3 step 1 完整**（commit `<L7R3-trace>`）：viewer_frames.jsonl 按 LAYER7_GODOT_VIEWER_SPEC § 4.1 补齐 `trees[]`(id/x/y/iv/av) + 天气进度 `wp` + 季节进度 `sp`。view_frames.py 现在画 trees（绿色圆，半径随 integrity 缩放，砍倒后变灰木桩）+ HUD 显示 `weather=N(WP%) season=N(SP%)`。Smoke 验证：第一帧 80 棵树 + wp/sp 数据正常。
+> - **Layer 6 R2 skeleton**（commit `2570aa9`）：按 LAYER6_THREE_WORLDS_SPEC § 6 优先级 1 落 in-memory 多世界迁徙骨架。
+>   - `WorldRole` enum + `worldRoleName()` + `WorldPopulationPool` + `WorldSlot` 值类型（之前的 R1 只有 toml 字符串 accessor）。
+>   - `MigrationScheduler`（无状态，参数化）：`extractTopK` 按 fitness 稳定排序克隆 top-K 保留 lineage_id；`seedFromCandidates` 追加不清空；`promoteTopK` 链式封装。
+>   - `TripleWorldRuntime` 持有三个 `WorldSlot` + `promoteSandboxToBorderland` / `promoteBorderlandToMain`；提供 `seedSandboxPool` 测试辅助。
+>   - **真实集成到 ProtagonistEcologyRuntime 主 tick 循环 deferred**（spec 明确说"分阶段做"），以及主世界 disk 序列化 + extinction rescue 也 deferred — 这次 commit 只锁迁徙算术不破坏现有流程。
+>   - 7 个新 gtest 覆盖：enum 命名 / topK 排序 / k>N 截断 / size mismatch throw / append 语义 / sandbox→borderland 往返 / borderland→main 往返。
+> - **测试总数**：184/184 pass（177 + 7 = 184），无任何回归。
 >
 > **2026-05-24 傍晚 训练就绪审计剩余 3 项收口（#6 / #9 / #10）**：
 > - **#6 [MEDIUM] 主角自选 BuildingType**（待提交）：
