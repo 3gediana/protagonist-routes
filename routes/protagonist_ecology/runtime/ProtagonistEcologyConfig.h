@@ -527,6 +527,19 @@ struct ProtagonistEcologyConfig {
         // perturb_rate=0.8 + reset_rate=0.05.
         double borderland_mutate_perturb_rate{1.0};
         double borderland_mutate_reset_rate{0.0};
+        // L6 R3 stage 3 commit L: structural NEAT mutation rates for
+        // the borderland pool. Per-genome Bernoulli rates that
+        // determine whether a NeatGenome attempts add-connection or
+        // add-node this generation. Mirrors sandbox NEAT
+        // evolution.neat.add_connection_rate / .add_node_rate (which
+        // default to 0.10 / 0.04 there). Defaults here are 0 (off) so
+        // existing borderland configs are unchanged; turning these on
+        // lets a background-species borderland pool grow new structure
+        // without depending on the sandbox NEAT generation step.
+        // ProtagonistGenome (dense weight blocks) is silently skipped;
+        // only NeatGenome receives structural changes.
+        double borderland_mutate_add_conn_rate{0.0};
+        double borderland_mutate_add_node_rate{0.0};
     };
     TripleWorldConfig triple_world{};
     // Stone Bootstrap commit 2 (STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md

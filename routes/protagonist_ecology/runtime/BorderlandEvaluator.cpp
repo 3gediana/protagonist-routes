@@ -2,6 +2,7 @@
 
 #include "brain/ProtagonistGenome.h"
 #include "core/agent/Agent.h"
+#include "core/brain/neat/InnovationTracker.h"
 #include "core/brain/neat/NeatGenome.h"
 #include "core/interfaces/IGenome.h"
 #include "core/world/World2D.h"
@@ -10,6 +11,7 @@
 #include "runtime/ProtagonistWorldFactory.h"
 #include "world/BaseLayer.h"
 
+#include <algorithm>
 #include <memory>
 #include <random>
 
@@ -161,6 +163,107 @@ void perturbGenomeWeights(IGenome& g,
     // mutation API exists, and we don't want to throw inside a hot loop.
 }
 
+// Commit L: scan a NEAT genome and report the highest NodeId so the
+// shared InnovationTracker can be seeded past it (otherwise the very
+// first nextNodeId() the tracker hands out would collide with an
+// already-existing node). The pool's tracker is created once per
+// mutateStructuralPool call and bumped past the max across the whole
+// pool so a borderland with mixed-history genomes doesn't accidentally
+// reuse a NodeId that already lives in some other pool member.
+NodeId maxNodeIdInGenome(const NeatGenome& g) {
+    NodeId mx{0};
+    for (const auto& n : g.nodes()) {
+        if (static_cast<std::uint64_t>(n.id) > static_cast<std::uint64_t>(mx)) mx = n.id;
+    }
+    return mx;
+}
+
+// Commit L: add-connection mutation. Mirrors
+// NeatEvolution::addConnectionMutation in sandbox NEAT. Up to 24
+// random (source, target) attempts; skip if target is Input or the
+// edge already exists; otherwise push a new ConnectionGene with a
+// fresh innovation id from the supplied tracker.
+//
+// `tracker` is shared across all genomes in this mutateStructuralPool
+// call so a borderland generation receives consistent innovation ids
+// (the same as how sandbox NeatEvolution::beginGeneration would
+// behave). We don't call beginGeneration() here because the sandbox
+// tracker's generation cache is used to dedupe identical (from, to)
+// edges added across genomes in the same generation; we don't have
+// access to that cache for the borderland tracker, but
+// nextConnectionInnovation already records the cache itself.
+void addConnectionMutationNeat(NeatGenome& genome,
+                               InnovationTracker& tracker,
+                               std::mt19937& rng) {
+    if (genome.nodes().size() < 2) return;
+    std::uniform_int_distribution<std::size_t> source_dist(0, genome.nodes().size() - 1);
+    std::uniform_int_distribution<std::size_t> target_dist(0, genome.nodes().size() - 1);
+    for (std::size_t attempt = 0; attempt < 24; ++attempt) {
+        const auto& source = genome.nodes()[source_dist(rng)];
+        const auto& target = genome.nodes()[target_dist(rng)];
+        if (target.type == NodeGeneType::Input) continue;
+        if (genome.hasConnection(source.id, target.id)) continue;
+        std::normal_distribution<float> weight_dist(0.0f, 1.0f);
+        genome.connections().push_back(ConnectionGene{
+            source.id,
+            target.id,
+            weight_dist(rng),
+            true,
+            tracker.nextConnectionInnovation(source.id, target.id),
+        });
+        return;
+    }
+}
+
+// Commit L: add-node mutation. Mirrors
+// NeatEvolution::addNodeMutation. Splits a random enabled edge into
+// two: disable the edge, insert a new hidden node, push two edges
+// (source->new with weight 1, new->target with the old weight).
+// `tracker` allocates the new NodeId; it must be bumped past the
+// pool's existing max NodeId before this is called (mutateStructuralPool
+// does that once per call).
+void addNodeMutationNeat(NeatGenome& genome,
+                         InnovationTracker& tracker,
+                         std::mt19937& rng,
+                         float tau_min,
+                         float tau_max) {
+    std::vector<std::size_t> enabled_indices;
+    for (std::size_t i = 0; i < genome.connections().size(); ++i) {
+        if (genome.connections()[i].enabled) enabled_indices.push_back(i);
+    }
+    if (enabled_indices.empty()) return;
+
+    std::uniform_int_distribution<std::size_t> index_dist(0, enabled_indices.size() - 1);
+    const std::size_t split_index = enabled_indices[index_dist(rng)];
+    const ConnectionGene split = genome.connections()[split_index];
+    genome.connections()[split_index].enabled = false;
+
+    const NodeId new_node_id = tracker.nextNodeId();
+    std::normal_distribution<float> bias_dist(0.0f, 1.0f);
+    std::uniform_real_distribution<float> tau_dist(tau_min, tau_max);
+    genome.nodes().push_back(NodeGene{
+        new_node_id,
+        NodeGeneType::Hidden,
+        bias_dist(rng),
+        1.0f,
+        tau_dist(rng),
+    });
+    genome.connections().push_back(ConnectionGene{
+        split.from,
+        new_node_id,
+        1.0f,
+        true,
+        tracker.nextConnectionInnovation(split.from, new_node_id),
+    });
+    genome.connections().push_back(ConnectionGene{
+        new_node_id,
+        split.to,
+        split.weight,
+        true,
+        tracker.nextConnectionInnovation(new_node_id, split.to),
+    });
+}
+
 }  // namespace
 
 std::size_t BorderlandEvaluator::evaluatePool(
@@ -215,6 +318,51 @@ std::size_t BorderlandEvaluator::mutatePool(TripleWorldRuntime& triple_world,
         archetype,
         /*mutator=*/[rng, sigma, perturb_rate, reset_rate](IGenome& g) {
             perturbGenomeWeights(g, *rng, sigma, perturb_rate, reset_rate);
+        });
+}
+
+std::size_t BorderlandEvaluator::mutateStructuralPool(
+    TripleWorldRuntime& triple_world,
+    std::size_t archetype,
+    double add_conn_rate,
+    double add_node_rate,
+    std::uint32_t seed,
+    float tau_min,
+    float tau_max) {
+    if (add_conn_rate <= 0.0 && add_node_rate <= 0.0) return 0;
+
+    // Pre-scan the pool to seed the InnovationTracker past every
+    // existing NodeId. Without this, tracker.nextNodeId() would start
+    // at 1 and immediately collide with input/output nodes inserted
+    // when the genomes were first minted.
+    auto& pool = triple_world.borderland().pools_by_archetype.at(archetype);
+    NodeId pool_max_node{0};
+    for (const auto& g : pool.genomes) {
+        if (!g) continue;
+        const auto* ng = dynamic_cast<const NeatGenome*>(g.get());
+        if (ng == nullptr) continue;
+        const NodeId mx = maxNodeIdInGenome(*ng);
+        if (static_cast<std::uint64_t>(mx) > static_cast<std::uint64_t>(pool_max_node)) {
+            pool_max_node = mx;
+        }
+    }
+    auto tracker = std::make_shared<InnovationTracker>();
+    tracker->ensureNextNodeIdAtLeast(NodeId{static_cast<std::uint64_t>(pool_max_node) + 1u});
+
+    auto rng = std::make_shared<std::mt19937>(seed == 0u ? 1u : seed);
+    return triple_world.mutateBorderlandPool(
+        archetype,
+        /*mutator=*/[rng, tracker, add_conn_rate, add_node_rate, tau_min, tau_max](IGenome& g) {
+            auto* ng = dynamic_cast<NeatGenome*>(&g);
+            if (ng == nullptr) return;  // ProtagonistGenome (dense) — skip
+            std::bernoulli_distribution add_conn(add_conn_rate);
+            std::bernoulli_distribution add_node(add_node_rate);
+            if (add_conn_rate > 0.0 && add_conn(*rng)) {
+                addConnectionMutationNeat(*ng, *tracker, *rng);
+            }
+            if (add_node_rate > 0.0 && add_node(*rng)) {
+                addNodeMutationNeat(*ng, *tracker, *rng, tau_min, tau_max);
+            }
         });
 }
 

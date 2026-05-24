@@ -90,3 +90,105 @@ TEST(Layer6BorderlandEvaluator, EmptyPoolReturnsZero) {
     EXPECT_EQ(BorderlandEvaluator::evaluatePool(trio, /*archetype=*/9, route_stub, 1.0), 0u);
     EXPECT_EQ(trio.borderland().pools_by_archetype.at(9).borderland_eval_count, 0u);
 }
+
+// Commit L: mutateStructuralPool with add_conn_rate=1.0 must add at
+// least one new ConnectionGene to each NeatGenome whose graph is not
+// already saturated.
+TEST(Layer6BorderlandEvaluator, MutateStructuralPoolAddsConnections) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> pop;
+    pop.push_back(makeGenome(GenomeId{501u}, /*extra_nodes=*/2));
+    pop.push_back(makeGenome(GenomeId{502u}, /*extra_nodes=*/2));
+    std::vector<double> fits = {0.0, 0.0};
+    std::vector<std::uint64_t> lineages = {510u, 511u};
+    trio.promoteExternalToBorderland(/*archetype=*/3, pop, fits, lineages, 2);
+
+    const std::size_t before_g0_conns
+        = dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(3).genomes[0])
+              .connections().size();
+    const std::size_t before_g1_conns
+        = dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(3).genomes[1])
+              .connections().size();
+
+    BorderlandEvaluator::mutateStructuralPool(
+        trio, /*archetype=*/3,
+        /*add_conn_rate=*/1.0, /*add_node_rate=*/0.0,
+        /*seed=*/12345u);
+
+    const std::size_t after_g0_conns
+        = dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(3).genomes[0])
+              .connections().size();
+    const std::size_t after_g1_conns
+        = dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(3).genomes[1])
+              .connections().size();
+    EXPECT_GT(after_g0_conns, before_g0_conns);
+    EXPECT_GT(after_g1_conns, before_g1_conns);
+}
+
+// Commit L: mutateStructuralPool with add_node_rate=1.0 adds exactly
+// one Hidden node and two new edges per NeatGenome (splits one
+// enabled edge into two while disabling the original).
+TEST(Layer6BorderlandEvaluator, MutateStructuralPoolAddsNodes) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> pop;
+    pop.push_back(makeGenome(GenomeId{601u}, /*extra_nodes=*/0));  // 2 nodes, 1 conn
+    std::vector<double> fits = {0.0};
+    std::vector<std::uint64_t> lineages = {610u};
+    trio.promoteExternalToBorderland(/*archetype=*/5, pop, fits, lineages, 1);
+
+    NeatGenome& g = dynamic_cast<NeatGenome&>(
+        *trio.borderland().pools_by_archetype.at(5).genomes[0]);
+    const std::size_t before_nodes = g.nodes().size();
+    const std::size_t before_conns = g.connections().size();
+
+    BorderlandEvaluator::mutateStructuralPool(
+        trio, /*archetype=*/5,
+        /*add_conn_rate=*/0.0, /*add_node_rate=*/1.0,
+        /*seed=*/777u);
+
+    EXPECT_EQ(g.nodes().size(), before_nodes + 1u);     // +1 hidden node
+    EXPECT_EQ(g.connections().size(), before_conns + 2u);  // 2 new edges
+    // The new node must have a NodeId > all preexisting ones
+    // (InnovationTracker was bumped past the pool max).
+    NodeId max_pre{static_cast<NodeId>(2u + 0u)};  // makeGenome puts input=1, output=2
+    bool found_new = false;
+    for (const auto& n : g.nodes()) {
+        if (n.type == NodeGeneType::Hidden
+            && static_cast<std::uint64_t>(n.id) > static_cast<std::uint64_t>(max_pre)) {
+            found_new = true;
+        }
+    }
+    EXPECT_TRUE(found_new);
+}
+
+// Commit L: both rates = 0 is a no-op (does not invoke the underlying
+// mutateBorderlandPool at all, so returns 0).
+TEST(Layer6BorderlandEvaluator, MutateStructuralPoolZeroRatesNoop) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> pop;
+    pop.push_back(makeGenome(GenomeId{701u}, /*extra_nodes=*/1));
+    std::vector<double> fits = {0.0};
+    std::vector<std::uint64_t> lineages = {710u};
+    trio.promoteExternalToBorderland(/*archetype=*/2, pop, fits, lineages, 1);
+
+    const std::size_t before_nodes
+        = dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(2).genomes[0])
+              .nodes().size();
+    const std::size_t before_conns
+        = dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(2).genomes[0])
+              .connections().size();
+
+    const std::size_t touched = BorderlandEvaluator::mutateStructuralPool(
+        trio, /*archetype=*/2,
+        /*add_conn_rate=*/0.0, /*add_node_rate=*/0.0,
+        /*seed=*/1u);
+    EXPECT_EQ(touched, 0u);
+    EXPECT_EQ(
+        dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(2).genomes[0])
+            .nodes().size(),
+        before_nodes);
+    EXPECT_EQ(
+        dynamic_cast<NeatGenome&>(*trio.borderland().pools_by_archetype.at(2).genomes[0])
+            .connections().size(),
+        before_conns);
+}

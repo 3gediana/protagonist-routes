@@ -4600,6 +4600,23 @@ int ProtagonistEcologyRuntime::runTraining() {
                             /*perturb_rate=*/tw_cfg.borderland_mutate_perturb_rate,
                             /*reset_rate=*/tw_cfg.borderland_mutate_reset_rate);
                     }
+                    // Commit L: structural NEAT mutation (add conn /
+                    // add node) for NeatGenomes in this archetype's
+                    // pool. Runs AFTER weight perturb so each
+                    // generation's evaluatePool sees both the new
+                    // weights and any new topology. Per-archetype
+                    // seed offset (+13) keeps structural rng
+                    // independent of the weight perturb rng so they
+                    // don't accidentally co-mutate the same direction.
+                    if (tw_cfg.borderland_mutate_add_conn_rate > 0.0
+                        || tw_cfg.borderland_mutate_add_node_rate > 0.0) {
+                        BorderlandEvaluator::mutateStructuralPool(
+                            triple_world,
+                            /*archetype=*/a,
+                            /*add_conn_rate=*/tw_cfg.borderland_mutate_add_conn_rate,
+                            /*add_node_rate=*/tw_cfg.borderland_mutate_add_node_rate,
+                            /*seed=*/static_cast<std::uint32_t>(generation * 31u + a + 13u));
+                    }
                     border_evaluated_total += BorderlandEvaluator::evaluatePool(
                         triple_world,
                         /*archetype=*/a,

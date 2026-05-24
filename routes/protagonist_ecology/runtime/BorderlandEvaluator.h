@@ -66,6 +66,32 @@ public:
                                   std::uint32_t seed,
                                   double perturb_rate = 1.0,
                                   double reset_rate = 0.0);
+
+    // Commit L: structural NEAT mutation on the borderland pool. For
+    // each NeatGenome the per-genome Bernoulli(add_conn_rate) decides
+    // whether to attempt an add-connection mutation, and Bernoulli(
+    // add_node_rate) whether to attempt add-node (split an enabled
+    // edge). Mirrors sandbox NeatEvolution::addConnectionMutation /
+    // addNodeMutation with a local InnovationTracker that is seeded
+    // from the highest NodeId present in the pool so new node ids
+    // never collide with existing ones. ProtagonistGenome (dense
+    // weight blocks) has no structural concept and is silently
+    // skipped — borderland still keeps protagonists, they just don't
+    // receive structural mutations. Rates default to 0 (off) so
+    // existing configs are unchanged. Returns the number of genomes
+    // for which the mutator lambda was invoked (matches mutatePool's
+    // semantics — it counts every genome visited, including
+    // ProtagonistGenome entries where the mutator is a no-op). The
+    // underlying helper retries up to 24 times for add-connection but
+    // may still fail in a fully-connected graph; that is not surfaced
+    // in the return value.
+    static std::size_t mutateStructuralPool(TripleWorldRuntime& triple_world,
+                                            std::size_t archetype,
+                                            double add_conn_rate,
+                                            double add_node_rate,
+                                            std::uint32_t seed,
+                                            float tau_min = 0.5f,
+                                            float tau_max = 5.0f);
 };
 
 }  // namespace neuro::routes::protagonist
