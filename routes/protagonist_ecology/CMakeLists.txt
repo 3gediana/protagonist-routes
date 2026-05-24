@@ -49,6 +49,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     runtime/ProtagonistEvolution.cpp
     runtime/ProtagonistEcologyRuntime.cpp
     runtime/ProtagonistWorldFactory.cpp
+    runtime/BorderlandEvaluator.cpp
     runtime/MainWorldPersistence.cpp
     runtime/MigrationScheduler.cpp
     runtime/QualityDiversityArchive.cpp
@@ -116,6 +117,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     runtime/ProtagonistEvolution.h
     runtime/ProtagonistEcologyRuntime.h
     runtime/ProtagonistWorldFactory.h
+    runtime/BorderlandEvaluator.h
     runtime/MainWorldPersistence.h
     runtime/MigrationScheduler.h
     runtime/QualityDiversityArchive.h
