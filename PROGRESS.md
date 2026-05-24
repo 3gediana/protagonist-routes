@@ -5,11 +5,11 @@
 ## ⏱️ 顶部状态
 | 项 | 值 |
 |---|---|
-| **最后更新** | 2026-05-25 凌晨（**Layer 6 R2 stage 3 三件全做完：borderland cull cap + MainWorldPersistence + extinction rescue**） |
-| **当前阶段** | 🟩 protagonist_ecology 路线 Layer 1-5 完整 + Layer 6 R2 (stage 2 主循环接入 + stage 3 三件) 完整 + Layer 7 R3 step 1 trace + Layer 8 R1 Lamarckian。Spec invariant #1 "主世界永不 reset" 第一次用具体数字证明跨进程 (run1→run2 main_world 56→112)；invariant #4 灭绝自愈接到主循环。**192/192 tests pass**。 |
-| **整体进度** | 蓝图驱动：Layer 1-5 完整，Layer 6 R2 完整（R3 deferred = 独立 World2D tick + full snapshot + 50 代物种延续考验），Layer 7 R3 step 1 trace 完整 (stage 2 viewer 待决策)，Layer 8 R1 baseline。 |
-| **最近会话摘要** | **本会话主线：Layer 6 R2 stage 3 三件齐全 (3 commits)**。**Commit 1 cull cap** (`45f56a6`): borderland 永不无界增长，按 stashed fitness 留 top-N。toml gate `borderland_max_pool_per_archetype` 默认 0 = off。+2 gtest。**Commit 2 MainWorldPersistence** (`2e24abf`): JSON manifest + per-genome 二进制 blob (复用 NeatGenome/ProtagonistGenome::saveToFile)。toml gate `persist_dir` 默认空 = off。Smoke 2 次顺序运行验证 main_world 跨进程累积 56→112。+3 gtest。**Commit 3 extinction rescue** (`39cd7da`): main_world 某 archetype 空时从 borderland 同 archetype 取 top-K 克隆。toml gate `extinction_rescue_top_k` 默认 0 = off。Smoke 验证 9 archetype × 2 = 18 一次性 rescue。+2 gtest。**测试**: 185 → 192。Layer 6 R2 完整收口。 |
-| **下一步建议** | Layer 6 R2 完整。**剩余候选**: (a) **Layer 6 R3** — borderland 独立 World2D tick + 50 代物种延续考验 + full World2D snapshot (agents/worksites/trees/...) — 最大工程量 ~1000+ 行，但 spec § 5 完成判据"主世界连续运行 ≥几小时"需要这个；(b) **Layer 7 R3 stage 2** — Godot vs raylib MVP 决策，做第一个 agent 渲染（D-038 deep_protagonist 视觉化已 freeze 等训练 plateau，这条线优先级相对低）；(c) 续跑 long run #10 完整 60 gen 收 A/B 长跑证据（IO-bound ~6-8h，可后台跑同时干别的）。优先级以 user 决策为准。 |
+| **最后更新** | 2026-05-25 凌晨（**训练审计：3D BD 验证为负优化 → 改回 2D BD avg 5917 / me_cov 0.40 / build chain stone 真打通 + throw_penalty 机制就位**） |
+| **当前阶段** | 🟩 Layer 1-5 完整 + Layer 6 R2 stage 3 三件齐全 + Layer 7 R3 step 1 trace + Layer 8 R1 Lamarckian。**训练审计**：3D BD（hunt 第三轴, 192 cells）curse-of-dimensionality 验证为负优化（avg=2774, me_cov 4%, build chain 半死）；2D BD（25 cells）AB 通过验证：avg=5917 (gen 58 峰), me_cov=0.40, stone deposit 真正打通 (6-13/gen)。Throw_penalty toml gate 落地 (`reward.goal_completion.throw_attempt`)。**194/194 tests pass**。 |
+| **整体进度** | 蓝图驱动：Layer 1-5 完整，Layer 6 R2 完整，训练侧已找到合适 BD geometry（2D 5×5）。Layer 6 R3 + Layer 7 R3 stage 2 + throw_penalty AB 长跑仍待做。 |
+| **最近会话摘要** | **本会话主线：Layer 6 R2 stage 3 三件 (3 commits) + 训练审计 (1 commit)**。Stage 3：cull cap (`45f56a6`) + MainWorldPersistence (`2e24abf`) + extinction rescue (`39cd7da`)。训练审计：用户质疑训练闭环 → 跑 long_run #10 60-gen baseline (3D BD, 70 min, avg 1185→2774) + AB 2D BD (58 min, avg 1185→5917, me_cov 4%→40%, 第一次 stone deposit 6-13/gen 打通)。Throw_penalty 机制落地 (commit `da3fc4f`, +73 lines, 194/194 tests)。Stone deposit root-cause 调查：training role bootstrap zero stones, NurseryProgressionLayer 进度 gate 6 deposits → 10 stone scatter, 但每 episode 重置。 |
+| **下一步建议** | **训练侧**: (a) 跑 throw_penalty AB long_run (`tmp/layer1/long_run_60gen_2d_throw.toml` 已就位, ~60 min) 看 throws 能否压下来; (b) `long_run_60gen.toml` 默认应改回 2D BD geometry 或切 CVT 模式; (c) stone bootstrap 的进度 gate 重置问题需要架构级修复 (跨 episode 持久化 unlock 状态)。**架构侧**: (d) Layer 6 R3 - borderland 独立 World2D + full snapshot + 50 代物种延续考验 (~1000+ 行, 多会话); (e) Layer 7 R3 stage 2 viewer - 需要先有 stable training baseline 否则 viewer 看到的就是 throw-spamming agent。优先级以 user 决策为准。 |
 
 ---
 

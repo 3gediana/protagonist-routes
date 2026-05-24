@@ -3,7 +3,16 @@
 > 最后巡检：2026-05-25 凌晨（**Layer 1-5 全部 + Layer 6 R2 stage 3 三件齐全 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`39cd7da Layer 6 R2 stage 3 commit 3: extinction rescue`
+> 当前 HEAD：`da3fc4f L6 R3 audit: throw_attempt penalty toml gate`
+>
+> **2026-05-25 凌晨 训练收口审计：3D BD 验证为负优化 + throw_penalty 机制就位**（commits 用户 push 时 + `da3fc4f`）：
+> - **背景**：用户质疑"是不是过早进可视化阶段，训练真的闭环了吗"。本会话先把 long run #10 60-gen 跑完（3D BD `tmp/layer1/long_run_60gen.toml` seed=7777, 70 min），再跑 2D BD AB（`tmp/layer1/long_run_60gen_2d.toml` 把 hunt 维度撤掉退回 5×5=25 cells）做对比。
+> - **3D BD 60-gen 结果（baseline）**：avg fitness 1185→2774（2.3×），best peak 13236（gen 1 spike）后回落到 10684（gen 58），me_coverage 全程 1.5-4%（8 cells / 192）。Build chain gen 35-40 才觉醒，crafts 0→10-16，但 worksite 完成数仍 0-1/gen，stone deposit **0-2/gen**（核心瓶颈）。
+> - **2D BD 60-gen 结果（AB）**：avg fitness 1185→**5917**（gen 58 峰，5×），best peak **15248**（gen 58, 1.43× 3D），me_coverage 早期就 0.08-0.16，gen 14 跳到 0.32，gen 28 顶到 **0.40 (10 cells / 25)**，qd_score 峰值 65183。Build chain gen 8-10 就有 worksite 完成事件，gen 28-32 出现 142-169 deposits + **6-13 stone deposits/gen**（stone 真正打通！）+ 18 crafts。
+> - **结论**：v17 hunt-axis 3D BD 192 cells 验证为**负优化** — Vassiliades 2017 spec 早预测的 curse of dimensionality 真发生：archive 大半时间空着，selection 退化成 "≈ random NEAT"，进化没有 diversity 信号。下次训练默认应回 2D BD（`long_run_60gen_2d.toml` 已就位），或者切 CVT 模式（早已实现，从未真正测过）。
+> - **Throw_penalty 机制**（commit `da3fc4f`, +73/-3 lines, 194/194 tests）：3D BD 评估发现 throws 8-22k/gen × 14% 命中 = network spam throwing 浪费 inventory（thrown stone 永远到不了 worksite）。新 toml gate `reward.goal_completion.throw_attempt`（默认 0=off）走现有 HRL 子奖励数组 slot 13；ThrowCarriedObjectCapability 调 `noteGoalCompletion(13)`。负权重生效则 N × |weight| 从 fitness 扣。`long_run_60gen_2d_throw.toml` 配 `-0.05` ≈ 10000 throws/ep × 0.05 = -500/ep ≈ 1 worksite_completion_reward 等量，"足够压但不毁灭"。AB 长跑下次会话做。
+> - **Stone deposit 调查（read-only）**：`ProtagonistWorldFactory.cpp` line 121 — **training role 下 bootstrap zero stones**，全是 sticks。`NurseryProgressionLayer` 进度 gate：6 deposits unlock stone（10 个 ScatterStone），但每 episode 重置，protagonist 必须每 episode 重学整条链。是为什么 stones 在 3D BD 下永远不到位的根因之一。
+> - **测试总数**：192 → 194。
 >
 > **2026-05-25 凌晨 Layer 6 R2 stage 3 三件全做完**（commits `45f56a6` + `2e24abf` + `39cd7da`）：
 > - **Commit 1 borderland cull cap** (`45f56a6`)：stage 2 留下 borderland 永远只增不减，60 代后能涨到 240+ genome/archetype。新 `TripleWorldRuntime::cullBorderland(archetype, max_pool_size)` 按 stashed fitness 留 top-N 砍其余，每次 sandbox→borderland promote 之后调一次。toml gate `[runtime.triple_world] borderland_max_pool_per_archetype` 默认 0=关。Smoke (`tmp/layer1/smoke_tw_cull.toml`, cap=4) 验证：每 archetype 稳定 4，border 总 36 = 9 archetype × 4，culled 数学完全对应。**未做 (R3 deferred)**：真正的 "borderland 进化" 即独立 World2D + 50 代物种延续 test。这次只做 pruning。
