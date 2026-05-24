@@ -50,6 +50,7 @@
 #include "world/CampfireLayer.h"
 #include "world/InterventionDirectorLayer.h"
 #include "world/NurseryLogisticsLayer.h"
+#include "world/NurseryProgressionLayer.h"
 #include "world/PopulationLayer.h"
 #include "world/SurvivalStatusLayer.h"
 #include "world/TreeLayer.h"
@@ -57,6 +58,7 @@
 #include "world/WorksiteLayer.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <chrono>
 #include <ctime>
@@ -3974,6 +3976,18 @@ int ProtagonistEcologyRuntime::runTraining() {
     // disk persistence yet (deferred to stage 3).
     TripleWorldRuntime triple_world;
     const auto& tw_cfg = route.triple_world;
+
+    // Stone Bootstrap commit 2: per-archetype curriculum unlock state
+    // carried across episodes. Slot 0 = protagonist (only one we
+    // currently care about); slots 1-8 reserved for background
+    // archetypes if we ever extend NurseryProgressionLayer to them.
+    // Default-constructed all false; toml gate decides whether the
+    // runtime actually injects/merges (default off = legacy behavior).
+    std::array<ArchetypeProgressionState, 9> archetype_progression{};
+    const bool curriculum_persist = route.curriculum.archetype_progression_persistence_enabled;
+    if (curriculum_persist) {
+        spdlog::info("Curriculum: archetype_progression_persistence enabled (5 monotonic unlocks per archetype carried across episodes)");
+    }
     if (tw_cfg.enabled) {
         spdlog::info("TripleWorldRuntime: enabled (top_k_protag/gen={}, top_k_bg/gen={}, "
                      "border->main every {} gen)",
@@ -4109,6 +4123,18 @@ int ProtagonistEcologyRuntime::runTraining() {
                     episode_results[episode].template_idx = static_cast<int>(selected_idx);
                 }
                 auto world = createBootstrapWorld(generation_route);
+
+                // Stone Bootstrap commit 2: pre-seed this episode's
+                // NurseryProgressionLayer from the runtime-level
+                // archetype state so already-unlocked flags don't have
+                // to be re-earned. Only protagonist (slot 0) currently
+                // has a NurseryProgressionLayer attached.
+                if (curriculum_persist) {
+                    if (auto* progression_layer = world->getLayer<NurseryProgressionLayer>()) {
+                        progression_layer->seedFromProgressionState(archetype_progression[0]);
+                    }
+                }
+
                 // L2.6 v12 (PEARL/RL² context-conditioned policy): stamp
                 // the selected template index onto every protagonist
                 // so TaskContextPerception can expose it to the brain
@@ -4164,6 +4190,38 @@ int ProtagonistEcologyRuntime::runTraining() {
                 EpisodeResult& result = episode_results[episode];
                 evaluatePopulation(*world, generation_route, episode_params, population, background_view, result.behavior, stop_requested_, trace_recorder.get());
                 accumulateGenomeFitness(*world, population, result.fitness_sum);
+
+                // Stone Bootstrap commit 2: episode-end OR-merge the
+                // current NurseryProgressionLayer unlock state back into
+                // the runtime-level archetype_progression so the next
+                // episode starts with this episode's unlocks already
+                // baked in. monotonic: a flag never flips back to false.
+                if (curriculum_persist) {
+                    if (const auto* progression_layer = world->getLayer<NurseryProgressionLayer>()) {
+                        const auto live = progression_layer->progressionState();
+                        auto& slot = archetype_progression[0];
+                        const ArchetypeProgressionState before = slot;
+                        slot.first_fire_ignited   = slot.first_fire_ignited   || live.first_fire_ignited;
+                        slot.worksite_unlocked    = slot.worksite_unlocked    || live.worksite_unlocked;
+                        slot.stone_unlocked       = slot.stone_unlocked       || live.stone_unlocked;
+                        slot.heavy_unlocked       = slot.heavy_unlocked       || live.heavy_unlocked;
+                        slot.second_fire_ignited  = slot.second_fire_ignited  || live.second_fire_ignited;
+                        if (slot.first_fire_ignited != before.first_fire_ignited
+                            || slot.worksite_unlocked != before.worksite_unlocked
+                            || slot.stone_unlocked != before.stone_unlocked
+                            || slot.heavy_unlocked != before.heavy_unlocked
+                            || slot.second_fire_ignited != before.second_fire_ignited) {
+                            spdlog::info("Curriculum gen {} ep {} archetype 0: unlock state changed "
+                                         "(fire={}->{} worksite={}->{} stone={}->{} heavy={}->{} fire2={}->{})",
+                                         generation, episode,
+                                         before.first_fire_ignited, slot.first_fire_ignited,
+                                         before.worksite_unlocked, slot.worksite_unlocked,
+                                         before.stone_unlocked, slot.stone_unlocked,
+                                         before.heavy_unlocked, slot.heavy_unlocked,
+                                         before.second_fire_ignited, slot.second_fire_ignited);
+                        }
+                    }
+                }
                 // L2.8 v14 ME-NEAT: harvest per-genome behavioural descriptor
                 // before the world is destroyed. Agent::goalCompletionTotal
                 // counters were accumulated by capability success paths

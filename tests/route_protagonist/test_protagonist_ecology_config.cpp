@@ -193,3 +193,38 @@ borderland_eval_aging_factor = 0.85
     EXPECT_EQ(route.triple_world.borderland_eval_period_gens, 5u);
     EXPECT_DOUBLE_EQ(route.triple_world.borderland_eval_aging_factor, 0.85);
 }
+
+// Stone Bootstrap commit 2: curriculum.archetype_progression_persistence
+// toml gate. Default false (off) preserves legacy behavior.
+TEST(ProtagonistEcologyConfig, CurriculumArchetypeProgressionPersistenceDefaultsOff) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "curriculum_default_test"
+
+[world]
+size = [120.0, 120.0]
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_FALSE(route.curriculum.archetype_progression_persistence_enabled);
+}
+
+TEST(ProtagonistEcologyConfig, CurriculumArchetypeProgressionPersistenceParsesTrue) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "curriculum_on_test"
+
+[world]
+size = [120.0, 120.0]
+
+[runtime.curriculum]
+archetype_progression_persistence_enabled = true
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_TRUE(route.curriculum.archetype_progression_persistence_enabled);
+}

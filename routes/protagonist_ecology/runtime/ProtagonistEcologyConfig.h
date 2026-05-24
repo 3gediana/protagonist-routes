@@ -511,6 +511,18 @@ struct ProtagonistEcologyConfig {
         std::size_t borderland_min_continuity_gens{0};
     };
     TripleWorldConfig triple_world{};
+    // Stone Bootstrap commit 2 (STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md
+    // option D): cross-episode curriculum unlock state persistence.
+    // When enabled, the runtime keeps a per-archetype
+    // ArchetypeProgressionState across episode boundaries; each new
+    // episode's NurseryProgressionLayer is pre-seeded from that state
+    // so the protagonist doesn't have to re-earn "stone unlock" from
+    // zero every single episode. Default off so existing training
+    // configs are unaffected.
+    struct CurriculumConfig {
+        bool archetype_progression_persistence_enabled{false};
+    };
+    CurriculumConfig curriculum{};
     MemoryTrialConfig memory_trial{};
     ProtagonistBrainConfig protagonist{};
     BackgroundBrainConfig background{};
