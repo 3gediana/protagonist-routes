@@ -22,6 +22,13 @@ namespace {
 // few seconds.
 constexpr std::size_t kBorderlandMiniTicks = 100;
 constexpr float kBorderlandMiniDt = 0.1f;
+// L6 R3 stage 3 commit G: protagonist mini-world peer count.
+// Borderland eval was originally a 1-agent isolated world (commit E);
+// commit G injects up to N peer protagonists drawn from the same
+// archetype's borderland pool so cooperation / signal / co-presence
+// reward paths actually fire. Peers are not the agent under
+// evaluation — fitness extraction still tracks the focal agent only.
+constexpr std::size_t kBorderlandPeerCount = 3;
 
 // Walk a 1-agent mini-world for the configured number of substeps and
 // return a scalar fitness. Current scoring is the count of substeps the
@@ -39,19 +46,45 @@ double tickAndScore(World2D& world, Agent& agent) {
     return static_cast<double>(alive_substeps) + agent.fitness();
 }
 
-double miniTickProtagonist(const IGenome& g, const ProtagonistEcologyConfig& route) {
+double miniTickProtagonist(const IGenome& g,
+                           const ProtagonistEcologyConfig& route,
+                           const WorldPopulationPool& pool) {
     auto world = createBootstrapWorld(route);
     if (!world) return 0.0;
     auto* agent_layer = world->getLayer<AgentLayer>();
     if (agent_layer == nullptr) return 0.0;
 
+    // Inject the focal genome as agent_id=1.
     std::mt19937 rng(static_cast<std::uint32_t>(g.id().value));
-    auto agent_owned = makeProtagonistAgent(
+    auto eval_owned = makeProtagonistAgent(
         AgentId{1u}, g, route, rng, world->getLayer<BaseLayer>());
-    if (!agent_owned) return 0.0;
-    Agent* agent = agent_owned.get();
-    agent_layer->addAgent(std::move(agent_owned), *world);
-    return tickAndScore(*world, *agent);
+    if (!eval_owned) return 0.0;
+    Agent* eval_agent = eval_owned.get();
+    agent_layer->addAgent(std::move(eval_owned), *world);
+
+    // L6 R3 stage 3 commit G: inject up to kBorderlandPeerCount peers
+    // from the same borderland pool so cooperation / signal /
+    // co-presence reward paths can actually fire. Peers use the same
+    // makeProtagonistAgent path so their capability stack is identical;
+    // the focal agent is distinguished only by being the one whose
+    // fitness we read at the end.
+    std::uint64_t next_id_value = 2u;
+    std::size_t peers_added = 0;
+    for (const auto& peer_g : pool.genomes) {
+        if (peers_added >= kBorderlandPeerCount) break;
+        if (!peer_g) continue;
+        if (peer_g->id().value == g.id().value) continue;  // skip self
+        std::mt19937 peer_rng(static_cast<std::uint32_t>(peer_g->id().value + 7919u));
+        auto peer_owned = makeProtagonistAgent(
+            AgentId{next_id_value}, *peer_g, route, peer_rng,
+            world->getLayer<BaseLayer>());
+        if (peer_owned) {
+            agent_layer->addAgent(std::move(peer_owned), *world);
+            ++peers_added;
+            ++next_id_value;
+        }
+    }
+    return tickAndScore(*world, *eval_agent);
 }
 
 // Commit F: same shape but for background species. The caller supplies
@@ -92,9 +125,17 @@ std::size_t BorderlandEvaluator::evaluatePool(
     double aging_factor,
     const std::vector<SpeciesArchetype>* background_archetypes) {
     if (archetype == 0) {
+        // Commit G: capture the borderland pool by reference so the
+        // mini-world can inject peer protagonists drawn from the same
+        // pool. Pool is mutated by evaluateBorderland (it updates
+        // fitness slots), but our read of pool.genomes happens before
+        // each per-genome write so iteration stability is fine.
+        const auto& proto_pool = triple_world.borderland().pools_by_archetype.at(archetype);
         return triple_world.evaluateBorderland(
             archetype,
-            /*eval_fn=*/[&route](const IGenome& g) { return miniTickProtagonist(g, route); },
+            /*eval_fn=*/[&route, &proto_pool](const IGenome& g) {
+                return miniTickProtagonist(g, route, proto_pool);
+            },
             aging_factor);
     }
     // Commit F: archetype N (N>=1) maps to background_archetypes[N-1]
