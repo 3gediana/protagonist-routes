@@ -19,6 +19,7 @@
 #include "agent/ProgressTracker.hpp"
 #include "agent/RewardSystem.hpp"
 #include "agent/Shelter.hpp"
+#include "agent/SpatialMemory.hpp"
 #include "agent/TameSystem.hpp"
 #include "agent/VitalSystem.hpp"
 #include "agent/Wardrobe.hpp"
@@ -618,10 +619,14 @@ int run_self_tests() {
         dp::world::FarmingSystem    farming;
         dp::agent::TameSystem       tame;
 
+        dp::agent::SpatialMemory sm_test;
+        sm_test.configure(0.0f, 0.0f);
+
         dp::agent::ObservationBuilder::Vector obs{};
         dp::agent::ObservationBuilder::compose(
             w, agent, vstate, day, plants, animals, resources,
-            inv, sh, em, progress, buildings, wardrobe, farming, tame, obs);
+            inv, sh, em, progress, buildings, wardrobe, farming, tame,
+            dp::world::BuildingType::Shed, sm_test, obs);
 
         check(dp::agent::ObservationBuilder::SIZE >= 140,
               "Observation: total dimension is at least 140 (S3.10 expanded)");
@@ -644,12 +649,13 @@ int run_self_tests() {
         dp::agent::ObservationBuilder::Vector obs2{};
         dp::agent::ObservationBuilder::compose(
             w, agent, vstate, day, plants, animals, resources,
-            inv, sh, em, progress, buildings, wardrobe, farming, tame, obs2);
-        // Tame follower count slot is the very last; shelter "placed" is
-        // 3 slots before progress block. We just verify the build went OK
-        // and that the new layout still has a placed-shelter signal.
-        // (Position recomputed: shelter triplet sits 21 slots from end.)
-        int placed_idx = dp::agent::ObservationBuilder::SIZE - 21 - 3;
+            inv, sh, em, progress, buildings, wardrobe, farming, tame,
+            dp::world::BuildingType::Shed, sm_test, obs2);
+        // Sanity check: the shelter "placed" slot sits 3 slots before the
+        // S3.10 progress block, then 35 dims of P0 obs, then 384 dims of
+        // SpatialMemory window. So index = SIZE - 384 - 35 - 21 - 3.
+        int placed_idx = dp::agent::ObservationBuilder::SIZE
+                       - dp::agent::SpatialMemory::WINDOW_DIM - 35 - 21 - 3;
         check(obs2[placed_idx] > 0.5f,
               "Observation: shelter-placed flag flips after build");
     }
@@ -959,6 +965,53 @@ int run_self_tests() {
               "RewardSystem: milestone event is +20 by default");
     }
 
+    // --- SpatialMemory ---
+    {
+        dp::agent::SpatialMemory sm;
+        sm.configure(0.0f, 0.0f);
+        check(sm.visited_count() == 0,
+              "SpatialMemory: clears to zero on configure");
+
+        // Cell at (0,0) -> grid (0,0)
+        sm.write(8.0f, 8.0f, false, false, false, false, false);
+        check(sm.visited_count() == 1,
+              "SpatialMemory: writing inside a cell increments visited");
+
+        // Same cell again: visited stays 1.
+        sm.write(15.9f, 15.9f, true, false, false, false, false);
+        check(sm.visited_count() == 1,
+              "SpatialMemory: writing same cell does not double-count");
+        check(sm.feature_avg(dp::agent::SpatialMemory::CH_WATER) > 0.0f,
+              "SpatialMemory: water flag persists after write");
+
+        // Out-of-bounds is a silent no-op.
+        sm.write(-100.0f, -100.0f, true, true, true, true, true);
+        check(sm.visited_count() == 1,
+              "SpatialMemory: out-of-bounds writes are ignored");
+
+        // Read window centered on agent
+        std::array<float, dp::agent::SpatialMemory::WINDOW_DIM> win{};
+        sm.read_window(12.0f, 12.0f, win.data());
+        // Centre cell should be the one we just wrote -> non-zero visited
+        // Window layout is (gy, gx, feature); centre is (half, half).
+        const int half = dp::agent::SpatialMemory::WINDOW / 2;
+        const int feat = dp::agent::SpatialMemory::FEATURES;
+        int centre = (half * dp::agent::SpatialMemory::WINDOW + half) * feat;
+        check(win[centre + dp::agent::SpatialMemory::CH_VISITED] > 0.5f,
+              "SpatialMemory: read_window centre reflects current cell");
+
+        // Boundary read (top-left corner of world) should have zeros for
+        // the OOB half of the window.
+        sm.read_window(0.0f, 0.0f, win.data());
+        check(win[0] == 0.0f,
+              "SpatialMemory: out-of-bounds window cells are zero");
+
+        // Clear empties the grid.
+        sm.clear();
+        check(sm.visited_count() == 0,
+              "SpatialMemory: clear() resets all cells");
+    }
+
     spdlog::info("------------------------------------------------");
     if (failures == 0) {
         spdlog::info(" SELF-TESTS PASSED");
@@ -1117,6 +1170,10 @@ int main(int argc, char** argv) {
         // SKIPS the keyboard overlay so trained behaviour is the only
         // input. Pass --policy ppo --load file.pt to enable.
         std::unique_ptr<dp::policy::PPO> ppo_policy;
+        // SpatialMemory used both for HUD-visualisable cognitive map and
+        // (when --policy ppo) as part of the observation vector.
+        dp::agent::SpatialMemory viewer_spatial;
+        viewer_spatial.configure(0.0f, 0.0f);
         if (viewer_policy == "ppo") {
             dp::policy::PPOConfig pcfg;
             ppo_policy = std::make_unique<dp::policy::PPO>(pcfg);
@@ -1164,7 +1221,8 @@ int main(int argc, char** argv) {
                     world, agent, vital_state, day,
                     plants, animals, resources,
                     inventory, shelter, episodes, progress,
-                    buildings, wardrobe, farming, tame, obs);
+                    buildings, wardrobe, farming, tame,
+                    selected_building, viewer_spatial, obs);
                 std::vector<float> cont, disc;
                 float lp = 0.0f, vv = 0.0f;
                 action = ppo_policy->sample_action(obs, cont, disc, lp, vv);
@@ -1188,6 +1246,51 @@ int main(int argc, char** argv) {
             }
             agent.apply_action(action, world, physics, dt);
             const auto& as = agent.state();
+
+            // Write current sense into the cognitive map (mirrors what
+            // Environment does). 60m radius scan; we only mark booleans.
+            {
+                const float R  = dp::agent::ObservationBuilder::VISION_RANGE;
+                const float R2 = R * R;
+                bool saw_water = false;
+                {
+                    auto b = world.biome_at(as.pos_x, as.pos_y);
+                    saw_water = (b == dp::world::Biome::River
+                                 || b == dp::world::Biome::Swamp);
+                }
+                bool saw_food = false;
+                for (const auto& pl : plants.plants()) {
+                    if (!pl.ripe) continue;
+                    float dx = pl.x - as.pos_x, dy = pl.y - as.pos_y;
+                    if (dx*dx + dy*dy <= R2) { saw_food = true; break; }
+                }
+                bool saw_resource = false;
+                for (const auto& rs : resources.resources()) {
+                    if (!rs.available) continue;
+                    float dx = rs.x - as.pos_x, dy = rs.y - as.pos_y;
+                    if (dx*dx + dy*dy <= R2) { saw_resource = true; break; }
+                }
+                bool saw_danger = false;
+                for (const auto& an : animals.animals()) {
+                    if (an.state == dp::world::AnimalState::Dead) continue;
+                    if (an.kind != dp::world::AnimalKind::Wolf) continue;
+                    float dx = an.pos_x - as.pos_x, dy = an.pos_y - as.pos_y;
+                    if (dx*dx + dy*dy <= R2) { saw_danger = true; break; }
+                }
+                bool saw_building = false;
+                for (const auto& bd : buildings.buildings()) {
+                    float dx = bd.x - as.pos_x, dy = bd.y - as.pos_y;
+                    if (dx*dx + dy*dy <= R2) { saw_building = true; break; }
+                }
+                for (const auto& site : buildings.sites()) {
+                    if (site.completed) continue;
+                    float dx = site.x - as.pos_x, dy = site.y - as.pos_y;
+                    if (dx*dx + dy*dy <= R2) { saw_building = true; break; }
+                }
+                viewer_spatial.write(as.pos_x, as.pos_y,
+                                     saw_water, saw_food, saw_resource,
+                                     saw_danger, saw_building);
+            }
 
             reward.begin_step();
             reward.event_alive(dt);
@@ -1540,6 +1643,7 @@ int main(int argc, char** argv) {
                 wardrobe.clear();
                 farming.clear();
                 tame.clear();
+                viewer_spatial.clear();
                 was_alive = true;
             }
 

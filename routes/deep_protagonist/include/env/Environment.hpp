@@ -8,6 +8,7 @@
 #include "agent/ProgressTracker.hpp"
 #include "agent/RewardSystem.hpp"
 #include "agent/Shelter.hpp"
+#include "agent/SpatialMemory.hpp"
 #include "agent/TameSystem.hpp"
 #include "agent/VitalSystem.hpp"
 #include "agent/Wardrobe.hpp"
@@ -139,6 +140,7 @@ private:
     dp::agent::ProgressTracker      progress_;
     dp::agent::RewardSystem         reward_;
     dp::agent::EpisodeManager       episodes_;
+    dp::agent::SpatialMemory        spatial_;
 
     // S3.10 main-loop scratch state (matches main.cpp local vars).
     dp::world::BuildingType         selected_building_ = dp::world::BuildingType::Shed;

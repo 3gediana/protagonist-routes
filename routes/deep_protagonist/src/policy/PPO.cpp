@@ -14,11 +14,16 @@ namespace dp::policy {
 // Network
 // ============================================================================
 ActorCriticImpl::ActorCriticImpl() {
-    fc1         = register_module("fc1",         torch::nn::Linear(OBS_DIM, HIDDEN));
-    fc2         = register_module("fc2",         torch::nn::Linear(HIDDEN,  HIDDEN));
-    cont_mean   = register_module("cont_mean",   torch::nn::Linear(HIDDEN,  CONT_DIM));
-    disc_logits = register_module("disc_logits", torch::nn::Linear(HIDDEN,  DISC_DIM));
-    value       = register_module("value",       torch::nn::Linear(HIDDEN,  1));
+    encoder     = register_module("encoder",
+                                  torch::nn::Linear(OBS_DIM, HIDDEN));
+    gru         = register_module("gru",
+                                  torch::nn::GRUCell(HIDDEN, HIDDEN));
+    cont_mean   = register_module("cont_mean",
+                                  torch::nn::Linear(HIDDEN, CONT_DIM));
+    disc_logits = register_module("disc_logits",
+                                  torch::nn::Linear(HIDDEN, DISC_DIM));
+    value       = register_module("value",
+                                  torch::nn::Linear(HIDDEN, 1));
 
     // log_std initialised to log(0.5) ≈ -0.693 (moderate exploration).
     log_std = register_parameter(
@@ -31,22 +36,25 @@ ActorCriticImpl::ActorCriticImpl() {
         torch::nn::init::orthogonal_(l->weight, gain);
         torch::nn::init::zeros_(l->bias);
     };
-    orthogonal_(fc1,         std::sqrt(2.0f));
-    orthogonal_(fc2,         std::sqrt(2.0f));
+    orthogonal_(encoder,     std::sqrt(2.0f));
     orthogonal_(cont_mean,   0.01f);   // small final-layer
     orthogonal_(disc_logits, 0.01f);
     orthogonal_(value,       1.0f);
+    // GRUCell weights are initialised by libtorch with reasonable defaults
+    // (uniform Kaiming-ish). We leave them alone.
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-ActorCriticImpl::forward(const torch::Tensor& obs) {
-    auto h = torch::relu(fc1(obs));
-    h      = torch::relu(fc2(h));
-    auto cm = cont_mean(h);
-    auto cs = log_std.expand({obs.size(0), CONT_DIM});
-    auto dl = disc_logits(h);
-    auto v  = value(h).squeeze(-1);
-    return {cm, cs, dl, v};
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor,
+           torch::Tensor, torch::Tensor>
+ActorCriticImpl::forward_step(const torch::Tensor& obs,
+                              const torch::Tensor& h_in) {
+    auto enc = torch::relu(encoder(obs));               // [B, HIDDEN]
+    auto h   = gru(enc, h_in);                          // [B, HIDDEN]
+    auto cm  = cont_mean(h);                            // [B, CONT_DIM]
+    auto cs  = log_std.expand({obs.size(0), CONT_DIM}); // [B, CONT_DIM]
+    auto dl  = disc_logits(h);                          // [B, DISC_DIM]
+    auto v   = value(h).squeeze(-1);                    // [B]
+    return {cm, cs, dl, v, h};
 }
 
 // ============================================================================
@@ -66,13 +74,29 @@ PPO::PPO(const PPOConfig& cfg)
         net_->parameters(),
         torch::optim::AdamOptions(cfg.lr));
 
-    spdlog::info("PPO init on device={}, params={}",
+    hidden_ = torch::zeros({1, ActorCriticImpl::HIDDEN},
+                           torch::TensorOptions().dtype(torch::kFloat32)
+                                                 .device(device_));
+
+    spdlog::info("PPO init on device={}, params={}, obs_dim={}",
                  (device_.is_cuda() ? "CUDA" : "CPU"),
                  [&]() {
                      int64_t n = 0;
                      for (auto& p : net_->parameters()) n += p.numel();
                      return n;
-                 }());
+                 }(),
+                 ActorCriticImpl::OBS_DIM);
+}
+
+void PPO::reset_hidden() {
+    torch::NoGradGuard ng;
+    hidden_.zero_();
+}
+
+std::vector<float> PPO::current_hidden() const {
+    auto cpu = hidden_.detach().to(torch::kCPU).contiguous();
+    return std::vector<float>(cpu.data_ptr<float>(),
+                              cpu.data_ptr<float>() + ActorCriticImpl::HIDDEN);
 }
 
 dp::agent::AgentAction PPO::sample_action(
@@ -92,7 +116,8 @@ dp::agent::AgentAction PPO::sample_action(
         .clone()
         .to(device_);
     net_->eval();
-    auto [cm, cs, dl, v] = net_->forward(t_obs);
+    auto [cm, cs, dl, v, h_out] = net_->forward_step(t_obs, hidden_);
+    hidden_ = h_out.detach();
 
     auto std_  = cs.exp();                       // [1, C]
     auto eps   = torch::randn_like(cm);
@@ -157,14 +182,19 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     constexpr int O = ActorCriticImpl::OBS_DIM;
     constexpr int C = ActorCriticImpl::CONT_DIM;
     constexpr int D = ActorCriticImpl::DISC_DIM;
+    constexpr int H = ActorCriticImpl::HIDDEN;
 
     const int N = static_cast<int>(rollout.size());
     if (N == 0) return {};
 
     // ---------- pack rollout into flat host tensors ----------
+    // We use "stale-hidden" PPO (CleanRL-style): the hidden state passed
+    // to forward during update is the one cached at rollout time. This
+    // is slightly off-policy but is the simplest correct PPO+GRU.
     std::vector<float> obs_flat;       obs_flat.reserve(N * O);
     std::vector<float> cont_flat;      cont_flat.reserve(N * C);
     std::vector<float> disc_flat;      disc_flat.reserve(N * D);
+    std::vector<float> hin_flat;       hin_flat.reserve(N * H);
     std::vector<float> rew(N), val(N), lp(N);
     std::vector<float> done(N);
     for (int i = 0; i < N; ++i) {
@@ -172,6 +202,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
         obs_flat.insert(obs_flat.end(), tr.obs.begin(), tr.obs.end());
         cont_flat.insert(cont_flat.end(), tr.cont_act.begin(), tr.cont_act.end());
         disc_flat.insert(disc_flat.end(), tr.disc_act.begin(), tr.disc_act.end());
+        hin_flat.insert(hin_flat.end(), tr.h_in.begin(), tr.h_in.end());
         rew[i]  = tr.reward;
         val[i]  = tr.value;
         lp[i]   = tr.log_prob;
@@ -203,6 +234,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     auto t_obs   = torch::from_blob(obs_flat.data(),  {N, O}, torch::kFloat32).clone().to(device_);
     auto t_cont  = torch::from_blob(cont_flat.data(), {N, C}, torch::kFloat32).clone().to(device_);
     auto t_disc  = torch::from_blob(disc_flat.data(), {N, D}, torch::kFloat32).clone().to(device_);
+    auto t_hin   = torch::from_blob(hin_flat.data(),  {N, H}, torch::kFloat32).clone().to(device_);
     auto t_lpold = torch::from_blob(lp.data(),        {N},    torch::kFloat32).clone().to(device_);
     auto t_adv   = torch::from_blob(adv.data(),       {N},    torch::kFloat32).clone().to(device_);
     auto t_ret   = torch::from_blob(ret.data(),       {N},    torch::kFloat32).clone().to(device_);
@@ -227,11 +259,12 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             auto b_obs   = t_obs.index_select(0,   t_idx);
             auto b_cont  = t_cont.index_select(0,  t_idx);
             auto b_disc  = t_disc.index_select(0,  t_idx);
+            auto b_hin   = t_hin.index_select(0,   t_idx);
             auto b_lpold = t_lpold.index_select(0, t_idx);
             auto b_adv   = t_adv.index_select(0,   t_idx);
             auto b_ret   = t_ret.index_select(0,   t_idx);
 
-            auto [cm, cs, dl, v] = net_->forward(b_obs);
+            auto [cm, cs, dl, v, h_out] = net_->forward_step(b_obs, b_hin);
             auto std_ = cs.exp();
             auto cont_lp =
                 (-0.5f * ((b_cont - cm) / std_).pow(2)

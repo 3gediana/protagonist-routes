@@ -97,6 +97,7 @@ set(DP_CORE_SOURCES
     src/agent/ProgressTracker.cpp
     src/agent/RewardSystem.cpp
     src/agent/Shelter.cpp
+    src/agent/SpatialMemory.cpp
     src/agent/TameSystem.cpp
     src/agent/VitalSystem.cpp
     src/agent/Wardrobe.cpp

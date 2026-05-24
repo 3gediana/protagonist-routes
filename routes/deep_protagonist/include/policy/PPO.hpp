@@ -11,32 +11,42 @@
 namespace dp::policy {
 
 // =============================================================================
-// Network. Shared MLP trunk -> three heads:
+// Network. obs -> MLP encoder -> GRU recurrent core -> three heads:
 //   * cont mean      (3) for continuous actions (move_x, move_y, yaw_rate)
 //   * disc logits    (16) for discrete-trigger actions (eat, drink, ...)
 //   * value          (1) state-value baseline for advantage estimation
+//
 // log_std is a state-independent learnable parameter vector (3), the
 // usual PPO trick for continuous control.
+//
+// The GRU gives the policy short-term memory (~3-10s of effective recall
+// at our 30 Hz tick). Long-term spatial recall is supplied externally by
+// SpatialMemory (read out into obs).
+//
+// Recurrent state shape: [B, HIDDEN]. Persists across PPO steps within
+// an episode; reset to zero at episode boundary.
 // =============================================================================
 struct ActorCriticImpl : torch::nn::Module {
-    static constexpr int OBS_DIM  = dp::agent::ObservationBuilder::SIZE;       // 145
-    static constexpr int CONT_DIM = dp::agent::ACTION_CONTINUOUS_DIM;          // 3
-    static constexpr int DISC_DIM = dp::agent::ACTION_DISCRETE_DIM;            // 16
+    static constexpr int OBS_DIM  = dp::agent::ObservationBuilder::SIZE;
+    static constexpr int CONT_DIM = dp::agent::ACTION_CONTINUOUS_DIM;
+    static constexpr int DISC_DIM = dp::agent::ACTION_DISCRETE_DIM;
     static constexpr int HIDDEN   = 256;
 
-    torch::nn::Linear fc1{nullptr};
-    torch::nn::Linear fc2{nullptr};
-    torch::nn::Linear cont_mean{nullptr};
-    torch::nn::Linear disc_logits{nullptr};
-    torch::nn::Linear value{nullptr};
-    torch::Tensor     log_std;   // shape [CONT_DIM]
+    torch::nn::Linear   encoder{nullptr};
+    torch::nn::GRUCell  gru{nullptr};
+    torch::nn::Linear   cont_mean{nullptr};
+    torch::nn::Linear   disc_logits{nullptr};
+    torch::nn::Linear   value{nullptr};
+    torch::Tensor       log_std;   // shape [CONT_DIM]
 
     ActorCriticImpl();
 
-    // Forward returns: (cont_mean, cont_log_std, disc_logits, value).
-    // obs: [B, OBS_DIM]. All outputs are [B, *].
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-    forward(const torch::Tensor& obs);
+    // Single-step forward. obs:[B, OBS_DIM], h_in:[B, HIDDEN].
+    // Returns (cont_mean[B,C], cont_log_std[B,C], disc_logits[B,D],
+    //          value[B], h_out[B,HIDDEN]).
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor,
+               torch::Tensor, torch::Tensor>
+    forward_step(const torch::Tensor& obs, const torch::Tensor& h_in);
 };
 TORCH_MODULE(ActorCritic);
 
@@ -47,6 +57,7 @@ struct Transition {
     std::vector<float>  obs;        // OBS_DIM floats
     std::vector<float>  cont_act;   // CONT_DIM floats
     std::vector<float>  disc_act;   // DISC_DIM floats (0/1)
+    std::vector<float>  h_in;       // HIDDEN floats - GRU hidden BEFORE this step
     float               reward = 0.0f;
     float               value  = 0.0f;
     float               log_prob = 0.0f;
@@ -77,15 +88,26 @@ class PPO {
 public:
     explicit PPO(const PPOConfig& cfg);
 
-    // Pick an action for one observation. Returns AgentAction filled in,
-    // and via out_log_prob / out_value / out_cont / out_disc returns the
-    // raw rollout fields the caller stuffs into a Transition.
+    // Reset the policy's persistent hidden state to zeros (call at the
+    // start of every episode).
+    void reset_hidden();
+
+    // Pick an action for one observation. Updates the policy's internal
+    // hidden state from h_in to h_out. The caller must:
+    //   * record h_in (via current_hidden() *before* this call) into the
+    //     Transition for replay during update.
+    //   * call reset_hidden() at every episode boundary.
     dp::agent::AgentAction sample_action(
         const dp::agent::ObservationBuilder::Vector& obs,
         std::vector<float>&  out_cont,
         std::vector<float>&  out_disc,
         float& out_log_prob,
         float& out_value);
+
+    // Read the current persistent hidden state (HIDDEN floats). Snapshot
+    // this before each sample_action so the Transition records what the
+    // GRU saw at that step.
+    std::vector<float> current_hidden() const;
 
     // Compute and apply a PPO update from the given rollout. last_value
     // is V(s_T) for advantage bootstrapping (0 if last step ended episode).
@@ -115,6 +137,8 @@ private:
     torch::Device                            device_;
     ActorCritic                              net_;
     std::shared_ptr<torch::optim::Adam>      opt_;
+    // Persistent recurrent state. Shape [1, HIDDEN] on `device_`.
+    torch::Tensor                            hidden_;
 };
 
 }  // namespace dp::policy

@@ -46,6 +46,8 @@ Environment::Environment(const EnvConfig& cfg)
     ecfg.max_seconds      = cfg_.max_episode_seconds;
     ecfg.animal_seed_base = cfg_.world.seed ^ 0xA11AULL;
     episodes_.configure(ecfg);
+
+    spatial_.configure(0.0f, 0.0f);
 }
 
 void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
@@ -69,6 +71,7 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     step_index_ = 0;
     selected_building_ = dp::world::BuildingType::Shed;
     last_seed_kind_    = dp::world::PlantKind::Berry;
+    spatial_.clear();   // cognitive map is per-life (one episode)
     // milestone flags persist across resets on purpose (curriculum
     // signals are once-per-training-run, matching main.cpp behaviour).
 
@@ -349,6 +352,51 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     agent_.apply_action(action, world_, physics_, dt);
 
     apply_action_effects_(action);
+
+    // Cognitive map: write whatever the agent currently senses around it
+    // into the spatial grid cell under its feet. This is what gives PPO
+    // long-term spatial recall ("I saw water in the NW corner earlier").
+    {
+        const auto& as = agent_.state();
+        auto b = world_.biome_at(as.pos_x, as.pos_y);
+        bool saw_water = (b == dp::world::Biome::River
+                          || b == dp::world::Biome::Swamp);
+        const float R = dp::agent::ObservationBuilder::VISION_RANGE;
+        const float R2 = R * R;
+        bool saw_food = false;
+        for (const auto& pl : plants_.plants()) {
+            if (!pl.ripe) continue;
+            float dx = pl.x - as.pos_x, dy = pl.y - as.pos_y;
+            if (dx*dx + dy*dy <= R2) { saw_food = true; break; }
+        }
+        bool saw_resource = false;
+        for (const auto& rs : resources_.resources()) {
+            if (!rs.available) continue;
+            float dx = rs.x - as.pos_x, dy = rs.y - as.pos_y;
+            if (dx*dx + dy*dy <= R2) { saw_resource = true; break; }
+        }
+        bool saw_danger = false;
+        for (const auto& an : animals_.animals()) {
+            if (an.state == dp::world::AnimalState::Dead) continue;
+            if (an.kind != dp::world::AnimalKind::Wolf) continue;
+            float dx = an.pos_x - as.pos_x, dy = an.pos_y - as.pos_y;
+            if (dx*dx + dy*dy <= R2) { saw_danger = true; break; }
+        }
+        bool saw_building = false;
+        for (const auto& bd : buildings_.buildings()) {
+            float dx = bd.x - as.pos_x, dy = bd.y - as.pos_y;
+            if (dx*dx + dy*dy <= R2) { saw_building = true; break; }
+        }
+        for (const auto& site : buildings_.sites()) {
+            if (site.completed) continue;
+            float dx = site.x - as.pos_x, dy = site.y - as.pos_y;
+            if (dx*dx + dy*dy <= R2) { saw_building = true; break; }
+        }
+        spatial_.write(as.pos_x, as.pos_y,
+                       saw_water, saw_food, saw_resource,
+                       saw_danger, saw_building);
+    }
+
     episodes_.tick(dt);
 
     bool done = episodes_.is_done(vital_state_);
@@ -377,7 +425,7 @@ void Environment::rebuild_observation_(
         plants_, animals_, resources_,
         inventory_, shelter_, episodes_, progress_,
         buildings_, wardrobe_, farming_, tame_,
-        out);
+        selected_building_, spatial_, out);
 }
 
 }  // namespace dp::env

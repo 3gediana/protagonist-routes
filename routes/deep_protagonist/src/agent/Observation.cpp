@@ -89,6 +89,8 @@ void ObservationBuilder::compose(const dp::world::World&         world,
                                  const Wardrobe&                  wardrobe,
                                  const dp::world::FarmingSystem&  farming,
                                  const TameSystem&                tame,
+                                 dp::world::BuildingType          selected_building_type,
+                                 const SpatialMemory&             spatial,
                                  Vector&                          out) {
     std::memset(out.data(), 0, sizeof(float) * SIZE);
     const auto& s = agent.state();
@@ -321,6 +323,127 @@ void ObservationBuilder::compose(const dp::world::World&         world,
 
     // ---- tame follower count (1) ----
     out[p++] = clamp01(tame.follower_count() / 4.0f);
+
+    // ====================== S4.0 P0 additions ============================
+    //
+    // The blocks below sit *after* the original S3.10 layout so older
+    // checkpoints stay aligned through 0..144 - if anyone wants to load a
+    // pre-S4.0 .pt they'd still get the right vital/animals/etc, only the
+    // new tail needs zero-init.
+
+    // ---- nearest water cell (3: dx_norm, dy_norm, dist_norm) -----------
+    // Scan a coarse grid of biome cells around the agent within
+    // VISION_RANGE; pick the closest River or Swamp cell. Done in metres
+    // so it works regardless of heightmap cell_scale.
+    {
+        const float step = 8.0f;
+        float best_d2  = std::numeric_limits<float>::infinity();
+        float best_dx  = 0.0f, best_dy = 0.0f;
+        for (float dy = -VISION_RANGE; dy <= VISION_RANGE; dy += step) {
+            for (float dx = -VISION_RANGE; dx <= VISION_RANGE; dx += step) {
+                float wx = s.pos_x + dx, wy = s.pos_y + dy;
+                auto b = world.biome_at(wx, wy);
+                if (b != dp::world::Biome::River
+                 && b != dp::world::Biome::Swamp) continue;
+                float d2 = dx*dx + dy*dy;
+                if (d2 < best_d2) { best_d2 = d2; best_dx = dx; best_dy = dy; }
+            }
+        }
+        if (std::isfinite(best_d2)) {
+            float dist = std::sqrt(best_d2);
+            out[p++] = clamp_norm(best_dx / VISION_RANGE);
+            out[p++] = clamp_norm(best_dy / VISION_RANGE);
+            out[p++] = clamp01(dist / VISION_RANGE);
+        } else {
+            out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 1.0f;  // "no water in sight"
+        }
+    }
+
+    // ---- biome one-hot at agent's feet (N_BIOMES) ----------------------
+    {
+        auto b = world.biome_at(s.pos_x, s.pos_y);
+        int  idx = static_cast<int>(b);
+        for (int i = 0; i < N_BIOMES; ++i) {
+            out[p++] = (i == idx) ? 1.0f : 0.0f;
+        }
+    }
+
+    // ---- selected building type one-hot (N_BUILDING_TYPES) -------------
+    {
+        int idx = static_cast<int>(selected_building_type);
+        for (int i = 0; i < N_BUILDING_TYPES; ++i) {
+            out[p++] = (i == idx) ? 1.0f : 0.0f;
+        }
+    }
+
+    // ---- nearest active construction site remaining materials (3) ------
+    // Picks the closest non-completed site and reports how much more
+    // (wood/stone/grass) it needs to finish. Normalised by 20 since that
+    // is the largest recipe component (BigHouse). 0 = "no site / done".
+    {
+        const auto& sites = buildings.sites();
+        float best_d2 = std::numeric_limits<float>::infinity();
+        int   best_idx = -1;
+        for (int i = 0; i < int(sites.size()); ++i) {
+            if (sites[i].completed) continue;
+            float dx = sites[i].x - s.pos_x, dy = sites[i].y - s.pos_y;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < best_d2) { best_d2 = d2; best_idx = i; }
+        }
+        if (best_idx >= 0) {
+            const auto& site   = sites[best_idx];
+            const auto& recipe = dp::world::building_recipe(site.type);
+            int w_left = std::max(0, recipe.wood_required  - site.wood_deposited);
+            int s_left = std::max(0, recipe.stone_required - site.stone_deposited);
+            int g_left = std::max(0, recipe.grass_required - site.grass_deposited);
+            out[p++] = clamp01(w_left / 20.0f);
+            out[p++] = clamp01(s_left / 20.0f);
+            out[p++] = clamp01(g_left / 20.0f);
+        } else {
+            out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 0.0f;
+        }
+    }
+
+    // ---- SpatialMemory window (8x8x6 = 384) ----------------------------
+    // Cognitive map read-out, gives PPO the equivalent of "what I've seen
+    // within ~64 m of myself this life". Written into out at offset p
+    // first (we'll bump p afterwards) since SpatialMemory::read_window
+    // takes a plain float* and fills WINDOW_DIM consecutive floats.
+    spatial.read_window(s.pos_x, s.pos_y, out.data() + p + 19);
+    // Reserve the 384 slots; we still need to fill last_action *before*
+    // them (slots are contiguous in the layout). Do that now.
+    int spatial_offset_save = p + 19;
+    (void)spatial_offset_save;  // already written, p advances at the end
+
+    // ---- last_action (3 continuous + 16 discrete = 19) -----------------
+    // Standard RL trick: feed the previous action back into the obs so a
+    // recurrent or feed-forward policy can maintain intent / momentum.
+    {
+        const AgentAction& la = agent.last_action();
+        out[p++] = clamp_norm(la.move_x);
+        out[p++] = clamp_norm(la.move_y);
+        out[p++] = clamp_norm(la.yaw_rate / 3.14159265f);   // rad/s -> ~unit
+        // Discrete flags in the same order as ACTION_DISCRETE_DIM (16):
+        out[p++] = la.eat                  ? 1.0f : 0.0f;
+        out[p++] = la.drink                ? 1.0f : 0.0f;
+        out[p++] = la.attack               ? 1.0f : 0.0f;
+        out[p++] = la.collect              ? 1.0f : 0.0f;
+        out[p++] = la.place_shelter        ? 1.0f : 0.0f;
+        out[p++] = la.craft_spear          ? 1.0f : 0.0f;
+        out[p++] = la.sleep                ? 1.0f : 0.0f;
+        out[p++] = la.craft_grass_dress    ? 1.0f : 0.0f;
+        out[p++] = la.craft_fur_cloak      ? 1.0f : 0.0f;
+        out[p++] = la.wear_clothes         ? 1.0f : 0.0f;
+        out[p++] = la.place_blueprint      ? 1.0f : 0.0f;
+        out[p++] = la.cycle_building_type  ? 1.0f : 0.0f;
+        out[p++] = la.deposit_to_site      ? 1.0f : 0.0f;
+        out[p++] = la.plant_seed           ? 1.0f : 0.0f;
+        out[p++] = la.water_plot           ? 1.0f : 0.0f;
+        out[p++] = la.feed_tame            ? 1.0f : 0.0f;
+    }
+
+    // Advance p past the SpatialMemory window we already wrote above.
+    p += SpatialMemory::WINDOW_DIM;
 
     // p should equal SIZE here.
 }

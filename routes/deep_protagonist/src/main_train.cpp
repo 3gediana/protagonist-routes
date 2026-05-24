@@ -233,6 +233,7 @@ int main(int argc, char** argv) {
     int episodes_done = 0;
 
     // Main loop. Two policy paths share the same step/done plumbing.
+    std::vector<float> ppo_h_in_snapshot;   // h_in for current step
     while (steps_done < max_steps) {
         dp::agent::AgentAction action;
         std::vector<float> cont_act, disc_act;
@@ -242,6 +243,11 @@ int main(int argc, char** argv) {
         } else if (policy == "wander") {
             action = wander.sample(ecfg.fixed_dt);
         } else if (policy == "ppo") {
+            // Snapshot the GRU hidden BEFORE sample_action mutates it.
+            // h_in is the value PPO::update replays during the recurrent
+            // forward pass, so it has to match the hidden the GRU saw
+            // on entry to this step.
+            ppo_h_in_snapshot = ppo->current_hidden();
             action = ppo->sample_action(obs, cont_act, disc_act, lp, vv);
         } else {
             spdlog::error("Unknown policy '{}'", policy);
@@ -256,6 +262,7 @@ int main(int argc, char** argv) {
             tr.obs.assign(obs.begin(), obs.end());
             tr.cont_act = std::move(cont_act);
             tr.disc_act = std::move(disc_act);
+            tr.h_in     = std::move(ppo_h_in_snapshot);
             tr.reward   = sr.reward;
             tr.value    = vv;
             tr.log_prob = lp;
@@ -297,6 +304,9 @@ int main(int argc, char** argv) {
             ++episodes_done;
             if (max_episodes > 0 && episodes_done >= max_episodes) break;
             env.reset(obs);
+            // New life -> reset GRU hidden so memory doesn't bleed across
+            // episodes (matches reset of SpatialMemory inside Environment).
+            if (policy == "ppo") ppo->reset_hidden();
         }
     }
 
