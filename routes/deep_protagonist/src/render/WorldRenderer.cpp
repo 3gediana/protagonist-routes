@@ -161,6 +161,7 @@ void WorldRenderer::draw(const FlyCamera& cam,
                          const dp::agent::Shelter& shelter,
                          const dp::world::BuildingSystem& buildings,
                          const dp::world::FarmingSystem& farming,
+                         dp::agent::ItemKind worn_clothing,
                          Color tint) {
     if (!built_) return;
 
@@ -508,13 +509,32 @@ void WorldRenderer::draw(const FlyCamera& cam,
                      Color{ 240, 220, 120, 120 });
     }
 
-    // Agent capsule (white when above ground, cyan when underground)
+    // Agent capsule (white when above ground, cyan when underground).
+    // If wearing a grass dress / fur cloak we wrap a coloured "skirt"
+    // around the lower body so progression is visible from any angle.
     const auto& s = agent.state();
     Vector3 foot   = Vector3{ s.pos_x, s.pos_y, s.pos_z };
     Vector3 head   = Vector3{ s.pos_x, s.pos_y, s.pos_z + s.height };
     Color body_col = agent.inside_cave() ? Color{ 80, 220, 220, 255 }
                                          : Color{ 240, 240, 240, 255 };
     DrawCapsule(foot, head, s.radius, 12, 4, body_col);
+
+    // Clothing visual: a wider tinted band at hip height
+    if (worn_clothing == dp::agent::ItemKind::GrassDress
+     || worn_clothing == dp::agent::ItemKind::FurCloak) {
+        Color cloth_col = (worn_clothing == dp::agent::ItemKind::FurCloak)
+            ? Color{120,  80, 50, 230}      // warm brown
+            : Color{ 80, 170, 60, 230};     // grass green
+        float skirt_z_low  = s.pos_z + s.height * 0.30f;
+        float skirt_z_high = s.pos_z + s.height * 0.55f;
+        Vector3 sk_lo = Vector3{ s.pos_x, s.pos_y, skirt_z_low };
+        Vector3 sk_hi = Vector3{ s.pos_x, s.pos_y, skirt_z_high };
+        DrawCylinderEx(sk_lo, sk_hi,
+                       s.radius * 1.25f,
+                       s.radius * 1.05f,
+                       16,
+                       tint_mul(cloth_col, tint));
+    }
 
     // Origin marker (helps orientation)
     DrawCubeV(Vector3{ 0, 0, 1 }, Vector3{ 1, 1, 2 }, Color{ 230, 30, 30, 255 });

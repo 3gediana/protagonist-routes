@@ -948,6 +948,14 @@ int run_self_tests() {
         check(r.episode().steps == 3 && r.episode().r_alive > 0.0f
               && r.episode().r_food > 0.0f && r.episode().r_death < 0.0f,
               "RewardSystem: episode aggregates per-component totals");
+
+        // S3.10 milestone: a single milestone event should add +20
+        r.reset_episode();
+        r.begin_step();
+        r.event_milestone();
+        float m = r.end_step();
+        check(std::abs(m - 20.0f) < 1e-3f,
+              "RewardSystem: milestone event is +20 by default");
     }
 
     spdlog::info("------------------------------------------------");
@@ -1051,6 +1059,13 @@ int main(int argc, char** argv) {
         dp::world::PlantKind last_seed_kind = dp::world::PlantKind::Berry;
 
         dp::agent::TameSystem tame;
+
+        // Main-line milestone flags (one-shot rewards). Persist across
+        // episodes so the agent only earns each milestone once per
+        // training session.
+        bool first_house_built_fired    = false;
+        bool first_crop_harvested_fired = false;
+        bool first_follower_fired       = false;
 
         dp::agent::VitalSystem vitals;
         dp::agent::VitalState  vital_state{};
@@ -1157,6 +1172,10 @@ int main(int argc, char** argv) {
                 if (progress.can_farm()) {
                     auto farm_got = farming.harvest_at(as.pos_x, as.pos_y, 2.0f);
                     for (auto k : farm_got) got.push_back(k);
+                    if (!farm_got.empty() && !first_crop_harvested_fired) {
+                        reward.event_milestone();
+                        first_crop_harvested_fired = true;
+                    }
                 }
                 for (auto k : got) {
                     float kcal = 0.0f, ml = 0.0f;
@@ -1278,16 +1297,21 @@ int main(int argc, char** argv) {
             // Each tick: promote any site that just got its last material.
             int finished = buildings.tick_finalize();
             for (int i = 0; i < finished; ++i) {
-                reward.event_built_shelter();  // re-use weight for now
+                reward.event_built_shelter();
                 progress.on_house_built();
+                // S3.10 milestone: first house ever - one-shot +20.
+                if (!first_house_built_fired) {
+                    reward.event_milestone();
+                    first_house_built_fired = true;
+                }
             }
 
-            // Stage unlock bonus (Early->Mid, Mid->Late). +50 sparse reward.
+            // Stage unlock bonus (Early->Mid, Mid->Late). Each unlock
+            // fires the milestone bonus twice (= +40) to mark the
+            // moment as a hard inflection point for the policy.
             if (progress.poll_unlock()) {
-                // We piggyback on event_built_shelter so the magnitude
-                // (+5 default) is documented; multiply by 10 here for the
-                // milestone moment.
-                for (int i = 0; i < 10; ++i) reward.event_built_shelter();
+                reward.event_milestone();
+                reward.event_milestone();
             }
 
             // C key: craft a spear (consumes 1 wood + 1 stone, frees a slot)
@@ -1387,9 +1411,12 @@ int main(int argc, char** argv) {
                     inventory.remove_one(fr.consumed);
                     reward.event_collected_resource();
                     if (fr.just_became_follower) {
-                        // Milestone: mark as a "tool craft" so PPO sees a
-                        // clear positive event.
                         reward.event_crafted_tool();
+                        // S3.10 milestone: first follower ever -> +20.
+                        if (!first_follower_fired) {
+                            reward.event_milestone();
+                            first_follower_fired = true;
+                        }
                     }
                 }
             }
@@ -1420,7 +1447,8 @@ int main(int argc, char** argv) {
                 spdlog::info(
                     "Episode {} done: steps={} elapsed={:.1f}s "
                     "reward={:+.1f} (alive={:+.1f} food={:+.1f} water={:+.1f} "
-                    "kills={:+.1f} bites={:+.1f} death={:+.1f} vital={:+.1f})",
+                    "kills={:+.1f} bites={:+.1f} death={:+.1f} vital={:+.1f} "
+                    "milestone={:+.1f})",
                     episodes.episode_id(),
                     episodes.step_count(),
                     episodes.elapsed_s(),
@@ -1431,7 +1459,8 @@ int main(int argc, char** argv) {
                     reward.episode().r_kills,
                     reward.episode().r_bites,
                     reward.episode().r_death,
-                    reward.episode().r_vital);
+                    reward.episode().r_vital,
+                    reward.episode().r_milestone);
                 episodes.reset(world, agent, vitals, vital_state,
                                reward, animals, inventory, shelter,
                                buildings);
@@ -1460,6 +1489,7 @@ int main(int argc, char** argv) {
 
             renderer.draw(cam, agent, world, decorations, plants, animals,
                           resources, shelter, buildings, farming,
+                          wardrobe.worn(),
                           day.terrain_tint());
 
             // HUD background

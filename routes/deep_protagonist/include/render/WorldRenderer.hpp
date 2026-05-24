@@ -41,6 +41,7 @@ public:
               const dp::agent::Shelter& shelter,
               const dp::world::BuildingSystem& buildings,
               const dp::world::FarmingSystem& farming,
+              dp::agent::ItemKind worn_clothing,
               Color tint = WHITE);
 
 private:

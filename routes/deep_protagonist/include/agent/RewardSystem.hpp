@@ -55,24 +55,30 @@ public:
         float collected        = 0.5f;
         float built_shelter    = 5.0f;
         float crafted_tool     = 3.0f;
+
+        // S3.10 main-line milestones (first house, first crop, first
+        // follower, stage unlock). Sparse +20 each to focus PPO on
+        // progression-defining events without dwarfing normal rewards.
+        float milestone        = 20.0f;
     };
 
     // Per-step breakdown so we can debug *why* a reward is what it is.
     struct StepReward {
-        float alive    = 0.0f;
-        float food     = 0.0f;
-        float water    = 0.0f;
-        float kills    = 0.0f;
-        float bites    = 0.0f;
-        float death    = 0.0f;
-        float vital    = 0.0f;
-        float collect  = 0.0f;
-        float shelter  = 0.0f;
-        float craft    = 0.0f;
+        float alive     = 0.0f;
+        float food      = 0.0f;
+        float water     = 0.0f;
+        float kills     = 0.0f;
+        float bites     = 0.0f;
+        float death     = 0.0f;
+        float vital     = 0.0f;
+        float collect   = 0.0f;
+        float shelter   = 0.0f;
+        float craft     = 0.0f;
+        float milestone = 0.0f;
 
         float total() const {
             return alive + food + water + kills + bites + death
-                 + vital + collect + shelter + craft;
+                 + vital + collect + shelter + craft + milestone;
         }
     };
 
@@ -81,16 +87,17 @@ public:
     struct EpisodeStats {
         int   steps        = 0;
         float total_reward = 0.0f;
-        float r_alive   = 0.0f;
-        float r_food    = 0.0f;
-        float r_water   = 0.0f;
-        float r_kills   = 0.0f;
-        float r_bites   = 0.0f;
-        float r_death   = 0.0f;
-        float r_vital   = 0.0f;
-        float r_collect = 0.0f;
-        float r_shelter = 0.0f;
-        float r_craft   = 0.0f;
+        float r_alive     = 0.0f;
+        float r_food      = 0.0f;
+        float r_water     = 0.0f;
+        float r_kills     = 0.0f;
+        float r_bites     = 0.0f;
+        float r_death     = 0.0f;
+        float r_vital     = 0.0f;
+        float r_collect   = 0.0f;
+        float r_shelter   = 0.0f;
+        float r_craft     = 0.0f;
+        float r_milestone = 0.0f;
 
         void reset();
         void add(const StepReward& s);
@@ -113,6 +120,10 @@ public:
     void   event_collected_resource();
     void   event_built_shelter();
     void   event_crafted_tool();
+    // S3.10 milestone: fires once per "first" of a kind (first house,
+    // first crop, first follower) plus stage unlocks. Magnitude defaults
+    // to the weight defined in Weights::milestone (+20).
+    void   event_milestone();
 
     // Close the step. Pushes per-component into ep_, returns total.
     float  end_step();

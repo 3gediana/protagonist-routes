@@ -9,21 +9,23 @@ void RewardSystem::EpisodeStats::reset() {
     total_reward = 0.0f;
     r_alive = r_food = r_water = r_kills = r_bites = 0.0f;
     r_death = r_vital = r_collect = r_shelter = r_craft = 0.0f;
+    r_milestone = 0.0f;
 }
 
 void RewardSystem::EpisodeStats::add(const StepReward& s) {
     steps        += 1;
     total_reward += s.total();
-    r_alive   += s.alive;
-    r_food    += s.food;
-    r_water   += s.water;
-    r_kills   += s.kills;
-    r_bites   += s.bites;
-    r_death   += s.death;
-    r_vital   += s.vital;
-    r_collect += s.collect;
-    r_shelter += s.shelter;
-    r_craft   += s.craft;
+    r_alive     += s.alive;
+    r_food      += s.food;
+    r_water     += s.water;
+    r_kills     += s.kills;
+    r_bites     += s.bites;
+    r_death     += s.death;
+    r_vital     += s.vital;
+    r_collect   += s.collect;
+    r_shelter   += s.shelter;
+    r_craft     += s.craft;
+    r_milestone += s.milestone;
 }
 
 void RewardSystem::begin_step() { step_ = StepReward{}; }
@@ -64,9 +66,10 @@ void RewardSystem::event_vital_pressure(const VitalState& v, float dt) {
     step_.vital += w_.vital_decay_coef * pressure * dt * -1.0f;  // negative
 }
 
-void RewardSystem::event_collected_resource() { step_.collect += w_.collected; }
-void RewardSystem::event_built_shelter()      { step_.shelter += w_.built_shelter; }
-void RewardSystem::event_crafted_tool()       { step_.craft   += w_.crafted_tool; }
+void RewardSystem::event_collected_resource() { step_.collect   += w_.collected; }
+void RewardSystem::event_built_shelter()      { step_.shelter   += w_.built_shelter; }
+void RewardSystem::event_crafted_tool()       { step_.craft     += w_.crafted_tool; }
+void RewardSystem::event_milestone()          { step_.milestone += w_.milestone; }
 
 float RewardSystem::end_step() {
     last_ = step_;
