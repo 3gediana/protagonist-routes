@@ -1,9 +1,39 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-24（**FINAL_BLUEPRINT.md Layer 1-5 完整 (R1+R2+R3) + Layer 6/7/8 设计 spec**）
+> 最后巡检：2026-05-24 下午（**Layer 1-5 全部 + Layer 6/7/8 R1 + 训练就绪审计 9/12 项收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`617d5df Layer 7 R2: minimal Python viewer for viewer_frames.jsonl`
+> 当前 HEAD：`b0cbfe4 Layer 4/5 #5 + #12: A/B reward-shift result + reproduction unit tests` (此后还有 Layer 5 #11 commit)
+>
+> **2026-05-24 下午 训练就绪审计 9/12 项收口（接 5ccac49 Session summary 后）**：
+> - **#1 [SEVERE] in-world reproduction → 跨 episode NEAT pool**（commit bd07564, b0cbfe4）：
+>   `PopulationLayer::drainBornChildren()` + `runtime` bridge 把 in-world 出生孩子注入 `species_contexts[i].population`，所以孩子不再只是"画面上看到"，而是真的进化池一员。Smoke 验证：单代 8-10 个孩子注入。
+> - **#2 [SEVERE] Lamarckian 真正继承**（bd07564）：新 `NeatBrain::writeWeightsBackTo(NeatGenome&)` 把 Hebbian 在线学习的权重写回 child genome（toml gate `evolution.lamarckian.enabled`）。
+> - **#3 [SEVERE] kill() → killWithCause() 全量替换**（ebf4299）：8 个 `agent->kill("...")` 全部改成正确的 `DeathCause::{Starvation/Predation/Combat/Disease/Thermal/Dehydration}`。`Agent::death_counted_` one-shot flag 防止 PopulationLayer 跨 tick 重复计数。
+> - **#4 [SEVERE] PopulationLayer O(N²) → O(N)**（ebf4299）：spatial bucket on (archetype_tag, cell_x, cell_y), cell_size = reproduction_radius，3×3 邻域扫描。Smoke 验证 same-seed 输出与原 O(N²) 完全一致。
+> - **BUG ROOT CAUSE [pre-existing, fixed bd07564]** — 上一次会话报告"4 in-world births verified"实际是 mid-episode 后立即 STATUS_STACK_BUFFER_OVERRUN 崩溃（每次 reproduction 启用就会复现）。Root cause：`PopulationLayer` 用 `Agent::speciesId()` 配对，但本路径下背景 agent 全是 `kInvalidSpeciesId`，所以 Scavenger（6 outputs）会跟 Omnivore（7 outputs）配对，child brain 用 parent_a 的 outputDim 但 capability 用 parent_a 的 archetype，结果 `Agent::applyCapabilities` 抛 "output slice overflow"，从 parallelFor worker 抛出 → std::terminate → /GS canary。Fix: 改用 `archetypeTag()` 作为同种判定 key。同时把 `Agent::decide` / `decideUntilDense` / `applyCapabilities` 和 `NeatBrain::forward` 的所有 throw 改成 spdlog::error + 静默降级，并给 `AgentLayer::parallelFor` worker 包 try/catch — 让"诊断比崩溃更有用"。
+> - **#5 [MEDIUM] Layer 4 vs Layer 5 A/B 验证**（b0cbfe4）：4-gen × 2-ep × seed=4242 同种子对比。Layer 5 reward shift Gen 0/2/3 都比 Layer 4 高 +44/+60/+51 % avg fitness，最高个体 +194%，QD score 提升 +257% 在 Gen 3。Layer 5 不是噪声。详见 `docx/supporting/LAYER5_AB_RESULT.md`。
+> - **#7 [MEDIUM] Lookout sense_radius_scale 接入 4 个 perception**（a8dc76e）：`TreePerception` / `WaterPerception` / `DangerPerception` / `ObjectLogisticsPerception` 全部读 `Agent::senseRadiusScale()`。之前只有 `AgentSocialPerception` 用，所以 Lookout 建筑只能"看更远的 agent"，看不到树/水/火/物资 — 现在全部联动。
+> - **#8 [MEDIUM] Storage deposit reward + building_type toml shaping**（a8dc76e）：新 `reward.storage_deposit_reward` toml binding，每次 deposit 落到完工 Storage 时按 `cooperation_weight × storage_deposit_reward` 加分。Smoke 启用后从 8 个 children 升到 10 个，me_cov 从 4/192 升到 5/192。
+> - **#11 [MINOR] task_template must_build_to_survive penalty**（待提交）：新 toml 字段 `[[evolution.task_templates.must_build_to_survive]]` + `must_build_penalty`，episode 结束时给当 episode 完全没造过 worksite 的 protagonist 扣 200 fitness。把"没造就活不下去"硬编码到训练信号。
+> - **#12 [MINOR] Reproduction unit tests**（b0cbfe4）：`tests/route_protagonist/test_layer4_reproduction.cpp`，5 个 gtest 覆盖 NeatBrain::writeWeightsBackTo、PopulationLayer 按 archetype_tag 配对、BornChild 队列、Agent::deathCounted、senseRadiusScale clamp。
+> - **未做（暂缓，理由清晰）**：
+>   - **#6 主角自主选 BuildingType** —— 需要扩 protagonist `action_dim` 4 维 softmax，会破坏所有现有 toml/checkpoint，单独一次会话做。
+>   - **#9 背景种 DNC memory** —— 需要把 NeatBrain 路径改成可插拔 IBrain，同样大改。
+>   - **#10 50-100 gen 长跑** —— 单跑就需 8-15h，超过本次会话 4-min exec 限制。下次会话先跑 background。
+>
+> **早一些的工作（5ccac49 之前）**：
+> - Layer 1 (a0669f6, 7a098a6): 体温 + 600×600，alive 0.45→0.79
+> - Layer 2 (202186b): WeatherLayer 6 type，avg_fit +167%
+> - Layer 3 (e3d2b8b): Rabbit + 9 物种，avg_fit 6685 best 12390
+> - Layer 4 (da86050, 1377352): LifecycleStage/DeathCause/lineage_id/PopulationLayer，4 in-world births 验证 + perf throttle（注：reproduction crash 这次会话才修）
+> - Layer 5 (3501070, da86050, e598450, 5824eb7, b8326ee): BuildingType 4 type + Shelter 雨天免疫 + reward shift + building_type distribution + Storage overflow + Lookout perception bonus
+> - **Layer 5 30-gen 长跑结果**: Gen 27 peak protagonist avg=4543 best=18451 (vs v17 baseline 737 = **6.2x improvement**)
+> - Layer 6 R1 (b53a4e8): WorldRole borderland/main_world accessors (TripleWorldRuntime 实现 deferred)
+> - Layer 7 R1 (456e09b): viewer_frames.jsonl frame dumper (agents/worksites/weather/season JSONL)
+> - Layer 7 R2 (617d5df): minimal pygame Python viewer (160 LoC，PEP 723 self-contained)
+> - Layer 8 R1 (4d57714): Lamarckian Hebbian online weight adaptation (toml gate)
+> - 4 个 docx/supporting/LAYER{5,6,7,8}_*.md 详细设计文档
 >
 > **2026-05-24 蓝图驱动 Layer 1-5 完整 + 6/7/8 R1 baseline + 设计 spec**：
 > - Layer 1 (a0669f6, 7a098a6): 体温 + 600×600，alive 0.45→0.79
