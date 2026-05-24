@@ -1,9 +1,15 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 中午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-K 11 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke 验证通过 (HEALTHY verdict) + 60-gen throw_penalty AB 完成 (验证为负优化) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 下午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-M 13 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke 验证通过 (HEALTHY verdict) + 60-gen throw_penalty AB 完成 (验证为负优化) + 60-gen graduate AB 后台跑中 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`ef7957f smoke_tw_eval: align borderland mutate rates with sandbox NEAT (commit K)`
+> 当前 HEAD：`0659c8e Layer 6 R3 stage 3 commit M: structural counters in borderland_metrics`
+>
+> **2026-05-25 下午 L6 R3 commit L + M（结构性 NEAT mutation + metrics）+ 60-gen graduate AB 启动**：
+> - **Commit L** (`138eacb`)：`BorderlandEvaluator::mutateStructuralPool(archetype, add_conn_rate, add_node_rate, seed)`。Per-genome Bernoulli 决定是否调 add-connection / add-node mutation，mirror sandbox `NeatEvolution::addConnectionMutation` + `addNodeMutation` (24-attempt retry on add-conn, edge-split on add-node)。Pool-local `InnovationTracker` 先扫一遍池子，把 next_node_id 推过 max NodeId 防冲突。ProtagonistGenome (dense) dynamic_cast skip。Runtime hook 紧跟 mutatePool 之后，seed offset +13 跟 weight perturb rng 独立。Toml 字段 `borderland_mutate_add_conn_rate / add_node_rate` 默认 0=off。3 个新 gtest (AddsConnections / AddsNodes / ZeroRatesNoop) 全 PASS。
+> - **Commit M** (`0659c8e`)：`borderland_metrics.csv` header 加 `node_count_avg, connection_count_avg` 两列。Per-row 对池里 NeatGenome 累加 nodes/connections，protagonist 池写 0 (dense 没结构概念)。`borderland_metrics_summary.py` 表加两列 + 新增 **Structural mutation: ACTIVE/OFF** 诊断行 (阈值 > 0.5 avg new nodes 或 > 1.0 avg new edges)。配套 2 个 toml-parse gtest (defaults / parses)。Total tests 现 **218/218 PASS** (commit L 加 3 + commit M 加 2 vs 上次 213)。
+> - **60-gen graduate AB 后台跑中** (`tmp/layer1/run_curriculum_60gen.bat` started 21:05)：全 pipeline 启用 — curriculum.archetype_progression_persistence + triple_world (period=10, max_pool=32, eval_period=1, min_continuity=5, sigma=0.01, perturb=0.8, reset=0.05, extinction_rescue=2)。**没启用 commit L 结构性 mutation** (rate 默认 0)，所以本轮还是 weight-only。第一轮等 baseline 数据，下一轮再启用 structural mutation 做 A/B 对比。
+> - **Commit L 不影响 ongoing AB**：binary 是 commit K 时刻编译的 (20:42)，commit L/M 改的代码不进当前 binary。下次 long-run 才会用到 commit M 的新列 + commit L 的新 API。
 >
 > **2026-05-25 中午 端到端 smoke 验证 + 60-gen throw_penalty AB 收口**：
 > - **Smoke `smoke_tw_eval.toml`（4 gen, sigma=0.01, perturb=0.8, reset=0.05）**：完整跑通 commit A-K wiring。9 个 archetype 全部 mini-tick + mutate；protagonist pool 3→12；large_herbivore mean fit **489→3178 (6.5×)**；omnivore **421→3159 (7.5×)**；10 protagonist b2m promoted；borderland_metrics.csv 36 行。**borderland_metrics_summary.py verdict: HEALTHY**。整套 graduation pipeline 端到端真闭环：sandbox→border→mutate→eval→cull→continuity-gate→main_world.
