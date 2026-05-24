@@ -34,12 +34,25 @@
 #include <functional>
 #include <memory>
 #include <random>
+#include <vector>
 
 namespace neuro {
 class IGenome;
 }
 
 namespace neuro::routes::protagonist {
+
+// Per-episode born child record. PopulationLayer accumulates one of these
+// per successful in-world birth; the runtime drains the list at the end
+// of the episode and injects matching-archetype entries into the next
+// generation's evolution pool (so in-world reproduction is not just
+// visual but actually contributes to the cross-episode NEAT search).
+struct BornChild {
+    std::uint8_t archetype_tag = 0;
+    GenomeId genome_id{0};
+    AgentId  agent_id{0};
+    std::unique_ptr<IGenome> genome_clone;  // separate copy for evolution
+};
 
 class PopulationLayer final : public IWorldLayer {
 public:
@@ -109,6 +122,12 @@ public:
     std::size_t deathsByCause(Agent::DeathCause c) const;
     SimTimeSeconds simTime() const { return sim_time_; }
 
+    // ---- Cross-episode bridge ----
+    // Drain accumulated born-child genome clones so the runtime can inject
+    // them into the next generation's evolution pool. Returns ownership;
+    // the layer's internal list is emptied. Safe to call multiple times.
+    std::vector<BornChild> drainBornChildren();
+
     // Reset stats (used on episode reset).
     void resetStatistics();
 
@@ -132,6 +151,10 @@ private:
     std::size_t total_births_ = 0;
     std::size_t total_deaths_ = 0;
     std::array<std::size_t, 9> deaths_by_cause_{};
+
+    // L1 #1 cross-episode reproduction bridge. Cleared on resetStatistics()
+    // and drained externally via drainBornChildren().
+    std::vector<BornChild> born_children_;
 };
 
 }  // namespace neuro::routes::protagonist

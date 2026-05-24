@@ -53,6 +53,8 @@
 #include "core/world/layers/AgentLayer.h"
 #include "world/BaseLayer.h"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -445,6 +447,22 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
     }
 
     auto brain = std::make_unique<NeatBrain>(genome);
+    // Diagnostic: emit when brain output_dim disagrees with the expected
+    // backgroundOutputDim(archetype). A mismatch points at a genome that
+    // was cloned from a different-archetype parent (or a population list
+    // mixup at seed time), which historically caused Layer 4 in-world
+    // reproduction to crash mid-episode via Agent::applyCapabilities throw.
+    if (const auto expected_out = backgroundOutputDim(archetype);
+        archetype != SpeciesArchetype::Protagonist
+        && brain->outputDim() != expected_out) {
+        spdlog::warn(
+            "makeNeatSpeciesAgent: archetype={} agent_id={} genome_id={} "
+            "brain.output_dim={} != expected={} (genome was likely cloned from "
+            "a different-archetype parent; the agent will skip capability "
+            "apply this episode)",
+            static_cast<unsigned>(archetype), id.value, genome.id().value,
+            brain->outputDim(), expected_out);
+    }
     auto agent = std::make_unique<Agent>(
         id,
         genome.id(),
@@ -823,7 +841,26 @@ void stampLifecycleAndLineage(Agent& agent,
     }
     if (base_max_age > 0.0) {
         std::uniform_real_distribution<double> u(0.85, 1.15);
-        agent.setMaxAgeSeconds(base_max_age * u(jitter_rng));
+        const SimTimeSeconds my_max_age = base_max_age * u(jitter_rng);
+        agent.setMaxAgeSeconds(my_max_age);
+        // Spread founders across lifecycle stages. Without this, every
+        // founder starts at age=0 = Juvenile, and PopulationLayer's
+        // reproduction (which requires Adult, age in [0.25, 0.90] of
+        // max_age) never triggers within short training episodes.
+        // Distribution: U(0, 0.85*max) puts ~30% as Juvenile, ~65%
+        // as Adult (the reproduction-eligible band), ~5% as Elder.
+        // Protagonist is exempt: cross-episode evolution drives its
+        // breeding, and pre-aging it would shorten its effective
+        // reward-collection window unnecessarily.
+        // In-world children are also exempt — they enter as juvenile
+        // age=0 by design (PopulationLayer also sets juvenile cooldown).
+        // We detect "founder vs child" via lineage_id: PopulationLayer
+        // passes 0 here for children and overwrites it later, founders
+        // get a positive lineage from seedBootstrapPopulation.
+        if (archetype != SpeciesArchetype::Protagonist && lineage_id != 0) {
+            std::uniform_real_distribution<double> age_frac(0.0, 0.85);
+            agent.setAgeSeconds(static_cast<SimTimeSeconds>(my_max_age * age_frac(jitter_rng)));
+        }
     } else {
         agent.setMaxAgeSeconds(0.0);
     }
@@ -928,6 +965,16 @@ std::unique_ptr<Agent> makeChildFromParents(const Agent& parent_a,
     auto* child_neat = dynamic_cast<NeatGenome*>(child_genome_base.get());
     if (child_neat == nullptr) return nullptr;
     child_neat->setId(new_genome_id);
+
+    // Layer 8 Lamarckian inheritance: overlay the parent's *current* brain
+    // weights (which include any Hebbian online updates accumulated during
+    // life) onto the child's freshly-cloned genome. Gated by route config
+    // so a misbehaving writeback can be A/B-isolated from a stable bridge.
+    if (config.lamarckian.enabled) {
+        if (const auto* parent_neat_brain = dynamic_cast<const NeatBrain*>(&src.brain())) {
+            parent_neat_brain->writeWeightsBackTo(*child_neat);
+        }
+    }
 
     // Apply small Gaussian noise to weights (in-world micro-mutation).
     // Cross-episode evolution still does proper NEAT crossover/mutate.

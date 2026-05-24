@@ -5,6 +5,8 @@
 #include "core/events/EventPayloads.h"
 #include "core/interfaces/IWorld.h"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -77,7 +79,17 @@ private:
             if (index >= count_) {
                 break;
             }
-            fn(index);
+            // Workers cannot let exceptions escape without triggering
+            // std::terminate (and a Windows /GS stack-overrun crash
+            // surfaces as 0xC0000409). Swallow + log so the rest of the
+            // generation can finish and diagnostics survive.
+            try {
+                fn(index);
+            } catch (const std::exception& e) {
+                spdlog::error("AgentLayer worker fn({}) exception: {}", index, e.what());
+            } catch (...) {
+                spdlog::error("AgentLayer worker fn({}) unknown exception", index);
+            }
         }
     }
 

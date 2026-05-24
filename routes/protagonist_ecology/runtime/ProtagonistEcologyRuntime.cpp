@@ -48,6 +48,7 @@
 #include "world/CampfireLayer.h"
 #include "world/InterventionDirectorLayer.h"
 #include "world/NurseryLogisticsLayer.h"
+#include "world/PopulationLayer.h"
 #include "world/SurvivalStatusLayer.h"
 #include "world/TreeLayer.h"
 #include "world/WaterLayer.h"
@@ -3937,10 +3938,21 @@ int ProtagonistEcologyRuntime::runTraining() {
             // episode (chop/build/craft/hunt/signal counts). Merged across
             // episodes into the generation-level archive after waitAll.
             std::unordered_map<GenomeId, BehaviorDescriptor> behavior_per_genome;
+            // L1 #1 in-world reproduction → cross-episode NEAT pool. Drained
+            // from this episode's PopulationLayer and grouped by background
+            // species slot. Owning entries (genome_clone) are moved into
+            // species_contexts[i].population during reproduce-prep so they
+            // compete with the rest of the population the very next gen.
+            struct EpisodeBorn {
+                std::unique_ptr<IGenome> genome;
+                double fitness = 0.0;
+            };
+            std::vector<std::vector<EpisodeBorn>> born_per_species;
         };
         std::vector<EpisodeResult> episode_results(episodes_per_generation);
         for (auto& r : episode_results) {
             r.species_fitness_sum.resize(species_contexts.size());
+            r.born_per_species.resize(species_contexts.size());
         }
 
         // Submit each episode to the thread pool.
@@ -4043,6 +4055,48 @@ int ProtagonistEcologyRuntime::runTraining() {
                 for (std::size_t i = 0; i < background_view.size(); ++i) {
                     if (background_view[i].population != nullptr) {
                         accumulateGenomeFitness(*world, *background_view[i].population, result.species_fitness_sum[i]);
+                    }
+                }
+
+                // L1 #1: drain this episode's PopulationLayer for in-world
+                // births and route each child to its background-species
+                // slot. Fitness is read from the agent that still lives in
+                // this world; if the agent already died, fitness is 0 (life
+                // was brief but the lineage gets one shot in the next gen).
+                if (auto* pop_layer = world->getLayer<PopulationLayer>()) {
+                    auto births = pop_layer->drainBornChildren();
+                    if (!births.empty()) {
+                        auto* agent_layer_for_births = world->getLayer<AgentLayer>();
+                        // Build a quick map: agent_id → fitness.
+                        std::unordered_map<std::uint64_t, double> fitness_by_aid;
+                        if (agent_layer_for_births != nullptr) {
+                            for (const auto* a : agent_layer_for_births->agents()) {
+                                if (a == nullptr) continue;
+                                const auto* concrete = dynamic_cast<const Agent*>(a);
+                                if (concrete == nullptr) continue;
+                                fitness_by_aid.emplace(concrete->id().value, concrete->fitness());
+                            }
+                        }
+                        for (auto& bc : births) {
+                            if (bc.genome_clone == nullptr) continue;
+                            // archetype_tag follows SpeciesArchetype enum (0=Protagonist).
+                            // Background species slots in species_contexts are indexed
+                            // 0..N-1 in the order they were registered; match by archetype.
+                            std::size_t slot = species_contexts.size();
+                            for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                                if (static_cast<std::uint8_t>(species_contexts[i].archetype) == bc.archetype_tag) {
+                                    slot = i;
+                                    break;
+                                }
+                            }
+                            if (slot >= species_contexts.size()) continue;  // unknown archetype
+                            const auto fit_it = fitness_by_aid.find(bc.agent_id.value);
+                            const double fit = fit_it == fitness_by_aid.end() ? 0.0 : fit_it->second;
+                            EpisodeResult::EpisodeBorn eb;
+                            eb.genome = std::move(bc.genome_clone);
+                            eb.fitness = fit;
+                            result.born_per_species[slot].push_back(std::move(eb));
+                        }
                     }
                 }
 
@@ -4192,6 +4246,34 @@ int ProtagonistEcologyRuntime::runTraining() {
             }
             return n == 0 ? 0.0 : total / static_cast<double>(n);
         };
+
+        // L1 #1: inject in-world born children into each background species'
+        // population BEFORE collectEvaluated. Each born child's per-genome
+        // fitness is stored in species_fitness_sum[] pre-multiplied by
+        // episodes_per_generation so the subsequent /=episodes inside
+        // collectEvaluated yields the child's actual single-episode fitness.
+        // Children that survived multiple episodes (they're created mid-
+        // episode and don't carry across episodes today, so this is always
+        // "one episode") have their genomes only inserted in the slot
+        // matching their archetype.
+        std::size_t injected_total = 0;
+        for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+            for (auto& r : episode_results) {
+                if (i >= r.born_per_species.size()) continue;
+                for (auto& eb : r.born_per_species[i]) {
+                    if (eb.genome == nullptr) continue;
+                    const auto gid = eb.genome->id();
+                    species_fitness_sum[i][gid] += eb.fitness * static_cast<double>(episodes_per_generation);
+                    species_contexts[i].population.push_back(std::move(eb.genome));
+                    ++injected_total;
+                }
+                r.born_per_species[i].clear();
+            }
+        }
+        if (injected_total > 0) {
+            spdlog::info("PopulationLayer→NEAT bridge: injected {} in-world born children into next-gen pools",
+                         injected_total);
+        }
 
         for (std::size_t i = 0; i < species_contexts.size(); ++i) {
             auto eval_i = collectEvaluated(species_contexts[i].population, species_fitness_sum[i], episodes_per_generation);

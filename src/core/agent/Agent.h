@@ -349,6 +349,12 @@ public:
 
     SimTimeSeconds maxAgeSeconds() const { return max_age_seconds_; }
     void setMaxAgeSeconds(SimTimeSeconds v) { max_age_seconds_ = v; }
+    // Used by BootstrapPopulation to spread founders across lifecycle
+    // stages instead of forcing every founder to start as Juvenile.
+    // PopulationLayer's reproduction requires Adult phase (25-90% of max
+    // age), so without age jitter no in-world births can occur in
+    // typical short-episode training.
+    void setAgeSeconds(SimTimeSeconds v) { age_seconds_ = v; }
     LifecycleStage lifecycleStage() const {
         if (max_age_seconds_ <= 0.0) return LifecycleStage::Adult;
         const double r = age_seconds_ / max_age_seconds_;

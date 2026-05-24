@@ -25,6 +25,15 @@ public:
     std::vector<float> currentWeights() const;
     void setWeights(const std::vector<float>& weights);
 
+    // Layer 8 Lamarckian inheritance: write the brain's current (possibly
+    // Hebbian-updated) weights back into a NeatGenome. The genome must be
+    // structurally identical to the one this brain was constructed from
+    // (same nodes, same connections in the same order); typically this is
+    // a clone of the source genome. Re-traverses connections in genome
+    // order, matching them against the brain's incoming/modulatory lists
+    // built in NeatBrain's constructor.
+    void writeWeightsBackTo(NeatGenome& genome) const;
+
     std::size_t nodeCount() const { return node_evals_.size(); }
     std::size_t connectionCount() const { return connection_count_; }
     std::size_t hiddenCount() const {

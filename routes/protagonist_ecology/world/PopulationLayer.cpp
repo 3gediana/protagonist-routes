@@ -2,11 +2,13 @@
 
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/World2D.h"
+#include "core/interfaces/IGenome.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <random>
+#include <utility>
 
 namespace neuro::routes::protagonist {
 
@@ -29,6 +31,13 @@ void PopulationLayer::resetStatistics() {
     deaths_by_cause_.fill(0);
     total_births_ = 0;
     total_deaths_ = 0;
+    born_children_.clear();
+}
+
+std::vector<BornChild> PopulationLayer::drainBornChildren() {
+    std::vector<BornChild> out;
+    out.swap(born_children_);
+    return out;
 }
 
 void PopulationLayer::setNextIds(std::uint64_t agent_id, std::uint64_t genome_id, std::uint64_t lineage_id) {
@@ -109,10 +118,16 @@ void PopulationLayer::tick(IWorld& world, float dt) {
     if (agent_layer->livingCount() >= coeffs_.max_living_agents) return;
 
     // Build a list of eligible parents (adults, energy>=min, cooldown=0,
-    // alive). Group by species_id.
+    // alive). Group by archetype_tag — Agent::speciesId() in this route is
+    // kInvalidSpeciesId for every background agent, so using it as the
+    // pairing key would silently mate-across-species and crash inside
+    // Agent::applyCapabilities later (brain.output_dim is parent_a's, but
+    // capabilities are rebuilt from parent_a.archetypeTag()'s wiring).
+    // Archetype tag IS set per founder (stampLifecycleAndLineage), so it
+    // is the authoritative same-species predicate here.
     struct Candidate {
         Agent* agent;
-        SpeciesId species;
+        std::uint8_t archetype_tag;
     };
     std::vector<Candidate> candidates;
     candidates.reserve(agents.size());
@@ -122,7 +137,12 @@ void PopulationLayer::tick(IWorld& world, float dt) {
         if (a->lifecycleStage() != Agent::LifecycleStage::Adult) continue;
         if (a->energy() < coeffs_.reproduction_min_energy) continue;
         if (a->reproductionCooldown() > 0.0f) continue;
-        candidates.push_back({a, a->speciesId()});
+        // Protagonist breeding goes through cross-episode evolution; we
+        // never produce protagonist children here. Skipping protagonists
+        // at the candidate-building stage keeps the O(N^2) pair search
+        // bounded to background species only.
+        if (a->archetypeTag() == 0) continue;
+        candidates.push_back({a, a->archetypeTag()});
     }
     if (candidates.size() < 2) return;
 
@@ -143,7 +163,7 @@ void PopulationLayer::tick(IWorld& world, float dt) {
         if (new_agents.size() >= coeffs_.max_spawns_per_tick) break;
         for (std::size_t j = i + 1; j < candidates.size(); ++j) {
             if (used[j]) continue;
-            if (candidates[i].species.value != candidates[j].species.value) continue;
+            if (candidates[i].archetype_tag != candidates[j].archetype_tag) continue;
             const Vec2 pa = candidates[i].agent->position();
             const Vec2 pb = candidates[j].agent->position();
             const float dx = pa.x - pb.x;
@@ -183,6 +203,28 @@ void PopulationLayer::tick(IWorld& world, float dt) {
             candidates[j].agent->incrementOffspringCount();
 
             used[i] = used[j] = true;
+
+            // L1 #1 cross-episode bridge: stash a clone of the child's
+            // genome (with its archetype tag) so the runtime can later
+            // inject this individual into the cross-episode NEAT pool.
+            try {
+                if (child->genomeArchive() != nullptr) {
+                    auto cloned = child->genomeArchive()->clone();
+                    if (cloned != nullptr) {
+                        born_children_.push_back(BornChild{
+                            child->archetypeTag(),
+                            new_gid,
+                            new_aid,
+                            std::move(cloned),
+                        });
+                    }
+                }
+            } catch (const std::exception& e) {
+                spdlog::error("PopulationLayer born-child clone exception: {}", e.what());
+            } catch (...) {
+                spdlog::error("PopulationLayer born-child clone unknown exception");
+            }
+
             new_agents.push_back(std::move(child));
             ++total_births_;
             break;

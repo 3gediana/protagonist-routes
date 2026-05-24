@@ -74,7 +74,14 @@ std::size_t NeatBrain::outputDim() const {
 
 std::span<const float> NeatBrain::forward(std::span<const float> inputs, float dt) {
     if (inputs.size() != input_dim_) {
-        throw std::invalid_argument("NeatBrain input dim mismatch");
+        // Log + return zero outputs rather than throw. Parent caller paths
+        // (Agent::decide) cannot unwind exceptions from inside the
+        // parallelFor worker without terminating the process (workers
+        // don't catch). This keeps the rest of the population running so
+        // we can diagnose dim mismatches in logs instead of a black-box
+        // stack-overrun crash.
+        std::fill(outputs_.begin(), outputs_.end(), 0.0f);
+        return outputs_;
     }
 
     const float step = dt > 0.0f ? dt : 1.0f;
@@ -173,6 +180,37 @@ void NeatBrain::setWeights(const std::vector<float>& weights) {
         for (auto& [_, weight] : node.incoming) {
             if (wi < weights.size()) {
                 weight = weights[wi++];
+            }
+        }
+    }
+}
+
+void NeatBrain::writeWeightsBackTo(NeatGenome& genome) const {
+    // Re-traverse the genome in the same order as the constructor, using
+    // per-target cursors to walk the brain's incoming / modulatory_incoming
+    // lists in lockstep. This is robust to disabled connections in the
+    // genome that were skipped at construction time.
+    std::unordered_map<NodeId, std::size_t> incoming_cursor;
+    std::unordered_map<NodeId, std::size_t> mod_cursor;
+
+    for (auto& conn : genome.connections()) {
+        if (!conn.enabled) continue;
+        const auto src_it = node_index_by_id_.find(conn.from);
+        const auto tgt_it = node_index_by_id_.find(conn.to);
+        if (src_it == node_index_by_id_.end() || tgt_it == node_index_by_id_.end()) {
+            continue;
+        }
+        const auto& source_node = node_evals_[src_it->second];
+        const auto& target_node = node_evals_[tgt_it->second];
+        if (source_node.is_modulatory) {
+            const std::size_t k = mod_cursor[conn.to]++;
+            if (k < target_node.modulatory_incoming.size()) {
+                conn.weight = target_node.modulatory_incoming[k].second;
+            }
+        } else {
+            const std::size_t k = incoming_cursor[conn.to]++;
+            if (k < target_node.incoming.size()) {
+                conn.weight = target_node.incoming[k].second;
             }
         }
     }

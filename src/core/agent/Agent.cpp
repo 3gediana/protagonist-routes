@@ -8,6 +8,8 @@
 #include "core/interfaces/IPerception.h"
 #include "core/interfaces/IWorld.h"
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -128,7 +130,10 @@ void Agent::decide(IWorld& world, float dt) {
         }
 
         if (brain_->inputDim() != inputs.size()) {
-            throw std::runtime_error("Agent perception input dim mismatch");
+            spdlog::error(
+                "Agent perception input dim mismatch (agent={}, genome={}, expected={}, got={}) [decide]",
+                id_.value, genome_id_.value, brain_->inputDim(), inputs.size());
+            return;
         }
         auto output_span = brain_->forward(inputs, dt);
         last_outputs_.assign(output_span.begin(), output_span.end());
@@ -157,7 +162,16 @@ bool Agent::decideUntilDense(IWorld& world, float dt) {
     }
 
     if (brain_->inputDim() != pending_inputs_.size()) {
-        throw std::runtime_error("Agent perception input dim mismatch");
+        // Log + degrade silently instead of throwing — the parallelFor
+        // path can't unwind exceptions safely. Skip the decision this tick.
+        // Diagnostic: includes the agent id and the two mismatched sizes so
+        // we can localise the offending agent.
+        spdlog::error(
+            "Agent perception input dim mismatch (agent={}, genome={}, expected={}, got={})",
+            id_.value, genome_id_.value, brain_->inputDim(), pending_inputs_.size());
+        pending_decision_ = false;
+        pending_uses_batch_ = false;
+        return false;
     }
 
     pending_dt_ = dt;
@@ -218,7 +232,11 @@ void Agent::applyCapabilities(IWorld& world, float dt) {
         for (auto& capability : capabilities_) {
             const auto consumed = capability->consumedOutputs();
             if (output_offset + consumed > last_outputs_.size()) {
-                throw std::runtime_error("Agent capability output slice overflow");
+                spdlog::error(
+                    "Agent capability output slice overflow (agent={}, genome={}, "
+                    "outputs={}, consumed_so_far={}, this_consumed={})",
+                    id_.value, genome_id_.value, last_outputs_.size(), output_offset, consumed);
+                return;
             }
             std::span<const float> slice(last_outputs_.data() + output_offset, consumed);
             capability->apply(*this, world, slice, dt);
@@ -226,7 +244,10 @@ void Agent::applyCapabilities(IWorld& world, float dt) {
         }
 
         if (output_offset != last_outputs_.size()) {
-            throw std::runtime_error("Agent capability outputs do not fully consume brain outputs");
+            spdlog::error(
+                "Agent capability outputs do not fully consume brain outputs "
+                "(agent={}, genome={}, outputs={}, consumed={})",
+                id_.value, genome_id_.value, last_outputs_.size(), output_offset);
         }
     }
 }
