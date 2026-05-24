@@ -3950,6 +3950,18 @@ int ProtagonistEcologyRuntime::runTraining() {
     }
     species_csv << "generation,species,population,avg_fitness,best_fitness,min_fitness,avg_complexity\n";
 
+    // L6 R3 stage 3 commit H: per-generation borderland pool metrics.
+    // One row per (generation, archetype) once the triple-world pipeline
+    // is active. Lets analysis scripts watch borderland evolve — pool
+    // size growth, mean fitness drift, eval-count progression toward
+    // borderland_min_continuity_gens, and per-period promoteBorderlandToMain
+    // events. Empty pool rows are skipped to avoid noise in archetypes
+    // that haven't been promoted yet. File is created unconditionally
+    // (just stays empty when TripleWorld is off).
+    std::ofstream borderland_csv(run_dir / "borderland_metrics.csv", std::ios::out | std::ios::trunc);
+    borderland_csv << "generation,archetype,pool_size,mean_fitness,max_fitness,"
+                   << "borderland_eval_count,promoted_to_main,culled\n";
+
     LOG_INFO("ProtagonistEcologyRuntime: training with {} background species: {}",
              species_contexts.size(),
              [&]() {
@@ -4682,6 +4694,42 @@ int ProtagonistEcologyRuntime::runTraining() {
                 protag_promoted, bg_promoted_total,
                 b2m_protag_promoted, b2m_bg_promoted_total,
                 border_total, main_total, border_culled_total);
+
+            // L6 R3 stage 3 commit H: per-archetype borderland metrics row.
+            // Emitted once per gen, only for non-empty pools. The promoted
+            // count is per-archetype (b2m_protag for archetype 0, the
+            // sandbox bg promotion per archetype for 1..N) — caller-side
+            // attribution is fine here because the spdlog above already
+            // aggregated the global counters.
+            {
+                const auto& bp = triple_world.borderland().pools_by_archetype;
+                for (std::size_t a = 0; a < bp.size(); ++a) {
+                    const auto& pool = bp[a];
+                    if (pool.genomes.empty()) continue;
+                    double sum_fit = 0.0;
+                    double max_fit = -std::numeric_limits<double>::infinity();
+                    for (std::size_t i = 0; i < pool.fitnesses.size(); ++i) {
+                        const double f = pool.fitnesses[i];
+                        sum_fit += f;
+                        if (f > max_fit) max_fit = f;
+                    }
+                    const double mean_fit = pool.fitnesses.empty()
+                        ? 0.0 : sum_fit / static_cast<double>(pool.fitnesses.size());
+                    if (!std::isfinite(max_fit)) max_fit = 0.0;
+                    // promoted_this_gen attributes only the b2m promotion;
+                    // sandbox->border promotion is tracked separately via
+                    // pool.genomes.size() growth.
+                    const std::size_t promoted_this_gen =
+                        (a == 0) ? b2m_protag_promoted : 0u;
+                    borderland_csv << generation << ',' << a << ','
+                                   << pool.genomes.size() << ','
+                                   << mean_fit << ',' << max_fit << ','
+                                   << pool.borderland_eval_count << ','
+                                   << promoted_this_gen << ','
+                                   << border_culled_total << '\n';
+                }
+                borderland_csv.flush();
+            }
         }
 
         // ---- write evolution.csv ----
