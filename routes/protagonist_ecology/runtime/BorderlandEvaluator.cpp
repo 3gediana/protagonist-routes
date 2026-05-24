@@ -96,9 +96,23 @@ double miniTickProtagonist(const IGenome& g,
 // the concrete SpeciesArchetype so makeBackgroundAgent picks the right
 // capability mix. Returns 0.0 if the agent can't be built (e.g. a
 // non-NeatGenome leaked into the borderland pool).
+//
+// Commit N: per-archetype eval flavor. When the focal archetype is a
+// predator (ApexPredator / PackHunter / AmbushPredator), inject 1
+// prey peer drawn from `prey_pool` so the mini-tick has a real
+// hunting target. Without this, predator borderland selection just
+// rewards "stay alive in an empty world" — every predator scores
+// the same and add_conn / add_node mutation has no traction. The
+// prey is picked from the top of `prey_pool` (highest stashed
+// fitness, which promoteExternalToBorderland sorts first). Falls
+// back silently if prey_pool is null / empty (e.g. early
+// generations before the LargeHerbivore borderland is populated),
+// or if makeBackgroundAgent throws (genome layout mismatch).
 double miniTickBackground(const IGenome& g,
                           SpeciesArchetype archetype,
-                          const ProtagonistEcologyConfig& route) {
+                          const ProtagonistEcologyConfig& route,
+                          const std::vector<std::unique_ptr<IGenome>>* prey_pool = nullptr,
+                          SpeciesArchetype prey_archetype = SpeciesArchetype::LargeHerbivore) {
     auto world = createBootstrapWorld(route);
     if (!world) return 0.0;
     auto* agent_layer = world->getLayer<AgentLayer>();
@@ -114,6 +128,30 @@ double miniTickBackground(const IGenome& g,
     if (!agent_owned) return 0.0;
     Agent* agent = agent_owned.get();
     agent_layer->addAgent(std::move(agent_owned), *world);
+
+    // Commit N: prey peer injection (predator-only).
+    if (prey_pool != nullptr && !prey_pool->empty() && isPredatorArchetype(archetype)) {
+        // Walk the pool top-down for the first non-null genome.
+        // Pools are append-only (commit B/F protocol) so position 0
+        // is the earliest entry; promoteExternalToBorderland inserts
+        // top-fitness first which keeps the same ordering across
+        // borderland mutate+eval generations.
+        const IGenome* prey_g = nullptr;
+        for (const auto& p : *prey_pool) {
+            if (p) { prey_g = p.get(); break; }
+        }
+        if (prey_g != nullptr) {
+            std::mt19937 prey_rng(static_cast<std::uint32_t>(prey_g->id().value + 31337u));
+            try {
+                auto prey_owned = makeBackgroundAgent(
+                    AgentId{2u}, prey_archetype, *prey_g, route, prey_rng);
+                if (prey_owned) agent_layer->addAgent(std::move(prey_owned), *world);
+            } catch (const std::exception&) {
+                // Prey genome layout mismatch — silently skip; predator
+                // mini-tick still runs without a target.
+            }
+        }
+    }
     return tickAndScore(*world, *agent);
 }
 
@@ -295,9 +333,28 @@ std::size_t BorderlandEvaluator::evaluatePool(
         && archetype >= 1
         && (archetype - 1) < background_archetypes->size()) {
         const SpeciesArchetype sa = (*background_archetypes)[archetype - 1];
+        // Commit N: predators get a LargeHerbivore prey peer drawn
+        // from the herbivore borderland pool. We look up the pool
+        // index by walking background_archetypes for LargeHerbivore;
+        // if it's not in this run's background mix, prey_pool stays
+        // null and miniTickBackground falls back to the empty
+        // mini-world (commit F default).
+        const std::vector<std::unique_ptr<IGenome>>* prey_pool = nullptr;
+        if (isPredatorArchetype(sa)) {
+            for (std::size_t i = 0; i < background_archetypes->size(); ++i) {
+                if ((*background_archetypes)[i] == SpeciesArchetype::LargeHerbivore) {
+                    const std::size_t herb_idx = i + 1;  // archetype index = bg_index+1
+                    const auto& herb_pool = triple_world.borderland().pools_by_archetype.at(herb_idx);
+                    if (!herb_pool.genomes.empty()) prey_pool = &herb_pool.genomes;
+                    break;
+                }
+            }
+        }
         return triple_world.evaluateBorderland(
             archetype,
-            /*eval_fn=*/[&route, sa](const IGenome& g) { return miniTickBackground(g, sa, route); },
+            /*eval_fn=*/[&route, sa, prey_pool](const IGenome& g) {
+                return miniTickBackground(g, sa, route, prey_pool);
+            },
             aging_factor);
     }
     return triple_world.evaluateBorderland(
