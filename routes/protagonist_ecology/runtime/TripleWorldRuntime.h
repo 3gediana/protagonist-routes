@@ -29,9 +29,14 @@ const char* worldRoleName(WorldRole role);
 
 // One per-archetype NEAT pool plus the lineage IDs of those genomes,
 // keyed in the same order. Owned by whichever WorldSlot it lives in.
+//
+// L6 R2 stage 2: also carry the fitness that earned each genome its
+// promotion. The borderland slot needs this so that the next promote
+// (borderland→main_world) can re-rank without re-evaluation.
 struct WorldPopulationPool {
     std::vector<std::unique_ptr<IGenome>> genomes;
     std::vector<std::uint64_t> lineage_ids;
+    std::vector<double> fitnesses;
 };
 
 // All NEAT pools that belong to one of the three worlds. Map key is
@@ -73,6 +78,33 @@ public:
     std::size_t promoteBorderlandToMain(std::size_t archetype,
                                         const std::vector<double>& borderland_fitnesses,
                                         std::size_t k);
+
+    // L6 R2 stage 2: integration entry point.
+    //
+    // ProtagonistEcologyRuntime owns the actual sandbox pool (its
+    // `population` and `species_contexts[i].population`), so we don't
+    // mirror it inside this runtime. Instead, at the end of each
+    // generation, the caller hands us the live pool + fitnesses; we
+    // pick the top-K, clone them into the borderland slot, and stash
+    // their fitnesses there so a later borderland→main_world promote
+    // can re-rank without re-evaluating.
+    //
+    // `lineage_ids` should be the same length as `source_genomes`; if
+    // the caller doesn't track lineage separately, passing genome ids
+    // is a sensible placeholder (every genome is its own lineage tip).
+    std::size_t promoteExternalToBorderland(
+        std::size_t archetype,
+        const std::vector<std::unique_ptr<IGenome>>& source_genomes,
+        const std::vector<double>& fitnesses,
+        const std::vector<std::uint64_t>& lineage_ids,
+        std::size_t k);
+
+    // L6 R2 stage 2: stored-fitness overload. Reads the fitnesses that
+    // were stashed during promoteExternalToBorderland (or
+    // promoteSandboxToBorderland) and uses them to re-rank borderland
+    // genomes for promotion to main_world. Useful when borderland is
+    // an accumulator without its own evaluation loop.
+    std::size_t promoteBorderlandToMain(std::size_t archetype, std::size_t k);
 
     // Direct access to the per-world slots (for tests + the future
     // integration commit that will wire them into the real loop).

@@ -42,12 +42,19 @@ std::vector<MigrationCandidate> MigrationScheduler::extractTopK(
 void MigrationScheduler::seedFromCandidates(
     std::vector<MigrationCandidate> candidates,
     std::vector<std::unique_ptr<IGenome>>& target_pop,
-    std::vector<std::uint64_t>& target_lineages) {
+    std::vector<std::uint64_t>& target_lineages,
+    std::vector<double>* target_fitnesses) {
     target_pop.reserve(target_pop.size() + candidates.size());
     target_lineages.reserve(target_lineages.size() + candidates.size());
+    if (target_fitnesses != nullptr) {
+        target_fitnesses->reserve(target_fitnesses->size() + candidates.size());
+    }
     for (auto& c : candidates) {
         if (c.genome == nullptr) continue;
         target_lineages.push_back(c.lineage_id);
+        if (target_fitnesses != nullptr) {
+            target_fitnesses->push_back(c.fitness);
+        }
         target_pop.push_back(std::move(c.genome));
     }
 }
@@ -58,9 +65,10 @@ void MigrationScheduler::promoteTopK(
     const std::vector<std::uint64_t>& source_lineages,
     std::size_t k,
     std::vector<std::unique_ptr<IGenome>>& target_pop,
-    std::vector<std::uint64_t>& target_lineages) {
+    std::vector<std::uint64_t>& target_lineages,
+    std::vector<double>* target_fitnesses) {
     auto candidates = extractTopK(source_genomes, source_fitnesses, source_lineages, k);
-    seedFromCandidates(std::move(candidates), target_pop, target_lineages);
+    seedFromCandidates(std::move(candidates), target_pop, target_lineages, target_fitnesses);
 }
 
 }  // namespace neuro::routes::protagonist

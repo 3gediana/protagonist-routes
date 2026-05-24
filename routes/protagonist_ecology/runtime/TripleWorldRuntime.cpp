@@ -44,7 +44,7 @@ std::size_t TripleWorldRuntime::promoteSandboxToBorderland(
         src.genomes, sandbox_fitnesses, src.lineage_ids, k);
     const std::size_t n = candidates.size();
     MigrationScheduler::seedFromCandidates(
-        std::move(candidates), dst.genomes, dst.lineage_ids);
+        std::move(candidates), dst.genomes, dst.lineage_ids, &dst.fitnesses);
     return n;
 }
 
@@ -60,8 +60,39 @@ std::size_t TripleWorldRuntime::promoteBorderlandToMain(
         src.genomes, borderland_fitnesses, src.lineage_ids, k);
     const std::size_t n = candidates.size();
     MigrationScheduler::seedFromCandidates(
-        std::move(candidates), dst.genomes, dst.lineage_ids);
+        std::move(candidates), dst.genomes, dst.lineage_ids, &dst.fitnesses);
     return n;
+}
+
+std::size_t TripleWorldRuntime::promoteExternalToBorderland(
+    std::size_t archetype,
+    const std::vector<std::unique_ptr<IGenome>>& source_genomes,
+    const std::vector<double>& fitnesses,
+    const std::vector<std::uint64_t>& lineage_ids,
+    std::size_t k) {
+    auto& dst = ensurePool(borderland_, archetype);
+    if (source_genomes.empty() || k == 0) return 0;
+
+    auto candidates = MigrationScheduler::extractTopK(
+        source_genomes, fitnesses, lineage_ids, k);
+    const std::size_t n = candidates.size();
+    MigrationScheduler::seedFromCandidates(
+        std::move(candidates), dst.genomes, dst.lineage_ids, &dst.fitnesses);
+    return n;
+}
+
+std::size_t TripleWorldRuntime::promoteBorderlandToMain(std::size_t archetype, std::size_t k) {
+    auto& src = ensurePool(borderland_, archetype);
+    if (src.genomes.empty() || k == 0) return 0;
+    if (src.fitnesses.size() != src.genomes.size()) {
+        // Fitness wasn't tracked for this slot (shouldn't happen via the
+        // documented APIs, but be defensive). Treat all as equal-fitness
+        // FIFO so the oldest entries promote first.
+        return promoteBorderlandToMain(archetype,
+                                       std::vector<double>(src.genomes.size(), 1.0),
+                                       k);
+    }
+    return promoteBorderlandToMain(archetype, src.fitnesses, k);
 }
 
 }  // namespace neuro::routes::protagonist

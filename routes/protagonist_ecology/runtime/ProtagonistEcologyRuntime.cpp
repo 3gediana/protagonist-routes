@@ -35,6 +35,7 @@
 #include "runtime/ProtagonistBatchedDenseRunner.h"
 #include "runtime/ProtagonistEvolution.h"
 #include "runtime/QualityDiversityArchive.h"
+#include "runtime/TripleWorldRuntime.h"
 #include "brain/GoalMemory.h"
 #include "runtime/BootstrapPopulation.h"
 #include "runtime/CommunicationMetrics.h"
@@ -3960,6 +3961,24 @@ int ProtagonistEcologyRuntime::runTraining() {
     // almost solves it" -> upweighted in the next generation's sampling.
     std::vector<float> template_regret_score(route.task_templates.size(), 0.0f);
 
+    // L6 R2 stage 2: in-process TripleWorldRuntime. Owns the borderland
+    // and main_world NEAT pool slots; the sandbox slot is left empty
+    // because the live sandbox state is the runtime's own `population`
+    // and `species_contexts[i].population`. At end of every generation
+    // we top-K promote from those into triple_world.borderland(); every
+    // borderland_to_main_period_gens we top-K promote from borderland
+    // into triple_world.mainWorld() using the stashed fitnesses. No
+    // disk persistence yet (deferred to stage 3).
+    TripleWorldRuntime triple_world;
+    const auto& tw_cfg = route.triple_world;
+    if (tw_cfg.enabled) {
+        spdlog::info("TripleWorldRuntime: enabled (top_k_protag/gen={}, top_k_bg/gen={}, "
+                     "border->main every {} gen)",
+                     tw_cfg.top_k_protagonist_per_gen,
+                     tw_cfg.top_k_background_per_gen,
+                     tw_cfg.borderland_to_main_period_gens);
+    }
+
     for (std::size_t generation = start_generation; generation < params.generations; ++generation) {
         if (stop_requested_.load()) {
             break;
@@ -4350,6 +4369,110 @@ int ProtagonistEcologyRuntime::runTraining() {
             species_evaluated.push_back(std::move(eval_i));
         }
 
+        // L6 R2 stage 2: feed end-of-gen top-K from sandbox into the
+        // borderland slot of TripleWorldRuntime, then every
+        // borderland_to_main_period_gens promote borderland into
+        // main_world. No reset of the source sandbox pool — the live
+        // training loop keeps using `population` and
+        // `species_contexts[i].population` as before.
+        if (tw_cfg.enabled) {
+            // Build a {genome_id -> fitness} map once for protagonist.
+            std::unordered_map<GenomeId, double> proto_fit_by_id;
+            proto_fit_by_id.reserve(evaluated.size());
+            for (const auto& ev : evaluated) {
+                proto_fit_by_id[ev.genome_id] = ev.fitness;
+            }
+            // Build a compacted, non-null view of population (cloned
+            // once) alongside aligned fitness/lineage. The scheduler
+            // will clone the top-K again into the borderland slot —
+            // that's twice but with K small (default 4) it's negligible.
+            std::vector<double> proto_fitnesses;
+            std::vector<std::uint64_t> proto_lineages;
+            std::vector<std::unique_ptr<IGenome>> proto_src_compact;
+            proto_fitnesses.reserve(population.size());
+            proto_lineages.reserve(population.size());
+            proto_src_compact.reserve(population.size());
+            for (const auto& g : population) {
+                if (g == nullptr) continue;
+                auto it = proto_fit_by_id.find(g->id());
+                proto_fitnesses.push_back(it == proto_fit_by_id.end() ? 0.0 : it->second);
+                proto_lineages.push_back(g->id().value);
+                proto_src_compact.push_back(g->clone());
+            }
+
+            const std::size_t protag_promoted = triple_world.promoteExternalToBorderland(
+                /*archetype=*/0,
+                proto_src_compact,
+                proto_fitnesses,
+                proto_lineages,
+                tw_cfg.top_k_protagonist_per_gen);
+
+            std::size_t bg_promoted_total = 0;
+            for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                std::unordered_map<GenomeId, double> bg_fit_by_id;
+                bg_fit_by_id.reserve(species_evaluated[i].size());
+                for (const auto& ev : species_evaluated[i]) {
+                    bg_fit_by_id[ev.genome_id] = ev.fitness;
+                }
+                std::vector<double> bg_fitnesses;
+                std::vector<std::uint64_t> bg_lineages;
+                std::vector<std::unique_ptr<IGenome>> bg_src_compact;
+                const auto& bg_pop = species_contexts[i].population;
+                bg_fitnesses.reserve(bg_pop.size());
+                bg_lineages.reserve(bg_pop.size());
+                bg_src_compact.reserve(bg_pop.size());
+                for (const auto& g : bg_pop) {
+                    if (g == nullptr) continue;
+                    auto it = bg_fit_by_id.find(g->id());
+                    bg_fitnesses.push_back(it == bg_fit_by_id.end() ? 0.0 : it->second);
+                    bg_lineages.push_back(g->id().value);
+                    bg_src_compact.push_back(g->clone());
+                }
+                bg_promoted_total += triple_world.promoteExternalToBorderland(
+                    /*archetype=*/i + 1,
+                    bg_src_compact,
+                    bg_fitnesses,
+                    bg_lineages,
+                    tw_cfg.top_k_background_per_gen);
+            }
+
+            // Accumulated borderland sizes (sum across archetypes).
+            std::size_t border_total = 0;
+            for (const auto& pool : triple_world.borderland().pools_by_archetype) {
+                border_total += pool.genomes.size();
+            }
+            std::size_t main_total = 0;
+            for (const auto& pool : triple_world.mainWorld().pools_by_archetype) {
+                main_total += pool.genomes.size();
+            }
+
+            // Border -> Main on configured period (1-indexed: first promote
+            // happens at end of gen `period`, not at gen 0).
+            std::size_t b2m_protag_promoted = 0;
+            std::size_t b2m_bg_promoted_total = 0;
+            const std::size_t period = tw_cfg.borderland_to_main_period_gens;
+            if (period > 0 && (generation + 1) % period == 0) {
+                b2m_protag_promoted = triple_world.promoteBorderlandToMain(
+                    /*archetype=*/0, tw_cfg.borderland_to_main_top_k_protagonist);
+                for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                    b2m_bg_promoted_total += triple_world.promoteBorderlandToMain(
+                        /*archetype=*/i + 1, tw_cfg.borderland_to_main_top_k_background);
+                }
+                main_total = 0;
+                for (const auto& pool : triple_world.mainWorld().pools_by_archetype) {
+                    main_total += pool.genomes.size();
+                }
+            }
+
+            spdlog::info(
+                "TripleWorld gen {}: sandbox->border protag={} bg={} | "
+                "border->main protag={} bg={} | border={} main={}",
+                generation,
+                protag_promoted, bg_promoted_total,
+                b2m_protag_promoted, b2m_bg_promoted_total,
+                border_total, main_total);
+        }
+
         // ---- write evolution.csv ----
         evolution_metrics << generation << ','
                           << stats.min_fitness << ','
@@ -4687,6 +4810,37 @@ int ProtagonistEcologyRuntime::runTraining() {
                 species_contexts[i].population = std::move(next_species_populations[i]);
             }
         }
+    }
+
+    // L6 R2 stage 2: end-of-run summary. Dumps final genome counts per
+    // archetype for borderland and main_world to triple_world_summary.json.
+    // No genome serialization yet (deferred to stage 3 with the full
+    // MainWorldPersistence design).
+    if (tw_cfg.enabled) {
+        const auto& border_pools = triple_world.borderland().pools_by_archetype;
+        const auto& main_pools = triple_world.mainWorld().pools_by_archetype;
+        std::size_t border_total = 0;
+        for (const auto& p : border_pools) border_total += p.genomes.size();
+        std::size_t main_total = 0;
+        for (const auto& p : main_pools) main_total += p.genomes.size();
+        std::ofstream tw_summary(run_dir / "triple_world_summary.json");
+        if (tw_summary.is_open()) {
+            tw_summary << "{\n  \"borderland\": {\n    \"total\": " << border_total
+                       << ",\n    \"per_archetype\": [";
+            for (std::size_t i = 0; i < border_pools.size(); ++i) {
+                if (i > 0) tw_summary << ',';
+                tw_summary << border_pools[i].genomes.size();
+            }
+            tw_summary << "]\n  },\n  \"main_world\": {\n    \"total\": " << main_total
+                       << ",\n    \"per_archetype\": [";
+            for (std::size_t i = 0; i < main_pools.size(); ++i) {
+                if (i > 0) tw_summary << ',';
+                tw_summary << main_pools[i].genomes.size();
+            }
+            tw_summary << "]\n  }\n}\n";
+        }
+        LOG_INFO("TripleWorldRuntime end-of-run: borderland={} main_world={}",
+                 border_total, main_total);
     }
 
     LOG_INFO("ProtagonistEcologyRuntime: training run complete at {}", run_dir.string());

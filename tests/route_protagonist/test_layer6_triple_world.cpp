@@ -166,3 +166,43 @@ TEST(Layer6Migration, TripleWorldPromoteBorderlandToMain) {
     EXPECT_EQ(main_pool.genomes[0]->id().value, 51u);  // fit=3.0 winner
     EXPECT_EQ(main_pool.lineage_ids[0], 51u);
 }
+
+// L6 R2 stage 2: promoteExternalToBorderland uses the runtime's live
+// sandbox pool directly (no internal mirror), and stashes fitnesses
+// inside the borderland slot for a later stored-fitness promote.
+TEST(Layer6Migration, TripleWorldPromoteExternalAndStoredBorderToMain) {
+    TripleWorldRuntime trio;
+
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 200u}));
+    }
+    std::vector<double> fits = {0.3, 0.9, 0.7, 0.5};
+    std::vector<std::uint64_t> lineages = {201u, 202u, 203u, 204u};
+
+    const std::size_t n = trio.promoteExternalToBorderland(0, external_pop, fits, lineages, 2);
+    EXPECT_EQ(n, 2u);
+
+    // External pop is untouched (extractTopK clones).
+    EXPECT_EQ(external_pop.size(), 4u);
+    for (const auto& g : external_pop) ASSERT_NE(g, nullptr);
+
+    const auto& border = trio.borderland().pools_by_archetype.at(0);
+    ASSERT_EQ(border.genomes.size(), 2u);
+    ASSERT_EQ(border.fitnesses.size(), 2u);
+    EXPECT_DOUBLE_EQ(border.fitnesses[0], 0.9);
+    EXPECT_DOUBLE_EQ(border.fitnesses[1], 0.7);
+    // GenomeId{i + 200u} -> idx 1 (fit=0.9) is genome 201, idx 2 (fit=0.7) is 202.
+    EXPECT_EQ(border.genomes[0]->id().value, 201u);
+    EXPECT_EQ(border.genomes[1]->id().value, 202u);
+    EXPECT_EQ(border.lineage_ids[0], 202u);
+    EXPECT_EQ(border.lineage_ids[1], 203u);
+
+    // Now the stored-fitness overload picks the top-1 (fit=0.9 winner, genome 201).
+    const std::size_t main_promoted = trio.promoteBorderlandToMain(0, /*k=*/1);
+    EXPECT_EQ(main_promoted, 1u);
+    const auto& main_pool = trio.mainWorld().pools_by_archetype.at(0);
+    ASSERT_EQ(main_pool.genomes.size(), 1u);
+    EXPECT_EQ(main_pool.genomes[0]->id().value, 201u);
+    EXPECT_DOUBLE_EQ(main_pool.fitnesses[0], 0.9);
+}

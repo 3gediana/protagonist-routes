@@ -354,6 +354,14 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.lamarckian.learning_rate = config.getOr<float>("evolution.lamarckian.learning_rate", out.lamarckian.learning_rate);
     out.lamarckian.reward_threshold = config.getOr<float>("evolution.lamarckian.reward_threshold", out.lamarckian.reward_threshold);
 
+    // L6 R2 stage 2: TripleWorldRuntime in-process integration.
+    out.triple_world.enabled = config.getOr<bool>("runtime.triple_world.enabled", out.triple_world.enabled);
+    out.triple_world.top_k_protagonist_per_gen = config.getOr<std::size_t>("runtime.triple_world.top_k_protagonist_per_gen", out.triple_world.top_k_protagonist_per_gen);
+    out.triple_world.top_k_background_per_gen = config.getOr<std::size_t>("runtime.triple_world.top_k_background_per_gen", out.triple_world.top_k_background_per_gen);
+    out.triple_world.borderland_to_main_period_gens = config.getOr<std::size_t>("runtime.triple_world.borderland_to_main_period_gens", out.triple_world.borderland_to_main_period_gens);
+    out.triple_world.borderland_to_main_top_k_protagonist = config.getOr<std::size_t>("runtime.triple_world.borderland_to_main_top_k_protagonist", out.triple_world.borderland_to_main_top_k_protagonist);
+    out.triple_world.borderland_to_main_top_k_background = config.getOr<std::size_t>("runtime.triple_world.borderland_to_main_top_k_background", out.triple_world.borderland_to_main_top_k_background);
+
     out.memory_trial.enabled = config.getOr<bool>("world.memory_trial.enabled", out.memory_trial.enabled);
     out.memory_trial.cue_duration_seconds = config.getOr<double>("world.memory_trial.cue_duration_seconds", out.memory_trial.cue_duration_seconds);
     out.memory_trial.cue_radius = config.getOr<float>("world.memory_trial.cue_radius", out.memory_trial.cue_radius);

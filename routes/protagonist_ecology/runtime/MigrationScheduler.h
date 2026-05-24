@@ -42,11 +42,15 @@ public:
 
     // Move the candidate genomes into `target_pop` (clone is already
     // done by extractTopK). Lineage IDs are stored in `target_lineages`
-    // in the same order. Both vectors are appended to (not cleared).
+    // in the same order. All target vectors are appended to (not
+    // cleared). `target_fitnesses` is optional; when non-null, the
+    // candidate fitness is recorded so a downstream pass can re-rank
+    // without re-evaluation (L6 R2 stage 2 borderland→main_world flow).
     static void seedFromCandidates(
         std::vector<MigrationCandidate> candidates,
         std::vector<std::unique_ptr<IGenome>>& target_pop,
-        std::vector<std::uint64_t>& target_lineages);
+        std::vector<std::uint64_t>& target_lineages,
+        std::vector<double>* target_fitnesses = nullptr);
 
     // Convenience: chain extractTopK + seedFromCandidates in one go.
     static void promoteTopK(
@@ -55,7 +59,8 @@ public:
         const std::vector<std::uint64_t>& source_lineages,
         std::size_t k,
         std::vector<std::unique_ptr<IGenome>>& target_pop,
-        std::vector<std::uint64_t>& target_lineages);
+        std::vector<std::uint64_t>& target_lineages,
+        std::vector<double>* target_fitnesses = nullptr);
 };
 
 }  // namespace neuro::routes::protagonist

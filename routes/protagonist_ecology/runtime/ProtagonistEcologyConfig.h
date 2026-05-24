@@ -453,6 +453,21 @@ struct ProtagonistEcologyConfig {
         float reward_threshold{0.05f};  // only update when |reward|>threshold
     };
     LamarckianConfig lamarckian{};
+    // L6 R2 stage 2: in-process three-world migration. When enabled, the
+    // training loop calls TripleWorldRuntime::promoteExternalToBorderland
+    // every generation (top-K by fitness, per archetype), and
+    // TripleWorldRuntime::promoteBorderlandToMain every
+    // borderland_to_main_period_gens. Default off so existing training
+    // configs are unaffected.
+    struct TripleWorldConfig {
+        bool enabled{false};
+        std::size_t top_k_protagonist_per_gen{4};
+        std::size_t top_k_background_per_gen{2};
+        std::size_t borderland_to_main_period_gens{50};
+        std::size_t borderland_to_main_top_k_protagonist{8};
+        std::size_t borderland_to_main_top_k_background{4};
+    };
+    TripleWorldConfig triple_world{};
     MemoryTrialConfig memory_trial{};
     ProtagonistBrainConfig protagonist{};
     BackgroundBrainConfig background{};
