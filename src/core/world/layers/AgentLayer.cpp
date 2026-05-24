@@ -198,7 +198,7 @@ void AgentLayer::tick(IWorld& world, float dt) {
             }
 
             if (agent->energy() <= death_threshold_) {
-                agent->kill("energy_depleted");
+                agent->killWithCause(Agent::DeathCause::Starvation);
                 world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                        events::AgentDied{agent->id(), "energy_depleted"},
                                                        world.currentTick(),
@@ -234,7 +234,11 @@ void AgentLayer::tick(IWorld& world, float dt) {
         }
 
         if (agent->energy() <= death_threshold_) {
-            agent->kill("energy_depleted");
+            // L4 (Final Blueprint) #3: route energy_depleted to
+            // Starvation cause so PopulationLayer's per-cause death stats
+            // attribute these correctly. Was previously losing all
+            // metabolism deaths into DeathCause::Unknown.
+            agent->killWithCause(Agent::DeathCause::Starvation);
             world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                    events::AgentDied{agent->id(), "energy_depleted"},
                                                    world.currentTick(),
@@ -363,7 +367,7 @@ void AgentLayer::tickBatched(IWorld& world, float dt) {
         }
 
         if (agent->energy() <= death_threshold_) {
-            agent->kill("energy_depleted");
+            agent->killWithCause(Agent::DeathCause::Starvation);
             world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                    events::AgentDied{agent->id(), "energy_depleted"},
                                                    world.currentTick(),

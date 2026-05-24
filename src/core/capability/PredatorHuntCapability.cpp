@@ -167,7 +167,8 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
             }
 
             if (other->energy() <= 0.0f) {
-                other->kill("predation");
+                // L4 #3: background predator hunt → Predation cause.
+                other->killWithCause(Agent::DeathCause::Predation);
                 concrete->noteKill();
                 hunt_successes.fetch_add(1, std::memory_order_relaxed);
                 // L2.1 v2: apex digest satiety. After landing a kill on

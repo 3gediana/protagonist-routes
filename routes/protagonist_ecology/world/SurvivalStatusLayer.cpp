@@ -157,7 +157,40 @@ void SurvivalStatusLayer::tick(IWorld& world, float dt) {
         }
 
         if (state.health <= 0.0f && agent->alive()) {
-            agent->kill("survival_status_depleted");
+            // L4 (Final Blueprint) #3: classify death cause from the dominant
+            // ongoing damage source at time-of-death so PopulationLayer's
+            // per-cause death stats are meaningful. The four candidates that
+            // can drive health to 0 in this layer are:
+            //   - Dehydration (hydration < threshold)
+            //   - Thermal (core_temperature outside cold/hot threshold)
+            //   - Starvation (hunger > damage threshold)
+            //   - Combat (campfire danger zone, modelled as fire-burn)
+            // Pick whichever has the largest current severity.
+            const float hydration_severity =
+                (state.hydration < dehydration_threshold)
+                ? (dehydration_threshold - state.hydration) / std::max(0.01f, dehydration_threshold)
+                : 0.0f;
+            const float current_temp = agent->coreTemperature();
+            const float thermal_severity = current_temp < cold_temp_threshold_
+                ? (cold_temp_threshold_ - current_temp) / 10.0f
+                : (current_temp > hot_temp_threshold_
+                    ? (current_temp - hot_temp_threshold_) / 5.0f
+                    : 0.0f);
+            const float hunger_severity =
+                (agent->driveState().hunger > hunger_damage_threshold_)
+                ? (agent->driveState().hunger - hunger_damage_threshold_)
+                  / std::max(0.01f, 1.0f - hunger_damage_threshold_)
+                : 0.0f;
+            const bool in_fire = campfire_ != nullptr && campfire_->inDangerZone(agent->position());
+
+            Agent::DeathCause cause = Agent::DeathCause::Unknown;
+            float top = 0.0f;
+            if (hydration_severity > top) { top = hydration_severity; cause = Agent::DeathCause::Dehydration; }
+            if (thermal_severity  > top) { top = thermal_severity;  cause = Agent::DeathCause::Thermal; }
+            if (hunger_severity   > top) { top = hunger_severity;   cause = Agent::DeathCause::Starvation; }
+            if (in_fire)                 {                          cause = Agent::DeathCause::Combat; }
+            agent->killWithCause(cause);
+
             world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                    events::AgentDied{agent->id(), "survival_status_depleted"},
                                                    world.currentTick(),

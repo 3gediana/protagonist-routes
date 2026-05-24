@@ -127,10 +127,9 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
             world.currentTimeSeconds()});
         concrete->noteDamageDealt(actual_damage);
         if (best_target->energy() <= 0.0f) {
-            const char* cause = "thrown_stone";
-            if (carried->type == ObjectType::Spear) cause = "thrown_spear";
-            else if (carried->type == ObjectType::Stick) cause = "thrown_stick";
-            best_target->kill(cause);
+            // L4 #3: thrown object kill → Combat cause (range weapon hit
+            // rather than melee predation).
+            best_target->killWithCause(Agent::DeathCause::Combat);
             concrete->noteKill();
             // L2.7 v13 HRL: thrown kill also counts as Hunt (GoalType=8)
             concrete->noteGoalCompletion(8);

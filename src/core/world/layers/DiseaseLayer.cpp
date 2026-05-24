@@ -95,7 +95,8 @@ void DiseaseLayer::tick(IWorld& world, float dt) {
 
         // Infection wins → die
         if (agent->infectionProgress() >= infection_duration_) {
-            agent->kill("disease");
+            // L4 #3: disease death → Disease cause.
+            agent->killWithCause(Agent::DeathCause::Disease);
             ++infection_deaths_;
             continue;
         }

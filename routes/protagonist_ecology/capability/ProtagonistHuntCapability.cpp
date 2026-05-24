@@ -121,7 +121,8 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
             concrete->noteMeatFood(actual_gain);
         }
         if (target->energy() <= 0.0f) {
-            target->kill("protagonist_predation");
+            // L4 #3: prey hunted by protagonist → Predation cause.
+            target->killWithCause(Agent::DeathCause::Predation);
             concrete->noteKill();
             hunt_successes.fetch_add(1, std::memory_order_relaxed);
             // L2.7 v13 HRL sub-reward: Hunt (GoalType=8) kill achieved.

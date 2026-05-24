@@ -379,6 +379,10 @@ public:
         alive_ = false;
         death_cause_ = cause;
     }
+    // L4 #3: PopulationLayer's stats accumulator uses this so it doesn't
+    // double-count an already-counted dead agent on subsequent ticks.
+    bool deathCounted() const { return death_counted_; }
+    void markDeathCounted() { death_counted_ = true; }
 
     // Reproduction cooldown timer (sim seconds). When > 0, agent cannot
     // be a reproductive parent; decremented each tick by PopulationLayer.
@@ -473,6 +477,7 @@ private:
     std::uint32_t offspring_count_ = 0;
     float reproduction_cooldown_ = 0.0f;  // sec
     DeathCause death_cause_ = DeathCause::Unknown;
+    bool death_counted_ = false;  // PopulationLayer stats one-shot flag
     std::uint8_t archetype_tag_ = 0;  // 0 = protagonist; 1..N = background
     std::unique_ptr<IGenome> genome_archive_;  // L4 in-world reproduction
     float sense_radius_scale_ = 1.0f;  // L5 R3: Lookout building bonus

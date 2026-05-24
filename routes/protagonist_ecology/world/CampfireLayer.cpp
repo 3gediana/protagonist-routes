@@ -101,7 +101,10 @@ void CampfireLayer::tick(IWorld& world, float dt) {
         }
 
         if (agent->energy() <= 0.0f && agent->alive()) {
-            agent->kill("campfire_burn");
+            // L4 #3: campfire burns count as Combat (fire-damage); not a
+            // perfect taxonomy (there's no Burn cause) but Combat is
+            // closer than Unknown.
+            agent->killWithCause(Agent::DeathCause::Combat);
             world.eventBus().publish(events::Event{events::EventType::AgentDied,
                                                    events::AgentDied{agent->id(), "campfire_burn"},
                                                    world.currentTick(),

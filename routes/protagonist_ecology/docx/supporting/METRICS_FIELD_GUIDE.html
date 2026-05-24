@@ -1,872 +1,293 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Neural Eco 机制、训练、测试与指标说明</title>
-  <style>
-    :root {
-      --bg: #f4f4f1;
-      --panel: #ffffff;
-      --line: #d8ddd9;
-      --text: #1e2226;
-      --muted: #66707a;
-      --accent: #445b73;
-      --soft: #eef3f7;
-      --warn: #8b5b14;
-      --bad: #8a4040;
-      --good: #2f6b45;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.7;
-    }
-    .page {
-      width: min(1180px, calc(100vw - 24px));
-      margin: 20px auto 36px;
-    }
-    .hero, .section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 22px;
-      margin-bottom: 16px;
-    }
-    h1, h2, h3 { margin: 0 0 10px; }
-    h1 { font-size: clamp(28px, 4vw, 38px); line-height: 1.2; }
-    h2 { font-size: 24px; }
-    p, li { color: var(--muted); }
-    code {
-      background: #f3f5f6;
-      border-radius: 8px;
-      padding: 2px 7px;
-      color: #243140;
-    }
-    .nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 14px;
-    }
-    .nav a, .tag {
-      display: inline-flex;
-      align-items: center;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 6px 10px;
-      font-size: 12px;
-      color: var(--muted);
-      text-decoration: none;
-      background: #fff;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }
-    .card {
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 14px;
-      background: #fafaf8;
-    }
-    .callout {
-      border-left: 4px solid var(--accent);
-      background: var(--soft);
-      padding: 12px 14px;
-      border-radius: 0 12px 12px 0;
-      margin-top: 14px;
-      color: #324252;
-    }
-    .callout.warn {
-      border-left-color: var(--warn);
-      background: #fff8eb;
-      color: #6f4c14;
-    }
-    .callout.bad {
-      border-left-color: var(--bad);
-      background: #fbefef;
-      color: #6f3131;
-    }
-    details {
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: #fff;
-      margin-top: 12px;
-      overflow: hidden;
-    }
-    summary {
-      cursor: pointer;
-      list-style: none;
-      padding: 12px 14px;
-      font-weight: 700;
-      background: #fcfcfb;
-    }
-    summary::-webkit-details-marker { display: none; }
-    .detail-body {
-      padding: 0 14px 14px;
-      border-top: 1px solid var(--line);
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-      min-width: 760px;
-    }
-    .table-wrap {
-      overflow-x: auto;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      margin-top: 10px;
-    }
-    th, td {
-      text-align: left;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      vertical-align: top;
-      font-size: 14px;
-    }
-    th {
-      background: #f6f7f5;
-      color: #414b55;
-    }
-    tr:last-child td { border-bottom: none; }
-    .ok { color: var(--good); }
-    .warn-text { color: var(--warn); }
-    .bad-text { color: var(--bad); }
-    footer {
-      text-align: center;
-      color: var(--muted);
-      font-size: 13px;
-      padding-top: 6px;
-    }
-    @media (max-width: 900px) {
-      .grid { grid-template-columns: 1fr; }
-      .page { width: min(100vw - 16px, 1180px); }
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Neural Eco · 这片世界，是有人在看的</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --paper: #ffffff;
+    --text: #1d1d1f; --text-2: #424245; --text-3: #6e6e73; --text-4: #86868b;
+    --line-soft: #e5e5ea;
+    --accent: #0071e3; --accent-soft: #e8f1fd; --quote-bar: #5e5ce6;
+  }
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+                 "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 17px; line-height: 1.78; letter-spacing: -0.003em;
+  }
+  .scroll-progress {
+    position: fixed; top: 0; left: 0; height: 3px;
+    background: linear-gradient(90deg, #0071e3, #5e5ce6);
+    width: 0%; z-index: 200; transition: width 0.1s linear;
+  }
+  .brand {
+    position: fixed; top: 18px; left: 32px; z-index: 100;
+    font-size: 13px; font-weight: 600; color: var(--text-3);
+  }
+  .brand .dot {
+    display: inline-block; width: 6px; height: 6px;
+    background: var(--accent); border-radius: 50%;
+    margin-right: 8px; vertical-align: middle;
+  }
+  article { max-width: 740px; margin: 0 auto; padding: 120px 32px 160px 32px; }
+
+  .hero { margin-bottom: 80px; }
+  .hero .eyebrow {
+    font-size: 13px; font-weight: 600; color: var(--accent);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 16px;
+  }
+  .hero h1 {
+    font-size: 64px; font-weight: 700; line-height: 1.05;
+    letter-spacing: -0.025em; margin: 0 0 28px 0;
+  }
+  .hero h1 .grad {
+    background: linear-gradient(120deg, #0071e3 0%, #5e5ce6 70%, #ff375f 110%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .deck {
+    font-size: 22px; line-height: 1.5; color: var(--text-2);
+    font-weight: 400; letter-spacing: -0.005em; margin-bottom: 28px;
+  }
+  .hero .byline {
+    font-size: 14px; color: var(--text-4);
+    border-top: 1px solid var(--line-soft); padding-top: 18px;
+  }
+  .hero .byline strong { color: var(--text-2); font-weight: 600; }
+
+  /* 弱化的小过场标题 */
+  .lede {
+    margin: 56px 0 16px 0;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--text);
+    letter-spacing: -0.012em;
+  }
+  /* 三星过场 */
+  .stars {
+    text-align: center;
+    margin: 56px 0;
+    color: var(--text-4);
+    font-size: 16px;
+    letter-spacing: 0.6em;
+  }
+
+  p { margin: 0 0 22px 0; color: var(--text-2); }
+  p strong { color: var(--text); font-weight: 600; }
+  p em { font-style: normal; color: var(--text); border-bottom: 1px dotted var(--line-soft); }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.86em; background: var(--accent-soft);
+    padding: 2px 7px; border-radius: 5px; white-space: nowrap;
+  }
+  blockquote {
+    margin: 36px 0; padding: 4px 0 4px 28px;
+    border-left: 3px solid var(--quote-bar);
+    font-size: 22px; line-height: 1.5; color: var(--text);
+    font-weight: 500; letter-spacing: -0.012em;
+  }
+  blockquote em { font-style: italic; border: 0; color: var(--text-3); font-weight: 400; }
+  /* 首段下沉 */
+  .lead::first-letter {
+    font-size: 4.4em; font-weight: 700; float: left;
+    line-height: 0.92; margin: 6px 12px 0 0; color: var(--accent);
+  }
+  .closing {
+    margin-top: 96px; padding: 48px 0;
+    border-top: 1px solid var(--line-soft);
+    text-align: center; color: var(--text-4); font-size: 14px;
+  }
+  @media (max-width: 800px) {
+    article { padding: 80px 20px 100px 20px; }
+    .hero h1 { font-size: 44px; }
+    .hero .deck { font-size: 18px; }
+    .lede { font-size: 18px; }
+    body { font-size: 16px; }
+  }
+</style>
 </head>
 <body>
-  <div class="page">
-    <section class="hero">
-      <h1>Neural Eco · 机制、训练、测试与指标说明</h1>
-      <p>这页不只解释指标，还会把<strong>系统里有哪些机制、它们为什么要加、怎么训练、怎么测试、真实运行时怎么跑</strong>串成一张完整地图。内容尽量保持“适合入门，但不幼稚”的讲法，并尽量对齐当前项目真实代码与配置。</p>
-      <div class="nav">
-        <a href="#rules">怎么看</a>
-        <a href="#map">文件地图</a>
-        <a href="#system">系统机制</a>
-        <a href="#training-flow">怎么训练</a>
-        <a href="#testing">怎么测试</a>
-        <a href="#runtime">怎么运行</a>
-        <a href="#train-metrics">训练指标</a>
-        <a href="#behavior">主角行为</a>
-        <a href="#memory">记忆与 Ablation</a>
-        <a href="#eco">生态模块</a>
-        <a href="#research">研究型统计</a>
-        <a href="#params">关键参数</a>
-        <a href="#recipes">判读模板</a>
-      </div>
-      <div class="callout">
-        <strong>先记一句：</strong> 你可以把这页分成 5 层：<strong>机制</strong>回答“系统里装了什么”，<strong>训练</strong>回答“它怎么学”，<strong>测试</strong>回答“我们怎么知道它不是碰巧”，<strong>运行</strong>回答“最后怎么长期跑”，<strong>指标</strong>回答“我们拿什么证据来判断这些事”。
-      </div>
-    </section>
+<div class="scroll-progress" id="bar"></div>
+<div class="brand"><span class="dot"></span>Neural Eco · routes/protagonist_ecology</div>
 
-    <section id="rules" class="section">
-      <h2>1. 先学会怎么看</h2>
-      <div class="grid">
-        <div class="card">
-          <h3>先分 4 类</h3>
-          <ul>
-            <li><strong>训练主指标：</strong> 例如 <code>avg_fitness</code>。</li>
-            <li><strong>行为事件指标：</strong> 例如 <code>drank_water_events</code>。</li>
-            <li><strong>研究解释指标：</strong> 例如 <code>signal_action_mi</code>。</li>
-            <li><strong>性能指标：</strong> 例如 <code>total_ms</code>。</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3>最稳的阅读顺序</h3>
-          <ul>
-            <li>先看任务主指标有没有动。</li>
-            <li>再看配套指标是否一起支持这个解释。</li>
-            <li>最后才看总 fitness。</li>
-          </ul>
-        </div>
-      </div>
-      <div class="callout warn">
-        <strong>别只看 fitness：</strong> fitness 是混合总分。它变好了，不一定代表你关心的那个行为真的变强了。
-      </div>
-    </section>
+<article>
 
-    <section id="map" class="section">
-      <h2>2. 输出文件地图</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>文件</th>
-              <th>用途</th>
-              <th>最适合回答的问题</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><code>fitness.csv</code></td><td>代际适应度基础表</td><td>训练总分有没有上去</td></tr>
-            <tr><td><code>evolution.csv</code></td><td>主角 + 背景物种代际表现</td><td>是不是只有主角在涨，还是生态一起动</td></tr>
-            <tr><td><code>protagonist_behaviors.csv</code></td><td>主角行为核心表</td><td>主角到底做了什么</td></tr>
-            <tr><td><code>memory_ablation_results.csv</code></td><td>记忆开关对照实验</td><td>关掉哪类记忆后哪个任务最受伤</td></tr>
-            <tr><td><code>module_metrics.csv</code></td><td>生态模块统计</td><td>世界模块是否真的在运作</td></tr>
-            <tr><td><code>advanced_stats.csv</code></td><td>群体层统计</td><td>多样性、探索、复杂度是否变化</td></tr>
-            <tr><td><code>emergence_audit.csv</code></td><td>涌现现象审计</td><td>信号、协作、军备竞赛有没有苗头</td></tr>
-            <tr><td><code>comprehensive/*.csv</code></td><td>研究型细分统计包</td><td>信息论、多样性、物种画像</td></tr>
-            <tr><td><code>perf.csv</code></td><td>性能耗时表</td><td>程序有没有跑慢</td></tr>
-            <tr><td><code>species.jsonl / phylo_tree.jsonl</code></td><td>物种快照 / 系谱事件</td><td>物种是怎么生灭分化的</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="system" class="section">
-      <h2>3. 系统机制地图：除了记忆，还加了什么</h2>
-      <div class="callout">
-        <strong>先建立一个总画面：</strong> 这个项目不是“只有一个神经网络在乱走”，而是<strong>神经脑 + 身体状态 + 资源世界 + 社会互动 + 生态压力 + 进化</strong> 一起作用的系统。记忆只是其中一块，而且它必须和其它机制配合才有意义。
-      </div>
-      <div class="grid">
-        <div class="card">
-          <h3>世界与时间</h3>
-          <p><strong>地形</strong>不是纯装饰，会影响移动成本和可达性；世界也在往<strong>连续时间</strong>方向走，所以行为不是只有“按一次按钮”那么简单，而是跟 <code>dt</code> 和持续时间有关。</p>
-        </div>
-        <div class="card">
-          <h3>生存机制</h3>
-          <p>主角不只是“活着就行”，而是要处理<strong>血量、口渴、受伤、取暖、恢复</strong>。这让“找水、回火边、回巢”变成真实需求，而不是脚本规定的任务。</p>
-        </div>
-        <div class="card">
-          <h3>资源与工具链</h3>
-          <p>世界里有<strong>资源、树、石头、可搬运物体、工具制作、投掷、狩猎</strong>。这样主角不是只会移动，而是可能形成“采集 → 搬运 → 制作 → 使用”的链条。</p>
-        </div>
-        <div class="card">
-          <h3>基地与聚落机制</h3>
-          <p><strong>base、stockpile、nursery、campfire、worksite、progression</strong> 这些机制一起定义了“家”“营火”“工地”“发展阶段”这些概念，所以系统才能朝原始聚落而不是随机生态箱发展。</p>
-        </div>
-        <div class="card">
-          <h3>通信与合作</h3>
-          <p>有 <strong>signal</strong> 层，也有会合、共同在场、共同狩猎、工地贡献这些机制。它们的目标不是做“装饰性信号”，而是让合作有可观测后果。</p>
-        </div>
-        <div class="card">
-          <h3>生态压力</h3>
-          <p>背景物种、捕食者、猎物、病原体、昼夜、季节都会改变环境压力。这样训练出来的行为更像“在真实环境里应付问题”，而不是只对单一奖励函数取巧。</p>
-        </div>
-      </div>
-
-      <details open>
-        <summary>主角脑、背景物种脑、进化三者是什么关系</summary>
-        <div class="detail-body">
-          <p>你可以把系统里的“智能部分”分成两层看：</p>
-          <ul>
-            <li><strong>主角脑：</strong> 当前路线里主角有自己的脑结构、记忆通路、DNC 和专门感知。</li>
-            <li><strong>背景物种脑：</strong> 背景 species 走的是另一套更通用的 NEAT 路线。</li>
-            <li><strong>进化器：</strong> 它不直接“替主角思考”，而是根据表现保留好的个体、淘汰差的个体，再通过交叉和变异产生下一代。</li>
-          </ul>
-          <p>所以这不是“一个固定模型上线推理”，而更像“许多个体在世界里竞争，表现好的脑结构被保留下来”。</p>
-        </div>
-      </details>
-
-      <details>
-        <summary>基地、营火、工地、progression 为什么重要</summary>
-        <div class="detail-body">
-          <p>如果没有这些机制，主角最多学会“找吃的、躲危险”。但你真正想看到的是更高一级的行为，比如：</p>
-          <ul>
-            <li>把材料搬回共同位置</li>
-            <li>围着火生存和恢复</li>
-            <li>在工地持续投入材料</li>
-            <li>随着世界阶段推进，解锁新任务和新资源</li>
-          </ul>
-          <p>这就是为什么系统里要有 <code>base / nursery / campfire / worksite / progression</code> 这些看起来“不是 AI 本体”的机制：它们定义了 AI 可以理解和争夺的社会空间。</p>
-        </div>
-      </details>
-
-      <details>
-        <summary>信号、合作、贡献记录为什么不是可有可无</summary>
-        <div class="detail-body">
-          <p>如果只有奖励，没有“谁做了贡献”的记录，系统很容易出现搭便车问题：真正干活的人和路过的人拿分差不多。</p>
-          <p>所以项目里会逐步加入：</p>
-          <ul>
-            <li>谁发了信号</li>
-            <li>谁到场响应了信号</li>
-            <li>谁对狩猎造成了真实伤害</li>
-            <li>谁给工地送了材料</li>
-          </ul>
-          <p>这些东西不是“锦上添花”，而是为了让合作能被正确奖励。</p>
-        </div>
-      </details>
-
-      <details>
-        <summary>疾病、昼夜、季节这些机制到底在干嘛</summary>
-        <div class="detail-body">
-          <p>它们的作用不是把世界弄复杂而已，而是防止系统学出太机械的固定套路。</p>
-          <ul>
-            <li><strong>疾病：</strong> 让个体和病原体出现军备竞赛压力。</li>
-            <li><strong>昼夜：</strong> 让同样的行动在不同时间成本不同。</li>
-            <li><strong>季节：</strong> 让资源和环境条件不总是恒定。</li>
-          </ul>
-          <p>简单说：这些机制的作用是让主角必须“理解世界在变”，而不是只记一条固定路线。</p>
-        </div>
-      </details>
-    </section>
-
-    <section id="training-flow" class="section">
-      <h2>4. 这个项目是怎么训练的</h2>
-      <div class="callout">
-        <strong>最关键一句：</strong> 这条 protagonist 路线当前主训练方式更接近<strong>进化训练</strong>，不是常见课堂上那种“拿标签做反向传播的监督学习”。
-      </div>
-
-      <details open>
-        <summary>一代训练大致发生什么</summary>
-        <div class="detail-body">
-          <ul>
-            <li><strong>第 1 步：</strong> 读取配置，决定世界大小、机制开关、奖励权重、是否 resume checkpoint。</li>
-            <li><strong>第 2 步：</strong> 创建或恢复 protagonist population，同时创建背景物种 population。</li>
-            <li><strong>第 3 步：</strong> 每一代跑多个 episode；每个 episode 会把主角和背景物种一起放进世界。</li>
-            <li><strong>第 4 步：</strong> 世界按 <code>substep_dt</code> 连续推进，期间累计 reward、行为指标、trace、DNC 摘要等。</li>
-            <li><strong>第 5 步：</strong> 把多个 episode 的表现汇总成每个个体的 fitness。</li>
-            <li><strong>第 6 步：</strong> 用 selection + crossover + mutation 产生下一代，并定期保存 checkpoint。</li>
-          </ul>
-          <p>你可以把它理解成：<strong>不是在调一个模型的梯度，而是在筛选一整群不同的脑，留下更适应这个世界的那些。</strong></p>
-        </div>
-      </details>
-
-      <details>
-        <summary>训练时到底在优化什么</summary>
-        <div class="detail-body">
-          <p>当前训练参数里，reward 不是只看一项，而是多项组合：</p>
-          <ul>
-            <li>生存</li>
-            <li>进食</li>
-            <li>探索 / 内在动机</li>
-            <li>战斗</li>
-            <li>合作</li>
-            <li>通信</li>
-            <li>工地靠近 / 工地完成</li>
-            <li>共同狩猎</li>
-          </ul>
-          <p>这也是为什么后面你不能只看 <code>avg_fitness</code>：因为它本来就是这些目标混合后的总分。</p>
-        </div>
-      </details>
-
-      <details open>
-        <summary>常见训练入口配置怎么理解</summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>配置</th><th>用途</th><th>适合理解成什么</th></tr></thead>
-              <tbody>
-                <tr><td><code>protagonist_ecology_train_smoke.toml</code></td><td>极短训练</td><td>接线验收，不是最终能力证明</td></tr>
-                <tr><td><code>protagonist_ecology_train_survival_foundation.toml</code></td><td>生存基础课</td><td>先学活下来</td></tr>
-                <tr><td><code>protagonist_ecology_train_camp_building.toml</code></td><td>营地建造课</td><td>学会搬运、围火、工地闭环</td></tr>
-                <tr><td><code>protagonist_ecology_train_camp_building_evolve.toml</code></td><td>更正式的建造训练</td><td>在更完整训练循环里真正进化</td></tr>
-                <tr><td><code>protagonist_ecology_train_hunt_avoid.toml</code></td><td>狩猎 / 躲避课</td><td>学应对生态压力</td></tr>
-                <tr><td><code>protagonist_ecology_train_dnc_cue_choice.toml</code></td><td>DNC micro-task</td><td>测试“纯记忆能力 wiring 是否打通”</td></tr>
-                <tr><td><code>protagonist_ecology_train_overnight.toml</code></td><td>长训入口</td><td>更接近正式跑</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details>
-        <summary>为什么训练要多 episode，而不是一代只跑一次</summary>
-        <div class="detail-body">
-          <p>因为世界有随机性。只跑一次，某个个体可能只是“运气好”。</p>
-          <p>多 episode 的意义是：让系统更看重<strong>稳定表现</strong>，而不是一次碰巧拿高分。</p>
-        </div>
-      </details>
-    </section>
-
-    <section id="testing" class="section">
-      <h2>5. 这个项目怎么测试</h2>
-      <div class="callout">
-        <strong>测试不只是一种：</strong> 这个项目里至少有<strong>代码级测试、短 smoke、专门 eval 世界、ablation、traceprobe</strong> 这几层。
-      </div>
-
-      <details open>
-        <summary>第一层：代码级测试</summary>
-        <div class="detail-body">
-          <p>这层回答的是“代码有没有接错”。当前 route 里已经有不少专门测试，例如：</p>
-          <ul>
-            <li><code>test_protagonist_ecology_config.cpp</code>：配置解析是否正确</li>
-            <li><code>test_goal_manager.cpp</code>：目标管理逻辑是否正常</li>
-            <li><code>test_checkpoint_resume.cpp</code>：checkpoint 是否能真恢复</li>
-            <li><code>test_memory_ablation_eval.cpp</code>：ablation 任务派生是否正确</li>
-            <li><code>test_memory_trial_layer.cpp</code>：DNC micro-task 层是否正常</li>
-            <li><code>test_protagonist_brain_v3_shell.cpp</code>：BrainV3 最小壳层是否没接崩</li>
-          </ul>
-          <p>这层很重要，但它只能证明“系统没坏”，不能证明“系统真的学会了”。</p>
-        </div>
-      </details>
-
-      <details>
-        <summary>第二层：smoke run</summary>
-        <div class="detail-body">
-          <p>smoke run 的意思不是“训练完成”，而是“我先用一个很小的配置跑一下，看整条链有没有打通”。</p>
-          <p>例如 <code>protagonist_ecology_train_smoke.toml</code> 就适合验证：</p>
-          <ul>
-            <li>世界能不能正常启动</li>
-            <li>训练循环能不能跑完</li>
-            <li>CSV 和 trace 能不能产出</li>
-            <li>行为计数是不是非空</li>
-          </ul>
-        </div>
-      </details>
-
-      <details open>
-        <summary>第三层：eval 世界</summary>
-        <div class="detail-body">
-          <p>eval 世界是专门拿来问一句：<strong>它学到的是规则，还是只是记住了训练地图？</strong></p>
-          <p>当前已经有几类 eval 配置：</p>
-          <ul>
-            <li><code>protagonist_ecology_eval_generalization.toml</code></li>
-            <li><code>protagonist_ecology_eval_sparse_terrain.toml</code></li>
-            <li><code>protagonist_ecology_eval_timing_shift.toml</code></li>
-          </ul>
-          <p>它们会改几何布局、地形、资源节奏或时间条件，用来测试泛化，而不是只看训练世界里会不会走固定路线。</p>
-        </div>
-      </details>
-
-      <details>
-        <summary>第四层：ablation</summary>
-        <div class="detail-body">
-          <p>ablation 的意思是“把系统里某一块先关掉，再看表现会不会掉”。</p>
-          <p>这比“某个指标升了”更有解释力，因为它直接在问：<strong>这块机制到底有没有贡献</strong>。</p>
-          <p>当前最典型的就是 memory ablation：关掉 spatial / episodic / social / goal 之一，看 fixed-task 的主指标是否下降。</p>
-        </div>
-      </details>
-
-      <details>
-        <summary>第五层：traceprobe</summary>
-        <div class="detail-body">
-          <p>当某个结果不对时，traceprobe 不是继续盲猜，而是回到事件级和 agent 级轨迹里查：</p>
-          <ul>
-            <li>信号有没有真的发出</li>
-            <li>材料有没有真的送到</li>
-            <li>goal 有没有在该切换时切换</li>
-            <li>记忆写入有没有真的发生</li>
-          </ul>
-          <p>它更像“黑盒训练里的调试显微镜”。</p>
-        </div>
-      </details>
-    </section>
-
-    <section id="runtime" class="section">
-      <h2>6. 真实运行与“生产环境”怎么理解</h2>
-
-      <details open>
-        <summary>当前代码里已经区分了 <code>train / eval / live</code></summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>角色</th><th>它在语义上是什么</th><th>当前怎么用</th></tr></thead>
-              <tbody>
-                <tr><td><code>train</code></td><td>训练世界</td><td>用来进化 population，产生新一代</td></tr>
-                <tr><td><code>eval</code></td><td>评估世界</td><td>换环境检验泛化，不应把它和正式训练混在一起</td></tr>
-                <tr><td><code>live</code></td><td>长期运行世界</td><td>更像开放运行 / 展示 / 观察环境</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details>
-        <summary><code>run()</code> 现在真实怎么分支</summary>
-        <div class="detail-body">
-          <p>当前 runtime 的分支逻辑很直接：</p>
-          <ul>
-            <li>如果开了 memory ablation，就走 <strong>专项 ablation 入口</strong></li>
-            <li>否则如果 <code>evolution.generations &gt; 0</code>，就走 <strong>训练入口</strong></li>
-            <li>否则就只是<strong>初始化世界，然后按 <code>preview_duration_seconds</code> 把世界往前推进</strong></li>
-          </ul>
-          <p>这意味着：<strong>现在的 live 角色已经存在，但它当前更像“长期运行世界”，不是一套完整的线上继续学习系统。</strong></p>
-        </div>
-      </details>
-
-      <details open>
-        <summary>“生产环境里继续学”这个想法能不能做</summary>
-        <div class="detail-body">
-          <p><strong>原则上能做，但要分清两种含义：</strong></p>
-          <ul>
-            <li><strong>含义 A：</strong> live 世界只是继续运行，个体在世界里靠记忆、状态、生态互动继续适应。这个现在就能做一部分。</li>
-            <li><strong>含义 B：</strong> live 世界里的模型权重 / 基因也在线继续更新。这个现在还不是完整闭环。</li>
-          </ul>
-          <p>如果直接让线上个体边跑边改脑，风险很大：</p>
-          <ul>
-            <li>可能突然学坏</li>
-            <li>可能把生态平衡直接打崩</li>
-            <li>出问题时很难回滚和定位</li>
-            <li>你也会分不清“这是新能力”还是“偶然漂移”</li>
-          </ul>
-        </div>
-      </details>
-
-      <details>
-        <summary>更安全的“生产环境继续学习”方案应该是什么</summary>
-        <div class="detail-body">
-          <p>对这个项目来说，最合理的不是“live 里无约束自我修改”，而是<strong>受控的持续学习</strong>：</p>
-          <ul>
-            <li><strong>第 1 步：</strong> live 世界继续跑，持续收集轨迹、行为、环境数据。</li>
-            <li><strong>第 2 步：</strong> 在旁路训练区或 shadow world 里，用这些数据继续训练 / 继续进化候选 population。</li>
-            <li><strong>第 3 步：</strong> 用 eval 世界、ablation、关键任务指标去审查候选版本。</li>
-            <li><strong>第 4 步：</strong> 只有通过门槛的新 checkpoint，才替换到 live。</li>
-            <li><strong>第 5 步：</strong> 保留旧 checkpoint，随时能回滚。</li>
-          </ul>
-          <p>你可以把它理解成：<strong>不是让“线上个体自己乱改脑”，而是让 live 提供真实经验，再由受控训练系统慢慢学习。</strong></p>
-        </div>
-      </details>
-
-      <details>
-        <summary>如果以后真的要这样跑，最推荐的顺序</summary>
-        <div class="detail-body">
-          <p><strong>最稳的流程：</strong> <code>train → eval → live → shadow continual learning → gated promotion</code></p>
-          <p>这很像真正工程里的做法：先离线学，再上线观察，再受控更新，而不是一上来就在线自我进化。</p>
-        </div>
-      </details>
-    </section>
-
-    <section id="train-metrics" class="section">
-      <h2>7. 训练主指标</h2>
-
-      <details open>
-        <summary><code>fitness.csv</code> · 最基础总分</summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段</th><th>含义</th><th>怎么判断</th></tr></thead>
-              <tbody>
-                <tr><td><code>generation</code></td><td>第几代</td><td>横轴</td></tr>
-                <tr><td><code>min_fitness</code></td><td>本代最低分</td><td>看底部是不是还在大面积翻车</td></tr>
-                <tr><td><code>avg_fitness</code></td><td>本代平均分</td><td class="ok">最适合看整体训练是否前进</td></tr>
-                <tr><td><code>best_fitness</code></td><td>本代最高分</td><td>看天花板，但容易被单个幸运个体拉高</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details>
-        <summary><code>evolution.csv</code> · 主角与背景物种一起看</summary>
-        <div class="detail-body">
-          <p>表头是 <code>generation,min_fitness,avg_fitness,best_fitness</code>，后面还会拼接每个背景物种的 <code>_avg</code> 和 <code>_best</code>。</p>
-          <p>如果主角越来越强，但背景物种全崩，说明可能不是“生态更聪明”，而是环境被打穿了。</p>
-        </div>
-      </details>
-
-      <details>
-        <summary><code>perf.csv</code> · 这是性能表，不是行为表</summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段</th><th>含义</th><th>用途</th></tr></thead>
-              <tbody>
-                <tr><td><code>total_ms</code></td><td>一整代总耗时</td><td>看总运行成本</td></tr>
-                <tr><td><code>eval_ms</code></td><td>评估阶段耗时</td><td>看行为仿真有多贵</td></tr>
-                <tr><td><code>repro_ms</code></td><td>繁殖阶段耗时</td><td>看进化更新有多贵</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-    </section>
-
-    <section id="behavior" class="section">
-      <h2>8. 主角行为指标</h2>
-      <div class="callout">
-        <strong>这是当前 route 最关键的一张表：</strong> <code>protagonist_behaviors.csv</code>。
-      </div>
-      <div class="callout bad">
-        <strong>注意：</strong> 这张表里有的是“事件次数”，有的是“最终状态”，有的是“DNC 摘要平均值”。不要把它们当成同一种数直接横比。
-      </div>
-
-      <details open>
-        <summary>生存与资源闭环</summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
-              <tbody>
-                <tr><td><code>episodes</code></td><td>本代评估 episode 数</td><td>比较 run 前先确认一致</td></tr>
-                <tr><td><code>total_protagonists</code></td><td>合并所有 episode 的主角总数</td><td>分母</td></tr>
-                <tr><td><code>survived_protagonists</code></td><td>最后活下来的主角数</td><td class="ok">先看能不能活到最后</td></tr>
-                <tr><td><code>drank_water_events</code></td><td>真实喝水事件数</td><td class="ok">判断“会不会回水源”的硬指标</td></tr>
-                <tr><td><code>deposits_total</code></td><td>总交付次数</td><td>看有没有把资源搬到目标位置</td></tr>
-                <tr><td><code>deposits_stick</code></td><td>木棍交付次数</td><td>看材料链细分</td></tr>
-                <tr><td><code>deposits_stone</code></td><td>石头交付次数</td><td>看材料链细分</td></tr>
-                <tr><td><code>completed_worksites</code></td><td>episode 结束时最终完成的工地数</td><td>偏结果</td></tr>
-                <tr><td><code>worksite_completion_events</code></td><td>运行过程中新增完成工地事件数</td><td class="ok">更适合证明建造闭环真的发生过</td></tr>
-                <tr><td><code>active_fires</code></td><td>当前活跃营火数量</td><td>看聚落设施结果，不等于点火事件次数</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details>
-        <summary>采集、制造、攻击、狩猎</summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
-              <tbody>
-                <tr><td><code>chop_attempts</code></td><td>尝试砍树</td><td>说明开始尝试</td></tr>
-                <tr><td><code>chop_successes</code></td><td>成功砍树</td><td class="ok">成功比尝试更重要</td></tr>
-                <tr><td><code>craft_attempts</code></td><td>尝试制作</td><td>看是否进入工具链</td></tr>
-                <tr><td><code>craft_successes</code></td><td>成功制作</td><td>说明制造闭环通了</td></tr>
-                <tr><td><code>throw_attempts</code></td><td>尝试投掷</td><td>只说明动手了</td></tr>
-                <tr><td><code>throw_hits</code></td><td>投掷命中</td><td class="ok">比 attempt 更像真正战术行为</td></tr>
-                <tr><td><code>hunt_attempts</code></td><td>尝试狩猎</td><td>看是否进入追击链</td></tr>
-                <tr><td><code>hunt_successes</code></td><td>成功狩猎</td><td class="ok">判断会不会真正完成捕猎</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details open>
-        <summary>信号与合作</summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
-              <tbody>
-                <tr><td><code>signal_emits</code></td><td>当前实现更接近“被记录到的 emitter 数”</td><td class="warn-text">不完全等于所有发信号事件总数</td></tr>
-                <tr><td><code>signal_response_events</code></td><td>主角以 <code>RespondSignal</code> 为目标并在时窗内到达信号附近的响应事件</td><td class="ok">判断“真的响应了信号”的关键字段</td></tr>
-                <tr><td><code>signal_co_attendance</code></td><td>在时窗内进入信号会合区域的累计次数</td><td>看是否围绕信号聚集</td></tr>
-                <tr><td><code>cooperative_co_presence_seconds</code></td><td>多人共同在场的累计秒数</td><td>说明同地协同停留，但不等于任务有效完成</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <p><strong>最稳的说法：</strong> 想证明信号有用，优先看 <code>signal_response_events</code>，再用 <code>signal_co_attendance</code> 和研究统计里的互信息补强。</p>
-        </div>
-      </details>
-
-      <details open>
-        <summary>DNC 摘要字段</summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段</th><th>它是什么</th><th>怎么判断</th></tr></thead>
-              <tbody>
-                <tr><td><code>dnc_usage_mean_avg</code></td><td>平均槽位使用率</td><td>看“记忆板整体用了多少”</td></tr>
-                <tr><td><code>dnc_write_peak_avg</code></td><td>写入权重峰值</td><td>看写时会不会强聚焦某槽位</td></tr>
-                <tr><td><code>dnc_read_peak_avg</code></td><td>读取权重峰值</td><td>看读时会不会强聚焦某槽位</td></tr>
-                <tr><td><code>dnc_precedence_peak_avg</code></td><td>时间链接前序峰值</td><td>看顺序记忆链条热点</td></tr>
-                <tr><td><code>dnc_samples</code></td><td>摘要采样次数</td><td>样本量</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="callout bad">
-            <strong>最重要提醒：</strong> DNC 数值高，不等于记忆真的帮了任务。它只能说明“记忆系统在活动”，真正的证据要看 ablation 后任务主指标是否下降。
-          </div>
-        </div>
-      </details>
-    </section>
-
-    <section id="memory" class="section">
-      <h2>9. 记忆 / DNC / Ablation</h2>
-
-      <details open>
-        <summary><code>memory_ablation_results.csv</code> 怎么看</summary>
-        <div class="detail-body">
-          <p>这张表是当前最关键的记忆验证表。它会按 <code>task</code> 和 <code>variant</code> 输出各项平均结果。</p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段</th><th>含义</th><th>用途</th></tr></thead>
-              <tbody>
-                <tr><td><code>task</code></td><td>任务名</td><td>当前有哪些固定任务</td></tr>
-                <tr><td><code>variant</code></td><td><code>baseline / no_spatial / no_episodic / no_social / no_goal</code></td><td>关掉哪类记忆后的对照组</td></tr>
-                <tr><td><code>primary_metric</code></td><td>该任务最重要的主指标值</td><td class="ok">第一优先级</td></tr>
-                <tr><td><code>primary_metric_name</code></td><td>主指标字段名</td><td>告诉你这任务先看什么</td></tr>
-                <tr><td><code>avg_fitness / best_fitness</code></td><td>总分</td><td>辅助，不是第一优先级</td></tr>
-                <tr><td><code>survived_avg</code></td><td>平均存活数</td><td>看危险规避类任务</td></tr>
-                <tr><td><code>avg_health_ratio / avg_hydration_ratio</code></td><td>平均健康 / 水分比例</td><td>看生存状态是否同步改善</td></tr>
-                <tr><td><code>drank_water_events_avg</code></td><td>平均喝水事件</td><td>回水任务核心字段</td></tr>
-                <tr><td><code>deposits_avg / worksite_completion_events_avg</code></td><td>平均交付 / 工地完成事件</td><td>回工地与建造任务关键字段</td></tr>
-                <tr><td><code>signal_emit_events_avg / signal_response_events_avg / signal_co_attendance_avg</code></td><td>平均信号事件、响应、会合</td><td>看信号是否真的有作用</td></tr>
-                <tr><td><code>dnc_usage_mean_avg / dnc_read_peak_avg</code></td><td>DNC 活动摘要</td><td>只做辅助解释</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details>
-        <summary>各任务的主指标怎么配</summary>
-        <div class="detail-body">
-          <ul>
-            <li><strong>WaterReturn：</strong> 先看 <code>drank_water_events</code></li>
-            <li><strong>DangerAvoidance：</strong> 先看 <code>survived</code></li>
-            <li><strong>WorksiteReturn：</strong> 先看 <code>worksite_completion_events</code></li>
-            <li><strong>SignalResponse：</strong> 先看 <code>signal_response_events</code></li>
-          </ul>
-          <p>所以比较 baseline 和 ablation 时，<strong>先看对应任务自己的主指标，再看 fitness</strong>。</p>
-        </div>
-      </details>
-
-      <details open>
-        <summary>为什么短 smoke 里“关掉记忆反而更高分”不能说记忆有害</summary>
-        <div class="detail-body">
-          <p>短训里记忆输入维度很多，而 NEAT 还没学会利用它时，这些输入更像噪声，所以早期可能出现“关掉记忆反而更容易采样”的情况。</p>
-          <p>这说明短 smoke 更适合做<strong>接线验收</strong>，不适合直接下“记忆有害/有益”的科研结论。</p>
-        </div>
-      </details>
-    </section>
-
-    <section id="eco" class="section">
-      <h2>10. 生态模块指标</h2>
-
-      <details open>
-        <summary><code>module_metrics.csv</code></summary>
-        <div class="detail-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>字段组</th><th>代表什么</th><th>怎么判断</th></tr></thead>
-              <tbody>
-                <tr><td><code>alive_count, predator_count, prey_count, immune_count</code></td><td>存活人口和角色结构</td><td>先看生态是不是还活着、是否单边崩盘</td></tr>
-                <tr><td><code>avg_energy, avg_speed, avg_infected_speed, avg_food_eaten</code></td><td>能量、移动、感染后运动、进食</td><td>看资源和疾病压力是否真的影响行为</td></tr>
-                <tr><td><code>total_damage_dealt, total_kills, predator_kills</code></td><td>攻击造成的真实结果</td><td>区分“打了很多”与“真杀死了很多”</td></tr>
-                <tr><td><code>max_infected, infection_deaths, recoveries, healthy_infected_dist</code></td><td>疾病传播与恢复</td><td>看病原体是否真实施压</td></tr>
-                <tr><td><code>resource_available_count, avg_resource_amount</code></td><td>资源剩余量</td><td>避免把资源枯竭误读成行为退化</td></tr>
-                <tr><td><code>min_light, max_light, min_season, max_season, current_season</code></td><td>昼夜与季节上下文</td><td>解释环境难度变化</td></tr>
-                <tr><td><code>signal_field_energy</code></td><td>信号场总能量</td><td>看信号层是否被实际使用</td></tr>
-                <tr><td><code>heavy_resources_available, heavy_workers_avg</code></td><td>重资源与协作工人数</td><td>看多人协作工作是否被参与</td></tr>
-                <tr><td><code>avg_complexity</code></td><td>脑结构平均复杂度</td><td>偏结构，不是直接行为证据</td></tr>
-                <tr><td><code>pathogen_avg_speed, pathogen_avg_spread, pathogen_avg_evasion, pathogen_avg_gen</code></td><td>病原体平均属性</td><td>看病原体本身是否在演化</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-    </section>
-
-    <section id="research" class="section">
-      <h2>11. 研究型统计</h2>
-      <div class="callout warn">
-        <strong>这部分容易误读：</strong> 很多字段是“解释系统结构”的，不是“证明某个行为已经学会”的硬证据。
-      </div>
-
-      <details open>
-        <summary><code>advanced_stats.csv</code></summary>
-        <div class="detail-body">
-          <ul>
-            <li><code>shannon_diversity</code>：物种分布多样性。</li>
-            <li><code>fitness_variance</code>：强弱差距有多大。</li>
-            <li><code>avg_age</code>：平均年龄。</li>
-            <li><code>avg_exploration</code>：平均访问格子数，近似看探索范围。</li>
-            <li><code>behavior_complexity</code>：简化动作序列复杂度，越高表示不那么重复。</li>
-            <li><code>species_count</code>：物种数。</li>
-            <li><code>alive_ratio</code>：存活比例。</li>
-          </ul>
-        </div>
-      </details>
-
-      <details open>
-        <summary><code>emergence_audit.csv</code></summary>
-        <div class="detail-body">
-          <ul>
-            <li><code>signal_behavior_mi_avg</code>：信号与动作的平均互信息。</li>
-            <li><code>modulatory_usage_ratio</code>：有调制能力的活体比例。</li>
-            <li><code>modulatory_corr</code>：当前实现是 proxy，不是直接神经调制激活。</li>
-            <li><code>pred_prey_fitness_corr</code>：捕食者和猎物 fitness 相关性，粗看红皇后。</li>
-            <li><code>heavy_tasks_completed</code>：重任务完成数。</li>
-            <li><code>host_immunity_pathogen_virulence_corr</code>：宿主免疫与感染暴露 proxy 的相关性。</li>
-            <li><code>species_dig_preference_var</code>：当前还是 proxy，不能当直接“挖掘偏好方差”。</li>
-            <li><code>cave_occupancy_ratio</code>：洞穴占用比例。</li>
-            <li><code>hunt_success_rate</code>：捕猎成功率。</li>
-          </ul>
-        </div>
-      </details>
-
-      <details>
-        <summary><code>comprehensive/*.csv</code> 核心文件</summary>
-        <div class="detail-body">
-          <ul>
-            <li><code>oee_complexity.csv</code>：节点数、连接数、隐藏节点、结构多样性。</li>
-            <li><code>population_stats.csv</code>：空间熵、行为熵、fitness 熵、能量方差、感染比例等。</li>
-            <li><code>info_theory.csv</code>：<code>signal_action_mi</code>、<code>terrain_behavior_mi</code>、<code>infection_behavior_mi</code>。</li>
-            <li><code>coevo_stats.csv</code>：捕食-猎物 fitness、<code>red_queen_corr</code>、<code>hunt_success_rate</code>。</li>
-            <li><code>disease_arms_race.csv</code>：毒力、菌株数、免疫率、免疫记忆大小、感染率。</li>
-            <li><code>species_profile.csv</code>：每个物种的平均位置、能量、感染比例、洞穴比例、脑结构、偏好参数。</li>
-          </ul>
-        </div>
-      </details>
-
-      <details>
-        <summary>物种快照与系谱</summary>
-        <div class="detail-body">
-          <p><code>species.jsonl</code> 会记录每代的 <code>species_count</code>，以及每个物种的 <code>members</code>、<code>living</code>、<code>avg_fitness</code>、<code>best_fitness</code>。</p>
-          <p><code>phylo_tree.jsonl</code> 会记录 <code>species_born</code>、<code>species_alive</code>、<code>species_extinct</code> 事件，用来重建谱系。</p>
-        </div>
-      </details>
-    </section>
-
-    <section id="params" class="section">
-      <h2>12. 关键参数：为什么同一个指标不能乱比</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>参数</th><th>会影响什么</th><th>为什么重要</th></tr></thead>
-          <tbody>
-            <tr><td><code>episodes_per_generation</code></td><td>统计稳定性</td><td>episode 数不同，均值可比性就会变差</td></tr>
-            <tr><td><code>episode_duration_seconds</code></td><td>行为次数上限</td><td>时长不同，<code>drank_water_events</code>、<code>deposits_total</code> 等不能直接横比</td></tr>
-            <tr><td><code>substep_dt</code></td><td>连续时间步长</td><td>会影响积分、事件密度和共同在场时间累积</td></tr>
-            <tr><td><code>signal_co_attendance_radius</code></td><td>会合判定半径</td><td>半径越大，越容易被算进响应/会合</td></tr>
-            <tr><td><code>signal_co_attendance_window_seconds</code></td><td>响应判定时间窗</td><td>时间窗越长，<code>signal_response_events</code> 越容易成立</td></tr>
-            <tr><td><code>worksite_completion_reward</code></td><td>建造动机强度</td><td>奖励越大，系统越可能优先学建造闭环</td></tr>
-            <tr><td><code>social_proximity_radius</code></td><td>合作邻近判定</td><td>会影响 <code>cooperative_co_presence_seconds</code> 的增长速度</td></tr>
-            <tr><td><code>joint_hunt_radius</code></td><td>围猎判定范围</td><td>会改变联合捕猎被奖励的难易度</td></tr>
-            <tr><td><code>memory ... enabled</code></td><td>某类记忆是否参与</td><td>ablation 比较时最关键</td></tr>
-            <tr><td><code>compute.agent_decision_threads</code></td><td>运行速度</td><td>主要影响性能，不直接改变行为定义</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="recipes" class="section">
-      <h2>13. 实战判读模板</h2>
-      <div class="grid">
-        <div class="card">
-          <h3>会不会回水</h3>
-          <p><strong>主看：</strong> <code>drank_water_events</code></p>
-          <p><strong>辅助：</strong> <code>avg_hydration_ratio</code> 上升，<code>dehydrated_avg</code> 下降，<code>survived_protagonists</code> 上升。</p>
-        </div>
-        <div class="card">
-          <h3>会不会建工地</h3>
-          <p><strong>先看：</strong> <code>deposits_total</code></p>
-          <p><strong>再确认：</strong> <code>worksite_completion_events</code>、<code>completed_worksites</code>。</p>
-        </div>
-        <div class="card">
-          <h3>信号有没有用</h3>
-          <p><strong>主看：</strong> <code>signal_response_events</code></p>
-          <p><strong>辅助：</strong> <code>signal_co_attendance</code>、<code>signal_action_mi</code>、ablation 分离。</p>
-        </div>
-        <div class="card">
-          <h3>狩猎是否学会</h3>
-          <p><strong>主看：</strong> <code>hunt_successes</code> 或 <code>hunt_success_rate</code></p>
-          <p><strong>不要只看：</strong> <code>hunt_attempts</code>。</p>
-        </div>
-        <div class="card">
-          <h3>记忆是否真的有用</h3>
-          <p><strong>黄金标准：</strong> baseline 与 ablation 的任务主指标明显分离。</p>
-          <p><strong>DNC 数值：</strong> 只能做辅助证据。</p>
-        </div>
-        <div class="card">
-          <h3>训练是否整体变好</h3>
-          <p><strong>同时满足：</strong> <code>avg_fitness</code> 稳定上升、关键行为持续非零、存活不崩、不是单代偶然峰值。</p>
-        </div>
-      </div>
-    </section>
-
-    <footer>
-      建议阅读顺序：先看“系统机制”“怎么训练”“怎么运行”，再看“主角行为指标”和“记忆 / Ablation”。
-    </footer>
+<section class="hero">
+  <div class="eyebrow">A Living-World Field Report · 2026-05-22</div>
+  <h1>这片世界，<br/><span class="grad">是有人在看的</span>。</h1>
+  <p class="deck">这不是一份指标手册，也不是一份目录式的开发文档。这是一段从 200×200 米的沙盒上空俯瞰下去、一直追到代码最深一层的现场报告——里面住着主角，住着六种背景物种，每秒推进 0.1 秒的物理时间，每一片水、每一棵树、每一处营火、每一个工地都各自有自己的状态机。所有出现的字段、参数和阈值，都来自仓库内 <code>routes/protagonist_ecology/</code> 真实可执行的代码，没有一处是为了讲故事编出来的。</p>
+  <div class="byline">
+    <strong>怎么读这份文档</strong> — 它没有章节，从头读到尾。所有 <code>this_kind_of_thing</code> 都是真实的代码符号；遇到任何想深挖的位置，去仓库对应的源文件即可。
   </div>
+</section>
+
+<p class="lead">把镜头放到这片世界的正上方。它叫 <code>routes/protagonist_ecology</code>，是一张 <code>world_size = (200, 200)</code> 的连续浮点世界，物理时间以 <code>substep_dt = 0.1</code> 秒的步长向前积分，每个 tick 最多积 <code>max_substeps_per_advance = 16</code> 步——这意味着无论上层逻辑跑得多快，物理引擎绝不会在一个调用里跨过 1.6 秒，避免事件聚集和数值不稳。</p>
+
+<p>这片世界<em>不是</em>一个单一的对象，而是一摞分层堆叠的 <code>IWorldLayer</code>。地表上有 <code>BaseLayer</code> 划出的基地（含中心点、堆栈区 stockpile、巢穴 nest 三块同心圆），有 <code>WaterLayer</code> 维护的几个固定水源（默认 <code>source_count = 2</code>，每个半径 5 米，喝水半径 3 米），有 <code>TreeLayer</code> 散播的十棵树（每棵 <code>max_integrity = 16</code>，砍倒掉 3 个木棍，重生周期 240 秒），有 <code>CampfireLayer</code> 控制的两堆营火（暖意半径 11 米，灼伤半径 3.5 米——<em>同一团火，既能续命也能要命</em>），还有 <code>WorksiteLayer</code> 摆好的两个工地（每个需要 4 木棍 + 2 石头才能完工）。这五个 Layer 是地形最基础的"物质骨架"。</p>
+
+<p>之上还有第二层骨架：<code>SurvivalStatusLayer</code> 维护主角的血量、水分、脱水掉血、烧伤掉血、暖意回血、巢穴回血——所有的稳态规则都集中在这里；<code>SandboxStatusLayer</code> 是它的兄弟，承担<strong>沙盒级</strong>的状态聚合，写到 trace 的世界快照里给你回放用。</p>
+
+<p>第三层是 Nursery 三件套，它构成了整片世界的<em>"成长曲线"</em>。<code>NurseryLogisticsLayer</code> 接管"投放奖励"：主角把木棍或石头扔进 <code>stockpile</code> 半径 6 米内，每次给 8 点能量加成、3 点 fitness 加成。<code>NurserySupplyLayer</code> 是基地的物资守恒——当近邻 16 米内的 stick 数低于 8 个时，每 25 秒补一波（4 个一批），目的是不让"没有原料"成为系统性死结。最有意思的是 <code>NurseryProgressionLayer</code>：它是一个潜伏在底下的成长关卡，按主角积累的 deposits 数目，依次解锁五个事件——<code>FirstFire</code>（积累到 4 个 stick 时点燃第一堆火）、<code>WorksiteUnlock</code>（达到 8 个 stick deposit + 1 个 stone deposit 时激活工地）、<code>StoneDrop</code>（6 个 deposit 时空投 10 块石头）、<code>HeavyDrop</code>（12 个 deposit 时空投 6 块重型石头）、<code>SecondFire</code>（16 个 deposit 时点第二堆火）。每两个事件之间有 20-80 秒的随机间隔，看起来像是"上天有人在循序渐进地给世界加料"。</p>
+
+<p>而那个"上天的人"，在代码里也是有名有姓的，它叫 <code>InterventionDirectorLayer</code>——干预导演。它统筹四种干预请求：<code>IgniteCampfire</code>、<code>ActivateWorksite</code>、<code>ScatterStone</code>、<code>ScatterHeavyStone</code>。每一次干预都要消耗 budget，触发 stress；budget 上限 3.0，初始 1.4，每秒回复 0.025；stress 上限 0.85，每秒衰减 0.01；两次干预之间还有 18 秒的 cooldown。<strong>这是一个"上帝也不能为所欲为"的设计</strong>——即使是项目方在外部投放剧情，也必须按预算节奏来，不允许把系统强行推到一个种群没准备好的状态。</p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">真正让世界动起来的，不是地形，是住在里面的居民。</div>
+
+<p>居民分两阵营。一边是被项目方反复打磨的<em>主角种群</em>——默认 32 只，全部由 <code>ProtagonistBrain</code> 驱动，每一只配齐一身能力，是项目所有学习信号的最终归宿。另一边是<em>背景物种</em>，由 <code>BackgroundBrainConfig</code> 的 <code>slots</code> 列表定义，每个 slot 指定一个 <code>archetype</code> 和数量。Archetype 有七种，对应 <code>SpeciesArchetype</code> 枚举里的真实条目，每一种都不是装饰，它们的存在为主角制造了完全不同的环境压力。</p>
+
+<p>第一种是 <code>LargeHerbivore</code>——大型食草动物，可以想象成牛或大象。它移动慢（<code>max_speed = 1.8</code>），纯食草（<code>diet_preference = 0.05</code>），唯一的攻击响应是 <code>FleeCapability</code>。它的 <code>damage_threshold = 12</code>——这是一个非常关键的阈值：单只 PackHunter 的攻击伤害是 4 dmg/秒，<em>一只狼一秒只能造成 4 点累积，永远打不破 12，必须 3 头以上的狼同时攻击才行</em>。这是项目对"涌现群猎"最硬的强迫机制——你不需要在 reward 函数里告诉狼"要合作"，它们自己会发现单挑没用。</p>
+
+<p>第二种是 <code>SmallForager</code>——小型采食者，对应兔子或啮齿类。速度快（<code>max_speed = 2.3</code>），<code>damage_threshold = 0</code>——也就是<em>一击必杀</em>，碎得很。但它有一个独门绝技：<code>CaveHideCapability</code>。当它实际进入一个"洞穴"地形格时，<code>AgentSocialPerception</code> 会把它从外部观察者的感知里过滤出去，等于真的隐身了。这就让"逃进洞里"成为一种值得学的具体行为，而不是一个抽象选择。</p>
+
+<p>第三种是 <code>ApexPredator</code>——顶级捕食者，老虎或熊。慢（1.6）但单击致命（dmg=18，单杀大食草绰绰有余），但它有一个反向机制——一旦完成一次成功狩猎，<code>PredatorHuntCapability</code> 会武装一个 <code>digest_satiety_until = now + 60s</code> 的窗口，期间它的伤害降到 0.2 倍，相当于"吃饱了在原地睡"。这是给主角和其他猎物喘息的窗口，也让 ApexPredator 不会变成一个无尽的杀戮机器。</p>
+
+<p>第四种是 <code>PackHunter</code>——群居猎手，狼。中速（2.0），单挑伤害低到 4——<em>故意</em>低到打不破 LargeHerbivore 的 12 阈值。因此狼想吃肉就必须凑够 3 只以上同时下口。这是项目里"涌现合作"最干净的范例。</p>
+
+<p>第五种是 <code>AmbushPredator</code>——伏击型，豹子或猫科。爆发速度高（2.6），生命脆，配 <code>StealthCapability</code>：站着不动 3 秒后翻转 stealth_state = true，远处的观察者通过视线检查时会把它过滤掉。一旦它从隐身中发起首击，伤害是平时的 2 倍——然后隐身溶解。这就把"摸黑潜伏-暴起"变成了一条实打实可学的策略。</p>
+
+<p>第六种是 <code>Scavenger</code>——食腐者，秃鹫或乌鸦。最关键的属性是 <code>aerial = true</code>，它<em>飞越地形</em>——不受坡度惩罚，也不受地表碰撞影响。它的食腐效率被刻意做成不对称：<code>scavenge_efficiency = 3.0</code>，对低活力猎物（能量 &lt; 阈值 × 0.25）能量收益 ×3，但对健康猎物只有 ×1/3。<strong>这强制它扮演"等别人重创目标后再来吃"的生态位</strong>，哪怕项目还没正式上 corpse 资源通道。</p>
+
+<p>第七种是 <code>Omnivore</code>——杂食，野猪或熊崽。<code>damage_threshold = 6</code>，介于易碎采食者和坚韧食草之间——单只狼依然打不死它（4 &lt; 6），还是需要协作。它的食物偏好是 <code>fruit = 1.0, grass = 0.6, browse = 0.6, meat = 0.4</code>，是一个真正"什么都能凑合吃"的角色。</p>
+
+<blockquote>
+七种物种之间的差异，不在 reward 函数里，而在 <em>capability 装配 + 三个数值（damage、threshold、loneliness setpoint）</em>里。这就是这个项目谈"生态位"时最具体的样子。
+</blockquote>
+
+<p>关于 <code>loneliness setpoint</code> 多说两句。每只动物身上都挂了 <code>DriveTickCapability</code>，它维护五大驱动：饥饿、口渴、疲劳、恐惧、孤独。每个驱动有一个 setpoint（舒适点），偏离 setpoint 会扣 fitness。这看似是个细节，却是物种最深的"性格分层"：<code>LargeHerbivore</code> 和 <code>PackHunter</code> 的 loneliness setpoint 是 0——它们必须紧贴同伴，孤独本身扣分；<code>ApexPredator</code> 和 <code>AmbushPredator</code> 的 loneliness setpoint 是 0.6——它们享受独处；<code>Scavenger</code> 的是 0.3，介于两者之间。这一组 setpoint 加上四种植物（grass / browse / fruit / meat）的 EatEfficiency 矩阵，足以让七个物种在没有任何外部"群居/独居"标签的情况下，自然演化出泾渭分明的栖息和聚集模式。</p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">主角站在这片地形与七个物种构成的世界里，要做的事比它们都难。</div>
+
+<p>主角的诞生路径是 <code>BootstrapPopulation::makeProtagonistAgent()</code>。它的身体由 <code>SurvivalStatusLayer</code> 给出——出生时血量 100（<code>max_health</code>），但水分只有 72%（<code>initial_hydration_ratio = 0.72</code>），<em>它睁眼那一刻就处在轻微焦虑里</em>。水分以每秒 0.055 的速率衰减（<code>hydration_decay_per_second</code>），跌破 0.30 阈值（<code>dehydration_threshold_ratio</code>）后开始每秒 0.18 点掉血。如果它从 100% 起步，可能根本没动力去找水；从 72% 起步，它必须在合理的时间窗里学会找水，否则就要死。</p>
+
+<p>它的能力清单很长。<code>MoveCapability</code> 给它移动；<code>EatCapability</code> 给它吃；<code>DrinkWaterCapability</code> 给它喝（喝水半径 3 米，每秒补 24 点）；<code>EmitSignalCapability</code> 给它喊（默认 2 个通道，每喊一次扣 <code>kSignalCost</code> 点能量）；<code>NurseryPickUpCapability</code> 给它捡起最近资源；<code>GoalAwareDropCapability</code> 给它放下——而且只在当前 goal 允许的时候才放，避免乱扔；<code>ChopTreeCapability</code> 给它砍树（每次只在树前停留若干秒后产出木棍）；<code>CraftSpearCapability</code> 给它把木棍加工成长矛；<code>ThrowCarriedObjectCapability</code> 给它扔东西；<code>ProtagonistHuntCapability</code> 给它狩猎；<code>FleeCapability</code> 给它逃。这一长串能力凑齐后，它的动作输出空间总宽度是 13 维——也就是 <code>action_dim = 13</code>。这个数字在配置里被写死，任何能力新增都必须严格同步它，否则旧 checkpoint 会拒绝加载，这是项目对"silent broken"的硬护栏。</p>
+
+<p>它的大脑是一个由六段组件组合的网络，统称 BrainV3：<code>ObservationEncoder</code> 把感知向量编码进 hidden 空间；<code>WorkingMemoryBank</code> 维护一段短期工作记忆；<code>BehaviorFusionTrunk</code> 是融合主体（GPU dense forward 主要发生在这一段）；<code>MotorCore</code> 把融合结果投射到运动潜空间；<code>ActionHeads</code> 输出 13 维动作；<code>InterfaceHead</code> 输出 DNC interface（控制对外部记忆的读写）。中间还嵌着一块 <code>DNCMemory</code>——可微分神经计算机，<code>memory_slots = 64</code>，<code>memory_cells = 48</code>，<code>read_heads = 4</code>。整体 hidden 维度 512。</p>
+
+<p>而这一切的入口，是一个长度为 44 的浮点数组。它叫 <code>MemoryCognitionPerception</code>，每个 tick 重新计算一次。<em>它的每一位都有显式语义。</em></p>
+
+<p>第 0 到第 15 维是<strong>空间记忆</strong>，由 <code>SpatialMemoryBank</code> 提供，里面有 9 个独立的物体追踪通道：水、食物、石头、木棍、树木、危险物、基地、营火、工地。每一通道维护一张"我曾在哪儿见过这种东西"的衰减网格——主角不需要每次都用眼睛重新扫描整个世界。第 16 到第 21 维是<strong>情景记忆</strong>，由 <code>EpisodicMemory</code> 提供，按显著性记录最近发生的大事——<code>was_attacked</code>、<code>chopped_tree</code>、<code>built_worksite</code>、<code>drank_water</code>、<code>peer_signal_heard</code>、<code>cooperative_act</code>。第 22 到第 29 维是<strong>社交记忆</strong>，由 <code>SocialMemory</code> 提供，记录与具体同伴的合作、敌意、通信关系，每一类都有 best 和 mean 两种聚合。第 30 到第 33 维是<strong>目标状态</strong>——当前激活的 GoalType 嵌入 + commitment + elapsed_seconds + completion_progress——<em>主角能看见自己当前的目标</em>。第 34 到第 41 维是 <strong>DNC 自我汇报</strong>：usage_mean、usage_max、write_peak、read_peak、read_norm、precedence_peak、write_focus、read_focus；这是一个相当大胆的设计——<em>大脑能感觉到自己的外部记忆有多满、写得有多锐利</em>。最后第 42、43 位是身体的标量：当前 health_ratio 和 hydration_ratio。</p>
+
+<p>这 44 维向量进入大脑，吐出 13 维动作向量，被各个 capability 按位消费——前两位是移动方向 (vx, vy)，第 2 位 Eat 触发，第 3 位 Drink 触发，第 4 位 Emit 触发，第 5 位 Pickup，第 6 位 Drop，第 7 位 Chop，第 8 位 Craft，第 9 位 Throw，第 10 位 Hunt，第 11 位 Flee，第 12 位预留扩展。<em>它是一只 13 个数字驱动的生物，但每一个数字的去向都可追溯。</em></p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">在大脑做决定之前，它的脑子里已经被一段规则推上了"我现在该干嘛"。</div>
+
+<p>这段规则叫 <code>GoalManager</code>。它<em>不是</em>神经网络，是一段由项目方写死的状态机。每个 tick 它根据身体、记忆、附近威胁，从 13 个 GoalType 里挑一个推荐：Explore、FindWater、FindFood、GatherStick、GatherStone、ChopTree、BuildWorksite、CraftWeapon、Hunt、Flee、RespondSignal、EmitSignal、RestNearFire。它有严格的优先级链——Flee 永远第一档（捕食者在场即触发），FindWater 第二档（水分跌破阈值），BuildWorksite 第三档（材料齐了就该完工），然后才是采集类、社交类、休养类、觅食类，最后 Explore 是默认 fallback。</p>
+
+<p>但 GoalManager 不是独裁——它只是<em>建议</em>。神经网络仍然在最终 13 维动作向量上拥有完整发言权，可以选择忽略 GoalManager。在被训练良好的种群里，神经网络会学会和它协同：goal 推 FindWater 时，把动作第 3 位（Drink）维持低位，等真正进入 3 米半径才推高。同时 Goal 切换会触发一个 commitment 衰减——初值 1.0，每 tick 自然下降——避免主角在 FindWater 和 BuildWorksite 之间疯狂抖动；这一段在 <code>GoalMemory::tick()</code> 里实现，专门用来抑制策略震荡。</p>
+
+<p>把所有这些机制串起来追一次具体事件最直观。<strong>主角第一次成功喝水。</strong>设当前世界时间 47.2 秒。从出生那一刻起水分以 0.055/s 衰减，0.72 ÷ 0.055 ≈ 13.1 秒后跌到 0.65，再过 7.6 秒跌破 0.30——<code>SurvivalStatusLayer::update()</code> 把脱水标志位翻起来，每秒开始扣 0.18 点血，并把状态变化作为事件推给 <code>EventBus</code>。下一个 tick，<code>GoalManager</code> 接到通知，把 goal 从 Explore 切成 FindWater，重置 commitment = 1.0。再下一个 tick，<code>SpatialMemoryBank::query()</code> 在 FindWater 状态下把水通道的权重抬高，第 0–15 位的空间记忆里"水"那一段被加权放大。<code>ProtagonistBrain</code> 拿到这份重新强调过的感知，在 hidden 层走完一遍，吐出 13 维动作向量——第 0、1 位指向最近水源方向，第 3 位维持低位。主角向水移动。当距离跌进 3 米，第 3 位被推高。<code>DrinkWaterCapability::execute()</code> 启动，每秒补 24 点。两秒后水分从 0.30 拉回 0.78。同时它把 <code>drank_water</code> 事件推给 EventBus，被 <code>EpisodicMemory::record()</code> 接收，按显著性写入；下一个 tick 主角"睁眼"时，第 16–21 位会感觉到："我刚刚喝过水"。</p>
+
+<blockquote>
+从水分跌破 0.30，到主角真的端起来喝，再到这次喝水被自己记住——整条链经过 <em>SurvivalStatusLayer → EventBus → GoalManager → SpatialMemoryBank → ProtagonistBrain → DrinkWaterCapability → EventBus → EpisodicMemory</em>，五个独立模块加两次 EventBus 流转。其中没有一段是凭空写死的。
+</blockquote>
+
+<p>这一次喝水会留下两条记录。<code>protagonist_behaviors.csv</code> 里 <code>drank_water_events</code> 计数器加 1（这是聚合层的统计）；如果这一回合开启了 trace，<code>event_trace.jsonl</code> 里会落一行 <code>{"type":"AgentDrankWater", "tick":472, "time_seconds":47.2, "id":...}</code>（这是事件层的精确档案）。前者用于跨代趋势观察，后者用于事后回放。</p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">喝水还只是一段短链。真正难的是社交。</div>
+
+<p>主角学说话这件事，在这个项目里被相当认真地对待。我们没有走"主角之间共享 latent 向量"的捷径——那种伪通信很容易把信息走私进去。我们走真实物理通信：<code>SignalLayer</code> 在世界里铺一张 64×64 的网格，每发一次信号就是在某个格子上放一个有强度的脉冲，每 tick 按 <code>decay_rate = 0.05</code> 衰减、按 <code>diffusion_rate = 0.08</code> 向四周扩散。一个信号大约能存活十几秒、覆盖几十米。<code>signal.channels = 2</code> 意味着<em>同时</em>能存在两种语义通道。</p>
+
+<p>主角动作向量第 4 位是 EmitSignal 的触发位。但乱叫不是免费的——每发一次扣 <code>kSignalCost</code> 点能量，把"广播"做成有成本的行为后，单纯靠基因瞎喊的个体会因为能量耗尽被自然淘汰。</p>
+
+<p>但<em>能喊不等于能交流</em>。一个种群可以在训练中演化出非常活跃的发声行为，但同伴对这些声音完全没有反应——emit 是噪音不是语言。要分辨这两者，A3 阶段引入了 <code>SignalAblation</code> 探针：<code>Disabled</code>（在订阅层就把所有 emit 丢弃，作为最强对照）、<code>ListenerBlind</code>（emit 仍然存在，但 listener 不消费它，用来分离"信号存在"和"信号被使用"）、<code>OneChannelOnly</code>（强制压到 channel 0，检验多通道语义）、<code>Noise</code>（在 listener 端给位置加 σ=1.5m 的高斯噪声，检验"听者用的是精确位置还是粗方向"）。这四个探针让"语义有没有形成"从主观判断变成可重复的量化测试。</p>
+
+<p>每一代的通信指标被收集到 <code>data/runs/_communication_metrics.csv</code>，每个通道一行。<code>emit_count</code> 是该通道总发声数；<code>unique_emitter_count</code> / <code>unique_listener_count</code> 区分"少数个体在刷"和"全体掌握"；<code>response_events</code> 计数动作向量在 channel active 时发生明显偏移的次数；最关键的是 <code>listener_policy_shift_l2</code>——把所有"听到信号那个 tick"上每个 listener 的动作向量按位求均值得到 A，把"没听到"的对应均值得到 B，A 与 B 的欧氏距离就是这个数。<strong>距离越大，说明信号对听者的行为造成了越大的偏移。</strong>如果你看到 emit_count 很高但 listener_policy_shift_l2 ≈ 0，意思非常清楚：声音存在，但什么也没改变。它是噪音，不是语言。配合 <code>response_latency_avg_seconds</code>（emit 到行为变化的平均延迟），这一对数字就是项目目前回答"通信有没有形成语义"的最硬手段。</p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">语言只是协作的一种工具，真正考验协作的，是建造。</div>
+
+<p>建造在这个项目里是最长链行为，也最难训出来。完整链条是：找到树 → 砍树拿到 stick → 找到工地 → 把 stick 放进去 → 反复直到工地集齐 4 木棍 + 2 石头 → 工地完工 → 完工后变成对捕食者真正有阻挡的物理障碍。注意，每棵树 max_integrity 16，wood_yield 3，要凑齐一个工地平均要砍两棵树、捡两块石头、来回搬运六次。整个过程随时可能被脱水中断、被捕食者打断、被同伴信号干扰——任何一段断了链子就废了。</p>
+
+<p>这一切的努力是为了一件事：<strong>真正的物理庇护</strong>。这里有段项目历史值得讲。2026 年 5 月之前我们用过一段叫 "<code>nest_predator_damage_per_second</code>" 的字段——主角只要在巢半径内，捕食者靠近就被代码强制掉血。它能让 CommDangerWarning 任务的 survived_avg 看起来不错，但它是假的：它绕过了"主角自己建庇护"的所有学习。这个字段在 2026-05-22 被正式删除。取而代之的是 <code>WorksiteLayer::enforcePredatorObstacles()</code>——只有当一个工地被主角自己一砖一木建到 100% 完工后，它才在 tickOrder=155（AgentLayer 之后）把试图穿过它的捕食者推回边界。<em>没有捷径。要庇护，就得真的去建。</em></p>
+
+<p>对应在 trace 文件里，每次完工会落一行 <code>BuildCompleted</code> 事件，payload 里两个最关键字段是 <code>contributors[]</code> 和 <code>contribution_seconds[]</code>——记录了对这个工地有贡献的每一个个体，以及他们各自陪伴在工地旁的累计秒数。每个 Worksite 自己内部维护着 <code>per_agent_contribution_seconds</code> 这张哈希表（在 <code>WorksiteLayer.h</code> 里能看到）。然后 <code>CreditLedger::settleBuild()</code> 接管按陪伴时长比例的奖励分账，每个 contributor 得到的 reward 与其陪伴秒数占比成正比。</p>
+
+<p>这套分账机制在三种合作场景里都生效。<code>settleBuild()</code> 用陪伴时长分；<code>settleHunt()</code> 用对受害者的伤害份额分；<code>settleSignal()</code> 用监听者在 emitter 范围内的 dwell 时长分。三种都会在 <code>data/runs/_credit_log.csv</code> 里留账，每行 <code>recipient / source_kind / source_id / share / reward</code>。</p>
+
+<p>更重要的是，<code>CreditLedger::computeFairness()</code> 会算一组<em>公平度指标</em>。<code>freeloader_ratio</code> 是 share 低于 1% 的 contributors 占比——衡量"白嫖率"。<code>share_gini</code> 是 share 分布的 Gini 系数——0 等于完美均分，接近 1 等于一个人吞了所有功劳。<code>top_share_mean</code> 是每次合作里"头号贡献者份额"的平均——看是不是每次都有一个绝对主导。这些指标合起来回答一个问题：<em>这个种群的协作，是真协作，还是几个个体偶尔搭便车？</em>项目对"伪合作"的防御就在这里——路过的个体不分账，看一眼就走的不分账，只有真的留在那里、真的造成了贡献，才进入分配。</p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">800 秒过去，回合结束。世界本身要被推倒，但留下的东西要被仔细处理。</div>
+
+<p>每一代的物理时长是 <code>episode_duration_seconds = 800</code> 秒。每一代会跑 <code>episodes_per_generation = 3</code> 个独立 episode——因为环境随机（资源位置、捕食者出生点会变），跑一局可能撞运气，三局取均才能区分真实能力和巧合。这是项目对 fitness 信号去噪的方式。</p>
+
+<p>每个 episode 结束后，<code>ProtagonistEvolution</code> 给每只主角算 fitness。这不是单一指标，是加权和：存活时长加分、补水次数加分、完工事件大加分、cooperative_co_presence_seconds 加分、信号响应加分、被攻击致死大扣分。所有权重在 toml 里都可调，但默认那一组是经过几次 retrain 调出来的。三局取均，就是 <code>fitness.csv</code> 里那一行——<code>avg_fitness</code> 全种群均值、<code>min_fitness</code> 最低分、<code>best_fitness</code> 最高分。</p>
+
+<p>然后是淘汰与繁殖。<code>NeatEvolution::evolveOneGeneration()</code> 做三件事。一是精英直传——按比例（通常 elite_ratio = 0.1）把得分最高的个体原封不动留到下一代。二是锦标赛选择——剩下名额，每次抽 tournament_size = 3 个个体小型 PK，赢家进繁殖池。三是变异 / 杂交——繁殖池里的个体配对，mutation_rate 决定权重抖动幅度，crossover_rate 决定杂交频率。新一代生出来后 <code>BootstrapPopulation</code> 又被调用一次，把它们撒回世界，一切重新开始。</p>
+
+<blockquote>
+我们盯的不是"某一只主角能不能做某件事"，而是"<em>第 30 代的种群比第 5 代的种群在做什么</em>"。fitness 曲线的<em>斜率</em>，才是关心的。
+</blockquote>
+
+<p>但代际曲线本身有几种典型异常要警惕。avg 一直不动——可能是 reward 函数饱和（拿满分太容易）或环境太极端（拿任何分都很难）。best 上升但 avg 不动——只有少数偶然个体解出问题，策略不普及。min 持续深负——变异分布偏极端，每代都有大量"废品"。这些信号都比"avg 高不高"重要。<code>evolution.csv</code> 是 fitness.csv 的延伸版，按物种把均值/最高分单独列出来——你能看见捕食者种群和主角种群各自的曲线。如果主角分数在涨但捕食者分数在崩，<em>主角是在打死靶子，不是在博弈</em>，这种"涨"是不真实的。</p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">数字会撒谎。要拆穿"看上去会"和"真的会"，必须把记忆模块挨个关掉来验。</div>
+
+<p>这一套工具叫 Memory Ablation Harness，对应代码 <code>routes/protagonist_ecology/runtime/MemoryAblationEval.{h,cpp}</code>。它的逻辑极其简单：拿一个训好的 genome，在固定地图上跑一组固定任务，每个任务跑两遍——一遍全功能（baseline），另一遍把某一块记忆模块关掉（variant），比较关键指标的差。差有多大，那块记忆就有多重要。</p>
+
+<p>任务有 7 个，定义在 <code>MemoryAblationTaskKind</code> 里。前四个是基础能力：<code>WaterReturn</code>（靠记忆回水源，主指标 <code>drank_water_events</code>）、<code>DangerAvoidance</code>（靠记忆躲危险，主指标 <code>survived</code>）、<code>WorksiteReturn</code>（靠记忆完成长链建造，主指标 <code>worksite_completion_events</code>）、<code>SignalResponse</code>（靠记忆响应通信，主指标 <code>signal_response_events</code>）。后三个是 A3 通信语义任务：<code>CommScoutWorker</code>（侦察兵-工人协作觅食）、<code>CommDangerWarning</code>（预警避险）、<code>CommBuildRequest</code>（远程建造请求）。每个任务对应一个 <code>configureMemoryAblationTask()</code>，会改写基础 toml 一些参数（关闭视觉、固定水源位置、强制 controlled_emitter，等等）。</p>
+
+<p>变体有 5 个。<code>baseline</code> 全开；<code>no_spatial</code> 关掉空间记忆写入；<code>no_episodic</code> 关掉情景记忆写入；<code>no_social</code> 关掉社交记忆写入；<code>no_goal</code> 关掉 GoalManager 切换。注意是关"写入"——读取仍然存在，但因为不再有新内容，旧数据会随时间被推空。每种 (Task, Variant) 在固定 genome 上跑 <code>episodes_per_task = 4</code> 取均。结果落到 <code>memory_ablation_results.csv</code>。</p>
+
+<p>判读时永远<strong>先看 primary_metric，再看 fitness</strong>——fitness 是混合分，可能因为别的原因没掉，但 primary_metric 是任务专属的硬证据。一个值得记住的判读规则：如果 WaterReturn × no_spatial 的 drank_water_events_avg 不比 baseline 低 50% 以上，那主角根本没在用空间记忆找水——它可能是靠 GoalManager 推的方向硬走或者瞎走撞上的。<em>"看上去会找水"不等于"会用空间记忆"。</em></p>
+
+<p>除了主指标，几个辅助列也有专门的判读用途。<code>protagonist_attack_avg</code> / <code>protagonist_deaths_avg</code> 是 DangerWarning 任务结果的解释钥匙——同样是 survived_avg 上升，可能是学会了"逃"也可能是学会了"打"。<code>signal_producer / listener / responder _count_avg</code> 是 A2.Step3 的通信三角色，用来诊断信号链断在哪一段：有没有人在发？有没有人能听到？有没有人真的走过去？只有三者都不为零，才说"通信链是通的"。</p>
+
+<div class="stars">⁕ ⁕ ⁕</div>
+
+<div class="lede">跨代曲线在涨、ablation 显示记忆有效、通信指标证明语义形成——这些都是"训练沙盒里的故事"。但这个项目最远的目标，不在沙盒。</div>
+
+<p>在代码里，这件事由 toml 配置中的一行 <code>world_role</code> 决定。它有三种取值，分别对应三种完全不同的世界生命周期。</p>
+
+<p><code>world_role = "train"</code> 是上面所有故事发生的地方。它是 episodic 的——每过 800 秒一回合，每过 N 个回合一代，回合之间整个世界被推倒重来。它的目的是<em>制造可重复的训练信号</em>，所以必须周期性 reset。<code>world_role = "eval"</code> 用同样的代码路径但换一组 scenario——比如换一张地图、把水源固定在某个位置、强制启用 controlled_emitter（A3 通信任务里那个稳定发信号的非 agent emitter）。它仍然 episodic，但随机种子和 train 不同步，避免训练种群在它见过的地图上过拟合。</p>
+
+<p><code>world_role = "live"</code> 是真正的生产世界。一旦它被启动，<em>它永远不被重置</em>。时间一直向前走，主角生老病死，物种代际更替，但世界本身的物理时间不允许倒退。这是 <code>PRODUCTION_WORLD_LIFECYCLE_SPEC.md</code> 里规定的第一条不变量，也是整个 live 路径上最严格的约束。</p>
+
+<p>这条不变量带来的连锁后果非常深。<strong>训练永远不能在 live 里发生。</strong>因为训练需要 reset，而 live 不允许。所以 live 的个体只是"活体"——权重从来不会在线更新。所有的训练发生在另一组叫 <em>shadow / frontier</em> 的影子世界里，跑的是从 live 摘录的 incident 改造成的 challenge 任务。</p>
+
+<p>第二条不变量：<strong>新血脉只能通过两条路进入 live。</strong>一是 live 内部的繁殖——两只 live 个体相遇配对生子；这是主路径，慢但稳。二是边境迁徙（migration）——shadow 训练出的优秀血脉先在 frontier 小流量公测，过了 baseline / regression / canary 三道闸门，才允许迁徙到 live。这是辅路径，快但要守门。</p>
+
+<p>这一组规则的意义不在"代码上更复杂"，而在于<em>它把一个不可逆的世界和一个可重置的训练环境严格隔开</em>。一旦 live 启动后被发现严重 bug，唯一合法的修复路径是：暂停 migration、留住 live、在 shadow 修复、重新过闸门、再迁徙补丁血脉。绝不允许"把 live 推倒重来"。</p>
+
+<blockquote>
+这个项目最重要的判断，从来不是"这一代主角的 avg_fitness 是多少"，而是"<em>这只主角值不值得让它进入那个永远不会重置的世界</em>"。
+</blockquote>
+
+<p>所以再回头看：这片世界不只是主角。它是 12 个 World Layer 同时在动；它是 7 种物种用不同的 damage_threshold 和 loneliness setpoint 在博弈；它是 NurseryProgression 沿着 5 个解锁事件循序投料；它是 InterventionDirector 在预算、压力、冷却约束下的有限干预；它是 CreditLedger 在 build / hunt / signal 三条线上按贡献分账；它是 CommunicationMetrics 用 listener_policy_shift_l2 鉴别声音和语言；它是 TraceRecorder 把 EventBus 的离散事件、Agent 的状态快照、World 的全貌聚合，分别写到 <code>event_trace.jsonl</code>、<code>agent_trace.csv</code>、<code>world_trace.csv</code>，用 <code>agent_interval = 10</code> 的下采样在每一代第一次 episode 留档。它是 7 个 Memory Ablation 任务 × 5 个变体反复回答"这块记忆到底有没有用"。它是 NEAT 演化在外层撑起代际更替——elite 直传 + tournament 选择 + 变异 / 杂交。</p>
+
+<p>训练只是手段，<em>live 才是目的。</em>fitness.csv 里的数字、ablation 实验的对照、CommunicationMetrics 的 policy_shift、CreditLedger 的 freeloader_ratio——所有这些工具的存在，归根结底是为了一件事：在某一只主角真正进入 live 之前，我们能拿出一组可被检查的证据，证明它已经准备好了，证明它不是在打死靶子，证明它身边的同伴是真协作不是搭便车，证明它脑子里的记忆是真在用而不是装样子，证明它发出的声音是真有所指而不是噪音。</p>
+
+<p>这就是这片世界的样子。它有人在看——这个人就是看代码、看 CSV、看 trace、看 ablation 的你。</p>
+
+<section class="closing">
+  Neural Eco · routes/protagonist_ecology · 2026-05-22<br/>
+  本文档随代码同步更新；任何机制改动需在指标链条里得到闭环验证。
+</section>
+
+</article>
+
+<script>
+  window.addEventListener('scroll', () => {
+    const h = document.documentElement;
+    const pct = (h.scrollTop / (h.scrollHeight - h.clientHeight)) * 100;
+    document.getElementById('bar').style.width = pct + '%';
+  });
+</script>
 </body>
 </html>
