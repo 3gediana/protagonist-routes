@@ -470,6 +470,29 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     }
     was_alive_ = vital_state_.alive;
 
+    // D-043 P2: per-step state-based bonus (Φ-style "what the agent has
+    // accumulated"). Awards a small ongoing payout for holding house +
+    // clothes + followers + inventory diversity, so the agent learns these
+    // as persistent values rather than one-shot first_X events.
+    {
+        float phi = 0.0f;
+        // has at least one completed building: +0.5
+        if (!buildings_.buildings().empty()) phi += 0.5f;
+        // wearing any clothing: +0.3
+        if (wardrobe_.worn() != dp::agent::ItemKind::Count) phi += 0.3f;
+        // followers: +0.1 each, capped at 5 followers (0.5)
+        phi += std::min(0.5f, 0.1f * static_cast<float>(tame_.follower_count()));
+        // inventory diversity: +0.05 per unique kind, capped at 10 unique (0.5)
+        int unique = 0;
+        for (int k = 0; k < static_cast<int>(dp::agent::ItemKind::Count); ++k) {
+            if (inventory_.num_of(static_cast<dp::agent::ItemKind>(k)) > 0) {
+                ++unique;
+            }
+        }
+        phi += std::min(0.5f, 0.05f * static_cast<float>(unique));
+        reward_.event_state_bonus(phi);
+    }
+
     reward_.end_step();
 }
 

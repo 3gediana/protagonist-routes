@@ -975,6 +975,14 @@ int run_self_tests() {
         float m_crisis = r.end_step();
         check(std::abs(m_crisis - 0.3f) < 1e-3f,
               "RewardSystem: milestone honors crisis scale param");
+
+        // D-043 P2: per-step state-based bonus = state_bonus_coef × phi.
+        r.reset_episode();
+        r.begin_step();
+        r.event_state_bonus(1.5f);  // phi=1.5 (max realistic)
+        float sb = r.end_step();
+        check(std::abs(sb - (0.005f * 1.5f)) < 1e-5f,
+              "RewardSystem: state_bonus = coef × phi (D-043 P2)");
     }
 
     // --- SpatialMemory ---
@@ -1643,12 +1651,29 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // Death edge: count the -100 in this step's reward and let
+            // Death edge: count the -10 in this step's reward and let
             // EpisodeManager handle the actual reset *after* end_step().
             if (was_alive && !vital_state.alive) {
                 reward.event_death();
             }
             was_alive = vital_state.alive;
+
+            // D-043 P2: per-step state-based bonus (Φ = house + clothes +
+            // followers + inventory diversity). Mirrors Environment.cpp.
+            {
+                float phi = 0.0f;
+                if (!buildings.buildings().empty()) phi += 0.5f;
+                if (wardrobe.worn() != dp::agent::ItemKind::Count) phi += 0.3f;
+                phi += std::min(0.5f, 0.1f * static_cast<float>(tame.follower_count()));
+                int unique = 0;
+                for (int k = 0; k < static_cast<int>(dp::agent::ItemKind::Count); ++k) {
+                    if (inventory.num_of(static_cast<dp::agent::ItemKind>(k)) > 0) {
+                        ++unique;
+                    }
+                }
+                phi += std::min(0.5f, 0.05f * static_cast<float>(unique));
+                reward.event_state_bonus(phi);
+            }
 
             reward.end_step();
             episodes.tick(dt);

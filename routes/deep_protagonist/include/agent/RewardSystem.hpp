@@ -83,6 +83,19 @@ public:
         // bite ≈ -0.83 — well within range.
         float reward_clip_min  = -10.0f;
         float reward_clip_max  = +10.0f;
+
+        // D-043 P2: state-based bonus coefficient. Each step the agent gets
+        // w * Φ(s) added to its reward, where Φ is a hand-crafted potential
+        // function over "things the agent has accumulated" (house, clothes,
+        // followers, inventory diversity). This is NOT strict PBRS (which
+        // would use γΦ' - Φ and yield negative per-step bonus while holding
+        // a state) — we want the opposite: holding Φ should give a small
+        // ongoing positive payout so the agent learns "I have a home" as a
+        // persistent value. Trade-off: violates Ng 1999 policy-invariance,
+        // but matches user's "developmental sense" requirement. Coef 0.005
+        // means full Φ≈1.5 → +0.0075/step → ~+67 over a 9000-step episode,
+        // dominant enough to shape behaviour but well within the clip.
+        float state_bonus_coef = 0.005f;
     };
 
     // Per-step breakdown so we can debug *why* a reward is what it is.
@@ -98,10 +111,12 @@ public:
         float shelter   = 0.0f;
         float craft     = 0.0f;
         float milestone = 0.0f;
+        // D-043 P2: per-step state-bonus from Φ(s). See Weights::state_bonus_coef.
+        float potential = 0.0f;
 
         float total() const {
             return alive + food + water + kills + bites + death
-                 + vital + collect + shelter + craft + milestone;
+                 + vital + collect + shelter + craft + milestone + potential;
         }
     };
 
@@ -121,6 +136,8 @@ public:
         float r_shelter   = 0.0f;
         float r_craft     = 0.0f;
         float r_milestone = 0.0f;
+        // D-043 P2: episode total of per-step Φ-based bonuses.
+        float r_potential = 0.0f;
 
         void reset();
         void add(const StepReward& s);
@@ -155,6 +172,11 @@ public:
     // `scale` parameter ∈ [0, 1] dampens the milestone when the agent is
     // in vital crisis (eg. about to die of thirst). Default 1.0 = full.
     void   event_milestone(float scale = 1.0f);
+    // D-043 P2: per-step "state-bonus" reward. Pass Φ(s_now), the
+    // hand-crafted potential of the agent's current state (has_house +
+    // has_clothes + n_followers + inventory_diversity). Bonus added each
+    // step = state_bonus_coef × phi. Yields ~+0.0075/step at full Φ.
+    void   event_state_bonus(float phi);
 
     // Close the step. Pushes per-component into ep_, returns total.
     float  end_step();

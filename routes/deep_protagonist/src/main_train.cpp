@@ -285,12 +285,13 @@ int main(int argc, char** argv) {
                      "(alive={:+.1f} food={:+.1f} water={:+.1f} kills={:+.1f} "
                      "bites={:+.1f} death={:+.1f} vital={:+.1f} "
                      "collect={:+.1f} shelter={:+.1f} craft={:+.1f} "
-                     "milestone={:+.1f})",
+                     "milestone={:+.1f} potential={:+.1f})",
                      episode_id, s.steps, s.total_reward,
                      ms.count(), dp::env::EpisodeMilestones::N, score,
                      s.r_alive, s.r_food, s.r_water, s.r_kills,
                      s.r_bites, s.r_death, s.r_vital,
-                     s.r_collect, s.r_shelter, s.r_craft, s.r_milestone);
+                     s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
+                     s.r_potential);
         if (mf) {
             double mv = astats.ticks > 0 ? astats.move_mag_sum / astats.ticks : 0.0;
             double yw = astats.ticks > 0 ? astats.yaw_abs_sum  / astats.ticks : 0.0;
@@ -299,13 +300,14 @@ int main(int argc, char** argv) {
                 "\"r_alive\":%.3f,\"r_food\":%.3f,\"r_water\":%.3f,"
                 "\"r_kills\":%.3f,\"r_bites\":%.3f,\"r_death\":%.3f,"
                 "\"r_vital\":%.3f,\"r_collect\":%.3f,\"r_shelter\":%.3f,"
-                "\"r_craft\":%.3f,\"r_milestone\":%.3f,"
+                "\"r_craft\":%.3f,\"r_milestone\":%.3f,\"r_potential\":%.3f,"
                 "\"deaths\":%d,\"policy\":\"%s\",\"seed\":%llu,"
                 "\"mv\":%.3f,\"yw\":%.3f,\"score\":%.4f,\"unlocks\":[",
                 episode_id, s.steps, s.total_reward,
                 s.r_alive, s.r_food, s.r_water, s.r_kills,
                 s.r_bites, s.r_death, s.r_vital,
                 s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
+                s.r_potential,
                 env.vitals().deaths, policy.c_str(),
                 static_cast<unsigned long long>(seed),
                 mv, yw, score);

@@ -11,6 +11,7 @@ void RewardSystem::EpisodeStats::reset() {
     r_alive = r_food = r_water = r_kills = r_bites = 0.0f;
     r_death = r_vital = r_collect = r_shelter = r_craft = 0.0f;
     r_milestone = 0.0f;
+    r_potential = 0.0f;
 }
 
 void RewardSystem::EpisodeStats::add(const StepReward& s) {
@@ -27,6 +28,7 @@ void RewardSystem::EpisodeStats::add(const StepReward& s) {
     r_shelter   += s.shelter;
     r_craft     += s.craft;
     r_milestone += s.milestone;
+    r_potential += s.potential;
 }
 
 void RewardSystem::begin_step() { step_ = StepReward{}; }
@@ -81,6 +83,13 @@ void RewardSystem::event_built_shelter()      { step_.shelter   += w_.built_shel
 void RewardSystem::event_crafted_tool()       { step_.craft     += w_.crafted_tool; }
 void RewardSystem::event_milestone(float scale) {
     step_.milestone += w_.milestone * std::clamp(scale, 0.0f, 1.0f);
+}
+
+void RewardSystem::event_state_bonus(float phi) {
+    // D-043 P2: per-step state-based reward. phi is expected to be a small
+    // non-negative quantity (~ [0, 1.5]) representing accumulated state
+    // (house, clothes, followers, inventory diversity). Clamp defensively.
+    step_.potential += w_.state_bonus_coef * std::max(0.0f, phi);
 }
 
 float RewardSystem::end_step() {
