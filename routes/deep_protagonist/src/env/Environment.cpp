@@ -147,10 +147,12 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 vital_state_.stamina = std::max(0.0f, vital_state_.stamina - 25.0f);
                 reward_.event_eat(-15.0f);
             } else {
-                if (kcal > 0.0f) { vitals_.eat(vital_state_, kcal);
-                                   reward_.event_eat(kcal); }
-                if (ml   > 0.0f) { vitals_.drink(vital_state_, ml);
-                                   reward_.event_drink(ml); }
+                if (kcal > 0.0f) {
+                    reward_.event_eat(vitals_.eat(vital_state_, kcal));
+                }
+                if (ml   > 0.0f) {
+                    reward_.event_drink(vitals_.drink(vital_state_, ml));
+                }
             }
             // 30% chance Fruit/Berry drops a Seed for late-stage farming.
             if (k == dp::world::PlantKind::Fruit
@@ -171,15 +173,13 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     if (action.drink) {
         auto b = world_.biome_at(as.pos_x, as.pos_y);
         if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
-            vitals_.drink(vital_state_, 35.0f);
-            reward_.event_drink(35.0f);
+            reward_.event_drink(vitals_.drink(vital_state_, 35.0f));
             auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
                                               agent_.yaw(), 2.0f, 100.0f);
             if (fish.killed
                 && animals_.animals()[fish.index].kind
                     == dp::world::AnimalKind::Fish) {
-                vitals_.eat(vital_state_, 20.0f);
-                reward_.event_eat(20.0f);
+                reward_.event_eat(vitals_.eat(vital_state_, 20.0f));
             }
         }
     }
@@ -264,20 +264,16 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             auto kind = animals_.animals()[hit.index].kind;
             if (kind == dp::world::AnimalKind::Wolf) {
                 reward_.event_wolf_killed();
-                vitals_.eat(vital_state_, 40.0f);
-                reward_.event_eat(40.0f);
+                reward_.event_eat(vitals_.eat(vital_state_, 40.0f));
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Rabbit) {
-                vitals_.eat(vital_state_, 15.0f);
-                reward_.event_eat(15.0f);
+                reward_.event_eat(vitals_.eat(vital_state_, 15.0f));
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Deer) {
-                vitals_.eat(vital_state_, 40.0f);
-                reward_.event_eat(40.0f);
+                reward_.event_eat(vitals_.eat(vital_state_, 40.0f));
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Fish) {
-                vitals_.eat(vital_state_, 20.0f);
-                reward_.event_eat(20.0f);
+                reward_.event_eat(vitals_.eat(vital_state_, 20.0f));
             }
         }
     }

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <numeric>
 #include <random>
 
@@ -286,6 +287,30 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
         stats.clip_frac   /= total_minibatches;
     }
     return stats;
+}
+
+void PPO::save(const std::string& path) const {
+    // Two-archive scheme: one file for the module, a sibling file for
+    // the optimizer. libtorch's serialize::OutputArchive doesn't easily
+    // mix modules + optimizers inside the same archive, and splitting
+    // them is what most reference implementations do.
+    torch::save(net_, path);
+    torch::save(*opt_, path + ".opt");
+    spdlog::info("PPO checkpoint saved: {}", path);
+}
+
+void PPO::load(const std::string& path) {
+    torch::load(net_, path);
+    net_->to(device_);
+    // Optimizer file is optional - if missing we keep a fresh one (this
+    // is fine for evaluation-only loads).
+    std::string opt_path = path + ".opt";
+    if (std::filesystem::exists(opt_path)) {
+        torch::load(*opt_, opt_path);
+        spdlog::info("PPO checkpoint + optimizer loaded: {}", path);
+    } else {
+        spdlog::info("PPO checkpoint loaded (no optimizer file): {}", path);
+    }
 }
 
 }  // namespace dp::policy

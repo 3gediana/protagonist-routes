@@ -51,10 +51,15 @@ public:
               float dt,
               float cold_resist = 0.0f) const;
 
-    // Consumption events
-    void eat(VitalState& s, float nutrition) const;       // food refills hunger
-    void drink(VitalState& s, float amount) const;        // water refills thirst
-    void rest(VitalState& s, float dt) const;             // sit still, regen stamina
+    // Consumption events. Both return the *actual* amount of vital
+    // restored (0 when the meter was already full); callers pass that
+    // delta to RewardSystem so reward shaping reflects what the agent
+    // actually got, not the attempted amount. This is the fix for the
+    // S4-pre training run where PPO discovered it could spam Q in a
+    // river to farm reward despite thirst already being capped at 100.
+    float eat(VitalState& s, float nutrition) const;       // food refills hunger
+    float drink(VitalState& s, float amount) const;        // water refills thirst
+    void  rest(VitalState& s, float dt) const;             // sit still, regen stamina
 
     // Damage / kill / respawn helpers
     void respawn(VitalState& s) const;

@@ -115,6 +115,9 @@ int main(int argc, char** argv) {
     uint64_t seed         = 12345;
     std::string policy    = "wander";
     std::string metrics_path;
+    std::string save_path;                // checkpoint output (PPO only)
+    int         save_every = 0;           // save every N updates (0=off)
+    std::string load_path;                // resume from this checkpoint
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -125,15 +128,22 @@ int main(int argc, char** argv) {
             }
             return std::string(argv[++i]);
         };
-        if      (a == "--steps")    max_steps    = std::stoi(next());
-        else if (a == "--episodes") max_episodes = std::stoi(next());
-        else if (a == "--seed")     seed         = std::stoull(next());
-        else if (a == "--policy")   policy       = next();
-        else if (a == "--metrics")  metrics_path = next();
+        if      (a == "--steps")      max_steps    = std::stoi(next());
+        else if (a == "--episodes")   max_episodes = std::stoi(next());
+        else if (a == "--seed")       seed         = std::stoull(next());
+        else if (a == "--policy")     policy       = next();
+        else if (a == "--metrics")    metrics_path = next();
+        else if (a == "--save-path")  save_path    = next();
+        else if (a == "--save-every") save_every   = std::stoi(next());
+        else if (a == "--load")       load_path    = next();
         else if (a == "-h" || a == "--help") {
-            std::printf("Usage: %s [--steps N] [--episodes N] [--seed S] "
-                        "[--policy wander|noop] [--metrics path.jsonl]\n",
-                        argv[0]);
+            std::printf(
+                "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
+                "       [--policy wander|noop|ppo]\n"
+                "       [--metrics path.jsonl]\n"
+                "       [--save-path file.pt --save-every N]\n"
+                "       [--load file.pt]\n",
+                argv[0]);
             return 0;
         } else {
             spdlog::warn("Unknown arg '{}', ignoring.", a);
@@ -182,7 +192,12 @@ int main(int argc, char** argv) {
         pcfg.seed = static_cast<int>(seed & 0x7FFFFFFFULL);
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
         rollout.reserve(pcfg.rollout_steps);
+        if (!load_path.empty()) {
+            ppo->load(load_path);
+        }
     }
+    int updates_since_save = 0;
+    int total_updates      = 0;
 
     auto log_episode = [&](int episode_id,
                            const dp::agent::RewardSystem::EpisodeStats& s) {
@@ -257,12 +272,21 @@ int main(int argc, char** argv) {
                                        dummy_lp, last_v);
                 }
                 auto stats = ppo->update(rollout, last_v);
-                spdlog::info("PPO update: pi_loss={:+.4f}  v_loss={:.4f}  "
+                ++total_updates;
+                ++updates_since_save;
+                spdlog::info("PPO update #{:3d}: pi={:+.4f}  v={:.4f}  "
                              "ent={:.3f}  kl={:+.4f}  clip={:.2f}",
+                             total_updates,
                              stats.policy_loss, stats.value_loss,
                              stats.entropy,    stats.approx_kl,
                              stats.clip_frac);
                 rollout.clear();
+
+                if (save_every > 0 && !save_path.empty()
+                    && updates_since_save >= save_every) {
+                    ppo->save(save_path);
+                    updates_since_save = 0;
+                }
             }
         }
 
@@ -282,6 +306,11 @@ int main(int argc, char** argv) {
     spdlog::info("Done: {} steps, {} episodes, {:.2f}s wall ({:.0f} steps/s)",
                  steps_done, episodes_done, elapsed_s, steps_per_s);
 
+    // Final save - always write a checkpoint at the end if save_path was
+    // provided, regardless of the save_every cadence.
+    if (policy == "ppo" && ppo && !save_path.empty()) {
+        ppo->save(save_path);
+    }
     if (mf) std::fclose(mf);
     return 0;
 }

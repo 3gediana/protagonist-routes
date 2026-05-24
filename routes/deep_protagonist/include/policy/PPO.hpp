@@ -100,6 +100,13 @@ public:
     UpdateStats update(const std::vector<Transition>& rollout,
                        float last_value);
 
+    // Persist / restore. Saves both the network weights AND the optimizer
+    // state to a single file using libtorch's archive format. Use this
+    // between training sessions so the next run picks up exactly where
+    // we stopped (counts, momentum, log_std all included).
+    void save(const std::string& path) const;
+    void load(const std::string& path);
+
     // Convenience for logging.
     torch::Device device() const { return device_; }
 

@@ -88,12 +88,16 @@ void VitalSystem::tick(VitalState& s,
     }
 }
 
-void VitalSystem::eat(VitalState& s, float nutrition) const {
-    s.hunger = clamp01_100(s.hunger + nutrition);
+float VitalSystem::eat(VitalState& s, float nutrition) const {
+    float old = s.hunger;
+    s.hunger  = clamp01_100(s.hunger + nutrition);
+    return s.hunger - old;
 }
 
-void VitalSystem::drink(VitalState& s, float amount) const {
-    s.thirst = clamp01_100(s.thirst + amount);
+float VitalSystem::drink(VitalState& s, float amount) const {
+    float old = s.thirst;
+    s.thirst  = clamp01_100(s.thirst + amount);
+    return s.thirst - old;
 }
 
 void VitalSystem::rest(VitalState& s, float dt) const {

@@ -22,6 +22,7 @@
 #include "agent/TameSystem.hpp"
 #include "agent/VitalSystem.hpp"
 #include "agent/Wardrobe.hpp"
+#include "policy/PPO.hpp"
 #include "render/FlyCamera.hpp"
 #include "render/WorldRenderer.hpp"
 #include "world/AnimalSystem.hpp"
@@ -978,6 +979,26 @@ int main(int argc, char** argv) {
         return run_self_tests();
     }
 
+    // CLI for the viewer. Defaults to "manual" (keyboard) which is what
+    // we've always had. With --policy ppo --load file.pt the agent will
+    // be driven by a trained network instead of the human; movement keys
+    // (E/Q/F/...) are still listened to as overrides if you want to nudge
+    // the agent during a demo.
+    std::string viewer_policy = "manual";
+    std::string viewer_load_path;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        auto next = [&]() -> std::string {
+            if (i + 1 >= argc) {
+                spdlog::error("missing value for {}", a);
+                std::exit(2);
+            }
+            return std::string(argv[++i]);
+        };
+        if      (a == "--policy") viewer_policy    = next();
+        else if (a == "--load")   viewer_load_path = next();
+    }
+
     try {
         print_banner();
         run_torch_smoke();
@@ -1091,6 +1112,24 @@ int main(int argc, char** argv) {
         // 600s = 10 minutes per in-game day; start at 0.30 = early morning
         dp::world::Daylight day(600.0f, 0.30f);
 
+        // Optional PPO policy (loaded from a checkpoint). When present,
+        // the main loop uses sample_action() in place of wander, and
+        // SKIPS the keyboard overlay so trained behaviour is the only
+        // input. Pass --policy ppo --load file.pt to enable.
+        std::unique_ptr<dp::policy::PPO> ppo_policy;
+        if (viewer_policy == "ppo") {
+            dp::policy::PPOConfig pcfg;
+            ppo_policy = std::make_unique<dp::policy::PPO>(pcfg);
+            if (!viewer_load_path.empty()) {
+                ppo_policy->load(viewer_load_path);
+                spdlog::info("Viewer running with PPO policy from '{}'",
+                             viewer_load_path);
+            } else {
+                spdlog::warn("--policy ppo set but no --load given; using "
+                             "freshly-initialised network (random behaviour)");
+            }
+        }
+
         spdlog::info("Window open. WASD+Mouse to fly, Ctrl=fast, Esc=quit.");
 
         // -----------------------------------------------------------
@@ -1111,28 +1150,42 @@ int main(int argc, char** argv) {
             if (IsKeyDown(KEY_Y)) day_dt *= 20.0f;
             day.advance(day_dt);
 
-            // Tick world: sample a wander action (placeholder for the
-            // PPO policy we will plug in at S4) and overlay every keyboard
-            // trigger onto the same AgentAction. From this point forward
-            // *no system reads IsKeyPressed directly* - everything goes
-            // through agent.last_action(), which means PPO at S4 only has
-            // to replace this single line.
-            dp::agent::AgentAction action = agent.sample_wander_action(dt);
-            action.eat                 = IsKeyPressed(KEY_E);
-            action.drink               = IsKeyPressed(KEY_Q);
-            action.attack              = IsKeyPressed(KEY_F);
-            action.collect             = IsKeyPressed(KEY_R);  // shared key
-            action.deposit_to_site     = IsKeyPressed(KEY_R);  // R prioritises deposit
-            action.place_shelter       = IsKeyPressed(KEY_B);
-            action.craft_spear         = IsKeyPressed(KEY_C);
-            action.craft_grass_dress   = IsKeyPressed(KEY_X);
-            action.craft_fur_cloak     = IsKeyPressed(KEY_Z);
-            action.wear_clothes        = IsKeyPressed(KEY_V);
-            action.place_blueprint     = IsKeyPressed(KEY_P);
-            action.cycle_building_type = IsKeyPressed(KEY_TAB);
-            action.plant_seed          = IsKeyPressed(KEY_N);
-            action.water_plot          = IsKeyPressed(KEY_J);
-            action.feed_tame           = IsKeyPressed(KEY_K);
+            // Compose this tick's AgentAction. Two paths:
+            //   * PPO-driven (when ppo_policy is set): build the 145-dim
+            //     observation, run sample_action(), and use whatever the
+            //     network returned. Keyboard is ignored so trained
+            //     behaviour isn't contaminated.
+            //   * Manual (default): wander gives a base move direction;
+            //     keyboard triggers stamp on top.
+            dp::agent::AgentAction action;
+            if (ppo_policy) {
+                dp::agent::ObservationBuilder::Vector obs;
+                dp::agent::ObservationBuilder::compose(
+                    world, agent, vital_state, day,
+                    plants, animals, resources,
+                    inventory, shelter, episodes, progress,
+                    buildings, wardrobe, farming, tame, obs);
+                std::vector<float> cont, disc;
+                float lp = 0.0f, vv = 0.0f;
+                action = ppo_policy->sample_action(obs, cont, disc, lp, vv);
+            } else {
+                action = agent.sample_wander_action(dt);
+                action.eat                 = IsKeyPressed(KEY_E);
+                action.drink               = IsKeyPressed(KEY_Q);
+                action.attack              = IsKeyPressed(KEY_F);
+                action.collect             = IsKeyPressed(KEY_R);  // shared key
+                action.deposit_to_site     = IsKeyPressed(KEY_R);  // R prioritises deposit
+                action.place_shelter       = IsKeyPressed(KEY_B);
+                action.craft_spear         = IsKeyPressed(KEY_C);
+                action.craft_grass_dress   = IsKeyPressed(KEY_X);
+                action.craft_fur_cloak     = IsKeyPressed(KEY_Z);
+                action.wear_clothes        = IsKeyPressed(KEY_V);
+                action.place_blueprint     = IsKeyPressed(KEY_P);
+                action.cycle_building_type = IsKeyPressed(KEY_TAB);
+                action.plant_seed          = IsKeyPressed(KEY_N);
+                action.water_plot          = IsKeyPressed(KEY_J);
+                action.feed_tame           = IsKeyPressed(KEY_K);
+            }
             agent.apply_action(action, world, physics, dt);
             const auto& as = agent.state();
 
@@ -1225,8 +1278,8 @@ int main(int argc, char** argv) {
                         vital_state.stamina = std::max(0.0f, vital_state.stamina - 25.0f);
                         reward.event_eat(-15.0f);
                     } else {
-                        if (kcal > 0.0f) { vitals.eat(vital_state, kcal);  reward.event_eat(kcal); }
-                        if (ml   > 0.0f) { vitals.drink(vital_state, ml);  reward.event_drink(ml); }
+                        if (kcal > 0.0f) { reward.event_eat(  vitals.eat(  vital_state, kcal)); }
+                        if (ml   > 0.0f) { reward.event_drink(vitals.drink(vital_state, ml)); }
                     }
                     // 30% chance to also drop a Seed for Fruit/Berry
                     // (used to plant farms in late stage).
@@ -1249,16 +1302,14 @@ int main(int argc, char** argv) {
             if (action.drink) {
                 auto b = world.biome_at(as.pos_x, as.pos_y);
                 if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
-                    vitals.drink(vital_state, 35.0f);
-                    reward.event_drink(35.0f);
+                    reward.event_drink(vitals.drink(vital_state, 35.0f));
                     // Same key: try to catch a fish in arm's reach.
                     auto fish = animals.agent_attack(as.pos_x, as.pos_y,
                                                      agent.yaw(), 2.0f, 100.0f);
                     if (fish.killed
                         && animals.animals()[fish.index].kind
                             == dp::world::AnimalKind::Fish) {
-                        vitals.eat(vital_state, 20.0f);
-                        reward.event_eat(20.0f);
+                        reward.event_eat(vitals.eat(vital_state, 20.0f));
                     }
                 }
             }
@@ -1366,20 +1417,16 @@ int main(int argc, char** argv) {
                     auto kind = animals.animals()[hit.index].kind;
                     if (kind == dp::world::AnimalKind::Wolf) {
                         reward.event_wolf_killed();
-                        vitals.eat(vital_state, 40.0f);
-                        reward.event_eat(40.0f);
+                        reward.event_eat(vitals.eat(vital_state, 40.0f));
                         inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Rabbit) {
-                        vitals.eat(vital_state, 15.0f);
-                        reward.event_eat(15.0f);
+                        reward.event_eat(vitals.eat(vital_state, 15.0f));
                         inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Deer) {
-                        vitals.eat(vital_state, 40.0f);
-                        reward.event_eat(40.0f);
+                        reward.event_eat(vitals.eat(vital_state, 40.0f));
                         inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Fish) {
-                        vitals.eat(vital_state, 20.0f);
-                        reward.event_eat(20.0f);
+                        reward.event_eat(vitals.eat(vital_state, 20.0f));
                     }
                 }
             }

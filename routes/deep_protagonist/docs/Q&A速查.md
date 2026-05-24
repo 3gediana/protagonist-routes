@@ -199,3 +199,19 @@ PPO 的"输入向量"。神经网络一帧就吃这 145 个数字然后吐出动
 - 死亡率 < 10%（wander 29%）→ 学会避狼
 - r_kills > 5（wander 0）→ 学会主动战斗
 - r_milestone > 20（wander 0.4）→ 解锁了中期
+
+## Q-018 · "PPO 第一次 1M 训练，怎么 ep39 后 reward 暴涨到 +6000？"（2026-05-24 13:25）
+
+**经典 reward hacking 案例**——PPO 找到了奖励函数的 bug 在疯狂刷分，不是真的学到了什么。
+
+具体经过：
+- 蓝图给 drink 的奖励权重 = `0.03 × ml`，每次按 Q 喝 35ml = +1.05 reward
+- VitalSystem.drink 在 thirst 满 100 时已经"装不下"了，actual delta 为 0
+- 但 RewardSystem 不知道，照样按"试图喝的量"给奖励
+- 9000 ticks × +1.05 = 上限 +9450 / episode
+
+PPO 在 ep39 偶然探索到河岸 + 反复按 Q 的组合，立刻锁死这条路径。然后所有 episode 都开始疯狂刷水。死亡率为 0（站着不动当然不死），但 milestone、building、kills 全部归零——agent 永远不会去探索建造和农耕。
+
+**修复**（D-036）：让 `vitals.drink/eat` 返回 actual_delta，调用方传给 `reward.event_X(actual)`。这样喝不进去的水不给 reward。`runs/ppo_run1_buggy.jsonl` 留作教学样本。
+
+**RL 工程师必须记住的铁律**："奖励应该等于 agent 实际获得的，不是试图获得的"。所有 reward 函数设计前先问自己：这个量有上限吗？上限到了还会触发 reward 吗？如果会，就是 reward hacking 漏洞。
