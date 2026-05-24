@@ -39,11 +39,18 @@ TEST(NeatBrain, ForwardProducesExpectedShape) {
     ASSERT_EQ(outputs.size(), 1u);
 }
 
-TEST(NeatBrain, InputMismatchThrows) {
+TEST(NeatBrain, InputMismatchSilentDegrade) {
+    // Layer 4 fix (commit bd07564): NeatBrain::forward used to throw on
+    // dim mismatch, but parallelFor workers can't unwind out of throws,
+    // so a single bad genome would crash the whole population mid-tick.
+    // Now it logs an error and returns zeros so the rest of the pop
+    // keeps running and the mismatch is visible in logs.
     NeatGenome genome = makeRecurrentGenome();
     NeatBrain brain(genome);
 
-    EXPECT_THROW((void)brain.forward(std::vector<float>{1.0f, 2.0f}, 1.0f), std::invalid_argument);
+    auto outputs = brain.forward(std::vector<float>{1.0f, 2.0f}, 1.0f);
+    EXPECT_EQ(outputs.size(), 1u);
+    EXPECT_FLOAT_EQ(outputs[0], 0.0f);
 }
 
 TEST(NeatBrain, RecurrentStatePersistsUntilReset) {

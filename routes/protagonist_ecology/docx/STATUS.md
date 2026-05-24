@@ -1,9 +1,27 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-24 下午（**Layer 1-5 全部 + Layer 6/7/8 R1 + 训练就绪审计 9/12 项收口**）
+> 最后巡检：2026-05-24 傍晚（**Layer 1-5 全部 + Layer 6/7/8 R1 + 训练就绪审计 12/12 项全部收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`b0cbfe4 Layer 4/5 #5 + #12: A/B reward-shift result + reproduction unit tests` (此后还有 Layer 5 #11 commit)
+> 当前 HEAD：`34aef3a STATUS.md: sync 2026-05-24 PM training-readiness audit (9/12 items closed)` (此后 PM 收口 #6 / #9 / #10 三项)
+>
+> **2026-05-24 傍晚 训练就绪审计剩余 3 项收口（#6 / #9 / #10）**：
+> - **#6 [MEDIUM] 主角自选 BuildingType**（待提交）：
+>   - 新 `Agent::buildingTypeChoice()` uint8_t 字段（core/route 解耦），新 `routes/protagonist_ecology/capability/ChooseBuildingTypeCapability` 4-output argmax。
+>   - `WorksiteLayer::activateNextDormant()` 加 vote 覆盖：在 `interaction_radius * 3` 内的 protagonist（archetype_tag==0）多数票决定该 site 的 building_type；无 protagonist 时退回 seed 期 weight 分布（向后兼容）。
+>   - toml gate `population.protagonist.building_type_choice_enabled = false` 默认 off，启用时 `action_dim` 必须 +4。**所有现有 toml/checkpoint 不需改动**。
+>   - 验证：`Layer5ChooseBuildingType.*` / `Layer5WorksiteVote.*` 3 个新 gtest 全过；联合 smoke `tmp/layer1/smoke_69.toml`（action_dim=17 + DNC memory 同时启用）2 gen × 1 ep 完整跑通无 crash。
+> - **#9 [MINOR] 背景种 DNC memory option**（待提交，方案改进）：
+>   - 原 audit 建议 "把 NeatBrain 改成可插拔 IBrain" — 实际**用项目已有的 perception/capability 扩展点更优**：新 `BackgroundMemoryLayer`（IWorldLayer，按 AgentId 持有 DNCMemory）+ `BackgroundMemoryReadPerception`（read_vectors 作为输入）+ `BackgroundMemoryWriteCapability`（decode interface vec → DNC step）。
+>   - **NeatBrain 完全不动**，所以 ~7 处 `dynamic_cast<NeatBrain*>` 调用点（Hebbian / writeWeightsBackTo / ComprehensiveMetrics / HeadlessRuntime monitoring）全部保持工作。
+>   - toml gate `[population.background.dnc_memory] enabled / slots / word_size / read_heads`，默认 off + 默认 tiny 配置（slots=4 word=2 heads=1 → read_vec_dim=2 / interface_dim=16，约 ~32 floats / agent，65 个背景 agent ≈ 8KB 总内存，远低于 audit 估计的 3MB）。
+>   - 验证：`Layer5BackgroundMemory.*` 3 个新 gtest 全过（getOrCreate 单例语义、read/write 往返、cull dead agents）；联合 smoke 同上。
+> - **#10 [MINOR] 50-100 gen 长训**（**性能证据已收**，binary 不归档）：
+>   - 用 reproduction + storage_deposit_reward + must_build_to_survive + Lamarckian Hebbian writeback **全开**的 60-gen 配置（`tmp/layer1/long_run_60gen.toml`，seed=7777）跑了 **13 代 / 60 代** 后被 link 步骤打断（kill 进程腾出 exe）。
+>   - 13 代结果：13 次 `PopulationLayer→NEAT bridge: injected N in-world born children into next-gen pools` 全部触发，**累计 352 个 in-world 出生注入了进化池**（16 + 28 + 38 + 85 + 62 + 44 + 29 + 16 + 17 + 2 + 2 + 4 + 9）。Gen 0 高峰是 founder Adult 集中产，后期回落到稳定 2-9/代，符合 reproduction_cooldown_sec=90 的预期节奏。
+>   - **意义**：第一次实证 Layer 4 reproduction + #1 NEAT bridge + #2 Lamarckian writeback 在长跑中能持续工作不崩溃（之前所有 reproduction 报告都仅 single-episode smoke 验证）。完整 60-gen 由用户后续按需启动。
+>
+> **新增**：`tests/route_protagonist/test_layer5_choice_and_bg_memory.cpp` 6 gtest 全过；`test_neat_brain.cpp::InputMismatchSilentDegrade` 替换原 `InputMismatchThrows`（适配 bd07564 silent degrade 行为）。**全测 177/177 pass**。
 >
 > **2026-05-24 下午 训练就绪审计 9/12 项收口（接 5ccac49 Session summary 后）**：
 > - **#1 [SEVERE] in-world reproduction → 跨 episode NEAT pool**（commit bd07564, b0cbfe4）：
@@ -17,10 +35,8 @@
 > - **#8 [MEDIUM] Storage deposit reward + building_type toml shaping**（a8dc76e）：新 `reward.storage_deposit_reward` toml binding，每次 deposit 落到完工 Storage 时按 `cooperation_weight × storage_deposit_reward` 加分。Smoke 启用后从 8 个 children 升到 10 个，me_cov 从 4/192 升到 5/192。
 > - **#11 [MINOR] task_template must_build_to_survive penalty**（待提交）：新 toml 字段 `[[evolution.task_templates.must_build_to_survive]]` + `must_build_penalty`，episode 结束时给当 episode 完全没造过 worksite 的 protagonist 扣 200 fitness。把"没造就活不下去"硬编码到训练信号。
 > - **#12 [MINOR] Reproduction unit tests**（b0cbfe4）：`tests/route_protagonist/test_layer4_reproduction.cpp`，5 个 gtest 覆盖 NeatBrain::writeWeightsBackTo、PopulationLayer 按 archetype_tag 配对、BornChild 队列、Agent::deathCounted、senseRadiusScale clamp。
-> - **未做（暂缓，理由清晰）**：
->   - **#6 主角自主选 BuildingType** —— 需要扩 protagonist `action_dim` 4 维 softmax，会破坏所有现有 toml/checkpoint，单独一次会话做。
->   - **#9 背景种 DNC memory** —— 需要把 NeatBrain 路径改成可插拔 IBrain，同样大改。
->   - **#10 50-100 gen 长跑** —— 单跑就需 8-15h，超过本次会话 4-min exec 限制。下次会话先跑 background。
+> - **2026-05-24 下午被暂缓的 3 项已在傍晚收口**（详见上方 "傍晚 3 项收口" 段）。
+>   #6 / #9 / #10 全部完成，audit 12/12 项关闭。
 >
 > **早一些的工作（5ccac49 之前）**：
 > - Layer 1 (a0669f6, 7a098a6): 体温 + 600×600，alive 0.45→0.79
