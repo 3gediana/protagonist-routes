@@ -50,6 +50,12 @@ struct ConstructionSite {
     // this kind). Wrong kinds are politely rejected so the caller can
     // refund the inventory slot.
     bool deposit(dp::agent::ItemKind k);
+
+    // Material progress in [0, 1] across all three resource kinds.
+    // Used by WorldRenderer to grow the half-built geometry stage by
+    // stage (foundation -> walls -> roof) instead of materialising the
+    // whole house in one frame.
+    float material_progress() const;
 };
 
 // A finished house: 3D anchor with type-specific size, shelter coverage,

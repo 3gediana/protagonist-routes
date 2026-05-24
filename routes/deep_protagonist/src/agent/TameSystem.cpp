@@ -67,6 +67,9 @@ void TameSystem::apply_follow(dp::world::AnimalSystem& animals,
                               float follow_speed) {
     for (const auto& r : records_) {
         if (!r.following) continue;
+        // Tag the animal so wild wolves give it a pass, then steer it
+        // toward the agent.
+        animals.mark_tamed(r.animal_idx, true);
         animals.steer_toward(r.animal_idx, ax, ay, follow_speed, dt);
     }
 }

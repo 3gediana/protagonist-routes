@@ -63,6 +63,17 @@ bool ConstructionSite::deposit(dp::agent::ItemKind k) {
     return true;
 }
 
+float ConstructionSite::material_progress() const {
+    const auto& r = building_recipe(type);
+    int need = r.wood_required + r.stone_required + r.grass_required;
+    if (need <= 0) return 1.0f;
+    int have = wood_deposited + stone_deposited + grass_deposited;
+    float p = static_cast<float>(have) / static_cast<float>(need);
+    if (p < 0.0f) p = 0.0f;
+    if (p > 1.0f) p = 1.0f;
+    return p;
+}
+
 int BuildingSystem::place_site(BuildingType type, float x, float y, float z,
                                const dp::agent::ProgressTracker& progress) {
     const auto& r = building_recipe(type);

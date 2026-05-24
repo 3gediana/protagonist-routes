@@ -328,28 +328,77 @@ void WorldRenderer::draw(const FlyCamera& cam,
         }
     }
 
-    // Construction sites: a white wireframe footprint + 3 stacks of
-    // material progress (1 bar per kind, height = filled / required).
+    // Construction sites: a white wireframe footprint + a progressively
+    // built-up half-finished house, plus 3 material progress bars. Stages:
+    //   <25%: just the footprint and 3 material stacks
+    //   25-50%: footprint + low foundation slab
+    //   50-75%: foundation + walls growing
+    //   75-100%: full-height walls, no roof yet
+    // Once the site finalises BuildingSystem promotes it to a real
+    // Building (which gets its own roof + coverage ring further below).
     for (const auto& s : buildings.sites()) {
         if (s.completed) continue;
         const auto& r = dp::world::building_recipe(s.type);
-        Vector3 c = Vector3{ s.x, s.y, s.z + 0.05f };
-        Vector3 box_size = Vector3{ r.foot_radius * 2.0f,
-                                    r.foot_radius * 2.0f,
-                                    0.10f };
-        // Footprint frame
-        DrawCubeWiresV(c, box_size, Color{ 240, 240, 240, 220 });
-        // Translucent bottom slab
-        DrawCubeV(c, box_size, Color{ 200, 200, 200, 60 });
+        float w = r.foot_radius * 2.0f;
+        float p = s.material_progress();
 
-        // 3 material bars sitting on the slab. Height = deposited/required.
+        // 1. Footprint frame is always drawn (so empty plots are visible).
+        Vector3 frame_c = Vector3{ s.x, s.y, s.z + 0.05f };
+        DrawCubeWiresV(frame_c, Vector3{ w, w, 0.10f },
+                       Color{ 240, 240, 240, 220 });
+        DrawCubeV(frame_c, Vector3{ w, w, 0.10f },
+                  Color{ 200, 200, 200, 60 });
+
+        // 2. Foundation slab (>=25% progress).
+        if (p >= 0.25f) {
+            Color stone_col = tint_mul(Color{140, 140, 145, 255}, tint);
+            DrawCubeV(Vector3{ s.x, s.y, s.z + 0.20f },
+                      Vector3{ w * 0.95f, w * 0.95f, 0.30f },
+                      stone_col);
+        }
+
+        // 3. Walls growing (>=50%). Their height scales from 0 -> full
+        // as progress goes 50% -> 100%.
+        if (p >= 0.50f) {
+            float wall_p = (p - 0.50f) / 0.50f;  // 0..1 in this band
+            if (wall_p > 1.0f) wall_p = 1.0f;
+            // Per-type full wall height (matches the completed building).
+            float full_h;
+            Color wall_col;
+            switch (s.type) {
+                case dp::world::BuildingType::Shed:
+                    full_h = 1.6f; wall_col = Color{180, 130, 70, 255};
+                    break;
+                case dp::world::BuildingType::WoodHouse:
+                    full_h = 2.6f; wall_col = Color{160, 110, 60, 255};
+                    break;
+                case dp::world::BuildingType::StoneHouse:
+                    full_h = 2.6f; wall_col = Color{160, 160, 165, 255};
+                    break;
+                case dp::world::BuildingType::BigHouse:
+                    full_h = 3.4f; wall_col = Color{170, 150, 120, 255};
+                    break;
+            }
+            float ch = full_h * wall_p;
+            if (ch > 0.01f) {
+                DrawCubeV(Vector3{ s.x, s.y, s.z + 0.35f + ch * 0.5f },
+                          Vector3{ w * 0.95f, w * 0.95f, ch },
+                          tint_mul(wall_col, tint));
+                DrawCubeWiresV(Vector3{ s.x, s.y, s.z + 0.35f + ch * 0.5f },
+                               Vector3{ w * 0.95f, w * 0.95f, ch },
+                               Color{50, 40, 30, 200});
+            }
+        }
+
+        // 4. Material progress bars (always visible until completed).
+        // Show them off to the side so they don't clip the half-house.
         auto bar = [&](int idx, int deposited, int required, Color col) {
             if (required <= 0) return;
             float f = static_cast<float>(deposited) / required;
             if (f > 1.0f) f = 1.0f;
-            float bw = r.foot_radius * 0.35f;
-            float bx = s.x + (idx - 1) * r.foot_radius * 0.7f;
-            float by = s.y;
+            float bw = 0.20f;
+            float bx = s.x + (idx - 1) * 0.30f;
+            float by = s.y + r.foot_radius + 0.4f;
             float bz_low = s.z + 0.10f;
             float bh = 1.5f * f;
             Vector3 center = Vector3{ bx, by, bz_low + bh * 0.5f };

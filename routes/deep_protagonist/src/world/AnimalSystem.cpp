@@ -191,13 +191,15 @@ void AnimalSystem::tick_wolf(AnimalInstance& a, int self_idx, const World& world
     float speed_agent      = speed_base      * agent_speed_scale;
 
     // Look for the closest live rabbit/deer first; that prey gets
-    // priority over the agent if it's closer.
+    // priority over the agent if it's closer. Tamed (follower) prey is
+    // skipped so the agent's pets don't get eaten by wild wolves.
     int   best_prey   = -1;
     float best_prey_d2 = perception_base * perception_base;
     for (int i = 0; i < int(animals_.size()); ++i) {
         if (i == self_idx) continue;
         const auto& p = animals_[i];
         if (p.state == AnimalState::Dead) continue;
+        if (p.is_tamed) continue;
         if (p.kind != AnimalKind::Rabbit && p.kind != AnimalKind::Deer) continue;
         float dx = p.pos_x - a.pos_x;
         float dy = p.pos_y - a.pos_y;
@@ -345,6 +347,11 @@ void AnimalSystem::kill(int idx) {
     animals_[idx].state = AnimalState::Dead;
     animals_[idx].vel_x = 0.0f;
     animals_[idx].vel_y = 0.0f;
+}
+
+void AnimalSystem::mark_tamed(int idx, bool yes) {
+    if (idx < 0 || idx >= int(animals_.size())) return;
+    animals_[idx].is_tamed = yes;
 }
 
 void AnimalSystem::steer_toward(int idx, float tx, float ty,

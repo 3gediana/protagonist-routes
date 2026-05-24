@@ -36,6 +36,9 @@ struct AnimalInstance {
     float health = 100.0f;
     float state_timer = 0.0f;
     float wander_x = 1.0f, wander_y = 0.0f;
+    // Marked by TameSystem: wolves should not pick this prey, and the
+    // animal stays close to the agent via TameSystem::apply_follow().
+    bool  is_tamed = false;
 };
 
 // AnimalSystem runs scripted (non-learning) AI for the world's wildlife.
@@ -86,6 +89,10 @@ public:
     // Steer the animal at `idx` toward (tx, ty) at `speed` m/s, for one
     // tick. Used by TameSystem so tamed followers stay near the agent.
     void steer_toward(int idx, float tx, float ty, float speed, float dt);
+
+    // Flag an animal as tamed (or untag it). Tamed animals are skipped
+    // by wolf prey scans so the agent's followers don't get eaten.
+    void mark_tamed(int idx, bool yes);
 
     struct AttackResult {
         int   index   = -1;     // index of the animal hit; -1 = miss
