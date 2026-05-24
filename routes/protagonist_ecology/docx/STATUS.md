@@ -1,9 +1,17 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C 三件齐全 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C 三件齐全 + Stone bootstrap commit 1 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`8a49dbb Layer 6 R3 stage 3 commit C: 50-generation 物种延续 gate`
+> 当前 HEAD：`199b510 Stone bootstrap commit 1: NurseryProgressionLayer cross-episode persistence API`
+>
+> **2026-05-25 上午 Stone bootstrap commit 1**（commit `199b510`，API-only）：
+> - 按 `STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md` 方案 D 落 NurseryProgressionLayer 跨 episode 持久化 API。
+> - 新增 `ArchetypeProgressionState` struct（5 个 monotonic unlock bool：first_fire / worksite / stone / heavy / second_fire）。
+> - NurseryProgressionLayer 新增 `seedFromProgressionState(state)` setter + `progressionState()` getter；setter 是 OR-merge 语义，stale-false 永不清掉已 true 的 flag。
+> - 3 个新 gtest（DefaultStateIsAllFalse / SeedRoundtrips / SeedIsMonotonicOrMerge），**203/203 total**。
+> - **Commit 1 是 API-only**：没接 runtime 注入也没接 MainWorldPersistence。Commit 2 将加 ProtagonistEcologyRuntime archetype state owner + 注入点 + `[runtime.curriculum] archetype_progression_persistence_enabled` toml gate；commit 3 把 progression state 顺路塞进 `MainWorldSnapshotMetadata` JSON。
+> - **Commit 2/3 暂未做**：需要改 ProtagonistEcologyRuntime.cpp → 触发 neural-eco-protagonist binary rebuild，但当前 60-gen throw AB 训练在跑 binary lock 着。等训练完再做。
 >
 > **2026-05-25 上午 Layer 6 R3 stage 3 三件落地 + harmony 工具 + stone bootstrap 提案 + 60-gen throw AB 后台跑**（commits `c14598b` + `be9dd43` + `8a49dbb`）：
 > - **背景**：用户路线图选择"1→2→3→4→5 顺序走"，且要求"训练时手头还有可以并行跑的任务就并行跑"。本会话后台启动 throw_penalty 60-gen AB 长跑（`tmp/layer1/long_run_60gen_2d_throw.toml`，2D BD + `throw_attempt = -0.05`，run_dir `data/runs/long_run_60gen_2d_throw/20260524-185129`），同时前台推进 graduation pipeline 收尾 (#2)。
