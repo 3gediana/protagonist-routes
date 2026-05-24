@@ -17,17 +17,23 @@ namespace neuro::routes::protagonist {
 struct TraceRecorderConfig {
     bool enabled{false};
     bool events_enabled{true};
+    // 2026-05-25 disk-budget cleanup: defaults previously wrote agent
+    // pose every 10 substeps and world tile snapshots every 10 ticks,
+    // yielding ~70-150 MB per traced episode. New defaults are 3x/5x
+    // sparser respectively; toml can still override per-run. Long
+    // 60-gen runs that opt into full tracing (e.g. via max_generations
+    // = 60) will now write ~1-2 GB instead of ~7-8 GB.
     bool agents_enabled{true};
     bool world_enabled{true};
-    std::size_t agent_interval{10};
-    std::size_t world_interval{10};
+    std::size_t agent_interval{30};
+    std::size_t world_interval{50};
     std::size_t max_generations{1};
     std::size_t max_episodes_per_generation{1};
     // L7 R1 (FINAL_BLUEPRINT.md §7): frame-based JSON dumper for Godot/raylib
     // viewer consumption. Each tick writes one JSON object to frames.jsonl
     // with agents/worksites/weather/season snapshots. Off by default (large).
     bool viewer_frames_enabled{false};
-    std::size_t viewer_frame_interval{20};  // every N ticks
+    std::size_t viewer_frame_interval{80};  // every N ticks (default sparse for disk budget)
 };
 
 class TraceRecorder final {

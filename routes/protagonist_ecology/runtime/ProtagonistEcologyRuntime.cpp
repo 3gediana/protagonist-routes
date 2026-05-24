@@ -188,6 +188,14 @@ struct TrainingParams {
     float joint_hunt_reward{8.0f};
     float joint_hunt_radius{10.0f};
     std::size_t checkpoint_every{0};
+    // 2026-05-25 disk-budget cleanup: best_genome_gen{N}.bin (1.4MB
+    // each on protagonist) was written every generation in addition to
+    // best_genome_latest.bin + best_genome_overall.bin, accounting for
+    // ~85MB per 60-gen run. Default off; the latest/overall pair is
+    // enough for resume + post-mortem inspection. Set
+    // evolution.save_best_per_generation = true to opt back in (e.g.
+    // for fitness-trajectory video reconstruction).
+    bool save_best_per_generation{false};
     double elite_ratio{0.10};
     std::size_t tournament_size{5};
     double weight_perturb_rate{0.80};
@@ -525,6 +533,7 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.joint_hunt_reward = config.getOr<float>("reward.joint_hunt_reward", params.joint_hunt_reward);
     params.joint_hunt_radius = config.getOr<float>("reward.joint_hunt_radius", params.joint_hunt_radius);
     params.checkpoint_every = config.getOr<std::size_t>("evolution.checkpoint_every", params.checkpoint_every);
+    params.save_best_per_generation = config.getOr<bool>("evolution.save_best_per_generation", params.save_best_per_generation);
     params.combat_attack_reward = config.getOr<float>("combat.attack_reward", params.combat_attack_reward);
     params.combat_kill_bonus = config.getOr<float>("combat.kill_bonus", params.combat_kill_bonus);
     params.combat_death_penalty = config.getOr<float>("combat.death_penalty", params.combat_death_penalty);
@@ -4944,10 +4953,17 @@ int ProtagonistEcologyRuntime::runTraining() {
             for (const auto& genome : population) {
                 if (genome != nullptr && genome->id() == best_id) {
                     if (auto* protagonist_genome = dynamic_cast<const ProtagonistGenome*>(genome.get()); protagonist_genome != nullptr) {
-                        const auto gen_path = run_dir / ("best_genome_gen" + std::to_string(generation) + ".bin");
+                        // disk-budget cleanup: per-generation snapshot is
+                        // opt-in (evolution.save_best_per_generation =
+                        // true). The default keeps best_genome_latest.bin
+                        // (rolling) + best_genome_overall.bin (best ever
+                        // seen) which is enough for resume + final eval.
                         const auto latest_path = run_dir / "best_genome_latest.bin";
-                        protagonist_genome->saveToFile(gen_path);
                         protagonist_genome->saveToFile(latest_path);
+                        if (params.save_best_per_generation) {
+                            const auto gen_path = run_dir / ("best_genome_gen" + std::to_string(generation) + ".bin");
+                            protagonist_genome->saveToFile(gen_path);
+                        }
                         if (best_it->fitness > best_fitness_seen) {
                             best_fitness_seen = best_it->fitness;
                             protagonist_genome->saveToFile(run_dir / "best_genome_overall.bin");
