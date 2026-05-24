@@ -14,8 +14,9 @@ Parallel route alongside `protagonist_ecology` (NEAT-based, group emergence).
 | S3.7 | PPO prerequisites (action / reward / episode / obs / inventory / shelter) | done |
 | S3.8 | Combat / hunting / shelter dampening / fishing / mushroom poison | done |
 | S3.9 | Terrain adaptation (swamp slow / desert thirst) | done |
-| S4 | PPO loop + 5-10M model training | next |
-| S5 | Tools + fire + 50M scale + long training | planned |
+| **S3.10** | **Full survival main-line (progression / building / clothing / farming / taming)** | **done** |
+| S4 | PPO + curriculum learning + 5-10M model training | next |
+| S5 | Fire + 50M scale + long training (8-16 weeks) | planned |
 | S6 | Visual polish + answer-defense polish | planned |
 
 ## Quick start
@@ -37,10 +38,11 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 .\build\bin\deep_protagonist.exe
 ```
 
-Self-test should report `SELF-TESTS PASSED` with 69 PASS lines.
+Self-test should report `SELF-TESTS PASSED` with 100 PASS lines.
 
 ## Viewer key bindings
 
+### Movement & camera
 | Key | What it does |
 |---|---|
 | WASD / Space / Shift | Fly camera (or move agent in follow mode) |
@@ -48,12 +50,32 @@ Self-test should report `SELF-TESTS PASSED` with 69 PASS lines.
 | Mouse | Look around |
 | G | Toggle camera follow-agent |
 | T / Y | Speed up day cycle (+5x / +20x) |
+
+### Early-stage actions (always available)
+| Key | What it does |
+|---|---|
 | E | Harvest nearest ripe plant (mushroom: 30% poison) |
 | Q | Drink water in river/swamp; also catches a fish in arm's reach |
-| R | Pick up nearby resource (wood / stone / grass) |
-| C | Craft spear (consumes 1 wood + 1 stone, frees a slot) |
-| B | Build shelter at agent's feet (consumes 1 wood + 1 grass) |
-| F | Melee attack closest animal in front (spear adds reach + damage) |
+| R | Pick up nearby resource (wood / stone / grass) - or deposit if near a site |
+| C | Craft spear (consumes 1 wood + 1 stone) |
+| B | Build quick shelter (1 wood + 1 grass) |
+| F | Melee attack (spear adds reach + damage); also drops Fur from kills |
+| X | Craft a grass dress (3 grass) |
+| Z | Craft a fur cloak (2 fur) |
+| V | Wear best clothing in inventory (cloak > dress) |
+
+### Mid-stage actions (unlock: 30 collected resources + 500m explored)
+| Key | What it does |
+|---|---|
+| Tab | Cycle next building type (Shed / WoodHouse / StoneHouse / BigHouse) |
+| P | Place a construction site at your feet |
+
+### Late-stage actions (unlock: build 1 house)
+| Key | What it does |
+|---|---|
+| N | Plant a seed from inventory |
+| J | Water the nearest farm plot |
+| K | Feed grass (rabbit/deer) or fur (wolf) to build trust + follower |
 | Esc | Quit |
 
 ## Toolchain
