@@ -126,6 +126,16 @@ public:
     // implements the pruning half of "borderland is bounded".
     std::size_t cullBorderland(std::size_t archetype, std::size_t max_pool_size);
 
+    // L6 R2 stage 3 commit 3: emergency rescue when a main_world
+    // archetype pool is empty (extinction = spec invariant #4).
+    // Pulls the top-K genomes (by stashed fitness) from the borderland
+    // slot of the same archetype into main_world. Borderland retains
+    // its copies (rescue is a clone, not a move) so subsequent normal
+    // promote steps keep working. Returns the number of rescued
+    // genomes (0 if main_world wasn't actually empty, or borderland
+    // had nothing to give).
+    std::size_t rescueExtinctSpecies(std::size_t archetype, std::size_t k);
+
     // Direct access to the per-world slots (for tests + the future
     // integration commit that will wire them into the real loop).
     WorldSlot& sandbox()    { return sandbox_; }

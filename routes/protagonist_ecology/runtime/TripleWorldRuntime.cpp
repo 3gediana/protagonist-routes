@@ -131,4 +131,31 @@ std::size_t TripleWorldRuntime::cullBorderland(std::size_t archetype, std::size_
     return dropped;
 }
 
+std::size_t TripleWorldRuntime::rescueExtinctSpecies(std::size_t archetype, std::size_t k) {
+    auto& main_pool = ensurePool(main_world_, archetype);
+    // Only fire when main_world is genuinely extinct for this archetype.
+    if (!main_pool.genomes.empty()) return 0;
+
+    auto& border_pool = ensurePool(borderland_, archetype);
+    if (border_pool.genomes.empty() || k == 0) return 0;
+
+    // Use stashed fitness if aligned; otherwise treat as FIFO (equal-fitness
+    // stable sort = source order preserved = oldest borderland entries
+    // rescue first).
+    std::vector<double> fallback_fits;
+    const std::vector<double>* fits_ptr = &border_pool.fitnesses;
+    if (border_pool.fitnesses.size() != border_pool.genomes.size()) {
+        fallback_fits.assign(border_pool.genomes.size(), 1.0);
+        fits_ptr = &fallback_fits;
+    }
+
+    auto candidates = MigrationScheduler::extractTopK(
+        border_pool.genomes, *fits_ptr, border_pool.lineage_ids, k);
+    const std::size_t n = candidates.size();
+    MigrationScheduler::seedFromCandidates(
+        std::move(candidates), main_pool.genomes, main_pool.lineage_ids,
+        &main_pool.fitnesses);
+    return n;
+}
+
 }  // namespace neuro::routes::protagonist

@@ -478,6 +478,12 @@ struct ProtagonistEcologyConfig {
         // pools from this dir on startup, and writes them back at the
         // end of the run. Empty (default) = no disk persistence.
         std::string persist_dir;
+        // L6 R2 stage 3 commit 3: extinction rescue (spec invariant #4).
+        // When > 0, every generation the runtime checks each main_world
+        // archetype pool; if any is empty, it pulls top-K (by stashed
+        // fitness) from the borderland slot of the same archetype to
+        // re-seed main_world. 0 = disabled (legacy behavior).
+        std::size_t extinction_rescue_top_k{0};
     };
     TripleWorldConfig triple_world{};
     MemoryTrialConfig memory_trial{};

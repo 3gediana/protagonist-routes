@@ -242,6 +242,53 @@ TEST(Layer6Migration, CullBorderlandKeepsTopFitness) {
     EXPECT_EQ(border.genomes[2]->id().value, 305u);
 }
 
+// L6 R2 stage 3 commit 3: rescueExtinctSpecies refills an empty
+// main_world archetype pool from borderland by stashed fitness.
+TEST(Layer6Migration, RescueExtinctSpeciesRefillsFromBorderland) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 500u}));
+    }
+    std::vector<double> fits = {0.1, 0.4, 0.9, 0.2};
+    std::vector<std::uint64_t> lineages = {510u, 511u, 512u, 513u};
+    trio.promoteExternalToBorderland(/*archetype=*/3, external_pop, fits, lineages, 4);
+
+    // main_world archetype 3 is empty: trigger rescue.
+    const std::size_t rescued = trio.rescueExtinctSpecies(/*archetype=*/3, /*k=*/2);
+    EXPECT_EQ(rescued, 2u);
+    ASSERT_GE(trio.mainWorld().pools_by_archetype.size(), 4u);
+    const auto& main = trio.mainWorld().pools_by_archetype.at(3);
+    ASSERT_EQ(main.genomes.size(), 2u);
+    EXPECT_DOUBLE_EQ(main.fitnesses[0], 0.9);
+    EXPECT_DOUBLE_EQ(main.fitnesses[1], 0.4);
+    EXPECT_EQ(main.lineage_ids[0], 512u);
+    EXPECT_EQ(main.lineage_ids[1], 511u);
+
+    // Borderland keeps its copies (rescue is clone, not move).
+    const auto& border = trio.borderland().pools_by_archetype.at(3);
+    EXPECT_EQ(border.genomes.size(), 4u);
+}
+
+// Rescue is a no-op when main_world isn't actually extinct.
+TEST(Layer6Migration, RescueExtinctSpeciesNoopWhenMainNonEmpty) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 2; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 600u}));
+    }
+    std::vector<double> fits = {0.7, 0.8};
+    std::vector<std::uint64_t> lineages = {610u, 611u};
+    // Populate BOTH borderland and main_world for archetype 1.
+    trio.promoteExternalToBorderland(/*archetype=*/1, external_pop, fits, lineages, 2);
+    trio.promoteBorderlandToMain(/*archetype=*/1, /*k=*/1);
+    ASSERT_FALSE(trio.mainWorld().pools_by_archetype.at(1).genomes.empty());
+
+    const std::size_t rescued = trio.rescueExtinctSpecies(/*archetype=*/1, /*k=*/2);
+    EXPECT_EQ(rescued, 0u);
+    EXPECT_EQ(trio.mainWorld().pools_by_archetype.at(1).genomes.size(), 1u);
+}
+
 // Cull is a no-op when pool already fits (or is smaller than the cap).
 TEST(Layer6Migration, CullBorderlandNoopWhenUnderCap) {
     TripleWorldRuntime trio;

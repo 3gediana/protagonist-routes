@@ -363,6 +363,7 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.triple_world.borderland_to_main_top_k_background = config.getOr<std::size_t>("runtime.triple_world.borderland_to_main_top_k_background", out.triple_world.borderland_to_main_top_k_background);
     out.triple_world.borderland_max_pool_per_archetype = config.getOr<std::size_t>("runtime.triple_world.borderland_max_pool_per_archetype", out.triple_world.borderland_max_pool_per_archetype);
     out.triple_world.persist_dir = config.getOr<std::string>("runtime.triple_world.persist_dir", out.triple_world.persist_dir);
+    out.triple_world.extinction_rescue_top_k = config.getOr<std::size_t>("runtime.triple_world.extinction_rescue_top_k", out.triple_world.extinction_rescue_top_k);
 
     out.memory_trial.enabled = config.getOr<bool>("world.memory_trial.enabled", out.memory_trial.enabled);
     out.memory_trial.cue_duration_seconds = config.getOr<double>("world.memory_trial.cue_duration_seconds", out.memory_trial.cue_duration_seconds);

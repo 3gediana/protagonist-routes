@@ -4490,6 +4490,26 @@ int ProtagonistEcologyRuntime::runTraining() {
                 main_total += pool.genomes.size();
             }
 
+            // L6 R2 stage 3 commit 3: extinction rescue (spec invariant #4).
+            // Sweep every archetype every generation. Triggers only on
+            // genuinely empty main_world pools (rescueExtinctSpecies
+            // early-returns 0 otherwise), so under normal accumulation
+            // this is a no-op after the first borderland->main_world
+            // promote fires.
+            std::size_t rescued_total = 0;
+            if (tw_cfg.extinction_rescue_top_k > 0) {
+                rescued_total += triple_world.rescueExtinctSpecies(
+                    /*archetype=*/0, tw_cfg.extinction_rescue_top_k);
+                for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                    rescued_total += triple_world.rescueExtinctSpecies(
+                        /*archetype=*/i + 1, tw_cfg.extinction_rescue_top_k);
+                }
+                if (rescued_total > 0) {
+                    spdlog::info("TripleWorld gen {}: extinction rescue fired (rescued={} genomes)",
+                                 generation, rescued_total);
+                }
+            }
+
             // Border -> Main on configured period (1-indexed: first promote
             // happens at end of gen `period`, not at gen 0).
             std::size_t b2m_protag_promoted = 0;
