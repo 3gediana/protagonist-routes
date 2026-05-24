@@ -33,10 +33,14 @@ public:
         // by dt internally). 0.05 ⇒ +3 reward per minute alive.
         float alive_step       = 0.05f;
 
-        // Linear payouts for needs satisfaction, scaled to ~+1.0 per
-        // typical event (eating one fruit ≈ 25 kcal × 0.04 = +1).
-        float per_food_kcal    = 0.04f;
-        float per_water_ml     = 0.03f;
+        // D-043: payouts for needs satisfaction. Semantic change from
+        // "linear in amount" to "linear in drive reduction" (Keramati 2014
+        // homeostatic RL). Callers now pass drive_before-drive_after instead
+        // of kcal/ml. drive(v) = ((100-v)/100)^2, so drive_red ∈ [0, 1] per
+        // call; coef 3.0 means a full hunger→full takes ~3.0 reward across
+        // multiple eats (in line with Crafter event scale).
+        float food_coef        = 3.0f;
+        float water_coef       = 3.0f;
 
         // Wolves
         // D-043: align with Crafter "defeat_zombie/skeleton +1". 5.0 was a
@@ -71,6 +75,14 @@ public:
         // worthwhile (eg. attacking wolves to get first_hunt). At +1 the agent
         // sees milestones as bonus, not as gambling target.
         float milestone        = 1.0f;
+
+        // D-043 P1: per-step total reward clip. Prevents single-step outliers
+        // from polluting PPO advantage estimation. -10 keeps death intact;
+        // +10 covers worst case (shelter +5 + craft +3 + milestone +1 +
+        // collect +0.5 = ~9.5). Wolf bite is already scaled by dt so per-tick
+        // bite ≈ -0.83 — well within range.
+        float reward_clip_min  = -10.0f;
+        float reward_clip_max  = +10.0f;
     };
 
     // Per-step breakdown so we can debug *why* a reward is what it is.
@@ -139,9 +151,10 @@ public:
     // Accumulates into step_.vital so the schema stays at 11 components.
     void   event_action_cost(float cost = 0.001f);
     // S3.10 milestone: fires once per "first" of a kind (first house,
-    // first crop, first follower) plus stage unlocks. Magnitude defaults
-    // to the weight defined in Weights::milestone (+20).
-    void   event_milestone();
+    // first crop, first follower) plus stage unlocks. D-043 P1: optional
+    // `scale` parameter ∈ [0, 1] dampens the milestone when the agent is
+    // in vital crisis (eg. about to die of thirst). Default 1.0 = full.
+    void   event_milestone(float scale = 1.0f);
 
     // Close the step. Pushes per-component into ep_, returns total.
     float  end_step();

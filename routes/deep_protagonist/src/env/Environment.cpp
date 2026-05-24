@@ -98,18 +98,39 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     rebuild_observation_(obs_out);
 }
 
-// D-041 satiation scale: when a vital is already mostly full, the reward
-// for further consumption fades. Stops the "drink at full thirst" loop
-// without forbidding the action physically.
-//
-//   vital >= 90 -> scale 0.0  (no reward)
-//   vital >= 80 -> scale 0.2
-//   vital >= 50 -> scale 0.5
-//   vital <  50 -> scale 1.0  (full reward, agent really needs this)
-static float satiation_scale_(float vital) {
-    if (vital >= 90.0f) return 0.0f;
-    if (vital >= 80.0f) return 0.2f;
-    if (vital >= 50.0f) return 0.5f;
+// D-043 P1: drive function (Keramati & Gutkin 2014, Homeostatic RL).
+// Maps a vital reading in [0, 100] to a drive ∈ [0, 1]. v=100 (sated) → 0,
+// v=0 (depleted) → 1. Quadratic so deviations near the setpoint matter less
+// than approaching depletion (matches biological appetite).
+//   drive(100) = 0.00   (no need)
+//   drive( 80) = 0.04   (mild need; eating gives small reward)
+//   drive( 50) = 0.25   (moderate)
+//   drive( 20) = 0.64   (strong)
+//   drive(  0) = 1.00   (about to die)
+// Reward = drive_before - drive_after, so eating to fullness gives a small
+// reward bump near 100 and a big one near 0. Auto-replaces the old hard-cap
+// satiation_scale_().
+static float drive_(float vital) {
+    const float gap = (100.0f - std::clamp(vital, 0.0f, 100.0f)) / 100.0f;
+    return gap * gap;
+}
+
+// D-043 P1: crisis scale (Keramati's "irrelevant drive inhibition"). When
+// any vital is in dangerous territory, milestone rewards are damped so the
+// agent prioritizes survival over progression. Three regimes:
+//   max_drive > 0.7  (any vital < ~17/100): crisis -> 0.3
+//   max_drive > 0.4  (any vital < ~37/100): alert  -> 0.7
+//   otherwise                              : healthy -> 1.0
+// Returns a scalar in [0, 1] passed to RewardSystem::event_milestone.
+static float crisis_scale_(const dp::agent::VitalState& v) {
+    float max_drive = drive_(v.hunger);
+    max_drive = std::max(max_drive, drive_(v.thirst));
+    max_drive = std::max(max_drive, drive_(v.stamina));
+    // Temperature is centered at 50; map deviation to drive-like scale.
+    const float temp_dev = std::abs(v.temperature - 50.0f) / 50.0f;
+    max_drive = std::max(max_drive, temp_dev * temp_dev);
+    if (max_drive > 0.7f) return 0.3f;
+    if (max_drive > 0.4f) return 0.7f;
     return 1.0f;
 }
 
@@ -120,13 +141,38 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     reward_.begin_step();
     reward_.event_alive(dt);
 
-    // D-041: helper to fire a per-episode milestone exactly once. The flag
-    // resets every episode (see Environment::reset). Each fire = +20 reward.
+    // D-041 / D-043: fire a per-episode milestone exactly once. The flag
+    // resets every episode (see Environment::reset). D-043 P1: crisis_scale_
+    // damps the +1 milestone when the agent is in vital crisis so it doesn't
+    // grab milestones while about to die of thirst.
+    const float crisis = crisis_scale_(vital_state_);
     auto fire_once = [&](bool& flag) {
         if (!flag) {
             flag = true;
-            reward_.event_milestone();
+            reward_.event_milestone(crisis);
         }
+    };
+
+    // D-043 P1: eat/drink with drive-reduction reward (Keramati 2014).
+    // Replaces the old satiation_scale_ × kcal scheme. drive(v=100)=0 so
+    // eating-when-full naturally yields zero reward; near-empty agents see
+    // a big drive_red. Returns the *actual* vital restored so callers can
+    // still detect "did the consumption happen" for first_X triggers.
+    auto eat_drive = [&](float kcal) -> float {
+        if (kcal <= 0.0f) return 0.0f;
+        const float drive_before = drive_(vital_state_.hunger);
+        const float ate          = vitals_.eat(vital_state_, kcal);
+        const float drive_after  = drive_(vital_state_.hunger);
+        reward_.event_eat(drive_before - drive_after);
+        return ate;
+    };
+    auto drink_drive = [&](float ml) -> float {
+        if (ml <= 0.0f) return 0.0f;
+        const float drive_before = drive_(vital_state_.thirst);
+        const float drunk        = vitals_.drink(vital_state_, ml);
+        const float drive_after  = drive_(vital_state_.thirst);
+        reward_.event_drink(drive_before - drive_after);
+        return drunk;
     };
 
     // D-039 v3: any discrete trigger pressed this tick pays a small fee.
@@ -207,20 +253,15 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             if (poisoned) {
                 vital_state_.hunger  = std::max(0.0f, vital_state_.hunger  - 12.0f);
                 vital_state_.stamina = std::max(0.0f, vital_state_.stamina - 25.0f);
-                reward_.event_eat(-15.0f);
+                // D-043: poison = inverse drive reduction (eat made things
+                // worse). -0.2 drive ≈ -0.6 reward at food_coef=3.0,
+                // similar magnitude to old -15kcal × 0.04 = -0.6.
+                reward_.event_eat(-0.2f);
             } else {
-                if (kcal > 0.0f) {
-                    float scale = satiation_scale_(vital_state_.hunger);
-                    float ate   = vitals_.eat(vital_state_, kcal);
-                    reward_.event_eat(ate * scale);
-                    if (ate > 0.5f) fire_once(first_eat_fired_);
-                }
-                if (ml   > 0.0f) {
-                    float scale = satiation_scale_(vital_state_.thirst);
-                    float drunk = vitals_.drink(vital_state_, ml);
-                    reward_.event_drink(drunk * scale);
-                    if (drunk > 0.5f) fire_once(first_drink_fired_);
-                }
+                const float ate   = eat_drive(kcal);
+                if (ate > 0.5f) fire_once(first_eat_fired_);
+                const float drunk = drink_drive(ml);
+                if (drunk > 0.5f) fire_once(first_drink_fired_);
             }
             // 30% chance Fruit/Berry drops a Seed for late-stage farming.
             if (k == dp::world::PlantKind::Fruit
@@ -241,18 +282,14 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     if (action.drink) {
         auto b = world_.biome_at(as.pos_x, as.pos_y);
         if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
-            float scale = satiation_scale_(vital_state_.thirst);
-            float drunk = vitals_.drink(vital_state_, 35.0f);
-            reward_.event_drink(drunk * scale);
+            const float drunk = drink_drive(35.0f);
             if (drunk > 0.5f) fire_once(first_drink_fired_);
             auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
                                               agent_.yaw(), 2.0f, 100.0f);
             if (fish.killed
                 && animals_.animals()[fish.index].kind
                     == dp::world::AnimalKind::Fish) {
-                float fscale = satiation_scale_(vital_state_.hunger);
-                float ate    = vitals_.eat(vital_state_, 20.0f);
-                reward_.event_eat(ate * fscale);
+                const float ate = eat_drive(20.0f);
                 if (ate > 0.5f) fire_once(first_eat_fired_);
                 // D-043: first_hunt removed (Crafter: no reward for attacking
                 // neutral animals). Fish-while-drinking still gives food via
@@ -345,26 +382,21 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                                          agent_.yaw(), reach, damage);
         if (hit.killed) {
             auto kind = animals_.animals()[hit.index].kind;
-            float hscale = satiation_scale_(vital_state_.hunger);
             if (kind == dp::world::AnimalKind::Wolf) {
                 reward_.event_wolf_killed();
-                float ate = vitals_.eat(vital_state_, 40.0f);
-                reward_.event_eat(ate * hscale);
+                const float ate = eat_drive(40.0f);
                 if (ate > 0.5f) fire_once(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Rabbit) {
-                float ate = vitals_.eat(vital_state_, 15.0f);
-                reward_.event_eat(ate * hscale);
+                const float ate = eat_drive(15.0f);
                 if (ate > 0.5f) fire_once(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Deer) {
-                float ate = vitals_.eat(vital_state_, 40.0f);
-                reward_.event_eat(ate * hscale);
+                const float ate = eat_drive(40.0f);
                 if (ate > 0.5f) fire_once(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Fish) {
-                float ate = vitals_.eat(vital_state_, 20.0f);
-                reward_.event_eat(ate * hscale);
+                const float ate = eat_drive(20.0f);
                 if (ate > 0.5f) fire_once(first_eat_fired_);
             }
             // D-043: first_hunt removed. Killing a wolf still gives wolf_killed

@@ -46,6 +46,7 @@
 
 #include <raylib.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -938,31 +939,42 @@ int run_self_tests() {
         check(std::abs(a - 0.05f) < 1e-5f,
               "RewardSystem: alive(1s) ≈ +0.05 with default weights");
 
+        // D-043: eat/drink now use drive_reduction semantics (Keramati 2014).
+        // Callers pass drive_before-drive_after ∈ [0,1] instead of kcal/ml.
         r.begin_step();
-        r.event_eat(25.0f);    // one fruit
-        r.event_drink(35.0f);  // one river drink
+        r.event_eat(0.5f);    // half-recovery from depletion
+        r.event_drink(0.3f);
         float b = r.end_step();
-        check(std::abs(b - (0.04f * 25.0f + 0.03f * 35.0f)) < 1e-5f,
-              "RewardSystem: eat+drink uses linear weights");
+        check(std::abs(b - (3.0f * 0.5f + 3.0f * 0.3f)) < 1e-5f,
+              "RewardSystem: eat+drink uses drive-reduction × coef");
 
         r.begin_step();
         r.event_death();
         float d = r.end_step();
-        check(std::abs(d - (-100.0f)) < 1e-3f,
-              "RewardSystem: death is -100 by default");
+        // D-043: death magnitude reduced from -100 to -10 (Crafter-aligned).
+        // Clip at reward_clip_min = -10 keeps the signal intact.
+        check(std::abs(d - (-10.0f)) < 1e-3f,
+              "RewardSystem: death is -10 by default (D-043)");
 
         // Episode totals accumulate across the three steps above
         check(r.episode().steps == 3 && r.episode().r_alive > 0.0f
               && r.episode().r_food > 0.0f && r.episode().r_death < 0.0f,
               "RewardSystem: episode aggregates per-component totals");
 
-        // S3.10 milestone: a single milestone event should add +20
+        // D-043: milestone event is +1 (Crafter-aligned), scale param damps it.
         r.reset_episode();
         r.begin_step();
         r.event_milestone();
         float m = r.end_step();
-        check(std::abs(m - 20.0f) < 1e-3f,
-              "RewardSystem: milestone event is +20 by default");
+        check(std::abs(m - 1.0f) < 1e-3f,
+              "RewardSystem: milestone event is +1 by default (D-043)");
+
+        r.reset_episode();
+        r.begin_step();
+        r.event_milestone(0.3f);  // crisis-scale damping
+        float m_crisis = r.end_step();
+        check(std::abs(m_crisis - 0.3f) < 1e-3f,
+              "RewardSystem: milestone honors crisis scale param");
     }
 
     // --- SpatialMemory ---
@@ -1148,6 +1160,30 @@ int main(int argc, char** argv) {
         // against once we plug it in (S4). For S3 we run it in shadow mode
         // so we get a feel for how the reward signal behaves under wander.
         dp::agent::RewardSystem reward;
+
+        // D-043 P1: drive function + eat/drink helpers (Keramati 2014).
+        // Mirrors Environment.cpp so the viewer and headless trainer compute
+        // identical rewards. drive(v=100)=0, drive(v=0)=1, quadratic.
+        auto drive_v = [](float vital) {
+            const float gap = (100.0f - std::clamp(vital, 0.0f, 100.0f)) / 100.0f;
+            return gap * gap;
+        };
+        auto eat_drive = [&](float kcal) -> float {
+            if (kcal <= 0.0f) return 0.0f;
+            const float before = drive_v(vital_state.hunger);
+            const float ate    = vitals.eat(vital_state, kcal);
+            const float after  = drive_v(vital_state.hunger);
+            reward.event_eat(before - after);
+            return ate;
+        };
+        auto drink_drive = [&](float ml) -> float {
+            if (ml <= 0.0f) return 0.0f;
+            const float before = drive_v(vital_state.thirst);
+            const float drunk  = vitals.drink(vital_state, ml);
+            const float after  = drive_v(vital_state.thirst);
+            reward.event_drink(before - after);
+            return drunk;
+        };
 
         // EpisodeManager: ends the current episode on death or after a
         // wall-clock cap, then re-spawns agent + vitals + animals while
@@ -1375,15 +1411,14 @@ int main(int argc, char** argv) {
                         }
                     }
                     if (poisoned) {
-                        // Drop hunger and stamina; reward also takes a hit
-                        // through the "negative eat" payload so the agent
-                        // learns mushrooms are risky.
+                        // Drop hunger and stamina; D-043 P1: inverse
+                        // drive_red of -0.2 ≈ -0.6 reward at coef=3.0.
                         vital_state.hunger  = std::max(0.0f, vital_state.hunger  - 12.0f);
                         vital_state.stamina = std::max(0.0f, vital_state.stamina - 25.0f);
-                        reward.event_eat(-15.0f);
+                        reward.event_eat(-0.2f);
                     } else {
-                        if (kcal > 0.0f) { reward.event_eat(  vitals.eat(  vital_state, kcal)); }
-                        if (ml   > 0.0f) { reward.event_drink(vitals.drink(vital_state, ml)); }
+                        eat_drive(kcal);
+                        drink_drive(ml);
                     }
                     // 30% chance to also drop a Seed for Fruit/Berry
                     // (used to plant farms in late stage).
@@ -1406,14 +1441,14 @@ int main(int argc, char** argv) {
             if (action.drink) {
                 auto b = world.biome_at(as.pos_x, as.pos_y);
                 if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
-                    reward.event_drink(vitals.drink(vital_state, 35.0f));
+                    drink_drive(35.0f);
                     // Same key: try to catch a fish in arm's reach.
                     auto fish = animals.agent_attack(as.pos_x, as.pos_y,
                                                      agent.yaw(), 2.0f, 100.0f);
                     if (fish.killed
                         && animals.animals()[fish.index].kind
                             == dp::world::AnimalKind::Fish) {
-                        reward.event_eat(vitals.eat(vital_state, 20.0f));
+                        eat_drive(20.0f);
                     }
                 }
             }
@@ -1521,16 +1556,16 @@ int main(int argc, char** argv) {
                     auto kind = animals.animals()[hit.index].kind;
                     if (kind == dp::world::AnimalKind::Wolf) {
                         reward.event_wolf_killed();
-                        reward.event_eat(vitals.eat(vital_state, 40.0f));
+                        eat_drive(40.0f);
                         inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Rabbit) {
-                        reward.event_eat(vitals.eat(vital_state, 15.0f));
+                        eat_drive(15.0f);
                         inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Deer) {
-                        reward.event_eat(vitals.eat(vital_state, 40.0f));
+                        eat_drive(40.0f);
                         inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Fish) {
-                        reward.event_eat(vitals.eat(vital_state, 20.0f));
+                        eat_drive(20.0f);
                     }
                 }
             }

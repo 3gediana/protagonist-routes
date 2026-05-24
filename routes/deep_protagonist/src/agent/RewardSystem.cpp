@@ -1,5 +1,6 @@
 #include "agent/RewardSystem.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace dp::agent {
@@ -34,12 +35,15 @@ void RewardSystem::event_alive(float dt) {
     step_.alive += w_.alive_step * dt;  // alive_step is per-second
 }
 
-void RewardSystem::event_eat(float kcal) {
-    step_.food += w_.per_food_kcal * kcal;
+// D-043: kcal/ml semantics replaced by drive_reduction (Keramati 2014).
+// Callers pass drive_before-drive_after ∈ [0, 1]; coef ~3.0 keeps single
+// eat/drink event reward in Crafter-aligned magnitude.
+void RewardSystem::event_eat(float drive_red) {
+    step_.food += w_.food_coef * drive_red;
 }
 
-void RewardSystem::event_drink(float ml) {
-    step_.water += w_.per_water_ml * ml;
+void RewardSystem::event_drink(float drive_red) {
+    step_.water += w_.water_coef * drive_red;
 }
 
 void RewardSystem::event_wolf_killed() {
@@ -75,12 +79,18 @@ void RewardSystem::event_vital_pressure(const VitalState& v, float dt) {
 void RewardSystem::event_collected_resource() { step_.collect   += w_.collected; }
 void RewardSystem::event_built_shelter()      { step_.shelter   += w_.built_shelter; }
 void RewardSystem::event_crafted_tool()       { step_.craft     += w_.crafted_tool; }
-void RewardSystem::event_milestone()          { step_.milestone += w_.milestone; }
+void RewardSystem::event_milestone(float scale) {
+    step_.milestone += w_.milestone * std::clamp(scale, 0.0f, 1.0f);
+}
 
 float RewardSystem::end_step() {
+    // D-043 P1: clamp the per-step total to keep PPO advantage estimation
+    // stable. Individual components are not clamped (so EpisodeStats reflects
+    // the "intended" reward), only the scalar returned to the learner.
     last_ = step_;
     ep_.add(last_);
-    return last_.total();
+    float total = last_.total();
+    return std::clamp(total, w_.reward_clip_min, w_.reward_clip_max);
 }
 
 }  // namespace dp::agent
