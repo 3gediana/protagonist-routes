@@ -50,6 +50,36 @@ scenario_name = "long_run_60gen_2d_curriculum"
 [runtime.curriculum]
 archetype_progression_persistence_enabled = true
 
+# L6 R3 stage 3 commits A-K: full graduation pipeline.
+# - triple_world.enabled: turn on the three-world topology
+# - borderland_to_main_period_gens: every 10 gen, promote top-K out
+#   of borderland into main world
+# - borderland_max_pool_per_archetype: cap each archetype's
+#   borderland pool to 32
+# - borderland_eval_period_gens: every gen, mini-tick eval the
+#   archetype's pool to refresh fitness
+# - borderland_min_continuity_gens: require 5 eval rounds before
+#   a genome can graduate to main world
+# - borderland_mutate_sigma + rates: sandbox-NEAT-aligned weight
+#   mutation between eval rounds so the pool actually evolves
+# - extinction_rescue_top_k: if main_world archetype goes extinct,
+#   pull top-2 from borderland to reseed
+[runtime.triple_world]
+enabled = true
+top_k_protagonist_per_gen = 4
+top_k_background_per_gen = 2
+borderland_to_main_period_gens = 10
+borderland_to_main_top_k_protagonist = 8
+borderland_to_main_top_k_background = 4
+borderland_max_pool_per_archetype = 32
+borderland_eval_period_gens = 1
+borderland_eval_aging_factor = 1.0
+borderland_min_continuity_gens = 5
+borderland_mutate_sigma = 0.01
+borderland_mutate_perturb_rate = 0.8
+borderland_mutate_reset_rate = 0.05
+extinction_rescue_top_k = 2
+
 [output]
 runs_dir = "data/runs/long_run_60gen_2d_curriculum"
 

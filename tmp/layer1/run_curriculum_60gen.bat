@@ -1,19 +1,24 @@
 @echo off
-REM Stone bootstrap commit 1/2/3 + L6 R3 commits A-G end-to-end 60-gen
-REM AB. Compared to throw_penalty (which only had throw_attempt=-0.05),
-REM this also turns on archetype_progression_persistence_enabled so
-REM the protagonist's NurseryProgressionLayer unlock flags survive
-REM across episode resets.
+REM L6 R3 stage 3 commits A-K + Stone bootstrap commits 1/2/3 end-to-end
+REM 60-gen graduate AB. Enables EVERYTHING:
+REM   - curriculum.archetype_progression_persistence (Stone 1/2/3)
+REM   - triple_world.enabled (three-world topology)
+REM   - borderland_eval_period_gens=1 (mini-tick eval every gen)
+REM   - borderland_mutate_sigma=0.01 + rates 0.8/0.05 (commit J/K)
+REM   - borderland_min_continuity_gens=5 (commit C 50-gen-ish gate)
+REM   - extinction_rescue_top_k=2 (R2 stage 3 commit 3)
 REM
-REM Run AFTER:
-REM   1. The throw_penalty 60-gen AB releases the binary
-REM   2. (optional) smoke_tw_eval.bat passes — confirms the new
-REM      BorderlandEvaluator wiring doesn't crash in a 4-gen run
+REM Smoke prerequisite: tmp/layer1/smoke_tw_eval.toml passed
+REM (verdict HEALTHY, all 9 archetypes mutate+eval running).
 REM
-REM Expected delta vs throw_penalty baseline: stone deposit /
-REM completion events per gen should climb because unlock state
-REM persists across episodes once the first protagonist crosses the
-REM 6-deposit threshold in episode 0.
+REM Expected indicators vs baseline long_run_60gen_2d.toml:
+REM   - HEALTHY borderland_metrics_summary verdict
+REM   - protagonist b2m promotions every 10 gen (period=10)
+REM   - stone deposit / completion events per gen climbing
+REM     (curriculum gate persists "stone_unlocked")
+REM
+REM Estimated runtime: ~90-150 min (borderland eval adds ~30s/gen
+REM on top of the ~75s/gen sandbox baseline).
 
 set BIN=D:\claude-code\c++\build_ninja_cuda\bin\neural-eco-protagonist.exe
 set CFG=D:\claude-code\c++\tmp\layer1\long_run_60gen_2d_curriculum.toml
