@@ -155,3 +155,41 @@ throw_attempt = -0.5
     // Other slots untouched - hunt default still 10.0.
     EXPECT_FLOAT_EQ(route.goal_completion_rewards[8], 10.0f);
 }
+
+// L6 R3 stage 3 commit B: borderland eval period + aging factor.
+// Defaults: period=0 (disabled), aging=1.0 (no aging).
+TEST(ProtagonistEcologyConfig, BorderlandEvalDefaultsAreDisabled) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "border_eval_default_test"
+
+[world]
+size = [120.0, 120.0]
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_EQ(route.triple_world.borderland_eval_period_gens, 0u);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_eval_aging_factor, 1.0);
+}
+
+TEST(ProtagonistEcologyConfig, BorderlandEvalPeriodAndAgingParseFromToml) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "border_eval_period_test"
+
+[world]
+size = [120.0, 120.0]
+
+[runtime.triple_world]
+borderland_eval_period_gens = 5
+borderland_eval_aging_factor = 0.85
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_EQ(route.triple_world.borderland_eval_period_gens, 5u);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_eval_aging_factor, 0.85);
+}

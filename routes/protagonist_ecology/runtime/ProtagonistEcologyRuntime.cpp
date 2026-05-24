@@ -4468,6 +4468,48 @@ int ProtagonistEcologyRuntime::runTraining() {
                     tw_cfg.top_k_background_per_gen);
             }
 
+            // L6 R3 stage 3 commit B: in-place borderland evaluation.
+            // Every borderland_eval_period_gens generations, walk every
+            // archetype's borderland pool and refresh its stashed
+            // fitness so subsequent cull/promote ranks on borderland-side
+            // selection rather than the sandbox snapshot.
+            // Eval_fn is a no-op identity for now (returns the existing
+            // stashed fitness); commit C will replace it with a real
+            // borderland tick. With aging_factor=1.0 (default) this is
+            // a true no-op; with aging_factor < 1.0 it gradually erodes
+            // old high scores so genomes that aren't re-evaluated
+            // eventually demote.
+            std::size_t border_evaluated_total = 0;
+            if (tw_cfg.borderland_eval_period_gens > 0
+                && (generation + 1) % tw_cfg.borderland_eval_period_gens == 0) {
+                const auto& bp = triple_world.borderland().pools_by_archetype;
+                for (std::size_t a = 0; a < bp.size(); ++a) {
+                    const auto& pool = bp[a];
+                    if (pool.genomes.empty()) continue;
+                    border_evaluated_total += triple_world.evaluateBorderland(
+                        /*archetype=*/a,
+                        /*eval_fn=*/[&pool](const neuro::IGenome& g) {
+                            // No-op identity: look up the genome's existing
+                            // stashed fitness (matched by id) and return it.
+                            // Fresh = stale, so max(aged, fresh) =
+                            // max(stale * aging_factor, stale) which is
+                            // stale when aging_factor >= 1.0 and stale
+                            // otherwise (so aging only matters when < 1).
+                            for (std::size_t i = 0; i < pool.genomes.size(); ++i) {
+                                if (pool.genomes[i] && pool.genomes[i]->id().value == g.id().value) {
+                                    return i < pool.fitnesses.size() ? pool.fitnesses[i] : 0.0;
+                                }
+                            }
+                            return 0.0;
+                        },
+                        /*aging_factor=*/tw_cfg.borderland_eval_aging_factor);
+                }
+                if (border_evaluated_total > 0) {
+                    spdlog::info("TripleWorld gen {}: borderland eval (no-op identity) updated {} genomes (aging={:.3f})",
+                                 generation, border_evaluated_total, tw_cfg.borderland_eval_aging_factor);
+                }
+            }
+
             // L6 R2 stage 3 commit 1: cap borderland pool per archetype so
             // the append-only protocol from above doesn't grow it without
             // bound. Cull happens AFTER promote so newcomers compete with

@@ -484,6 +484,23 @@ struct ProtagonistEcologyConfig {
         // fitness) from the borderland slot of the same archetype to
         // re-seed main_world. 0 = disabled (legacy behavior).
         std::size_t extinction_rescue_top_k{0};
+        // L6 R3 stage 3 commit B: in-place borderland evaluation period.
+        // Every N generations the runtime calls
+        // TripleWorldRuntime::evaluateBorderland for each archetype with
+        // a non-empty borderland pool, so the stashed fitness reflects
+        // borderland-side selection pressure rather than the sandbox
+        // snapshot taken at promotion time. 0 = disabled (legacy
+        // behavior). The current eval_fn is a no-op identity (returns
+        // the existing stashed fitness) so the pipeline is wired but
+        // semantically inert; commit C will plug in a real eval that
+        // builds a temporary borderland World2D and ticks N steps.
+        std::size_t borderland_eval_period_gens{0};
+        // Aging factor applied to the previous stashed fitness BEFORE
+        // mixing in the fresh eval. 1.0 = no aging (default), < 1.0 =
+        // old high scores erode so a genome that stops performing
+        // gradually loses its lead. Recorded fitness is always
+        // max(aged_old, fresh).
+        double borderland_eval_aging_factor{1.0};
     };
     TripleWorldConfig triple_world{};
     MemoryTrialConfig memory_trial{};
