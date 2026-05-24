@@ -49,8 +49,10 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     runtime/ProtagonistEvolution.cpp
     runtime/ProtagonistEcologyRuntime.cpp
     runtime/ProtagonistWorldFactory.cpp
+    runtime/MigrationScheduler.cpp
     runtime/QualityDiversityArchive.cpp
     runtime/TraceRecorder.cpp
+    runtime/TripleWorldRuntime.cpp
     world/BackgroundMemoryLayer.cpp
     world/BaseLayer.cpp
     world/CampfireLayer.cpp
