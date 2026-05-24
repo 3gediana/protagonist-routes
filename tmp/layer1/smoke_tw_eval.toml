@@ -50,10 +50,15 @@ borderland_to_main_top_k_background = 3
 # unless beaten by a fresh eval.
 borderland_eval_period_gens = 1
 borderland_eval_aging_factor = 1.0
-# L6 R3 stage 3 commit J: borderland weight perturbation. Small sigma
-# matches sandbox NEAT scale; > 0 lets borderland actually explore
-# rather than just rank the same genomes forever.
+# L6 R3 stage 3 commit J/K: borderland weight perturbation matching
+# the sandbox NEAT mutate pattern. Per weight:
+#   reset (rate=reset_rate)        -> w = N(0, 1)
+#   else perturb (rate=perturb_rate) -> w += N(0, sigma)
+# These three values mirror sandbox configs (`evolution.mutation` block
+# of long_run_60gen_2d_throw.toml).
 borderland_mutate_sigma = 0.01
+borderland_mutate_perturb_rate = 0.8
+borderland_mutate_reset_rate = 0.05
 
 [output]
 runs_dir = "data/runs/smoke_layer6_tw_eval"
