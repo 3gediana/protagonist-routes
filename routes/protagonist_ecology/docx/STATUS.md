@@ -1,11 +1,22 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 下午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-N 14 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke 验证通过 (HEALTHY verdict) + 60-gen throw_penalty AB 完成 (验证为负优化) + 60-gen graduate AB 后台跑中 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 晚（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`ed640a0 Layer 6 R3 stage 3 commit N: predator mini-world gets a prey peer`
+> 当前 HEAD：`4f493ae Layer 6 R3 stage 3 commit O: Omnivore also gets a prey peer`
 >
-> **2026-05-25 下午 L6 R3 commit L + M + N（结构性 NEAT mutation + metrics + per-archetype eval flavor）+ 60-gen graduate AB 启动**：
+> **2026-05-25 晚 60-gen graduate AB 完整结果（关键发现）**：
+> - **AB 启动 21:05 → 完成 23:47 (2h42min, 60 gen × 2 ep)**。binary 是 commit K (20:42) 编的，commit L/M/N/O 没进 binary。
+> - **harmony_check 5/7 PASS** vs baseline `long_run_60gen_2d.toml` 7/7：
+>   - ✅ C1 hunters / C2 herbivores / C3 coop (peak 2473s, baseline 3254s -24%) / C4 scavengers fed / C7 no extinction
+>   - ❌ **C5 worksites=0/total** (baseline 38) — completed_worksites 全 0
+>   - ❌ **C6 me_coverage 0.16** (baseline 0.40, 阈值 0.30) — protagonist diversity 大幅下降
+> - **borderland_metrics_summary verdict: HEALTHY (partial)** — 9 archetype eval 全工作 (large_herbivore mean fit 549→4693 +755%, ambush 100→2470 +2370%, protagonist 4415→9548 +116%)，6 cycle b2m promote 全跑 (border=288/main=258), 没 extinction。但 csv 限制：背景物种 promoted_to_main 列全显 0 因 commit H 只记 protagonist 那列（这是 csv 限制不是真实 0）。
+> - **关键失败原因（待下个 session 调）**：deposits_stick gen 0=5 / gen 29=1 / gen 58=46，但 deposits_stone **整个 60 代全 0**。Stone bootstrap commit 1/2/3 跨 episode/process 持久化机制工作正常，但 **stone 的实际解锁路径不是 "6 sticks 累积" 这条**（gen 58 已经 46 stick deposit），是别的（first_fire? worksite preactivate? 主世界 task 设计？）。需要查 NurseryProgressionLayer 的真正 stone unlock 条件。**worksite=0 → C5 永 FAIL**。
+> - **二次失败原因**：triple_world 每代 sandbox→border 抽走 4 个 protag 精英 + 16 bg 精英，sandbox NEAT crossover 留下来的基因质量降低 → me_coverage 0.16（baseline 0.40 跌 60%）。这是 triple_world 设计的代价，可能要 promote 频率减半（period_gens 10→20）或 top_k_protag 4→2。
+> - **结论**：graduate AB 暂时 **比 baseline 退步**（7/7 → 5/7）。triple_world + curriculum 全开会拖累 protagonist 主任务。下个 session 需要：(a) 查 stone unlock 真实路径并修；(b) 调 triple_world period/top_k 减少 sandbox 精英抽走；(c) 之后再启用 commit L 结构性 mutation 跑 structural-mutation AB。
+>
+> **2026-05-25 下午 L6 R3 commit L + M + N + O（结构性 NEAT mutation + metrics + per-archetype eval flavor）+ 60-gen graduate AB 启动**：
 > - **Commit L** (`138eacb`)：`BorderlandEvaluator::mutateStructuralPool(archetype, add_conn_rate, add_node_rate, seed)`。Per-genome Bernoulli 决定是否调 add-connection / add-node mutation，mirror sandbox `NeatEvolution::addConnectionMutation` + `addNodeMutation` (24-attempt retry on add-conn, edge-split on add-node)。Pool-local `InnovationTracker` 先扫一遍池子，把 next_node_id 推过 max NodeId 防冲突。ProtagonistGenome (dense) dynamic_cast skip。Runtime hook 紧跟 mutatePool 之后，seed offset +13 跟 weight perturb rng 独立。Toml 字段 `borderland_mutate_add_conn_rate / add_node_rate` 默认 0=off。3 个新 gtest (AddsConnections / AddsNodes / ZeroRatesNoop) 全 PASS。
 > - **Commit M** (`0659c8e`)：`borderland_metrics.csv` header 加 `node_count_avg, connection_count_avg` 两列。Per-row 对池里 NeatGenome 累加 nodes/connections，protagonist 池写 0 (dense 没结构概念)。`borderland_metrics_summary.py` 表加两列 + 新增 **Structural mutation: ACTIVE/OFF** 诊断行 (阈值 > 0.5 avg new nodes 或 > 1.0 avg new edges)。配套 2 个 toml-parse gtest (defaults / parses)。Total tests 现 **218/218 PASS** (commit L 加 3 + commit M 加 2 vs 上次 213)。
 > - **Commit N** (`ed640a0`)：第一个 per-archetype eval flavor。`miniTickBackground` 加 `prey_pool` 参数；当 archetype 是 ApexPredator/PackHunter/AmbushPredator 时，从 LargeHerbivore borderland pool 拉一个 top-fitness 的 herbivore genome 注入 mini-world 当 hunting target。这给 predator 选择真信号 (commit F 的 1-agent isolated mini-world predator 全打 0)。LargeHerbivore 不在 background_archetypes 时 prey_pool=null，silently fall back 到原行为。Scavenger / Omnivore / Rabbit 留下次 commit。5/5 borderland gtest 仍过 (placeholder path 不变)。
