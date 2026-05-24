@@ -200,6 +200,35 @@ PPO 的"输入向量"。神经网络一帧就吃这 145 个数字然后吐出动
 - r_kills > 5（wander 0）→ 学会主动战斗
 - r_milestone > 20（wander 0.4）→ 解锁了中期
 
+## Q-019 · "并行项目用 DNC 我们要不要用？"（2026-05-24 14:00）
+
+**不用**，文献+对比给了 5 条结论：
+
+1. **DNC 训练困难、不稳定**：Stanford / 瑞典 DiVA / PMC 论文都明确说 "difficult to train, prone to overfitting, slow convergence, complex memory operations"。需要 curriculum learning + bi-directional + transfer learning 才能稳
+
+2. **业界已经放弃 PPO + DNC**：2024 Memory Gym (ICLR)、2025 RLBenchNet 大规模对比 MLP/LSTM/GRU/Transformer-XL/Mamba **完全没列 DNC**——主流不在选项里
+
+3. **DNC 用于导航需要绝对坐标**（Parisotto-Salakhutdinov 2018），我们 obs 没有
+
+4. **DNC 真正擅长的是图谱推理**（伦敦地铁、家谱、bAbI QA），不是实时控制
+
+5. **场景不一样**：protagonist_ecology 是多 agent + 社交记忆 + 跨 episode 知识，DNC 甜点；我们是单 agent + 5 分钟 episode + 空间记忆，GRU + Spatial Memory 甜点
+
+我们选了 **GRU(256) + SpatialMemory(64×64×6) + obs P0 补料**（Parisotto-Salakhutdinov 2017 "Neural Map" 路线），见 D-037。
+
+## Q-020 · "GRU 只能记几秒，要长期记忆怎么办？"（2026-05-24 14:00）
+
+四层叠加方案（一起用）：
+
+| 层 | 谁负责 | 时间窗 |
+|---|---|---|
+| **当前 obs** | encoder MLP | 这一帧 |
+| **GRU(256)** | 短期记忆 | 几秒-十几秒 |
+| **SpatialMemory 64×64×6** | 一局空间地图 | 整局 5 分钟 |
+| **PPO 网络权重** | 跨所有局的本能 | 永久 |
+
+最后一层是免费的——PPO 训练时调的权重就是 agent 的"长期本能"，重启训练用 checkpoint 加载就回来。蓝图铁律"参数永不重置"保护的就是这个。
+
 ## Q-018 · "PPO 第一次 1M 训练，怎么 ep39 后 reward 暴涨到 +6000？"（2026-05-24 13:25）
 
 **经典 reward hacking 案例**——PPO 找到了奖励函数的 bug 在疯狂刷分，不是真的学到了什么。
