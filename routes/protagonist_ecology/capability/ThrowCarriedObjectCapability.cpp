@@ -82,6 +82,13 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
         return;
     }
     throw_attempts.fetch_add(1, std::memory_order_relaxed);
+    // L6 R3 training audit (2026-05-25): per-agent ThrowAttempt counter
+    // at slot 13 of the HRL goal table. Coupled with negative weight in
+    // `reward.goal_completion.throw_attempt` to penalise wasted throws
+    // (long_run #10 showed 8-22k throws/gen at 14% accuracy = mostly
+    // misses). Unset (default 0) keeps existing training distributions
+    // unchanged.
+    concrete->noteGoalCompletion(13);
 
     const float mag = std::sqrt(mag_sq);
     const Vec2 dir{outputs[0] / mag, outputs[1] / mag};

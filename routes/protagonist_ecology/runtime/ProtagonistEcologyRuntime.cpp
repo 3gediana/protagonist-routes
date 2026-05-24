@@ -239,7 +239,9 @@ struct TrainingParams {
     // Reward per tick = goal_completion_rewards[g] * agent.goalCompletionThisTick(g).
     // Decoupled from outcome_weight so dense HRL signals survive even
     // when outcome_weight is small.
-    std::array<float, 13> goal_completion_rewards{};
+    // L6 R3 training audit: matches ProtagonistEcologyConfig::goal_completion_rewards
+    // (slot 13 = ThrowAttempt penalty, slots 14/15 reserved).
+    std::array<float, 16> goal_completion_rewards{};
 };
 
 struct BehaviorAccumulator {

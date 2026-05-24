@@ -524,7 +524,15 @@ struct ProtagonistEcologyConfig {
     // a worksite completion gives ~+20 here in addition to the v9-style
     // worksite_completion_reward * outcome_weight). Toml keys live
     // under [reward.goal_completion] (drink, food, gather_stick, etc.).
-    std::array<float, 13> goal_completion_rewards{};
+    // L6 R3 training audit (2026-05-25): throws went 1700-22000/gen
+    // through long_run #10 with 14% accuracy = significant inventory
+    // waste (stones/spears that could have been deposited at worksites
+    // were thrown instead). Adding slot 13 (ThrowAttempt) lets us pay
+    // a per-throw penalty via the existing HRL sub-reward path; slot
+    // is OUTSIDE the GoalType enum (Count=13) so it doesn't pollute
+    // GoalContextPerception. Slots 14/15 reserved for future audit
+    // signals.
+    std::array<float, 16> goal_completion_rewards{};
     // L2.6 v12 (ACCEL regret-based curriculum): when true, the static
     // [[evolution.task_templates.weight]] is dynamically multiplied by
     // (1 + regret_score) where regret_score is a rolling estimate of

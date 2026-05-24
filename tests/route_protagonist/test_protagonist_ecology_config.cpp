@@ -106,3 +106,52 @@ size = [120.0, 120.0]
     EXPECT_DOUBLE_EQ(route.signal.controlled_emitter_period_seconds, 30.0);
     EXPECT_GT(route.signal.controlled_emitter_food_amount, 0.0f);
 }
+
+// L6 R3 training audit (2026-05-25): goal_completion_rewards array
+// expanded from 13 to 16 to add slot 13 (ThrowAttempt penalty); slots
+// 14/15 reserved. Default value is 0 (off) so existing configs are
+// unaffected.
+TEST(ProtagonistEcologyConfig, GoalCompletionRewardsArrayHas16SlotsAndThrowDefaultsToZero) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "throw_penalty_default_test"
+
+[world]
+size = [120.0, 120.0]
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+
+    // Compile-time array width.
+    static_assert(std::tuple_size_v<decltype(route.goal_completion_rewards)> == 16u,
+                  "goal_completion_rewards must have 16 slots (13 GoalType + ThrowAttempt + 2 reserved)");
+    // Defaults: slot 8 (Hunt) = 10.0, slot 13 (ThrowAttempt) = 0.0 unless toml overrides.
+    EXPECT_FLOAT_EQ(route.goal_completion_rewards[8], 10.0f);
+    EXPECT_FLOAT_EQ(route.goal_completion_rewards[13], 0.0f);
+    EXPECT_FLOAT_EQ(route.goal_completion_rewards[14], 0.0f);
+    EXPECT_FLOAT_EQ(route.goal_completion_rewards[15], 0.0f);
+}
+
+// L6 R3 training audit: throw_attempt slot is bound to a toml key.
+// Setting it to a negative value must round-trip into the config struct.
+TEST(ProtagonistEcologyConfig, GoalCompletionRewardsThrowAttemptParsesNegativeFromToml) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "throw_penalty_set_test"
+
+[world]
+size = [120.0, 120.0]
+
+[reward.goal_completion]
+throw_attempt = -0.5
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_FLOAT_EQ(route.goal_completion_rewards[13], -0.5f);
+    // Other slots untouched - hunt default still 10.0.
+    EXPECT_FLOAT_EQ(route.goal_completion_rewards[8], 10.0f);
+}

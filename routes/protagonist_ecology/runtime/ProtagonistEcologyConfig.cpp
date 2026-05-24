@@ -523,7 +523,7 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     // top, decoupled from outcome_weight on purpose (Cuccu/Schmidhuber
     // 2011 NeuroEvolution-style intrinsic-style dense signal that
     // doesn't get squashed when outcome_weight is small).
-    constexpr std::array<float, 13> kDefaultGoalRewards = {
+    constexpr std::array<float, 16> kDefaultGoalRewards = {
         0.0f,   // Explore (0)
         3.0f,   // FindWater (1)
         2.0f,   // FindFood (2)
@@ -537,6 +537,9 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
         0.0f,   // RespondSignal (10)
         0.0f,   // EmitSignal (11)
         0.0f,   // RestNearFire (12)
+        0.0f,   // ThrowAttempt (13) — default off; set negative via toml to penalise
+        0.0f,   // reserved (14)
+        0.0f,   // reserved (15)
     };
     out.goal_completion_rewards = kDefaultGoalRewards;
     out.goal_completion_rewards[0]  = config.getOr<float>("reward.goal_completion.explore",         out.goal_completion_rewards[0]);
@@ -552,6 +555,7 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.goal_completion_rewards[10] = config.getOr<float>("reward.goal_completion.respond_signal",  out.goal_completion_rewards[10]);
     out.goal_completion_rewards[11] = config.getOr<float>("reward.goal_completion.emit_signal",     out.goal_completion_rewards[11]);
     out.goal_completion_rewards[12] = config.getOr<float>("reward.goal_completion.rest_near_fire",  out.goal_completion_rewards[12]);
+    out.goal_completion_rewards[13] = config.getOr<float>("reward.goal_completion.throw_attempt",   out.goal_completion_rewards[13]);
     // L2.6 v12: ACCEL regret-based dynamic weight (default true).
     out.task_template_dynamic_weight = config.getOr<bool>(
         "evolution.task_template_dynamic_weight",
