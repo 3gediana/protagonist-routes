@@ -63,6 +63,41 @@ struct StepResult {
     int                                    episode_step = 0;
 };
 
+// D-043: per-episode milestone unlocks for Crafter-style geometric-mean
+// scoring. 10 milestones (first_hunt removed). Caller queries
+// Environment::milestones() at episode end (before reset()) to get the
+// snapshot.
+struct EpisodeMilestones {
+    bool drink     = false;
+    bool eat       = false;
+    bool collect   = false;
+    bool spear     = false;
+    bool shelter   = false;
+    bool clothing  = false;
+    bool seed      = false;
+    bool house     = false;
+    bool crop      = false;
+    bool follower  = false;
+
+    static constexpr int N = 10;
+    static const char* name(int i) {
+        static const char* names[N] = {
+            "drink","eat","collect","spear","shelter",
+            "clothing","seed","house","crop","follower"
+        };
+        return names[i];
+    }
+    bool get(int i) const {
+        const bool* arr = &drink;
+        return arr[i];
+    }
+    int count() const {
+        int n = 0;
+        for (int i = 0; i < N; ++i) if (get(i)) ++n;
+        return n;
+    }
+};
+
 // Headless wrapper around the full survival simulation. Mirrors what
 // main.cpp's main loop does, minus rendering and minus keyboard handling
 // (the AgentAction passed into step() is the only input channel).
@@ -115,6 +150,9 @@ public:
     const dp::agent::TameSystem&              tame() const { return tame_; }
     const dp::agent::Wardrobe&                wardrobe() const { return wardrobe_; }
     int                                       step_index() const { return step_index_; }
+    // D-043: read the current episode's milestone snapshot (10 bools).
+    // Call BEFORE reset() at episode-done; flags clear on reset.
+    EpisodeMilestones                         milestones() const;
 
 private:
     // Compose the current observation into out_.
@@ -165,7 +203,9 @@ private:
     bool                            first_spear_fired_          = false;
     bool                            first_shelter_fired_        = false;
     bool                            first_clothing_fired_       = false;
-    bool                            first_hunt_fired_           = false;
+    // D-043: first_hunt removed. Crafter's design principle: do not reward
+    // attacks on neutral animals (only defeat_zombie/skeleton). first_hunt
+    // was the direct cause of run7's "撩狼" pathology.
     bool                            first_seed_planted_fired_   = false;
     bool                            first_house_built_fired_    = false;
     bool                            first_crop_harvested_fired_ = false;

@@ -90,7 +90,6 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     first_spear_fired_          = false;
     first_shelter_fired_        = false;
     first_clothing_fired_       = false;
-    first_hunt_fired_           = false;
     first_seed_planted_fired_   = false;
     first_house_built_fired_    = false;
     first_crop_harvested_fired_ = false;
@@ -255,7 +254,9 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 float ate    = vitals_.eat(vital_state_, 20.0f);
                 reward_.event_eat(ate * fscale);
                 if (ate > 0.5f) fire_once(first_eat_fired_);
-                fire_once(first_hunt_fired_);
+                // D-043: first_hunt removed (Crafter: no reward for attacking
+                // neutral animals). Fish-while-drinking still gives food via
+                // first_eat, which is the legitimate signal.
             }
         }
     }
@@ -366,7 +367,9 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 reward_.event_eat(ate * hscale);
                 if (ate > 0.5f) fire_once(first_eat_fired_);
             }
-            fire_once(first_hunt_fired_);
+            // D-043: first_hunt removed. Killing a wolf still gives wolf_killed
+            // (now +1) plus eat reward, but no big milestone spike. This breaks
+            // the run7 "撩狼 for +20 milestone" pathology.
         }
     }
 
@@ -520,6 +523,22 @@ void Environment::rebuild_observation_(
         inventory_, shelter_, episodes_, progress_,
         buildings_, wardrobe_, farming_, tame_,
         selected_building_, spatial_, out);
+}
+
+// D-043: snapshot the 10 first_X flags as a Crafter-style milestone vector.
+EpisodeMilestones Environment::milestones() const {
+    EpisodeMilestones m;
+    m.drink    = first_drink_fired_;
+    m.eat      = first_eat_fired_;
+    m.collect  = first_collect_fired_;
+    m.spear    = first_spear_fired_;
+    m.shelter  = first_shelter_fired_;
+    m.clothing = first_clothing_fired_;
+    m.seed     = first_seed_planted_fired_;
+    m.house    = first_house_built_fired_;
+    m.crop     = first_crop_harvested_fired_;
+    m.follower = first_follower_fired_;
+    return m;
 }
 
 }  // namespace dp::env

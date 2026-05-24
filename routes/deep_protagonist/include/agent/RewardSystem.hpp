@@ -39,11 +39,18 @@ public:
         float per_water_ml     = 0.03f;
 
         // Wolves
-        float wolf_killed      = 5.0f;
+        // D-043: align with Crafter "defeat_zombie/skeleton +1". 5.0 was a
+        // big chunk of typical episode return and combined with first_hunt
+        // produced the "撩狼" pathology in run7. +1 keeps the self-defense
+        // signal small enough that PPO won't optimize for it.
+        float wolf_killed      = 1.0f;
         float wolf_bite_dmg    = -1.0f;   // per damage point absorbed
 
         // Hard terminal
-        float death            = -100.0f;
+        // D-043: -100 was 5x bigger than Crafter's death penalty (max ~10
+        // health loss). Combined with +20 first_X spikes it made death
+        // gambling worthwhile. -10 keeps death dominant but proportional.
+        float death            = -10.0f;
 
         // Soft pressure when vitals decay (combined "missing %" over the
         // 4 vitals × dt × this coef). Tuned so that fully-fed agent gets
@@ -56,10 +63,14 @@ public:
         float built_shelter    = 5.0f;
         float crafted_tool     = 3.0f;
 
-        // S3.10 main-line milestones (first house, first crop, first
-        // follower, stage unlock). Sparse +20 each to focus PPO on
-        // progression-defining events without dwarfing normal rewards.
-        float milestone        = 20.0f;
+        // S3.10/D-041 main-line milestones (first house, first crop, first
+        // follower, stage unlock).
+        // D-043: down from 20.0 to 1.0 to align with Crafter's +1/achievement
+        // convention. Run7 result confirmed that +20 per first_X dwarfed the
+        // -100 death penalty by 1/5, making "gamble for a milestone then die"
+        // worthwhile (eg. attacking wolves to get first_hunt). At +1 the agent
+        // sees milestones as bonus, not as gambling target.
+        float milestone        = 1.0f;
     };
 
     // Per-step breakdown so we can debug *why* a reward is what it is.

@@ -22,6 +22,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -255,14 +256,38 @@ int main(int argc, char** argv) {
 
     ActionStats astats;
 
+    // D-043: Crafter-style cumulative milestone tracking. unlock_total[i] =
+    // number of episodes in which milestone i was unlocked. The score is the
+    // geometric mean of success rates: exp(mean(log(1 + s_i))) - 1, which
+    // favors agents that unlock many milestones over those that grind one.
+    std::array<int, dp::env::EpisodeMilestones::N> unlock_total{};
+    int score_eps = 0;
+    auto compute_score = [&]() {
+        if (score_eps == 0) return 0.0;
+        double s = 0.0;
+        for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
+            double rate = static_cast<double>(unlock_total[i]) / score_eps;
+            s += std::log(1.0 + rate);
+        }
+        return std::exp(s / dp::env::EpisodeMilestones::N) - 1.0;
+    };
+
     auto log_episode = [&](int episode_id,
-                           const dp::agent::RewardSystem::EpisodeStats& s) {
-        spdlog::info("ep {}: steps={} R={:+.1f} (alive={:+.1f} "
-                     "food={:+.1f} water={:+.1f} kills={:+.1f} "
+                           const dp::agent::RewardSystem::EpisodeStats& s,
+                           const dp::env::EpisodeMilestones& ms) {
+        // Update cumulative counters BEFORE computing the score.
+        for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
+            if (ms.get(i)) ++unlock_total[i];
+        }
+        ++score_eps;
+        double score = compute_score();
+        spdlog::info("ep {}: steps={} R={:+.1f} unlocks={}/{} score={:.3f} "
+                     "(alive={:+.1f} food={:+.1f} water={:+.1f} kills={:+.1f} "
                      "bites={:+.1f} death={:+.1f} vital={:+.1f} "
                      "collect={:+.1f} shelter={:+.1f} craft={:+.1f} "
                      "milestone={:+.1f})",
                      episode_id, s.steps, s.total_reward,
+                     ms.count(), dp::env::EpisodeMilestones::N, score,
                      s.r_alive, s.r_food, s.r_water, s.r_kills,
                      s.r_bites, s.r_death, s.r_vital,
                      s.r_collect, s.r_shelter, s.r_craft, s.r_milestone);
@@ -276,14 +301,18 @@ int main(int argc, char** argv) {
                 "\"r_vital\":%.3f,\"r_collect\":%.3f,\"r_shelter\":%.3f,"
                 "\"r_craft\":%.3f,\"r_milestone\":%.3f,"
                 "\"deaths\":%d,\"policy\":\"%s\",\"seed\":%llu,"
-                "\"mv\":%.3f,\"yw\":%.3f,\"act\":[",
+                "\"mv\":%.3f,\"yw\":%.3f,\"score\":%.4f,\"unlocks\":[",
                 episode_id, s.steps, s.total_reward,
                 s.r_alive, s.r_food, s.r_water, s.r_kills,
                 s.r_bites, s.r_death, s.r_vital,
                 s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
                 env.vitals().deaths, policy.c_str(),
                 static_cast<unsigned long long>(seed),
-                mv, yw);
+                mv, yw, score);
+            for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
+                std::fprintf(mf, "%s%d", i == 0 ? "" : ",", ms.get(i) ? 1 : 0);
+            }
+            std::fprintf(mf, "],\"act\":[");
             for (int i = 0; i < 16; ++i) {
                 std::fprintf(mf, "%s%d", i == 0 ? "" : ",", astats.disc_count[i]);
             }
@@ -368,7 +397,9 @@ int main(int argc, char** argv) {
         obs = sr.obs;
 
         if (sr.done) {
-            log_episode(sr.episode_id, env.last_episode_stats());
+            // D-043: snapshot milestones BEFORE reset() clears the flags.
+            const auto ms = env.milestones();
+            log_episode(sr.episode_id, env.last_episode_stats(), ms);
             ++episodes_done;
             if (max_episodes > 0 && episodes_done >= max_episodes) break;
             env.reset(obs);
