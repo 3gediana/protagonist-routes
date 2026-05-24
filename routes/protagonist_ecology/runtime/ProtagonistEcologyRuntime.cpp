@@ -4436,6 +4436,20 @@ int ProtagonistEcologyRuntime::runTraining() {
                     tw_cfg.top_k_background_per_gen);
             }
 
+            // L6 R2 stage 3 commit 1: cap borderland pool per archetype so
+            // the append-only protocol from above doesn't grow it without
+            // bound. Cull happens AFTER promote so newcomers compete with
+            // the standing pool.
+            std::size_t border_culled_total = 0;
+            if (tw_cfg.borderland_max_pool_per_archetype > 0) {
+                border_culled_total += triple_world.cullBorderland(
+                    /*archetype=*/0, tw_cfg.borderland_max_pool_per_archetype);
+                for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                    border_culled_total += triple_world.cullBorderland(
+                        /*archetype=*/i + 1, tw_cfg.borderland_max_pool_per_archetype);
+                }
+            }
+
             // Accumulated borderland sizes (sum across archetypes).
             std::size_t border_total = 0;
             for (const auto& pool : triple_world.borderland().pools_by_archetype) {
@@ -4466,11 +4480,11 @@ int ProtagonistEcologyRuntime::runTraining() {
 
             spdlog::info(
                 "TripleWorld gen {}: sandbox->border protag={} bg={} | "
-                "border->main protag={} bg={} | border={} main={}",
+                "border->main protag={} bg={} | border={} main={} | culled={}",
                 generation,
                 protag_promoted, bg_promoted_total,
                 b2m_protag_promoted, b2m_bg_promoted_total,
-                border_total, main_total);
+                border_total, main_total, border_culled_total);
         }
 
         // ---- write evolution.csv ----

@@ -206,3 +206,55 @@ TEST(Layer6Migration, TripleWorldPromoteExternalAndStoredBorderToMain) {
     EXPECT_EQ(main_pool.genomes[0]->id().value, 201u);
     EXPECT_DOUBLE_EQ(main_pool.fitnesses[0], 0.9);
 }
+
+// L6 R2 stage 3 commit 1: cullBorderland keeps the top-K by stashed
+// fitness and drops the rest; pool tracking arrays stay aligned.
+TEST(Layer6Migration, CullBorderlandKeepsTopFitness) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 6; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 300u}));
+    }
+    // Promote all 6 into borderland so we have something to cull.
+    std::vector<double> fits = {0.1, 0.9, 0.4, 0.7, 0.3, 0.6};
+    std::vector<std::uint64_t> lineages = {310u, 311u, 312u, 313u, 314u, 315u};
+    trio.promoteExternalToBorderland(0, external_pop, fits, lineages, 6);
+    ASSERT_EQ(trio.borderland().pools_by_archetype.at(0).genomes.size(), 6u);
+
+    // Cull to 3. Should drop the bottom three (fit=0.1, 0.3, 0.4).
+    const std::size_t dropped = trio.cullBorderland(0, /*max_pool_size=*/3);
+    EXPECT_EQ(dropped, 3u);
+
+    const auto& border = trio.borderland().pools_by_archetype.at(0);
+    ASSERT_EQ(border.genomes.size(), 3u);
+    ASSERT_EQ(border.fitnesses.size(), 3u);
+    ASSERT_EQ(border.lineage_ids.size(), 3u);
+    EXPECT_DOUBLE_EQ(border.fitnesses[0], 0.9);
+    EXPECT_DOUBLE_EQ(border.fitnesses[1], 0.7);
+    EXPECT_DOUBLE_EQ(border.fitnesses[2], 0.6);
+    // Lineages must follow the same reordering: 0.9->lineage 311, 0.7->313, 0.6->315.
+    EXPECT_EQ(border.lineage_ids[0], 311u);
+    EXPECT_EQ(border.lineage_ids[1], 313u);
+    EXPECT_EQ(border.lineage_ids[2], 315u);
+    // Genomes: fit=0.9 is index 1 of original ⇒ id 301, etc.
+    EXPECT_EQ(border.genomes[0]->id().value, 301u);
+    EXPECT_EQ(border.genomes[1]->id().value, 303u);
+    EXPECT_EQ(border.genomes[2]->id().value, 305u);
+}
+
+// Cull is a no-op when pool already fits (or is smaller than the cap).
+TEST(Layer6Migration, CullBorderlandNoopWhenUnderCap) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 400u}));
+    }
+    std::vector<double> fits = {0.2, 0.5, 0.4};
+    std::vector<std::uint64_t> lineages = {410u, 411u, 412u};
+    trio.promoteExternalToBorderland(0, external_pop, fits, lineages, 3);
+
+    // Cap = 5, pool size = 3 → no drops, contents untouched.
+    EXPECT_EQ(trio.cullBorderland(0, /*max_pool_size=*/5), 0u);
+    EXPECT_EQ(trio.cullBorderland(0, /*max_pool_size=*/3), 0u);
+    EXPECT_EQ(trio.borderland().pools_by_archetype.at(0).genomes.size(), 3u);
+}

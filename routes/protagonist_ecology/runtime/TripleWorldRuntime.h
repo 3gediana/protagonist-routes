@@ -106,6 +106,26 @@ public:
     // an accumulator without its own evaluation loop.
     std::size_t promoteBorderlandToMain(std::size_t archetype, std::size_t k);
 
+    // L6 R2 stage 3 commit 1: cap the borderland slot's pool size.
+    //
+    // Under the stage-2 protocol, every generation top_k_per_gen new
+    // genomes are appended to borderland and never removed, so after
+    // 60 generations a borderland pool can hold 240+ protagonist
+    // genomes per archetype. Cull keeps borderland bounded by retaining
+    // only the top `max_pool_size` by stashed fitness (the same
+    // fitness that promoteBorderlandToMain ranks on, so promotion
+    // semantics are preserved across the cull).
+    //
+    // Returns the number of genomes that were dropped. If the pool
+    // already fits or is malformed, returns 0 and changes nothing.
+    //
+    // NOTE: this is *not* "borderland evolution". Spec § 2.2 calls for
+    // an actual world tick + 50-generation 物种延续 test inside
+    // borderland; that requires running an independent World2D per
+    // archetype and is deferred to Layer 6 R3. This commit only
+    // implements the pruning half of "borderland is bounded".
+    std::size_t cullBorderland(std::size_t archetype, std::size_t max_pool_size);
+
     // Direct access to the per-world slots (for tests + the future
     // integration commit that will wire them into the real loop).
     WorldSlot& sandbox()    { return sandbox_; }

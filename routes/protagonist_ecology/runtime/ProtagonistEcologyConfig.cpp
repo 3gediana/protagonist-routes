@@ -361,6 +361,7 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.triple_world.borderland_to_main_period_gens = config.getOr<std::size_t>("runtime.triple_world.borderland_to_main_period_gens", out.triple_world.borderland_to_main_period_gens);
     out.triple_world.borderland_to_main_top_k_protagonist = config.getOr<std::size_t>("runtime.triple_world.borderland_to_main_top_k_protagonist", out.triple_world.borderland_to_main_top_k_protagonist);
     out.triple_world.borderland_to_main_top_k_background = config.getOr<std::size_t>("runtime.triple_world.borderland_to_main_top_k_background", out.triple_world.borderland_to_main_top_k_background);
+    out.triple_world.borderland_max_pool_per_archetype = config.getOr<std::size_t>("runtime.triple_world.borderland_max_pool_per_archetype", out.triple_world.borderland_max_pool_per_archetype);
 
     out.memory_trial.enabled = config.getOr<bool>("world.memory_trial.enabled", out.memory_trial.enabled);
     out.memory_trial.cue_duration_seconds = config.getOr<double>("world.memory_trial.cue_duration_seconds", out.memory_trial.cue_duration_seconds);

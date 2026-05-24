@@ -95,4 +95,40 @@ std::size_t TripleWorldRuntime::promoteBorderlandToMain(std::size_t archetype, s
     return promoteBorderlandToMain(archetype, src.fitnesses, k);
 }
 
+std::size_t TripleWorldRuntime::cullBorderland(std::size_t archetype, std::size_t max_pool_size) {
+    auto& pool = ensurePool(borderland_, archetype);
+    if (pool.genomes.size() <= max_pool_size) return 0;
+    // Defensive: aligned tracking arrays are required to cull by fitness.
+    if (pool.fitnesses.size() != pool.genomes.size()
+        || pool.lineage_ids.size() != pool.genomes.size()) {
+        return 0;
+    }
+
+    std::vector<std::size_t> indices(pool.genomes.size());
+    for (std::size_t i = 0; i < indices.size(); ++i) indices[i] = i;
+    std::stable_sort(indices.begin(), indices.end(),
+                     [&](std::size_t a, std::size_t b) {
+                         return pool.fitnesses[a] > pool.fitnesses[b];
+                     });
+
+    std::vector<std::unique_ptr<IGenome>> kept_genomes;
+    std::vector<std::uint64_t> kept_lineages;
+    std::vector<double> kept_fitnesses;
+    kept_genomes.reserve(max_pool_size);
+    kept_lineages.reserve(max_pool_size);
+    kept_fitnesses.reserve(max_pool_size);
+    for (std::size_t i = 0; i < max_pool_size; ++i) {
+        const std::size_t idx = indices[i];
+        kept_genomes.push_back(std::move(pool.genomes[idx]));
+        kept_lineages.push_back(pool.lineage_ids[idx]);
+        kept_fitnesses.push_back(pool.fitnesses[idx]);
+    }
+
+    const std::size_t dropped = pool.genomes.size() - max_pool_size;
+    pool.genomes = std::move(kept_genomes);
+    pool.lineage_ids = std::move(kept_lineages);
+    pool.fitnesses = std::move(kept_fitnesses);
+    return dropped;
+}
+
 }  // namespace neuro::routes::protagonist

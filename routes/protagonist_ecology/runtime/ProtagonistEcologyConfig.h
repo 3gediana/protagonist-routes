@@ -466,6 +466,13 @@ struct ProtagonistEcologyConfig {
         std::size_t borderland_to_main_period_gens{50};
         std::size_t borderland_to_main_top_k_protagonist{8};
         std::size_t borderland_to_main_top_k_background{4};
+        // L6 R2 stage 3 commit 1: cap borderland pool size per archetype to
+        // prevent the stage-2 append-only protocol from growing the pool
+        // unboundedly. Cull happens AFTER each sandbox→borderland promote
+        // (so the new entries get to compete with the old). 0 = unbounded
+        // (legacy behavior). Default 32 = 8 promote-windows worth of
+        // top_k_protagonist_per_gen=4.
+        std::size_t borderland_max_pool_per_archetype{0};
     };
     TripleWorldConfig triple_world{};
     MemoryTrialConfig memory_trial{};
