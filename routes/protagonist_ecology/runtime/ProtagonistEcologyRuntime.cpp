@@ -35,6 +35,7 @@
 #include "runtime/ProtagonistBatchedDenseRunner.h"
 #include "runtime/ProtagonistEvolution.h"
 #include "runtime/QualityDiversityArchive.h"
+#include "runtime/MainWorldPersistence.h"
 #include "runtime/TripleWorldRuntime.h"
 #include "brain/GoalMemory.h"
 #include "runtime/BootstrapPopulation.h"
@@ -3977,6 +3978,35 @@ int ProtagonistEcologyRuntime::runTraining() {
                      tw_cfg.top_k_protagonist_per_gen,
                      tw_cfg.top_k_background_per_gen,
                      tw_cfg.borderland_to_main_period_gens);
+
+        // L6 R2 stage 3 commit 2: pool-only snapshot resume. If
+        // persist_dir is set and contains a manifest, load borderland +
+        // main_world pools before the training loop starts so they
+        // accumulate ACROSS runs.
+        if (!tw_cfg.persist_dir.empty()) {
+            MainWorldSnapshotMetadata loaded_meta;
+            if (MainWorldPersistence::load(
+                    std::filesystem::path(tw_cfg.persist_dir),
+                    triple_world, &loaded_meta)) {
+                std::size_t border_total = 0;
+                for (const auto& p : triple_world.borderland().pools_by_archetype) {
+                    border_total += p.genomes.size();
+                }
+                std::size_t main_total = 0;
+                for (const auto& p : triple_world.mainWorld().pools_by_archetype) {
+                    main_total += p.genomes.size();
+                }
+                spdlog::info("TripleWorldRuntime: loaded snapshot from {} (border={} main={} "
+                             "scenario='{}' snapshot_id={} gens_elapsed={})",
+                             tw_cfg.persist_dir, border_total, main_total,
+                             loaded_meta.scenario_name, loaded_meta.snapshot_id,
+                             loaded_meta.generations_elapsed);
+            } else {
+                spdlog::info("TripleWorldRuntime: persist_dir='{}' has no manifest "
+                             "(or it is unparseable) - starting fresh",
+                             tw_cfg.persist_dir);
+            }
+        }
     }
 
     for (std::size_t generation = start_generation; generation < params.generations; ++generation) {
@@ -4826,10 +4856,13 @@ int ProtagonistEcologyRuntime::runTraining() {
         }
     }
 
-    // L6 R2 stage 2: end-of-run summary. Dumps final genome counts per
-    // archetype for borderland and main_world to triple_world_summary.json.
-    // No genome serialization yet (deferred to stage 3 with the full
-    // MainWorldPersistence design).
+    // L6 R2 stage 2: end-of-run summary. Always dumps final genome
+    // counts per archetype for borderland and main_world to
+    // triple_world_summary.json in the run_dir (run-local, never
+    // overwritten across runs).
+    // L6 R2 stage 3 commit 2: when persist_dir is configured, also
+    // writes a full pool-only snapshot (manifest + per-genome blobs)
+    // for cross-run resume.
     if (tw_cfg.enabled) {
         const auto& border_pools = triple_world.borderland().pools_by_archetype;
         const auto& main_pools = triple_world.mainWorld().pools_by_archetype;
@@ -4855,6 +4888,23 @@ int ProtagonistEcologyRuntime::runTraining() {
         }
         LOG_INFO("TripleWorldRuntime end-of-run: borderland={} main_world={}",
                  border_total, main_total);
+
+        if (!tw_cfg.persist_dir.empty()) {
+            MainWorldSnapshotMetadata meta;
+            meta.snapshot_id = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+            meta.sim_time_seconds = 0.0;
+            meta.generations_elapsed = params.generations;
+            meta.scenario_name = route.scenario_name;
+            const std::filesystem::path persist_path(tw_cfg.persist_dir);
+            if (MainWorldPersistence::save(triple_world, meta, persist_path)) {
+                LOG_INFO("TripleWorldRuntime snapshot written to {} (border={} main={})",
+                         tw_cfg.persist_dir, border_total, main_total);
+            } else {
+                spdlog::error("TripleWorldRuntime snapshot save to {} FAILED", tw_cfg.persist_dir);
+            }
+        }
     }
 
     LOG_INFO("ProtagonistEcologyRuntime: training run complete at {}", run_dir.string());

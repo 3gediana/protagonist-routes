@@ -473,6 +473,11 @@ struct ProtagonistEcologyConfig {
         // (legacy behavior). Default 32 = 8 promote-windows worth of
         // top_k_protagonist_per_gen=4.
         std::size_t borderland_max_pool_per_archetype{0};
+        // L6 R2 stage 3 commit 2: pool-only snapshot persistence path.
+        // When set, the runtime tries to load borderland+main_world
+        // pools from this dir on startup, and writes them back at the
+        // end of the run. Empty (default) = no disk persistence.
+        std::string persist_dir;
     };
     TripleWorldConfig triple_world{};
     MemoryTrialConfig memory_trial{};
