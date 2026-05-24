@@ -92,11 +92,16 @@ def main() -> int:
     print(f"\n# Borderland metrics · {run_dir.name}")
     print(f"\nTotal rows: {len(rows)}, archetypes seen: {sorted(by_arch.keys())}\n")
 
-    print("| arch | name | pool first->last | mean fit first->last | eval count | promoted total | culled total |")
-    print("|---|---|---|---|---|---|---|")
+    # Commit M: structural columns (node_count_avg / connection_count_avg)
+    # were added to borderland_metrics.csv in this commit. Older CSVs
+    # without these columns still parse — to_float returns 0.0 on a
+    # missing key, so the "struct" column just shows 0->0 on old runs.
+    print("| arch | name | pool first->last | mean fit first->last | eval count | promoted total | culled total | nodes first->last | conns first->last |")
+    print("|---|---|---|---|---|---|---|---|---|")
 
     any_evolving = False
     any_gated = False
+    any_structural_growth = False
     for a in sorted(by_arch.keys()):
         arch_rows = sorted(by_arch[a], key=lambda r: to_int(r["generation"]))
         first, last = arch_rows[0], arch_rows[-1]
@@ -107,16 +112,29 @@ def main() -> int:
         last_eval_count = to_int(last["borderland_eval_count"])
         promoted_total = sum(to_int(r["promoted_to_main"]) for r in arch_rows)
         culled_total = sum(to_int(r["culled"]) for r in arch_rows)
+        first_nodes = to_float(first.get("node_count_avg", "0"))
+        last_nodes = to_float(last.get("node_count_avg", "0"))
+        first_conns = to_float(first.get("connection_count_avg", "0"))
+        last_conns = to_float(last.get("connection_count_avg", "0"))
 
         name = ARCHETYPE_NAME.get(a, f"archetype_{a}")
         print(f"| {a} | {name} | {first_pool}->{last_pool} | "
               f"{first_mean:.1f}->{last_mean:.1f} | {last_eval_count} | "
-              f"{promoted_total} | {culled_total} |")
+              f"{promoted_total} | {culled_total} | "
+              f"{first_nodes:.1f}->{last_nodes:.1f} | "
+              f"{first_conns:.1f}->{last_conns:.1f} |")
 
         if last_eval_count > 0 and abs(last_mean - first_mean) > 1.0:
             any_evolving = True
         if last_eval_count > 0 and promoted_total == 0:
             any_gated = True
+        # Structural growth signal: > 0.5 average new node or > 1.0
+        # average new edge across the run for any non-protagonist
+        # archetype (protagonist always writes 0). 0.5 is below
+        # rounding to 1 — anything above noise implies commit L's
+        # add_conn/add_node mutation is firing at least sometimes.
+        if a != 0 and (last_nodes - first_nodes > 0.5 or last_conns - first_conns > 1.0):
+            any_structural_growth = True
 
     # Verdict
     print()
@@ -134,6 +152,20 @@ def main() -> int:
     else:
         print("Verdict: **STAGNANT** — eval running but no signal change. Likely "
               "borderland_eval_period_gens=0 (no eval) or eval_fn is degenerate.")
+
+    # Commit M: separate structural-evolution diagnostic. Doesn't
+    # override the main verdict; just surfaces whether commit L's
+    # add_conn / add_node rates are actually firing in this run.
+    if any_structural_growth:
+        print("Structural mutation: **ACTIVE** — at least one background archetype "
+              "grew nodes or connections vs gen 0 (commit L add_conn / add_node "
+              "fired). To turn it off, set runtime.triple_world.borderland_mutate_"
+              "add_conn_rate = 0 and borderland_mutate_add_node_rate = 0.")
+    else:
+        print("Structural mutation: **OFF** — no background archetype grew structure "
+              "vs gen 0. Either runtime.triple_world.borderland_mutate_add_conn_rate "
+              "and borderland_mutate_add_node_rate are both 0 (default), or no "
+              "NeatGenome reached a non-saturated graph state during the run.")
 
     return 0
 

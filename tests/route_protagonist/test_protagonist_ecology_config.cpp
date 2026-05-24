@@ -263,3 +263,44 @@ archetype_progression_persistence_enabled = true
     const auto route = ProtagonistEcologyConfig::fromConfig(config);
     EXPECT_TRUE(route.curriculum.archetype_progression_persistence_enabled);
 }
+
+// L6 R3 stage 3 commit L: structural NEAT mutation rates.
+// Default 0.0 = off, parses non-zero from toml correctly. Mirrors
+// the BorderlandMutateSigma {Defaults,Parses} pair so a config typo
+// (e.g. borderland_mutate_add_conn_rate vs borderland_add_conn_rate)
+// is caught at unit-test level rather than only during a long-run AB.
+TEST(ProtagonistEcologyConfig, BorderlandMutateStructuralRatesDefaultToZero) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "border_struct_default_test"
+
+[world]
+size = [120.0, 120.0]
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_add_conn_rate, 0.0);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_add_node_rate, 0.0);
+}
+
+TEST(ProtagonistEcologyConfig, BorderlandMutateStructuralRatesParseFromToml) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "border_struct_test"
+
+[world]
+size = [120.0, 120.0]
+
+[runtime.triple_world]
+borderland_mutate_add_conn_rate = 0.10
+borderland_mutate_add_node_rate = 0.04
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_add_conn_rate, 0.10);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_add_node_rate, 0.04);
+}

@@ -3960,7 +3960,8 @@ int ProtagonistEcologyRuntime::runTraining() {
     // (just stays empty when TripleWorld is off).
     std::ofstream borderland_csv(run_dir / "borderland_metrics.csv", std::ios::out | std::ios::trunc);
     borderland_csv << "generation,archetype,pool_size,mean_fitness,max_fitness,"
-                   << "borderland_eval_count,promoted_to_main,culled\n";
+                   << "borderland_eval_count,promoted_to_main,culled,"
+                   << "node_count_avg,connection_count_avg\n";
 
     LOG_INFO("ProtagonistEcologyRuntime: training with {} background species: {}",
              species_contexts.size(),
@@ -4759,12 +4760,37 @@ int ProtagonistEcologyRuntime::runTraining() {
                     // pool.genomes.size() growth.
                     const std::size_t promoted_this_gen =
                         (a == 0) ? b2m_protag_promoted : 0u;
+                    // Commit M: structural counters. Average across
+                    // NeatGenome members of the pool only — protagonist
+                    // pools (ProtagonistGenome dense weights) report 0
+                    // since "node count" / "connection count" don't
+                    // apply to dense weight blocks. Lets the
+                    // borderland_metrics_summary script verify whether
+                    // commit L's add-conn / add-node mutations are
+                    // actually growing the borderland topology over
+                    // generations.
+                    std::size_t neat_count = 0;
+                    std::size_t node_sum = 0;
+                    std::size_t conn_sum = 0;
+                    for (const auto& g : pool.genomes) {
+                        if (!g) continue;
+                        const auto* ng = dynamic_cast<const NeatGenome*>(g.get());
+                        if (ng == nullptr) continue;
+                        ++neat_count;
+                        node_sum += ng->nodes().size();
+                        conn_sum += ng->connections().size();
+                    }
+                    const double node_avg = neat_count == 0 ? 0.0
+                        : static_cast<double>(node_sum) / static_cast<double>(neat_count);
+                    const double conn_avg = neat_count == 0 ? 0.0
+                        : static_cast<double>(conn_sum) / static_cast<double>(neat_count);
                     borderland_csv << generation << ',' << a << ','
                                    << pool.genomes.size() << ','
                                    << mean_fit << ',' << max_fit << ','
                                    << pool.borderland_eval_count << ','
                                    << promoted_this_gen << ','
-                                   << border_culled_total << '\n';
+                                   << border_culled_total << ','
+                                   << node_avg << ',' << conn_avg << '\n';
                 }
                 borderland_csv.flush();
             }
