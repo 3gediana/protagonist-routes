@@ -65,6 +65,17 @@ void WorksiteLayer::tick(IWorld& world, float dt) {
     progressConstruction(world, dt);
     // Layer 5 R2: completed Storage buildings keep absorbing.
     absorbToCompletedStorages(world);
+    // Layer 5 R3: update per-agent sense-radius scale based on Lookout proximity.
+    if (agents_ != nullptr) {
+        for (auto* a : agents_->agents()) {
+            if (a == nullptr || !a->alive()) continue;
+            if (buildingAt(a->position(), BuildingType::Lookout).has_value()) {
+                a->setSenseRadiusScale(1.5f);
+            } else {
+                a->setSenseRadiusScale(1.0f);
+            }
+        }
+    }
     // Emergent shelter L1: completed worksites act as collidable walls
     // for predators. Runs after AgentLayer (tickOrder 100 < 155) so the
     // movement positions for this tick are already in agent->position()

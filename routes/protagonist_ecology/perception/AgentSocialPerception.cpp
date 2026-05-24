@@ -23,10 +23,16 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
         return;
     }
 
+    // L5 R3: Lookout building bonus - effective sense radius scaled.
+    const auto* self_concrete_for_scale = dynamic_cast<const Agent*>(&self);
+    const float scale = self_concrete_for_scale != nullptr ? self_concrete_for_scale->senseRadiusScale() : 1.0f;
+    const float effective_radius = sense_radius_ * scale;
+    const float effective_r2 = effective_radius * effective_radius;
+
     const Agent* nearest_prey = nullptr;
     const Agent* nearest_predator = nullptr;
-    float nearest_prey_dist_sq = sense_radius_ * sense_radius_;
-    float nearest_predator_dist_sq = sense_radius_ * sense_radius_;
+    float nearest_prey_dist_sq = effective_r2;
+    float nearest_predator_dist_sq = effective_r2;
     std::size_t peer_count = 0;
     std::size_t predator_count = 0;
 
@@ -52,7 +58,7 @@ void AgentSocialPerception::sense(const IAgent& self, const IWorld& world, std::
         }
 
         const float dist_sq = Vec2::distanceSquared(other->position(), self.position());
-        if (dist_sq > sense_radius_ * sense_radius_) {
+        if (dist_sq > effective_r2) {
             continue;
         }
 

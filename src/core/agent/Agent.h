@@ -390,6 +390,14 @@ public:
     const IGenome* genomeArchive() const { return genome_archive_.get(); }
     void setGenomeArchive(std::unique_ptr<IGenome> g) { genome_archive_ = std::move(g); }
 
+    // Layer 5 R3: perceptual sense-radius multiplier. Default 1.0; gets
+    // bumped to ~1.5 when the agent stands inside a completed Lookout
+    // building (set by WorksiteLayer once per tick). Each IPerception
+    // implementation can opt in by multiplying its sense_radius_ by
+    // this scalar when computing distance thresholds.
+    float senseRadiusScale() const { return sense_radius_scale_; }
+    void setSenseRadiusScale(float s) { sense_radius_scale_ = std::max(0.1f, s); }
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -461,6 +469,7 @@ private:
     DeathCause death_cause_ = DeathCause::Unknown;
     std::uint8_t archetype_tag_ = 0;  // 0 = protagonist; 1..N = background
     std::unique_ptr<IGenome> genome_archive_;  // L4 in-world reproduction
+    float sense_radius_scale_ = 1.0f;  // L5 R3: Lookout building bonus
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };
