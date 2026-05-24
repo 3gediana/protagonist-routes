@@ -1,8 +1,10 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-24 下午 14:45
-> 当前阶段：**S4.0 GRU + SpatialMemory + obs P0 补料 ✅（1M 步训练完成）**
+> 最后更新：2026-05-24 下午 15:00
+> 当前阶段：**S4.0 完成；S4.1 准备扩网络长训（D-038：可视化全部延后）**
 > Self-test：**110 个全过**
+>
+> ⚠️ **未来 AI 必读**：用户决策 D-038 —— 所有 HUD / mini-map / 视觉化推迟到训练完毕接口冻结后。具体待办清单见 `docs/待办_视觉化与打磨.md`，**不要现在动手加 HUD**
 > Wander baseline：mean -37 / 死亡率 29%
 > PPO run2 (MLP, 1M): mean +16.3 / 死亡率 0% / water 0
 > **PPO run3 (GRU+SpatMem, 1M): mean +18.6 / 死亡率 0% / water +1.79 (稳定找水) / bites -2.17 (避狼 +92%)**
