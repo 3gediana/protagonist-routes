@@ -49,7 +49,11 @@ struct BackgroundSpecies {
 
 std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config);
 std::size_t backgroundSensoryDim(const ProtagonistEcologyConfig& config);
-std::size_t backgroundOutputDim(SpeciesArchetype archetype);
+// L5 #9: optional `config` arg adds the BackgroundMemoryWriteCapability
+// interface dim when memory is enabled. Defaults to a nullptr-equivalent
+// empty config branch (returns the bare archetype dim) so older call
+// sites that haven't been updated still compile.
+std::size_t backgroundOutputDim(SpeciesArchetype archetype, const ProtagonistEcologyConfig* config = nullptr);
 
 std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
                                             const IGenome& genome,

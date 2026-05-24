@@ -1,5 +1,7 @@
 set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
+    capability/BackgroundMemoryWriteCapability.cpp
     capability/CaveHideCapability.cpp
+    capability/ChooseBuildingTypeCapability.cpp
     capability/ChopTreeCapability.cpp
     capability/CraftSpearCapability.cpp
     capability/DrinkWaterCapability.cpp
@@ -22,6 +24,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     brain/ProtagonistBrain.cpp
     brain/ProtagonistGenome.cpp
     perception/AgentSocialPerception.cpp
+    perception/BackgroundMemoryReadPerception.cpp
     perception/BasePerception.cpp
     perception/CarriedObjectPerception.cpp
     perception/DangerPerception.cpp
@@ -48,6 +51,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     runtime/ProtagonistWorldFactory.cpp
     runtime/QualityDiversityArchive.cpp
     runtime/TraceRecorder.cpp
+    world/BackgroundMemoryLayer.cpp
     world/BaseLayer.cpp
     world/CampfireLayer.cpp
     world/InterventionDirectorLayer.cpp

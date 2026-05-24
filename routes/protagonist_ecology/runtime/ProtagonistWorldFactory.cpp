@@ -15,6 +15,7 @@
 #include "world/BaseLayer.h"
 #include "world/CampfireLayer.h"
 #include "world/InterventionDirectorLayer.h"
+#include "world/BackgroundMemoryLayer.h"
 #include "world/MemoryTrialLayer.h"
 #include "world/NurseryLogisticsLayer.h"
 #include "world/NurseryProgressionLayer.h"
@@ -149,6 +150,15 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
     world->addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, config.compute.agent_decision_threads));
     if (config.memory_trial.enabled) {
         world->addLayer(std::make_unique<MemoryTrialLayer>(config.memory_trial, config.random_seed + 907));
+    }
+    // L5 #9: per-agent DNC memory store for background species. Must be
+    // attached AFTER AgentLayer so its onAttach can resolve the AgentLayer
+    // pointer for periodic dead-agent culling.
+    if (config.background.dnc_memory.enabled) {
+        world->addLayer(std::make_unique<BackgroundMemoryLayer>(
+            config.background.dnc_memory.slots,
+            config.background.dnc_memory.word_size,
+            config.background.dnc_memory.read_heads));
     }
 
     if (config.terrain_enabled) {

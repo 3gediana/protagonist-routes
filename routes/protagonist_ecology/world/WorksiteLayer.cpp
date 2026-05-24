@@ -115,6 +115,33 @@ bool WorksiteLayer::activateNextDormant() {
     for (auto& site : sites_) {
         if (!site.active) {
             site.active = true;
+            // L5 #6: per-activation protagonist vote override. If any
+            // protagonist (archetype_tag==0) is within 3x interaction_radius
+            // of this site, take the modal buildingTypeChoice() over them
+            // and override the seeded type. Falls back to the seeded
+            // distribution when no protagonists are nearby.
+            if (agents_ != nullptr) {
+                int votes[4] = {0, 0, 0, 0};
+                int total = 0;
+                const float vote_radius = interaction_radius_ * 3.0f;
+                const float r2 = vote_radius * vote_radius;
+                for (const auto* a : agents_->agents()) {
+                    if (a == nullptr || !a->alive() || a->archetypeTag() != 0) continue;
+                    if (Vec2::distanceSquared(a->position(), site.position) > r2) continue;
+                    const auto bt = a->buildingTypeChoice();
+                    if (bt < 4) {
+                        ++votes[bt];
+                        ++total;
+                    }
+                }
+                if (total > 0) {
+                    int best = 0;
+                    for (int i = 1; i < 4; ++i) {
+                        if (votes[i] > votes[best]) best = i;
+                    }
+                    site.building_type = static_cast<BuildingType>(best);
+                }
+            }
             return true;
         }
     }

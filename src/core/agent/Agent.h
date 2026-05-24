@@ -408,6 +408,14 @@ public:
     float senseRadiusScale() const { return sense_radius_scale_; }
     void setSenseRadiusScale(float s) { sense_radius_scale_ = std::max(0.1f, s); }
 
+    // L5 #6: protagonist's preferred BuildingType for the next worksite
+    // activation (0=Wall / 1=Shelter / 2=Storage / 3=Lookout). Stored as
+    // uint8_t for core/route decoupling; the route's WorksiteLayer reads
+    // this when activating a dormant site and majority-votes among nearby
+    // protagonists to override the seeded distribution. Default 0 (Wall).
+    std::uint8_t buildingTypeChoice() const { return building_type_choice_; }
+    void setBuildingTypeChoice(std::uint8_t v) { building_type_choice_ = (v < 4u) ? v : 0u; }
+
 private:
     AgentId id_;
     GenomeId genome_id_;
@@ -481,6 +489,7 @@ private:
     std::uint8_t archetype_tag_ = 0;  // 0 = protagonist; 1..N = background
     std::unique_ptr<IGenome> genome_archive_;  // L4 in-world reproduction
     float sense_radius_scale_ = 1.0f;  // L5 R3: Lookout building bonus
+    std::uint8_t building_type_choice_ = 0;  // L5 #6: protagonist's vote on next site type
     std::vector<std::unique_ptr<IPerception>> perceptions_;
     std::vector<std::unique_ptr<IAgentCapability>> capabilities_;
 };

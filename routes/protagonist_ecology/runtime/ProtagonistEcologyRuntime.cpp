@@ -1082,7 +1082,7 @@ std::vector<std::unique_ptr<IGenome>> loadBackgroundCheckpointPopulation(const P
             throw std::runtime_error("failed to load background checkpoint genome: " + path.string());
         }
         if (genome->inputDim() != backgroundSensoryDim(route)
-            || genome->outputDim() != backgroundOutputDim(archetype)) {
+            || genome->outputDim() != backgroundOutputDim(archetype, &route)) {
             throw std::runtime_error("checkpoint background genome shape does not match current scenario: " + path.string());
         }
         population.push_back(std::move(genome));
@@ -3837,7 +3837,7 @@ int ProtagonistEcologyRuntime::runTraining() {
     if (checkpoint_path.empty()) {
         population = createInitialPopulation(route);
         for (auto& ctx : species_contexts) {
-            const auto output_dim = backgroundOutputDim(ctx.archetype);
+            const auto output_dim = backgroundOutputDim(ctx.archetype, &route);
             const std::uint64_t id_base = static_cast<std::uint64_t>(ctx.slot_index + 1) * kIdStride + 1ULL;
             ctx.population = createInitialNeatPopulation(
                 ctx.configured_count,
@@ -3874,7 +3874,7 @@ int ProtagonistEcologyRuntime::runTraining() {
         } else {
             population = loadProtagonistCheckpointPopulation(route, checkpoint_dir);
             for (auto& ctx : species_contexts) {
-                const auto output_dim = backgroundOutputDim(ctx.archetype);
+                const auto output_dim = backgroundOutputDim(ctx.archetype, &route);
                 const std::uint64_t id_base = static_cast<std::uint64_t>(ctx.slot_index + 1) * kIdStride + 1ULL;
                 ctx.population = createInitialNeatPopulation(
                     ctx.configured_count,

@@ -1,11 +1,14 @@
 #include "runtime/BootstrapPopulation.h"
 
+#include "brain/DNCMemory.h"
 #include "brain/ProtagonistBrain.h"
 #include "brain/ProtagonistGenome.h"
 #include "capability/CaveHideCapability.h"
 #include "capability/ChopTreeCapability.h"
 #include "capability/CraftSpearCapability.h"
 #include "capability/DrinkWaterCapability.h"
+#include "capability/BackgroundMemoryWriteCapability.h"
+#include "capability/ChooseBuildingTypeCapability.h"
 #include "capability/GoalActionAssistCapability.h"
 #include "capability/GoalAwareDropCapability.h"
 #include "capability/NurseryPickUpCapability.h"
@@ -34,6 +37,7 @@
 #include "core/perception/TimeOfDayPerception.h"
 #include "core/perception/WeatherPerception.h"
 #include "perception/AgentSocialPerception.h"
+#include "perception/BackgroundMemoryReadPerception.h"
 #include "perception/BasePerception.h"
 #include "perception/CarriedObjectPerception.h"
 #include "perception/DangerPerception.h"
@@ -223,7 +227,14 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
 
     const std::size_t sensory_dim = protagonistSensoryDim(config);
 
-    const std::size_t required_action_dim = 2 + (config.signal.enabled ? config.signal.channels : 0) + (config.water.enabled && config.survival.enabled ? 1 : 0) + (hasBackgroundAgents(config) ? 2 : 0) + (has_tree_curriculum ? 1 : 0) + (has_tool_curriculum ? 3 : 0) + (config.objects.enabled ? 2 : 0);
+    const std::size_t required_action_dim = 2
+        + (config.signal.enabled ? config.signal.channels : 0)
+        + (config.water.enabled && config.survival.enabled ? 1 : 0)
+        + (hasBackgroundAgents(config) ? 2 : 0)
+        + (has_tree_curriculum ? 1 : 0)
+        + (has_tool_curriculum ? 3 : 0)
+        + (config.objects.enabled ? 2 : 0)
+        + (config.protagonist.building_type_choice_enabled ? 4 : 0);  // L5 #6
     if (config.protagonist.action_dim != required_action_dim) {
         throw std::runtime_error("protagonist action_dim does not match configured move/signal capability outputs");
     }
@@ -341,6 +352,11 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         agent->addCapability(std::make_unique<NurseryPickUpCapability>(kPickRadius, kPickCost));
         agent->addCapability(std::make_unique<GoalAwareDropCapability>(kDropCost));
     }
+    // L5 #6: protagonist's BuildingType vote (4 outputs). Order matches
+    // the required_action_dim summation above (last, after objects).
+    if (config.protagonist.building_type_choice_enabled) {
+        agent->addCapability(std::make_unique<ChooseBuildingTypeCapability>());
+    }
 
     // L2.2 v2: drive tick (last so it sees foodEatenThisTick from
     // EatCapability). consumedOutputs = 0; safe to add unconditionally.
@@ -389,6 +405,11 @@ std::size_t computeBackgroundSensoryDim(const ProtagonistEcologyConfig& config) 
     if (config.signal.enabled) {
         dim += SignalPerception::featureDim(config.signal.channels);
     }
+    // L5 #9: DNC read_vectors (added LAST so capability/perception ordering
+    // in attachBackgroundCommonSensors matches the dim summation here).
+    if (config.background.dnc_memory.enabled) {
+        dim += config.background.dnc_memory.word_size * config.background.dnc_memory.read_heads;
+    }
     return dim;
 }
 
@@ -418,6 +439,22 @@ void attachBackgroundCommonSensors(Agent& agent,
         // immediate neighbours.
         agent.addPerception(std::make_unique<SignalPerception>(config.signal.channels, /*perception_radius=*/16.0f));
     }
+    // L5 #9: DNC read_vectors perception (last to match the dim-summation
+    // order in computeBackgroundSensoryDim).
+    if (config.background.dnc_memory.enabled) {
+        const std::size_t rv_dim = config.background.dnc_memory.word_size
+                                 * config.background.dnc_memory.read_heads;
+        agent.addPerception(std::make_unique<BackgroundMemoryReadPerception>(rv_dim));
+    }
+}
+
+// L5 #9: extra output slots claimed by BackgroundMemoryWriteCapability.
+// Returns 0 when the feature is disabled so existing checkpoints keep
+// loading. Added unconditionally to backgroundOutputDim() inputs.
+std::size_t backgroundMemoryInterfaceDim(const ProtagonistEcologyConfig& config) {
+    if (!config.background.dnc_memory.enabled) return 0;
+    return DNCMemory::interfaceDim(config.background.dnc_memory.word_size,
+                                   config.background.dnc_memory.read_heads);
 }
 
 // ---------------------------------------------------------------------------
@@ -452,7 +489,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
     // was cloned from a different-archetype parent (or a population list
     // mixup at seed time), which historically caused Layer 4 in-world
     // reproduction to crash mid-episode via Agent::applyCapabilities throw.
-    if (const auto expected_out = backgroundOutputDim(archetype);
+    if (const auto expected_out = backgroundOutputDim(archetype, &config);
         archetype != SpeciesArchetype::Protagonist
         && brain->outputDim() != expected_out) {
         spdlog::warn(
@@ -596,6 +633,14 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
 
         default:
             throw std::runtime_error("makeNeatSpeciesAgent: unsupported archetype");
+    }
+
+    // L5 #9: DNC memory write (last to match the dim summation order in
+    // backgroundOutputDim()). consumedOutputs() = interfaceDim.
+    if (config.background.dnc_memory.enabled) {
+        agent->addCapability(std::make_unique<BackgroundMemoryWriteCapability>(
+            config.background.dnc_memory.word_size,
+            config.background.dnc_memory.read_heads));
     }
 
     // L2.2 v2: drive tick + species-specific setpoints. Setpoints
@@ -745,23 +790,23 @@ std::size_t backgroundSensoryDim(const ProtagonistEcologyConfig& config) {
     return computeBackgroundSensoryDim(config);
 }
 
-std::size_t backgroundOutputDim(SpeciesArchetype archetype) {
+std::size_t backgroundOutputDim(SpeciesArchetype archetype, const ProtagonistEcologyConfig* config) {
+    std::size_t base = 6;
     switch (archetype) {
-        case SpeciesArchetype::LargeHerbivore: return 3;  // Move 2 + Flee 1 (CaveHide=0 not on this species)
-        case SpeciesArchetype::SmallForager:   return 3;  // Move 2 + Flee 1 (CaveHide consumed=0)
-        case SpeciesArchetype::ApexPredator:   return 6;  // Move 2 + Hunt 1 + Attack 3
-        case SpeciesArchetype::PackHunter:     return 6;
-        case SpeciesArchetype::AmbushPredator: return 6;  // Stealth consumed=0
-        // L2.1 v2: Scavenger now has PredatorHuntCapability so it can
-        // chip-feed off low-vitality prey via scavenge_efficiency. That
-        // adds 1 consumed output (Hunt 1). 7 = Move 2 + Hunt 1 + Attack
-        // 3 + Flee 1 (Eat=0).
-        case SpeciesArchetype::Scavenger:      return 7;
-        case SpeciesArchetype::Omnivore:       return 7;  // Move 2 + Hunt 1 + Attack 3 + Flee 1
-        // Layer 3: Rabbit has minimal capability stack - Move 2 + Flee 1.
-        case SpeciesArchetype::Rabbit:         return 3;
-        default: return 6;
+        case SpeciesArchetype::LargeHerbivore: base = 3; break;  // Move 2 + Flee 1
+        case SpeciesArchetype::SmallForager:   base = 3; break;  // Move 2 + Flee 1
+        case SpeciesArchetype::ApexPredator:   base = 6; break;  // Move 2 + Hunt 1 + Attack 3
+        case SpeciesArchetype::PackHunter:     base = 6; break;
+        case SpeciesArchetype::AmbushPredator: base = 6; break;  // Stealth consumed=0
+        // L2.1 v2: Scavenger PredatorHunt+Attack+Flee = 7.
+        case SpeciesArchetype::Scavenger:      base = 7; break;
+        case SpeciesArchetype::Omnivore:       base = 7; break;  // Move 2 + Hunt 1 + Attack 3 + Flee 1
+        // Layer 3: Rabbit minimal stack - Move 2 + Flee 1.
+        case SpeciesArchetype::Rabbit:         base = 3; break;
+        default: base = 6; break;
     }
+    if (config != nullptr) base += backgroundMemoryInterfaceDim(*config);
+    return base;
 }
 
 std::string_view speciesArchetypeName(SpeciesArchetype archetype) {

@@ -337,6 +337,12 @@ struct ProtagonistBrainConfig {
     bool goal_action_assist_enabled{false};
     bool predator_warn_enabled{true};
     bool hunt_enabled{true};
+    // L5 #6: when true, attaches ChooseBuildingTypeCapability (4 extra
+    // outputs) so the protagonist softmax-votes which BuildingType the
+    // next dormant worksite becomes. Default off so existing checkpoints
+    // and toml configs keep working unchanged. When enabled, the toml
+    // must bump action_dim by +4 to match the new capability output.
+    bool building_type_choice_enabled{false};
 };
 
 struct SpeciesSlotConfig {
@@ -390,12 +396,25 @@ struct TaskTemplate {
     float must_build_penalty{200.0f};
 };
 
+// L5 #9: per-agent DNC memory option for background species. When
+// enabled, every background NEAT brain gets +read_vector_dim sensory
+// inputs (read vectors) and +interfaceDim outputs (write/read interface).
+// The DNC state lives in the route-level BackgroundMemoryLayer keyed by
+// AgentId. Default off so existing checkpoints keep loading.
+struct BackgroundMemoryConfig {
+    bool enabled{false};
+    std::size_t slots{4};
+    std::size_t word_size{2};
+    std::size_t read_heads{1};
+};
+
 struct BackgroundBrainConfig {
     std::size_t forager_count{0};
     std::size_t predator_count{0};
     std::size_t ambient_count{0};
     std::size_t hidden_dim{32};
     std::vector<SpeciesSlotConfig> slots{};
+    BackgroundMemoryConfig dnc_memory{};
 };
 
 struct ProtagonistEcologyConfig {

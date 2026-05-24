@@ -376,11 +376,16 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist.goal_action_assist_enabled = config.getOr<bool>("population.protagonist.goal_action_assist_enabled", out.protagonist.goal_action_assist_enabled);
     out.protagonist.predator_warn_enabled = config.getOr<bool>("population.protagonist.predator_warn_enabled", out.protagonist.predator_warn_enabled);
     out.protagonist.hunt_enabled = config.getOr<bool>("population.protagonist.hunt_enabled", out.protagonist.hunt_enabled);
+    out.protagonist.building_type_choice_enabled = config.getOr<bool>("population.protagonist.building_type_choice_enabled", out.protagonist.building_type_choice_enabled);
 
     out.background.forager_count = config.getOr<std::size_t>("population.background.forager_count", out.background.forager_count);
     out.background.predator_count = config.getOr<std::size_t>("population.background.predator_count", out.background.predator_count);
     out.background.ambient_count = config.getOr<std::size_t>("population.background.ambient_count", out.background.ambient_count);
     out.background.hidden_dim = config.getOr<std::size_t>("population.background.hidden_dim", out.background.hidden_dim);
+    out.background.dnc_memory.enabled = config.getOr<bool>("population.background.dnc_memory.enabled", out.background.dnc_memory.enabled);
+    out.background.dnc_memory.slots = config.getOr<std::size_t>("population.background.dnc_memory.slots", out.background.dnc_memory.slots);
+    out.background.dnc_memory.word_size = config.getOr<std::size_t>("population.background.dnc_memory.word_size", out.background.dnc_memory.word_size);
+    out.background.dnc_memory.read_heads = config.getOr<std::size_t>("population.background.dnc_memory.read_heads", out.background.dnc_memory.read_heads);
 
     if (auto species_view = config.raw().at_path("population.background.species"); species_view && species_view.is_array()) {
         out.background.slots.clear();
