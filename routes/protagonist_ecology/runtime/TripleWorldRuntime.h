@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -125,6 +126,35 @@ public:
     // archetype and is deferred to Layer 6 R3. This commit only
     // implements the pruning half of "borderland is bounded".
     std::size_t cullBorderland(std::size_t archetype, std::size_t max_pool_size);
+
+    // L6 R3 stage 3 commit A: in-place borderland evaluation.
+    //
+    // Spec § 1.2 says borderland is "50 代考验 + 不灭绝才进入主世界".
+    // Stage 2 + R2-stage-3 left borderland as a fitness pool accumulator
+    // — every genome's stashed fitness was the snapshot taken at the
+    // moment of sandbox→borderland promotion, never re-evaluated. This
+    // call walks the borderland pool of `archetype`, invokes `eval_fn`
+    // for each genome (caller provides the World2D / brain machinery),
+    // and updates the stashed fitness so subsequent
+    // promoteBorderlandToMain / cullBorderland reflect the borderland's
+    // own selection pressure rather than the sandbox snapshot.
+    //
+    // The old stashed fitness is first multiplied by `aging_factor`
+    // (default 1.0 = no aging) so that a genome which stops performing
+    // gradually loses its lead instead of being permanently insulated
+    // by an old high score. The recorded fitness is `max(aged_old,
+    // fresh)` so a single bad evaluation doesn't immediately demote a
+    // proven survivor — borderland is a survival test, not a single
+    // make-or-break exam.
+    //
+    // Returns the number of genomes evaluated (0 if pool empty or
+    // eval_fn is null). The caller is expected to follow up with
+    // cullBorderland(archetype, max_pool_size) to actually evict the
+    // low-fitness tail.
+    using BorderlandEvalFn = std::function<double(const IGenome&)>;
+    std::size_t evaluateBorderland(std::size_t archetype,
+                                   const BorderlandEvalFn& eval_fn,
+                                   double aging_factor = 1.0);
 
     // L6 R2 stage 3 commit 3: emergency rescue when a main_world
     // archetype pool is empty (extinction = spec invariant #4).

@@ -131,6 +131,31 @@ std::size_t TripleWorldRuntime::cullBorderland(std::size_t archetype, std::size_
     return dropped;
 }
 
+std::size_t TripleWorldRuntime::evaluateBorderland(
+    std::size_t archetype,
+    const BorderlandEvalFn& eval_fn,
+    double aging_factor) {
+    auto& pool = ensurePool(borderland_, archetype);
+    if (pool.genomes.empty() || !eval_fn) return 0;
+
+    // Defensive: stashed fitness array must align with genomes. If
+    // somehow desynced (e.g. caller bypassed promoteExternalToBorderland)
+    // fall back to zero so the new fresh evaluation drives the result.
+    if (pool.fitnesses.size() != pool.genomes.size()) {
+        pool.fitnesses.assign(pool.genomes.size(), 0.0);
+    }
+
+    std::size_t evaluated = 0;
+    for (std::size_t i = 0; i < pool.genomes.size(); ++i) {
+        if (!pool.genomes[i]) continue;  // defensive
+        const double aged  = pool.fitnesses[i] * aging_factor;
+        const double fresh = eval_fn(*pool.genomes[i]);
+        pool.fitnesses[i] = std::max(aged, fresh);
+        ++evaluated;
+    }
+    return evaluated;
+}
+
 std::size_t TripleWorldRuntime::rescueExtinctSpecies(std::size_t archetype, std::size_t k) {
     auto& main_pool = ensurePool(main_world_, archetype);
     // Only fire when main_world is genuinely extinct for this archetype.

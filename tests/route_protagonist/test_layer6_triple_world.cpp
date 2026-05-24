@@ -305,3 +305,79 @@ TEST(Layer6Migration, CullBorderlandNoopWhenUnderCap) {
     EXPECT_EQ(trio.cullBorderland(0, /*max_pool_size=*/3), 0u);
     EXPECT_EQ(trio.borderland().pools_by_archetype.at(0).genomes.size(), 3u);
 }
+
+// L6 R3 stage 3 commit A: evaluateBorderland walks the borderland pool
+// and updates stashed fitness with max(aged_old, fresh). With
+// aging_factor=1.0 (default) a stale entry that earned 1000 in the
+// sandbox keeps its lead unless the fresh eval also returns >= 1000.
+TEST(Layer6Migration, EvaluateBorderlandUpdatesStashedFitness) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 700u}));
+    }
+    // Stale stashed fitnesses from the sandbox era.
+    std::vector<double> fits = {10.0, 20.0, 30.0, 40.0};
+    std::vector<std::uint64_t> lineages = {710u, 711u, 712u, 713u};
+    trio.promoteExternalToBorderland(/*archetype=*/2, external_pop, fits, lineages, 4);
+
+    // promoteExternalToBorderland sorts by fitness descending, so the
+    // borderland pool stores genomes in order [id=703, 702, 701, 700]
+    // with fitnesses [40, 30, 20, 10]. Eval callback returns id as
+    // fresh fitness, so max(aged_old=fit, fresh=id) = id (all ids
+    // exceed their own old fitness).
+    const std::size_t evaluated = trio.evaluateBorderland(
+        /*archetype=*/2,
+        /*eval_fn=*/[](const IGenome& g) {
+            return static_cast<double>(g.id().value);
+        },
+        /*aging_factor=*/1.0);
+    EXPECT_EQ(evaluated, 4u);
+    const auto& pool = trio.borderland().pools_by_archetype.at(2);
+    ASSERT_EQ(pool.fitnesses.size(), 4u);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[0], 703.0);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[1], 702.0);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[2], 701.0);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[3], 700.0);
+}
+
+// Aging factor < 1 lets fresh evals "catch up" against an old high
+// score. With aging=0.5, an old 100 becomes 50; a fresh 60 wins.
+TEST(Layer6Migration, EvaluateBorderlandAgingFactor) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 800u}));
+    }
+    std::vector<double> fits = {100.0, 200.0, 300.0};
+    std::vector<std::uint64_t> lineages = {810u, 811u, 812u};
+    trio.promoteExternalToBorderland(/*archetype=*/3, external_pop, fits, lineages, 3);
+
+    // promoteExternalToBorderland sorted descending: [id=802(fit=300),
+    // id=801(fit=200), id=800(fit=100)]. aging_factor=0.5 → aged old =
+    // {150, 100, 50}. fresh callback returns 60 for all.
+    //   max(150, 60) = 150
+    //   max(100, 60) = 100
+    //   max(50, 60)  = 60
+    const std::size_t evaluated = trio.evaluateBorderland(
+        /*archetype=*/3,
+        /*eval_fn=*/[](const IGenome&) { return 60.0; },
+        /*aging_factor=*/0.5);
+    EXPECT_EQ(evaluated, 3u);
+    const auto& pool = trio.borderland().pools_by_archetype.at(3);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[0], 150.0);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[1], 100.0);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[2], 60.0);
+
+    // Null callback or empty pool → no-op (0 returned).
+    EXPECT_EQ(trio.evaluateBorderland(/*archetype=*/3,
+                                      /*eval_fn=*/nullptr,
+                                      /*aging_factor=*/1.0),
+              0u);
+    // Empty archetype 99 — ensurePool grows the vector but pool stays empty.
+    EXPECT_EQ(trio.evaluateBorderland(
+                  /*archetype=*/99,
+                  /*eval_fn=*/[](const IGenome&) { return 1.0; },
+                  /*aging_factor=*/1.0),
+              0u);
+}
