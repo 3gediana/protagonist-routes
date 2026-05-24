@@ -1,9 +1,19 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C/D/E/F/G/H/I 九件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-J 十件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`14ba6e3 Layer 6 R3 stage 3 commit I: borderland_metrics_summary.py audit tool`
+> 当前 HEAD：`6b1e24a Layer 6 R3 stage 3 commit J: borderland weight mutation + toml gate`
+>
+> **2026-05-25 上午 L6 R3 commit J（真正的 borderland evolution）**（commit `6b1e24a`）：
+> - 之前 commit E/F/G 只能做"选择"，同一 genome 永远评出同样 fitness。Commit J 加上"探索"。
+> - `TripleWorldRuntime::mutateBorderlandPool(archetype, mutator)` 走 pool 内每个 genome 调 caller-supplied mutator。stashed_fitness 保持，下次 evaluateBorderland 走 max(aged, fresh)。
+> - `BorderlandEvaluator::mutatePool(triple_world, archetype, sigma, seed)` 对 ProtagonistGenome 的 dense 权重 (input/hidden/action/interface) + NeatGenome 的 ConnectionGene::weight 做 Gaussian perturb。dynamic_cast 分派 (IGenome 没有 uniform mutate API)。
+> - toml gate `[runtime.triple_world] borderland_mutate_sigma`（默认 0.0 = off）。
+> - Runtime hook 顺序：promote → **mutate (commit J)** → evaluate → cull → continuity-gate → b2m promote → metrics csv (commit H)。
+> - Smoke config `smoke_tw_eval.toml` 加 `borderland_mutate_sigma = 0.01` 让端到端 wiring 验证就位。
+> - 4 个新 gtest (Mutate pool applies/no-op + 2 config parse)。**213/213 total**。
+> - 整套 commit A-J 现在是真正的 "borderland 内部 evolution arena"：sandbox 提供 founder → borderland mutate + evaluate + cull 反复迭代 → 50-代物种延续 gate 决定毕业 → main world。
 >
 > **2026-05-25 上午 L6 R3 commit H/I（数据可视化 hook）**：
 > - **Commit H** (`67f2154`)：`borderland_metrics.csv` per-(generation, archetype) 行写入。Columns: generation / archetype / pool_size / mean_fitness / max_fitness / borderland_eval_count / promoted_to_main / culled。empty pool 跳过。File created unconditionally。
