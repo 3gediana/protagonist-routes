@@ -1,11 +1,13 @@
 #pragma once
 
 #include "runtime/TripleWorldRuntime.h"
+#include "world/NurseryProgressionLayer.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace neuro::routes::protagonist {
 
@@ -43,6 +45,12 @@ struct MainWorldSnapshotMetadata {
     double sim_time_seconds{0.0};
     std::size_t generations_elapsed{0};
     std::string scenario_name;
+    // Stone Bootstrap commit 3 (STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md
+    // option D §4.5): per-archetype curriculum unlock state. Empty
+    // vector means "no progression state persisted" (legacy snapshots
+    // load fine; the runtime then keeps its default-false state).
+    // Saved one entry per archetype index (0 = protagonist).
+    std::vector<ArchetypeProgressionState> archetype_progression;
 };
 
 class MainWorldPersistence {

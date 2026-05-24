@@ -180,6 +180,18 @@ struct JsonScanner {
     std::uint64_t readUint() {
         return static_cast<std::uint64_t>(readNumber());
     }
+    bool readBool() {
+        skipWs();
+        if (pos + 4 <= src.size() && src.compare(pos, 4, "true") == 0) {
+            pos += 4;
+            return true;
+        }
+        if (pos + 5 <= src.size() && src.compare(pos, 5, "false") == 0) {
+            pos += 5;
+            return false;
+        }
+        return false;  // defensive: malformed treated as false
+    }
     // Skip a balanced value (object / array / string / number / literal).
     void skipValue() {
         skipWs();
@@ -332,8 +344,28 @@ bool MainWorldPersistence::save(const TripleWorldRuntime& triple_world,
              << "  \"snapshot_id\": " << meta.snapshot_id << ",\n"
              << "  \"sim_time_seconds\": " << meta.sim_time_seconds << ",\n"
              << "  \"generations_elapsed\": " << meta.generations_elapsed << ",\n"
-             << "  \"scenario_name\": \"" << escapeJson(meta.scenario_name) << "\",\n"
-             << borderland_json.str() << ",\n"
+             << "  \"scenario_name\": \"" << escapeJson(meta.scenario_name) << "\",\n";
+    // Stone Bootstrap commit 3: per-archetype curriculum progression
+    // state. Written as a flat array of {fire,worksite,stone,heavy,fire2}
+    // booleans, one entry per archetype slot. Skipped entirely when
+    // archetype_progression is empty so old snapshot consumers stay
+    // happy.
+    if (!meta.archetype_progression.empty()) {
+        manifest << "  \"archetype_progression\": [\n";
+        for (std::size_t a = 0; a < meta.archetype_progression.size(); ++a) {
+            const auto& s = meta.archetype_progression[a];
+            manifest << "    {\"first_fire_ignited\":"  << (s.first_fire_ignited  ? "true" : "false")
+                     << ",\"worksite_unlocked\":"      << (s.worksite_unlocked    ? "true" : "false")
+                     << ",\"stone_unlocked\":"         << (s.stone_unlocked       ? "true" : "false")
+                     << ",\"heavy_unlocked\":"         << (s.heavy_unlocked       ? "true" : "false")
+                     << ",\"second_fire_ignited\":"    << (s.second_fire_ignited  ? "true" : "false")
+                     << "}";
+            if (a + 1 < meta.archetype_progression.size()) manifest << ",";
+            manifest << "\n";
+        }
+        manifest << "  ],\n";
+    }
+    manifest << borderland_json.str() << ",\n"
              << main_json.str() << "\n"
              << "}\n";
     return static_cast<bool>(manifest);
@@ -371,6 +403,29 @@ bool MainWorldPersistence::load(const std::filesystem::path& persist_dir,
             meta.generations_elapsed = static_cast<std::size_t>(sc.readUint());
         } else if (key == "scenario_name") {
             meta.scenario_name = sc.readString();
+        } else if (key == "archetype_progression") {
+            // Stone Bootstrap commit 3: array of {fire,worksite,stone,
+            // heavy,fire2} bool objects, one per archetype index.
+            if (!sc.consume('[')) return false;
+            while (!sc.peek(']')) {
+                if (!sc.consume('{')) return false;
+                ArchetypeProgressionState s{};
+                while (!sc.peek('}')) {
+                    const std::string sub = sc.readString();
+                    if (!sc.consume(':')) return false;
+                    if      (sub == "first_fire_ignited")   s.first_fire_ignited  = sc.readBool();
+                    else if (sub == "worksite_unlocked")    s.worksite_unlocked   = sc.readBool();
+                    else if (sub == "stone_unlocked")       s.stone_unlocked      = sc.readBool();
+                    else if (sub == "heavy_unlocked")       s.heavy_unlocked      = sc.readBool();
+                    else if (sub == "second_fire_ignited")  s.second_fire_ignited = sc.readBool();
+                    else                                    sc.skipValue();
+                    sc.consume(',');
+                }
+                sc.consume('}');
+                meta.archetype_progression.push_back(s);
+                sc.consume(',');
+            }
+            sc.consume(']');
         } else if (key == "borderland") {
             if (!loadSlot(sc, persist_dir, "borderland", staging.borderland())) {
                 return false;

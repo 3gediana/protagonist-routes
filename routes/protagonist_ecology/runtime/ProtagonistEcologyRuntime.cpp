@@ -4017,6 +4017,27 @@ int ProtagonistEcologyRuntime::runTraining() {
                              tw_cfg.persist_dir, border_total, main_total,
                              loaded_meta.scenario_name, loaded_meta.snapshot_id,
                              loaded_meta.generations_elapsed);
+                // Stone Bootstrap commit 3: restore archetype curriculum
+                // unlock state from the snapshot metadata if present.
+                // Only does anything when the curriculum gate is on AND
+                // the snapshot was written by a build that included the
+                // progression field (legacy snapshots have empty arrays).
+                if (curriculum_persist && !loaded_meta.archetype_progression.empty()) {
+                    const std::size_t n = std::min(loaded_meta.archetype_progression.size(),
+                                                   archetype_progression.size());
+                    for (std::size_t a = 0; a < n; ++a) {
+                        // OR-merge so any existing in-memory progress
+                        // (default-false at startup, but still defensive)
+                        // doesn't get clobbered by a stale-false snapshot.
+                        const auto& s = loaded_meta.archetype_progression[a];
+                        archetype_progression[a].first_fire_ignited   = archetype_progression[a].first_fire_ignited   || s.first_fire_ignited;
+                        archetype_progression[a].worksite_unlocked    = archetype_progression[a].worksite_unlocked    || s.worksite_unlocked;
+                        archetype_progression[a].stone_unlocked       = archetype_progression[a].stone_unlocked       || s.stone_unlocked;
+                        archetype_progression[a].heavy_unlocked       = archetype_progression[a].heavy_unlocked       || s.heavy_unlocked;
+                        archetype_progression[a].second_fire_ignited  = archetype_progression[a].second_fire_ignited  || s.second_fire_ignited;
+                    }
+                    spdlog::info("Curriculum: loaded {} archetype progression states from snapshot", n);
+                }
             } else {
                 spdlog::info("TripleWorldRuntime: persist_dir='{}' has no manifest "
                              "(or it is unparseable) - starting fresh",
@@ -5048,6 +5069,16 @@ int ProtagonistEcologyRuntime::runTraining() {
             meta.sim_time_seconds = 0.0;
             meta.generations_elapsed = params.generations;
             meta.scenario_name = route.scenario_name;
+            // Stone Bootstrap commit 3: serialize archetype curriculum
+            // unlock state alongside the pool snapshot. Only writes when
+            // the curriculum gate was active during this run; otherwise
+            // we leave the array empty so legacy snapshot consumers
+            // don't even see the new field.
+            if (curriculum_persist) {
+                meta.archetype_progression.assign(
+                    archetype_progression.begin(),
+                    archetype_progression.end());
+            }
             const std::filesystem::path persist_path(tw_cfg.persist_dir);
             if (MainWorldPersistence::save(triple_world, meta, persist_path)) {
                 LOG_INFO("TripleWorldRuntime snapshot written to {} (border={} main={})",

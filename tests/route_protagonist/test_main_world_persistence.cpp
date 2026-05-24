@@ -156,3 +156,60 @@ TEST(Layer6Persistence, MissingManifestLoadReturnsFalse) {
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
+
+// Stone Bootstrap commit 3: archetype_progression in metadata
+// roundtrips correctly through save -> load. Also verifies the empty-
+// vector path: when the source metadata has no progression, the loaded
+// metadata's archetype_progression is empty (legacy snapshot path).
+TEST(Layer6Persistence, ArchetypeProgressionRoundtrips) {
+    using neuro::routes::protagonist::ArchetypeProgressionState;
+    TripleWorldRuntime trio_src;
+    const auto dir = makeTempDir("progression");
+
+    MainWorldSnapshotMetadata meta_src;
+    meta_src.snapshot_id = 42u;
+    meta_src.scenario_name = "progression_test";
+    meta_src.archetype_progression.resize(3);
+    meta_src.archetype_progression[0] = {true,  false, true,  false, true};
+    meta_src.archetype_progression[1] = {false, false, false, false, false};
+    meta_src.archetype_progression[2] = {true,  true,  true,  true,  true};
+    ASSERT_TRUE(MainWorldPersistence::save(trio_src, meta_src, dir));
+
+    TripleWorldRuntime trio_dst;
+    MainWorldSnapshotMetadata meta_loaded;
+    ASSERT_TRUE(MainWorldPersistence::load(dir, trio_dst, &meta_loaded));
+    ASSERT_EQ(meta_loaded.archetype_progression.size(), 3u);
+    EXPECT_TRUE (meta_loaded.archetype_progression[0].first_fire_ignited);
+    EXPECT_FALSE(meta_loaded.archetype_progression[0].worksite_unlocked);
+    EXPECT_TRUE (meta_loaded.archetype_progression[0].stone_unlocked);
+    EXPECT_FALSE(meta_loaded.archetype_progression[0].heavy_unlocked);
+    EXPECT_TRUE (meta_loaded.archetype_progression[0].second_fire_ignited);
+    EXPECT_FALSE(meta_loaded.archetype_progression[1].first_fire_ignited);
+    EXPECT_FALSE(meta_loaded.archetype_progression[1].second_fire_ignited);
+    EXPECT_TRUE (meta_loaded.archetype_progression[2].first_fire_ignited);
+    EXPECT_TRUE (meta_loaded.archetype_progression[2].worksite_unlocked);
+    EXPECT_TRUE (meta_loaded.archetype_progression[2].heavy_unlocked);
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+// Empty progression metadata (legacy snapshot equivalent) loads back
+// as an empty vector — the load path must NOT inject phantom states.
+TEST(Layer6Persistence, EmptyProgressionLoadsEmpty) {
+    TripleWorldRuntime trio_src;
+    const auto dir = makeTempDir("progression_empty");
+
+    MainWorldSnapshotMetadata meta_src;
+    meta_src.scenario_name = "no_progression_field";
+    // archetype_progression intentionally left empty.
+    ASSERT_TRUE(MainWorldPersistence::save(trio_src, meta_src, dir));
+
+    TripleWorldRuntime trio_dst;
+    MainWorldSnapshotMetadata meta_loaded;
+    ASSERT_TRUE(MainWorldPersistence::load(dir, trio_dst, &meta_loaded));
+    EXPECT_TRUE(meta_loaded.archetype_progression.empty());
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
