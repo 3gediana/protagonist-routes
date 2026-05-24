@@ -164,6 +164,20 @@ public:
                                    const BorderlandEvalFn& eval_fn,
                                    double aging_factor = 1.0);
 
+    // L6 R3 stage 3 commit J: borderland in-place mutation. Walk every
+    // genome in the archetype's borderland pool and apply `mutator` to
+    // it. Stashed fitness is NOT touched; the next evaluateBorderland
+    // call will overwrite it (with max(aged, fresh) semantics). The
+    // mutation should be small enough that the existing stashed fitness
+    // remains a reasonable upper bound while fresh evaluations have a
+    // chance to discover whether the perturbation helped.
+    //
+    // Returns the number of genomes mutated (0 if pool empty or
+    // mutator is null).
+    using BorderlandMutateFn = std::function<void(IGenome&)>;
+    std::size_t mutateBorderlandPool(std::size_t archetype,
+                                     const BorderlandMutateFn& mutator);
+
     // L6 R2 stage 3 commit 3: emergency rescue when a main_world
     // archetype pool is empty (extinction = spec invariant #4).
     // Pulls the top-K genomes (by stashed fitness) from the borderland

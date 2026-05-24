@@ -509,6 +509,15 @@ struct ProtagonistEcologyConfig {
         // skipped for that one promote window. Default 0 = disabled =
         // legacy behavior (any borderland pool can promote).
         std::size_t borderland_min_continuity_gens{0};
+        // L6 R3 stage 3 commit J: per-weight Gaussian sigma applied to
+        // every borderland genome BEFORE each mini-tick eval. Without
+        // mutation, evaluateBorderland is pure selection — same genome
+        // always scores the same and the pool can't truly evolve.
+        // Small values (e.g. 0.005-0.02) match the sandbox NEAT
+        // weight_perturb_sigma scale so borderland exploration stays
+        // local. 0.0 (default) = no mutation, keeps behavior identical
+        // to commit I.
+        double borderland_mutate_sigma{0.0};
     };
     TripleWorldConfig triple_world{};
     // Stone Bootstrap commit 2 (STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md

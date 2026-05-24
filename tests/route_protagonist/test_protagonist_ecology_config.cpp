@@ -211,6 +211,41 @@ size = [120.0, 120.0]
     EXPECT_FALSE(route.curriculum.archetype_progression_persistence_enabled);
 }
 
+// L6 R3 stage 3 commit J: borderland_mutate_sigma toml gate.
+// Default 0.0 = off, parses non-zero from toml correctly.
+TEST(ProtagonistEcologyConfig, BorderlandMutateSigmaDefaultsToZero) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "border_mutate_default_test"
+
+[world]
+size = [120.0, 120.0]
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_sigma, 0.0);
+}
+
+TEST(ProtagonistEcologyConfig, BorderlandMutateSigmaParsesFromToml) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "border_mutate_test"
+
+[world]
+size = [120.0, 120.0]
+
+[runtime.triple_world]
+borderland_mutate_sigma = 0.012
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_sigma, 0.012);
+}
+
 TEST(ProtagonistEcologyConfig, CurriculumArchetypeProgressionPersistenceParsesTrue) {
     constexpr const char* kSample = R"(
 [runtime]

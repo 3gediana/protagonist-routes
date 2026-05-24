@@ -161,6 +161,19 @@ std::size_t TripleWorldRuntime::evaluateBorderland(
     return evaluated;
 }
 
+std::size_t TripleWorldRuntime::mutateBorderlandPool(
+    std::size_t archetype, const BorderlandMutateFn& mutator) {
+    auto& pool = ensurePool(borderland_, archetype);
+    if (pool.genomes.empty() || !mutator) return 0;
+    std::size_t mutated = 0;
+    for (auto& g : pool.genomes) {
+        if (!g) continue;
+        mutator(*g);
+        ++mutated;
+    }
+    return mutated;
+}
+
 std::size_t TripleWorldRuntime::rescueExtinctSpecies(std::size_t archetype, std::size_t k) {
     auto& main_pool = ensurePool(main_world_, archetype);
     // Only fire when main_world is genuinely extinct for this archetype.

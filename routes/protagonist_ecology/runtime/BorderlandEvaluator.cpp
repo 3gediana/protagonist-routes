@@ -1,6 +1,8 @@
 #include "runtime/BorderlandEvaluator.h"
 
+#include "brain/ProtagonistGenome.h"
 #include "core/agent/Agent.h"
+#include "core/brain/neat/NeatGenome.h"
 #include "core/interfaces/IGenome.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
@@ -8,6 +10,7 @@
 #include "runtime/ProtagonistWorldFactory.h"
 #include "world/BaseLayer.h"
 
+#include <memory>
 #include <random>
 
 namespace neuro::routes::protagonist {
@@ -116,6 +119,30 @@ double placeholderFitness(const IGenome& g) {
     return static_cast<double>(g.complexity()) * 100.0;
 }
 
+// Commit J: in-place Gaussian weight perturbation. Dispatches on the
+// concrete genome type because IGenome doesn't expose a uniform
+// weight-vector interface. ProtagonistGenome has dense weight blocks;
+// NeatGenome has per-connection weights. Either way, sigma is the
+// per-weight Gaussian standard deviation.
+void perturbGenomeWeights(IGenome& g, std::mt19937& rng, double sigma) {
+    if (sigma <= 0.0) return;
+    std::normal_distribution<float> noise(0.0f, static_cast<float>(sigma));
+    if (auto* pg = dynamic_cast<ProtagonistGenome*>(&g)) {
+        for (auto& w : pg->inputHiddenWeights())     w += noise(rng);
+        for (auto& w : pg->hiddenActionWeights())    w += noise(rng);
+        for (auto& w : pg->hiddenInterfaceWeights()) w += noise(rng);
+        return;
+    }
+    if (auto* ng = dynamic_cast<NeatGenome*>(&g)) {
+        for (auto& c : ng->connections()) {
+            if (c.enabled) c.weight += noise(rng);
+        }
+        return;
+    }
+    // Other genome types (none yet) silently skip — no IGenome-level
+    // mutation API exists, and we don't want to throw inside a hot loop.
+}
+
 }  // namespace
 
 std::size_t BorderlandEvaluator::evaluatePool(
@@ -156,6 +183,19 @@ std::size_t BorderlandEvaluator::evaluatePool(
         archetype,
         /*eval_fn=*/[](const IGenome& g) { return placeholderFitness(g); },
         aging_factor);
+}
+
+std::size_t BorderlandEvaluator::mutatePool(TripleWorldRuntime& triple_world,
+                                            std::size_t archetype,
+                                            double sigma,
+                                            std::uint32_t seed) {
+    if (sigma <= 0.0) return 0;
+    auto rng = std::make_shared<std::mt19937>(seed == 0u ? 1u : seed);
+    return triple_world.mutateBorderlandPool(
+        archetype,
+        /*mutator=*/[rng, sigma](IGenome& g) {
+            perturbGenomeWeights(g, *rng, sigma);
+        });
 }
 
 }  // namespace neuro::routes::protagonist

@@ -414,6 +414,69 @@ TEST(Layer6Migration, EvaluateBorderlandIncrementsEvalCount) {
     EXPECT_EQ(trio.borderland().pools_by_archetype.at(5).borderland_eval_count, 5u);
 }
 
+// L6 R3 stage 3 commit J: mutateBorderlandPool walks the pool and
+// applies the caller's mutator to every non-null genome. Stashed
+// fitness is NOT touched.
+TEST(Layer6Migration, MutateBorderlandPoolAppliesToEveryGenome) {
+    TripleWorldRuntime trio;
+    std::vector<std::unique_ptr<IGenome>> external_pop;
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        external_pop.push_back(makeTinyGenome(GenomeId{i + 1100u}));
+    }
+    std::vector<double> fits = {0.5, 0.6, 0.7, 0.8};
+    std::vector<std::uint64_t> lineages = {1110u, 1111u, 1112u, 1113u};
+    trio.promoteExternalToBorderland(/*archetype=*/2, external_pop, fits, lineages, 4);
+
+    int call_count = 0;
+    auto mutator = [&](IGenome& g) {
+        ++call_count;
+        // Bump connection weight by a known delta; lets us also verify
+        // the mutator ran on the actual pool genome (not a copy).
+        if (auto* ng = dynamic_cast<NeatGenome*>(&g)) {
+            for (auto& c : ng->connections()) c.weight += 0.5f;
+        }
+    };
+    const std::size_t mutated = trio.mutateBorderlandPool(/*archetype=*/2, mutator);
+    EXPECT_EQ(mutated, 4u);
+    EXPECT_EQ(call_count, 4);
+
+    // Stashed fitness slot should be untouched.
+    const auto& pool = trio.borderland().pools_by_archetype.at(2);
+    ASSERT_EQ(pool.fitnesses.size(), 4u);
+    EXPECT_DOUBLE_EQ(pool.fitnesses[0], 0.8);  // promoteExternalToBorderland sorts desc
+    EXPECT_DOUBLE_EQ(pool.fitnesses[3], 0.5);
+
+    // Re-running mutator on the SAME pool should bump the same genomes
+    // a second time — i.e. mutateBorderlandPool is in-place, not a copy.
+    const auto* g0 = dynamic_cast<const NeatGenome*>(pool.genomes[0].get());
+    ASSERT_NE(g0, nullptr);
+    ASSERT_FALSE(g0->connections().empty());
+    const float w_after_one_round = g0->connections().front().weight;
+    trio.mutateBorderlandPool(/*archetype=*/2, mutator);
+    const float w_after_two_rounds = g0->connections().front().weight;
+    EXPECT_FLOAT_EQ(w_after_two_rounds, w_after_one_round + 0.5f);
+}
+
+// Empty pool / null mutator must return 0 and not touch state.
+TEST(Layer6Migration, MutateBorderlandPoolNoOpOnEmptyOrNullMutator) {
+    TripleWorldRuntime trio;
+
+    // Empty pool early-returns without growing the slot's eval counter.
+    EXPECT_EQ(trio.mutateBorderlandPool(/*archetype=*/9,
+                                        [](IGenome&) { /* unused */ }),
+              0u);
+
+    // Seed a pool, then call with null mutator.
+    std::vector<std::unique_ptr<IGenome>> pop;
+    pop.push_back(makeTinyGenome(GenomeId{1200u}));
+    std::vector<double> fits = {1.0};
+    std::vector<std::uint64_t> lin = {1210u};
+    trio.promoteExternalToBorderland(/*archetype=*/9, pop, fits, lin, 1);
+    EXPECT_EQ(trio.mutateBorderlandPool(/*archetype=*/9,
+                                        TripleWorldRuntime::BorderlandMutateFn{}),
+              0u);
+}
+
 // Empty pool / null eval_fn must NOT bump the counter — early return.
 TEST(Layer6Migration, EvaluateBorderlandEarlyReturnDoesNotBumpEvalCount) {
     TripleWorldRuntime trio;

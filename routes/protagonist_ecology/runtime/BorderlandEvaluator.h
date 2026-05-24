@@ -50,6 +50,19 @@ public:
         const ProtagonistEcologyConfig& route,
         double aging_factor = 1.0,
         const std::vector<SpeciesArchetype>* background_archetypes = nullptr);
+
+    // Commit J: applies a Gaussian weight perturbation (sigma scale)
+    // to every genome in the archetype's borderland pool BEFORE the
+    // next evaluatePool runs. Lets borderland actually evolve — without
+    // mutation the eval is pure selection and the same genome always
+    // scores the same. ProtagonistGenome perturbs its dense weight
+    // vectors (input/hidden/action/interface); NeatGenome perturbs the
+    // enabled ConnectionGene::weight. sigma <= 0 is a no-op. seed is
+    // used to make mutation reproducible per generation.
+    static std::size_t mutatePool(TripleWorldRuntime& triple_world,
+                                  std::size_t archetype,
+                                  double sigma,
+                                  std::uint32_t seed);
 };
 
 }  // namespace neuro::routes::protagonist
