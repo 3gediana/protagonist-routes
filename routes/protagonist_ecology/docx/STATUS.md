@@ -1,17 +1,19 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C/D/E/F 六件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C/D/E/F/G 七件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`5ca63ae Layer 6 R3 stage 3 commit F: background mini-tick borderland eval`
+> 当前 HEAD：`d5f8a5f Layer 6 R3 stage 3 commit G: multi-protagonist borderland mini-world`
 >
-> **2026-05-25 上午 L6 R3 stage 3 commit D/E/F 三连**（commits `8aa4b5f` + `2883226` + `5ca63ae`）：
-> - **Commit D** (`8aa4b5f`)：BorderlandEvaluator 骨架 + placeholder 占位 (fitness=complexity\*100)。把 commit B 主 loop inline lambda 抽到独立类，给 commit E 留空位。
-> - **Commit E** (`2883226`)：protagonist (archetype 0) 走真 mini World2D tick。每个 genome → `createBootstrapWorld(route)` → `makeProtagonistAgent(id=1, g, route, rng, base)` 注入单 protagonist → tick 100 substep × 0.1 sim_sec = 10 sim_sec (~1/49 episode) → fitness = alive_substeps + agent.fitness()。Deterministic per-genome RNG (`mt19937(g.id().value)`) 保证相同 genome 在相同 world 总得到相同 fitness。
-> - **Commit F** (`5ca63ae`)：background archetype (1..8) 走 same mini-tick。BorderlandEvaluator API 加 optional `background_archetypes` vector 参数把 archetype index N → SpeciesArchetype enum；Runtime 收集 `species_contexts[i].archetype` 传入。`miniTickBackground` 用 makeBackgroundAgent，try/catch wrap 处理 genome 类型错配（不 crash 整个训练）。`tickAndScore` 提取成 protagonist/background 共享 helper。INFO 日志现在写 "borderland mini-tick eval"。
-> - **整套 L6 R3 stage 3 6 commits 总成**：toml gate `borderland_eval_period_gens > 0` 启用后，**每 archetype 都跑真 mini world**，borderland fitness 不再是 sandbox 快照（commit A/B/C 完成 plumbing 但 placeholder），而是 borderland 选择压力本身。Unmapped archetype (bg_archetypes 未提供或越界) 走 commit-D complexity placeholder 兜底。
-> - **测试总数**：209/209（commit E/F 没加新 test — archetype 0 路径需要构造 ProtagonistGenome + full route，archetype 1-8 路径需要 NeatGenome with 严格 outputDim 匹配，unit test 复杂度高于实施本身，留 smoke 验证）。
-> - **未做**：(a) per-genome mini-tick smoke test（需要 binary 空闲；当前 throw_penalty AB 占住）；(b) 多 protagonist mini-world (现在只 1 agent，没有 peers 合作信号)；(c) per-archetype eval flavors (e.g. predator 加个 prey, builder 加个 worksite candidate)。这些是后续 commit G+ 工作。
+> **2026-05-25 上午 L6 R3 stage 3 commit D/E/F/G 四连**（commits `8aa4b5f` + `2883226` + `5ca63ae` + `d5f8a5f`）：
+> - **Commit D** (`8aa4b5f`)：BorderlandEvaluator 骨架 + placeholder 占位 (fitness=complexity\*100)。把 commit B 主 loop inline lambda 抽到独立类。
+> - **Commit E** (`2883226`)：protagonist (archetype 0) 走真 mini World2D tick。每 genome → `createBootstrapWorld(route)` → `makeProtagonistAgent(id=1, g, ...)` → tick 100 substep × 0.1 sim_sec = 10 sim_sec → fitness = alive_substeps + agent.fitness()。Deterministic per-genome RNG.
+> - **Commit F** (`5ca63ae`)：background archetype (1..8) 走 same mini-tick。API 加 optional `background_archetypes` vector 映射 archetype index → SpeciesArchetype。`miniTickBackground` 用 makeBackgroundAgent，try/catch wrap 防 genome 类型错配 crash。`tickAndScore` 共享 helper。
+> - **Commit G** (`d5f8a5f`)：protagonist mini-world 注入 ≤ 3 个 peer（同 pool 的其他 protagonist genome），让 cooperation / signal / co-presence reward 路径真触发。focal agent fitness 才被读，peers 只是生态压力。Background 仍 1-agent (cross-archetype mix 留 commit H+)。
+> - **smoke configs 已就位**：`tmp/layer1/smoke_tw_eval.toml` + `run_smoke_tw_eval.bat`（4 gen smoke, period=1 + aging=1.0）+ `tmp/layer1/long_run_60gen_2d_curriculum.toml` + `run_curriculum_60gen.bat`（60 gen AB 启用 curriculum gate, 验证 stone bootstrap 端到端）。Binary 空闲后立刻能跑。
+> - **整套 L6 R3 stage 3 7 commits 总成**：toml gate `borderland_eval_period_gens > 0` 启用后，**每 archetype 都跑真 mini world** + protagonist mini-world 还带 3 个 peer。borderland fitness 真反映 borderland 选择压力。
+> - **测试总数**：209/209（commit E/F/G 没加新 test，unit test 构造 ProtagonistGenome + full route 复杂度高于实施本身，留 smoke 验证）。
+> - **未做**：(a) smoke 验证（binary lock 中）；(b) per-archetype eval flavors (e.g. predator 加 prey, builder 加 worksite candidate)；(c) 完整 50-代物种延续闭环（gate 已在 commit C 落，但还没在长 run 中验证 promote→demote 节奏）。这些是后续 commit H+ 工作。
 >
 > **2026-05-25 上午 Stone bootstrap commit 1/2/3 三件全 done**（commits `199b510` + `7cf32da` + `c087a41`，每件都有 unit test，smoke 等 binary 空闲）：
 > - **Commit 1** (`199b510`)：NurseryProgressionLayer 跨 episode API。新 `ArchetypeProgressionState` struct（5 monotonic unlock bool）+ `seedFromProgressionState(state)` setter + `progressionState()` getter。setter 是 OR-merge 语义，stale-false 永不清掉已 true 的 flag。3 个 gtest（DefaultStateIsAllFalse / SeedRoundtrips / SeedIsMonotonicOrMerge）。
