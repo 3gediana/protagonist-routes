@@ -1,15 +1,17 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C/D 四件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C/D/E/F 六件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`8aa4b5f Layer 6 R3 stage 3 commit D: BorderlandEvaluator skeleton (placeholder fitness)`
+> 当前 HEAD：`5ca63ae Layer 6 R3 stage 3 commit F: background mini-tick borderland eval`
 >
-> **2026-05-25 上午 L6 R3 stage 3 commit D**（commit `8aa4b5f`，骨架不要轻易开 toml gate）：
-> - 新建 `runtime/BorderlandEvaluator.{h,cpp}` 单一类把 commit B 的 inline no-op identity lambda 抽出去；ProtagonistEcologyRuntime 主 loop 替换成 `BorderlandEvaluator::evaluatePool(triple_world, archetype, route, aging_factor)`。
-> - **当前 evaluatePool 内部仍是占位**：`fresh = genome.complexity() * 100`。toml gate 启用会按 complexity 排 borderland fitness — **是错误的 evolutionary signal**（complex ≠ survival 强），所以**toml gate 务必保持 off**直到 commit E 替换真 evaluator。INFO 日志现在写 "(placeholder fitness)" 而不是 "(no-op identity)"，运行时区分明确。
-> - **Commit E 设计 (next session)**：把占位换成真 mini World2D tick — `createBootstrapWorld(route)` + 注入单 genome 作为 protagonist + tick N ticks (e.g. 1000，比 sandbox 4900 短 5×) + 提取 episode-end fitness。预计 ~500-800 LoC + brain wiring，~10 commits 切片可能更稳。是下一 session 第一优先级。
-> - 2 个 gtest（PlaceholderFitnessUpdatesPool + EmptyPoolReturnsZero），**209/209 total**。
+> **2026-05-25 上午 L6 R3 stage 3 commit D/E/F 三连**（commits `8aa4b5f` + `2883226` + `5ca63ae`）：
+> - **Commit D** (`8aa4b5f`)：BorderlandEvaluator 骨架 + placeholder 占位 (fitness=complexity\*100)。把 commit B 主 loop inline lambda 抽到独立类，给 commit E 留空位。
+> - **Commit E** (`2883226`)：protagonist (archetype 0) 走真 mini World2D tick。每个 genome → `createBootstrapWorld(route)` → `makeProtagonistAgent(id=1, g, route, rng, base)` 注入单 protagonist → tick 100 substep × 0.1 sim_sec = 10 sim_sec (~1/49 episode) → fitness = alive_substeps + agent.fitness()。Deterministic per-genome RNG (`mt19937(g.id().value)`) 保证相同 genome 在相同 world 总得到相同 fitness。
+> - **Commit F** (`5ca63ae`)：background archetype (1..8) 走 same mini-tick。BorderlandEvaluator API 加 optional `background_archetypes` vector 参数把 archetype index N → SpeciesArchetype enum；Runtime 收集 `species_contexts[i].archetype` 传入。`miniTickBackground` 用 makeBackgroundAgent，try/catch wrap 处理 genome 类型错配（不 crash 整个训练）。`tickAndScore` 提取成 protagonist/background 共享 helper。INFO 日志现在写 "borderland mini-tick eval"。
+> - **整套 L6 R3 stage 3 6 commits 总成**：toml gate `borderland_eval_period_gens > 0` 启用后，**每 archetype 都跑真 mini world**，borderland fitness 不再是 sandbox 快照（commit A/B/C 完成 plumbing 但 placeholder），而是 borderland 选择压力本身。Unmapped archetype (bg_archetypes 未提供或越界) 走 commit-D complexity placeholder 兜底。
+> - **测试总数**：209/209（commit E/F 没加新 test — archetype 0 路径需要构造 ProtagonistGenome + full route，archetype 1-8 路径需要 NeatGenome with 严格 outputDim 匹配，unit test 复杂度高于实施本身，留 smoke 验证）。
+> - **未做**：(a) per-genome mini-tick smoke test（需要 binary 空闲；当前 throw_penalty AB 占住）；(b) 多 protagonist mini-world (现在只 1 agent，没有 peers 合作信号)；(c) per-archetype eval flavors (e.g. predator 加个 prey, builder 加个 worksite candidate)。这些是后续 commit G+ 工作。
 >
 > **2026-05-25 上午 Stone bootstrap commit 1/2/3 三件全 done**（commits `199b510` + `7cf32da` + `c087a41`，每件都有 unit test，smoke 等 binary 空闲）：
 > - **Commit 1** (`199b510`)：NurseryProgressionLayer 跨 episode API。新 `ArchetypeProgressionState` struct（5 monotonic unlock bool）+ `seedFromProgressionState(state)` setter + `progressionState()` getter。setter 是 OR-merge 语义，stale-false 永不清掉已 true 的 flag。3 个 gtest（DefaultStateIsAllFalse / SeedRoundtrips / SeedIsMonotonicOrMerge）。
