@@ -1,9 +1,23 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-24 晚（**Layer 1-5 全部 + Layer 6 R2 skeleton + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-24 深夜（**Layer 1-5 全部 + Layer 6 R2 stage 2 已接入主循环 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`2570aa9 Layer 6 R2 skeleton: TripleWorldRuntime + MigrationScheduler`
+> 当前 HEAD：`3254e9e Layer 6 R2 stage 2: wire TripleWorldRuntime into the training loop`
+>
+> **2026-05-24 深夜 Layer 6 R2 stage 2: 主循环接入**（commit `3254e9e`）：
+> - 不再只是 isolated skeleton，TripleWorldRuntime 现在**在真实训练循环里**每代触发 promote。
+> - `WorldPopulationPool` 加 `fitnesses` 字段；borderland 现在记得每个 promoted genome 当时的 fitness，所以 borderland→main 可以无需重新评估直接 re-rank。
+> - 新 `TripleWorldRuntime::promoteExternalToBorderland(archetype, source, fits, lineages, k)` —— ProtagonistEcologyRuntime 保持拥有 sandbox pool (`population` + `species_contexts[i].population`)，三层 runtime 不 mirror，只取 top-K 克隆到 borderland slot。
+> - 新 stored-fitness 重载 `promoteBorderlandToMain(archetype, k)` 用 slot 内 stashed fitness。
+> - `[runtime.triple_world]` toml gate 默认 off：`enabled`/`top_k_protagonist_per_gen=4`/`top_k_background_per_gen=2`/`borderland_to_main_period_gens=50`/`borderland_to_main_top_k_protagonist=8`/`borderland_to_main_top_k_background=4`。
+> - 主循环 hook：每代 species_evaluated 收完后，build `{genome_id → fitness}` map per archetype，把 top-K 克隆进 borderland；每 `period` 代再 promote borderland→main。INFO 日志：`TripleWorld gen N: sandbox->border protag=P bg=B | border->main protag=p bg=b | border=BT main=MT`。
+> - 运行结束写 `triple_world_summary.json` 到 run_dir：每 archetype 槽位的最终 genome 数量。
+> - Smoke (`tmp/layer1/smoke_tw.toml`, 4 gen, period=2, seed=9999) 完整跑通：gen 0/1/2/3 全部 promote 触发；end-of-run summary borderland=76 main_world=58，9 个 archetype 槽位 `[12,8,8,8,8,8,8,8,8]` / `[10,6,6,6,6,6,6,6,6]`，与 `top_K × gen / period` 数学完全对应。
+> - **未做（stage 3 deferred）**：(a) borderland / main_world 独立 tick + 评估循环（现在只是 accumulator，没有 NEAT crossover 在 borderland 内发生）；(b) MainWorldSnapshot 磁盘序列化；(c) extinction rescue（rescueExtinctSpecies）。
+> - **测试总数**：185/185（之前 184 + 新增 1 = 185）。
+>
+> **早 evening 段**：
 >
 > **2026-05-24 晚 Layer 6 R2 + Layer 7 R3**：
 > - **Layer 7 R3 step 1 完整**（commit `<L7R3-trace>`）：viewer_frames.jsonl 按 LAYER7_GODOT_VIEWER_SPEC § 4.1 补齐 `trees[]`(id/x/y/iv/av) + 天气进度 `wp` + 季节进度 `sp`。view_frames.py 现在画 trees（绿色圆，半径随 integrity 缩放，砍倒后变灰木桩）+ HUD 显示 `weather=N(WP%) season=N(SP%)`。Smoke 验证：第一帧 80 棵树 + wp/sp 数据正常。
