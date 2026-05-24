@@ -1,9 +1,14 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C/D/E/F/G 七件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C/D/E/F/G/H/I 九件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`d5f8a5f Layer 6 R3 stage 3 commit G: multi-protagonist borderland mini-world`
+> 当前 HEAD：`14ba6e3 Layer 6 R3 stage 3 commit I: borderland_metrics_summary.py audit tool`
+>
+> **2026-05-25 上午 L6 R3 commit H/I（数据可视化 hook）**：
+> - **Commit H** (`67f2154`)：`borderland_metrics.csv` per-(generation, archetype) 行写入。Columns: generation / archetype / pool_size / mean_fitness / max_fitness / borderland_eval_count / promoted_to_main / culled。empty pool 跳过。File created unconditionally。
+> - **Commit I** (`14ba6e3`)：`scripts/borderland_metrics_summary.py` 配套审计脚本。读取 CSV，per-archetype markdown 表（pool first→last / mean fit drift / eval_count / promoted total / culled total）+ 全局 verdict (HEALTHY / GATED / STAGNANT / INACTIVE)。一行命令分析"borderland 是否真在 evolve"。
+> - **Commit H/I 是分析 infrastructure**：让长 run AB 完成后能立刻判断 borderland evolution 健康度，不需要手翻 60-gen log。 mirrors `harmony_check.py` 模式。
 >
 > **2026-05-25 上午 L6 R3 stage 3 commit D/E/F/G 四连**（commits `8aa4b5f` + `2883226` + `5ca63ae` + `d5f8a5f`）：
 > - **Commit D** (`8aa4b5f`)：BorderlandEvaluator 骨架 + placeholder 占位 (fitness=complexity\*100)。把 commit B 主 loop inline lambda 抽到独立类。
