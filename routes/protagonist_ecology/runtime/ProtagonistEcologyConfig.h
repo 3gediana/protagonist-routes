@@ -518,6 +518,15 @@ struct ProtagonistEcologyConfig {
         // local. 0.0 (default) = no mutation, keeps behavior identical
         // to commit I.
         double borderland_mutate_sigma{0.0};
+        // L6 R3 stage 3 commit K: Bernoulli rates matching the
+        // sandbox NEAT mutate pattern. Per weight:
+        //   reset (mutate_reset_rate)  -> w = N(0, 1)
+        //   perturb (mutate_perturb_rate) -> w += N(0, mutate_sigma)
+        // Defaults (1.0/0.0) reproduce commit J's "always perturb"
+        // for backwards compatibility. To match sandbox NEAT, set
+        // perturb_rate=0.8 + reset_rate=0.05.
+        double borderland_mutate_perturb_rate{1.0};
+        double borderland_mutate_reset_rate{0.0};
     };
     TripleWorldConfig triple_world{};
     // Stone Bootstrap commit 2 (STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md

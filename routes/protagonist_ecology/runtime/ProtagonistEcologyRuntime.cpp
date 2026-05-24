@@ -4585,15 +4585,20 @@ int ProtagonistEcologyRuntime::runTraining() {
                 const auto& bp = triple_world.borderland().pools_by_archetype;
                 for (std::size_t a = 0; a < bp.size(); ++a) {
                     if (bp[a].genomes.empty()) continue;
-                    // Commit J: mutate pool BEFORE eval so fresh fitness
-                    // measures the perturbed genome. Per-archetype seed
-                    // (gen + arch) keeps mutation reproducible.
-                    if (tw_cfg.borderland_mutate_sigma > 0.0) {
+                    // Commit J/K: mutate pool BEFORE eval so fresh
+                    // fitness measures the perturbed genome. Per-archetype
+                    // seed (gen*31 + arch + 1) keeps mutation
+                    // reproducible. Perturb/reset rates match the sandbox
+                    // NEAT pattern (default 1.0/0.0 = always perturb).
+                    if (tw_cfg.borderland_mutate_sigma > 0.0
+                        || tw_cfg.borderland_mutate_reset_rate > 0.0) {
                         border_mutated_total += BorderlandEvaluator::mutatePool(
                             triple_world,
                             /*archetype=*/a,
                             /*sigma=*/tw_cfg.borderland_mutate_sigma,
-                            /*seed=*/static_cast<std::uint32_t>(generation * 31u + a + 1u));
+                            /*seed=*/static_cast<std::uint32_t>(generation * 31u + a + 1u),
+                            /*perturb_rate=*/tw_cfg.borderland_mutate_perturb_rate,
+                            /*reset_rate=*/tw_cfg.borderland_mutate_reset_rate);
                     }
                     border_evaluated_total += BorderlandEvaluator::evaluatePool(
                         triple_world,

@@ -119,23 +119,41 @@ double placeholderFitness(const IGenome& g) {
     return static_cast<double>(g.complexity()) * 100.0;
 }
 
-// Commit J: in-place Gaussian weight perturbation. Dispatches on the
-// concrete genome type because IGenome doesn't expose a uniform
-// weight-vector interface. ProtagonistGenome has dense weight blocks;
-// NeatGenome has per-connection weights. Either way, sigma is the
-// per-weight Gaussian standard deviation.
-void perturbGenomeWeights(IGenome& g, std::mt19937& rng, double sigma) {
-    if (sigma <= 0.0) return;
+// Commit J/K: in-place Gaussian weight perturbation matching the
+// sandbox NEAT pattern (NeatEvolution::mutateWeights):
+//   per weight: Bernoulli(reset_rate) -> reset to N(0,1),
+//               else Bernoulli(perturb_rate) -> perturb by N(0,sigma).
+// Default rates (1.0/0.0) reproduce commit J's "always perturb" behavior
+// so existing configs unchanged. Setting both to 0 is a no-op. Dispatches
+// on concrete genome type — IGenome has no uniform mutate API.
+void perturbGenomeWeights(IGenome& g,
+                          std::mt19937& rng,
+                          double sigma,
+                          double perturb_rate,
+                          double reset_rate) {
+    if (sigma <= 0.0 && reset_rate <= 0.0) return;
+    std::bernoulli_distribution perturb(perturb_rate);
+    std::bernoulli_distribution reset(reset_rate);
     std::normal_distribution<float> noise(0.0f, static_cast<float>(sigma));
+    std::normal_distribution<float> reset_dist(0.0f, 1.0f);
+
+    auto perturb_one = [&](float& w) {
+        if (reset_rate > 0.0 && reset(rng)) {
+            w = reset_dist(rng);
+        } else if (sigma > 0.0 && perturb(rng)) {
+            w += noise(rng);
+        }
+    };
+
     if (auto* pg = dynamic_cast<ProtagonistGenome*>(&g)) {
-        for (auto& w : pg->inputHiddenWeights())     w += noise(rng);
-        for (auto& w : pg->hiddenActionWeights())    w += noise(rng);
-        for (auto& w : pg->hiddenInterfaceWeights()) w += noise(rng);
+        for (auto& w : pg->inputHiddenWeights())     perturb_one(w);
+        for (auto& w : pg->hiddenActionWeights())    perturb_one(w);
+        for (auto& w : pg->hiddenInterfaceWeights()) perturb_one(w);
         return;
     }
     if (auto* ng = dynamic_cast<NeatGenome*>(&g)) {
         for (auto& c : ng->connections()) {
-            if (c.enabled) c.weight += noise(rng);
+            if (c.enabled) perturb_one(c.weight);
         }
         return;
     }
@@ -188,13 +206,15 @@ std::size_t BorderlandEvaluator::evaluatePool(
 std::size_t BorderlandEvaluator::mutatePool(TripleWorldRuntime& triple_world,
                                             std::size_t archetype,
                                             double sigma,
-                                            std::uint32_t seed) {
-    if (sigma <= 0.0) return 0;
+                                            std::uint32_t seed,
+                                            double perturb_rate,
+                                            double reset_rate) {
+    if (sigma <= 0.0 && reset_rate <= 0.0) return 0;
     auto rng = std::make_shared<std::mt19937>(seed == 0u ? 1u : seed);
     return triple_world.mutateBorderlandPool(
         archetype,
-        /*mutator=*/[rng, sigma](IGenome& g) {
-            perturbGenomeWeights(g, *rng, sigma);
+        /*mutator=*/[rng, sigma, perturb_rate, reset_rate](IGenome& g) {
+            perturbGenomeWeights(g, *rng, sigma, perturb_rate, reset_rate);
         });
 }
 

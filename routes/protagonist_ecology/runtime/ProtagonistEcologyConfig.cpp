@@ -368,6 +368,8 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.triple_world.borderland_eval_aging_factor = config.getOr<double>("runtime.triple_world.borderland_eval_aging_factor", out.triple_world.borderland_eval_aging_factor);
     out.triple_world.borderland_min_continuity_gens = config.getOr<std::size_t>("runtime.triple_world.borderland_min_continuity_gens", out.triple_world.borderland_min_continuity_gens);
     out.triple_world.borderland_mutate_sigma = config.getOr<double>("runtime.triple_world.borderland_mutate_sigma", out.triple_world.borderland_mutate_sigma);
+    out.triple_world.borderland_mutate_perturb_rate = config.getOr<double>("runtime.triple_world.borderland_mutate_perturb_rate", out.triple_world.borderland_mutate_perturb_rate);
+    out.triple_world.borderland_mutate_reset_rate = config.getOr<double>("runtime.triple_world.borderland_mutate_reset_rate", out.triple_world.borderland_mutate_reset_rate);
     out.curriculum.archetype_progression_persistence_enabled = config.getOr<bool>(
         "runtime.curriculum.archetype_progression_persistence_enabled",
         out.curriculum.archetype_progression_persistence_enabled);
