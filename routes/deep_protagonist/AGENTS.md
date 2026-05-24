@@ -67,3 +67,10 @@
 - ❌ 写啰嗦文档
 - ❌ 重置神经网络 / 删旧奖励
 - ❌ 偏离 `docs/最终蓝图.md` 的"不做的事"清单
+
+## Tool 行为规则（token 经济学）
+
+- **shell context 缓存 5 分钟**。开 background 训练 / 长任务后，**polling 间隔必须 ≤ 4 分钟**，超时缓存失效要重读 context，烧钱
+- 训练命令一律 `run_in_background: true`，主 turn 立刻返回 shell_id
+- 然后在每 ≤ 4 分钟内做一次 `get_output` poll；间歇期间可以做：写文档 / 改其他文件 / 准备分析脚本（让等待不浪费）
+- exec timeout 也别超过 4 分钟同理
