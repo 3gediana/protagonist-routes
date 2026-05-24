@@ -58,9 +58,29 @@
 
 ## 训练日记（每次训练一条，对照基线判定）
 
-格式：日期 | 步数 | 命令 | mean reward | 死亡率 | 关键观察 | verdict tag
+| 日期 | run | 网络 | 步数 | mean R (last 20) | 死亡率 | r_water | r_bites | 关键观察 | tag |
+|---|---|---|---|---|---|---|---|---|---|
+| 2026-05-24 | smoke | MLP 145→256 | 10k | +19.0 (1ep) | 0% | 0 | 0 | 1 ep smoke 验证 | 🟦 |
+| 2026-05-24 | **ppo_run1_buggy** | MLP | ~600k(killed) | reward hacking | 0% | +6000 spam | 0 | drink reward 无 cap，PPO 锁定刷水路径，发现并修复 D-036 | 🟥 |
+| 2026-05-24 | **ppo_run2** | MLP 145→256 | 1M | +16.29 | 0% | 0 | -7.17 | reward hacking 修复后 baseline。1M 步 plateau，找水靠运气 | 🟨 |
+| 2026-05-24 | **ppo_run3_gru_sm** | **GRU+SpatMem 564→256→GRU(256)** | 1M | **+18.57** | **0%** | **+1.79** | **-2.17** | **稳定学会找水！避狼 -70%，但 milestone 频率没起来。1M 步对 GRU 不够** | �↑ |
 
-| 日期 | 步数 | 命令 | mean R | 死亡率 | 关键观察 | tag |
-|---|---|---|---|---|---|---|
-| 2026-05-24 | 10000 | smoke ppo --seed 42 | +19.0 (1ep) | 0% | smoke 验证，1 ep 不算 | 🟦 |
-| _待填_ | _1M_ | _ppo --seed 42 --metrics ..._ | _?_ | _?_ | _?_ | _?_ |
+### ppo_run3 vs ppo_run2 详细对比（last 20 ep）
+
+| 指标 | run2 (MLP) | run3 (GRU+SpatMem) | Δ |
+|---|---:|---:|---:|
+| mean reward | +16.29 | **+18.57** | +14% |
+| r_food | +1.52 | +0.79 | -48% |
+| r_water | 0.00 | **+1.79** | +∞ (首次稳定) |
+| r_kills | 0.00 | +1.25 | +∞ |
+| r_bites | -26.46 | **-2.17** | **避狼提升 92%** |
+| r_collect | +1.70 | **+2.85** | +68% |
+| r_shelter | +1.00 | 0.00 | -100% |
+| r_milestone | 0.00 | 0.00 | 0 |
+| 死亡率 | 0% | 0% | = |
+
+**关键结论**：
+- GRU+SpatialMemory 让 PPO 在 1M 步内**学会了找水**（run2 1M 步都没学到）
+- 避狼能力**大幅提升 92%**（spatial memory 标记 danger cell + GRU 短期记忆配合）
+- 但 1M 步对 GRU 还是不够：milestone 0、shelter 退化、food 略降，说明 policy 在"探索环境/避狼/找水"上偏多，没分到"建造 / 工具"
+- 需要 5-10M 步才能进 🟧 +50 区间

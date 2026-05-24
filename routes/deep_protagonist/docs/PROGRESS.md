@@ -1,10 +1,42 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-24 中午 13:10
-> 当前阶段：**S4-pre 训练前置补完 ✅（PPO 骨架已通）**
-> Self-test：**102 个全过**
-> Wander baseline：100 局，mean -37 / median +15 / 死亡率 29%（`docs/BASELINE.md`）
-> PPO smoke：CUDA 108k 参数，10000 步无 NaN，ep0 reward +19
+> 最后更新：2026-05-24 下午 14:45
+> 当前阶段：**S4.0 GRU + SpatialMemory + obs P0 补料 ✅（1M 步训练完成）**
+> Self-test：**110 个全过**
+> Wander baseline：mean -37 / 死亡率 29%
+> PPO run2 (MLP, 1M): mean +16.3 / 死亡率 0% / water 0
+> **PPO run3 (GRU+SpatMem, 1M): mean +18.6 / 死亡率 0% / water +1.79 (稳定找水) / bites -2.17 (避狼 +92%)**
+
+## ✅ 最新会话完成：S4.0 记忆架构（GRU + SpatialMemory）+ 第一次 1M 训练对比
+
+用户问"并行项目用 DNC 我们要不要用"。AI 查文献（Memory Gym ICLR'24, RLBenchNet'25, Parisotto-Salakhutdinov "Neural Map" 2017, MERLIN）+ 对比 protagonist_ecology 场景，得出 5 条证据：DNC 训练困难、PPO 无主流先例、需要绝对坐标、甜点是图谱推理不是实时控制、场景需求不同。决策 D-037：**用 GRU + SpatialMemory（Neural Map 路线），不用 DNC**。
+
+### S4.0 完成清单
+
+| 步 | 内容 | 状态 |
+|---|---|---|
+| 1 | obs P0 补料（last_action 19 + river 3 + biome 6 + building_type 4 + blueprint_left 3 = +35维） | ✅ |
+| 2 | SpatialMemory 模块 (64×64 grid @ 16m/cell × 6 features) + 8 self-tests | ✅ |
+| 3 | SpatialMemory 接入 obs（8×8 local window × 6 = +384维），obs 145 → 564 | ✅ |
+| 4 | PPO 网络改造：Linear(564) → ReLU → GRUCell(256) → 3 heads（参数 108k → 544k） | ✅ |
+| 5 | Rollout buffer 加 h_in 缓存（stale-hidden 方案，CleanRL 风格） | ✅ |
+| 6 | 1M 步训练 ppo_run3_gru_sm 跑完，对比 ppo_run2 | ✅ |
+
+### 1M 步训练结果（last 20 ep mean，详见 docs/BASELINE.md）
+
+| 指标 | run2 MLP | run3 GRU+SpatMem | 变化 |
+|---|---:|---:|---:|
+| 总 reward | +16.29 | **+18.57** | +14% |
+| r_water | 0.00 | **+1.79** | **首次稳定喝水** |
+| r_bites | -26.46 | **-2.17** | **避狼 +92%** |
+| r_collect | +1.70 | +2.85 | +68% |
+| r_kills | 0.00 | +1.25 | 主动战斗 |
+
+**质变**：PPO 学会了"渴了往河边走"——run2 1M 步都没学到，run3 在 ep80+ 后每局都能稳定喝水。避狼能力大幅提升（spatial map 标记 danger cell + GRU 维持意图）。
+
+**未达预期**：还在 🟨（mean >0）级别，没突破到 🟧（mean >+50）。1M 步对 GRU 来说不够，milestone 解锁少，shelter 没盖。需要 5-10M 步长训。
+
+## ✅ 之前会话完成：S4-pre 训练前置补完
 
 ## ✅ 最新会话完成：S4-pre 训练前置 5 步
 

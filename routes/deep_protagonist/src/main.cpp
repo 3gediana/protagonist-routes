@@ -1644,6 +1644,7 @@ int main(int argc, char** argv) {
                 farming.clear();
                 tame.clear();
                 viewer_spatial.clear();
+                if (ppo_policy) ppo_policy->reset_hidden();
                 was_alive = true;
             }
 
