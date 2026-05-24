@@ -67,6 +67,28 @@ void NurseryProgressionLayer::onAttach(IWorld& world) {
     world_size_ = world.size();
 }
 
+// Stone Bootstrap commit 1: caller (ProtagonistEcologyRuntime) hands
+// us the archetype's persisted unlock state right after onAttach.
+// We OR-merge into our own flags so a stale-false in `state` never
+// silently overrides a true we somehow already had set.
+void NurseryProgressionLayer::seedFromProgressionState(const ArchetypeProgressionState& state) {
+    first_fire_ignited_   = first_fire_ignited_   || state.first_fire_ignited;
+    worksite_unlocked_    = worksite_unlocked_    || state.worksite_unlocked;
+    stone_unlocked_       = stone_unlocked_       || state.stone_unlocked;
+    heavy_unlocked_       = heavy_unlocked_       || state.heavy_unlocked;
+    second_fire_ignited_  = second_fire_ignited_  || state.second_fire_ignited;
+}
+
+ArchetypeProgressionState NurseryProgressionLayer::progressionState() const {
+    return ArchetypeProgressionState{
+        first_fire_ignited_,
+        worksite_unlocked_,
+        stone_unlocked_,
+        heavy_unlocked_,
+        second_fire_ignited_,
+    };
+}
+
 void NurseryProgressionLayer::tick(IWorld& world, float dt) {
     (void)world;
     (void)dt;
