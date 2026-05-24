@@ -23,7 +23,14 @@ void ObjectLogisticsPerception::sense(const IAgent& self, const IWorld& world, s
         return;
     }
 
-    const auto nearby = objects->nearestObjects(self.position(), sense_radius_);
+    // L5 R3 #7: Lookout sense-radius scaling for object logistics
+    // perception. Querying ObjectLayer with effective_radius widens the
+    // candidate pool inside Lookout (more sticks/stones visible).
+    const auto* self_concrete = dynamic_cast<const Agent*>(&self);
+    const float scale = self_concrete != nullptr ? self_concrete->senseRadiusScale() : 1.0f;
+    const float effective_radius = sense_radius_ * scale;
+
+    const auto nearby = objects->nearestObjects(self.position(), effective_radius);
     if (nearby.empty()) {
         out[4] = 1.0f;
         return;
@@ -37,7 +44,7 @@ void ObjectLogisticsPerception::sense(const IAgent& self, const IWorld& world, s
         out[0] = delta.x / dist;
         out[1] = delta.y / dist;
     }
-    out[2] = std::clamp(dist / (sense_radius_ > 0.0f ? sense_radius_ : 1.0f), 0.0f, 1.0f);
+    out[2] = std::clamp(dist / (effective_radius > 0.0f ? effective_radius : 1.0f), 0.0f, 1.0f);
     out[3] = object->heavy ? 1.0f : 0.0f;
     out[4] = 0.0f;
     out[5] = object->type == ObjectType::Stone ? 1.0f : 0.0f;

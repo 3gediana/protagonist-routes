@@ -1,5 +1,6 @@
 #include "perception/DangerPerception.h"
 
+#include "core/agent/Agent.h"
 #include "core/interfaces/IAgent.h"
 #include "core/interfaces/IWorld.h"
 #include "world/CampfireLayer.h"
@@ -26,6 +27,11 @@ void DangerPerception::sense(const IAgent& self, const IWorld& world, std::span<
         return;
     }
 
+    // L5 R3 #7: Lookout sense-radius scaling for danger (fire) perception.
+    const auto* concrete = dynamic_cast<const Agent*>(&self);
+    const float scale = concrete != nullptr ? concrete->senseRadiusScale() : 1.0f;
+    const float effective_radius = sense_radius_ * scale;
+
     const Vec2 delta = nearest->position - self.position();
     const float distance = delta.length();
     if (distance > 0.0001f) {
@@ -36,7 +42,7 @@ void DangerPerception::sense(const IAgent& self, const IWorld& world, std::span<
         out[1] = 0.0f;
     }
 
-    out[2] = std::clamp(distance / (sense_radius_ > 0.0f ? sense_radius_ : 1.0f), 0.0f, 1.0f);
+    out[2] = std::clamp(distance / (effective_radius > 0.0f ? effective_radius : 1.0f), 0.0f, 1.0f);
     out[3] = fire->inWarmthZone(self.position()) ? 1.0f : 0.0f;
     out[4] = fire->inDangerZone(self.position()) ? 1.0f : 0.0f;
 }

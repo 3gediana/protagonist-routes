@@ -117,6 +117,13 @@ struct TrainingParams {
     float combat_death_penalty{5.0f};
     float worksite_proximity_reward{0.05f};
     float worksite_completion_reward{60.0f};
+    // L5 #8 Storage deposit reward. When a protagonist deposits a stick
+    // or stone into a *completed* Storage building (overflow stockpile),
+    // award this bonus per deposit. Without it the protagonist never
+    // learns to use Storage and the building is functionally inert.
+    // Scaled by cooperation_weight so it lives in the same Layer 5
+    // reward family as worksite_proximity_reward and joint_hunt_reward.
+    float storage_deposit_reward{0.0f};
     // Emergent shelter L1 (2026-05-22): rewards a protagonist for
     // standing inside a *completed* worksite (i.e. behind a built wall)
     // while there is at least one predator within
@@ -481,6 +488,7 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.communication_weight = config.getOr<double>("reward.communication_weight", params.communication_weight);
     params.worksite_proximity_reward = config.getOr<float>("reward.worksite_proximity_reward", params.worksite_proximity_reward);
     params.worksite_completion_reward = config.getOr<float>("reward.worksite_completion_reward", params.worksite_completion_reward);
+    params.storage_deposit_reward = config.getOr<float>("reward.storage_deposit_reward", params.storage_deposit_reward);
     params.shelter_camp_reward = config.getOr<float>("reward.shelter_camp_reward", params.shelter_camp_reward);
     params.shelter_camp_predator_radius = config.getOr<float>("reward.shelter_camp_predator_radius", params.shelter_camp_predator_radius);
     // L2.2 v2: drive-delta reward toggles.
@@ -2288,6 +2296,24 @@ void evaluatePopulation(World2D& world,
                             ? "deposited_stone"
                             : "deposited_stick";
                         record_episode(agent_pos, kind, 0.30f);
+                        // L5 #8: pay storage_deposit_reward if this
+                        // deposit landed in a completed Storage building.
+                        // worksite_layer->sites() iteration is small (<8
+                        // sites typical) so the per-deposit lookup is
+                        // cheap. Off by default (reward=0) so existing
+                        // training distributions are unaffected.
+                        if (params.storage_deposit_reward > 0.0f
+                            && worksite_layer != nullptr) {
+                            for (const auto& site : worksite_layer->sites()) {
+                                if (site.id != deposit.worksite_id) continue;
+                                if (site.completed
+                                    && site.building_type == BuildingType::Storage) {
+                                    reward += params.cooperation_weight
+                                            * static_cast<double>(params.storage_deposit_reward);
+                                }
+                                break;
+                            }
+                        }
                     }
                     // Signal emission as low-salience episodic marker (so memory
                     // can recall "where did I last try to shout?").
