@@ -84,6 +84,11 @@ void ObservationBuilder::compose(const dp::world::World&         world,
                                  const Inventory&                 inventory,
                                  const Shelter&                   shelter,
                                  const EpisodeManager&            episodes,
+                                 const ProgressTracker&           progress,
+                                 const dp::world::BuildingSystem& buildings,
+                                 const Wardrobe&                  wardrobe,
+                                 const dp::world::FarmingSystem&  farming,
+                                 const TameSystem&                tame,
                                  Vector&                          out) {
     std::memset(out.data(), 0, sizeof(float) * SIZE);
     const auto& s = agent.state();
@@ -216,6 +221,106 @@ void ObservationBuilder::compose(const dp::world::World&         world,
         out[p++] = 0.0f;
         out[p++] = 0.0f;
     }
+
+    // ---- progress stage one-hot (3) ----
+    int stage_idx = static_cast<int>(progress.stage());
+    for (int i = 0; i < 3; ++i) out[p++] = (i == stage_idx) ? 1.0f : 0.0f;
+
+    // ---- progress norms (3) ----
+    out[p++] = clamp01(progress.resources_collected()
+                       / float(progress.mid_collect_threshold > 0
+                               ? progress.mid_collect_threshold : 1));
+    out[p++] = clamp01(progress.total_explored()
+                       / (progress.mid_explore_threshold > 0
+                          ? progress.mid_explore_threshold : 1.0f));
+    out[p++] = clamp01(progress.houses_built() / 5.0f);
+
+    // ---- nearest building (3) ----
+    {
+        float best_d2 = std::numeric_limits<float>::infinity();
+        int   best_idx = -1;
+        bool  best_completed = false;
+        for (int i = 0; i < int(buildings.sites().size()); ++i) {
+            const auto& b = buildings.sites()[i];
+            float dx = b.x - s.pos_x;
+            float dy = b.y - s.pos_y;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                best_idx = i;
+                best_completed = b.completed;
+            }
+        }
+        for (int i = 0; i < int(buildings.buildings().size()); ++i) {
+            const auto& b = buildings.buildings()[i];
+            float dx = b.x - s.pos_x;
+            float dy = b.y - s.pos_y;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                best_idx = i;
+                best_completed = true;
+            }
+        }
+        if (best_idx >= 0) {
+            const dp::world::ConstructionSite* st_ptr = nullptr;
+            const dp::world::Building*         bd_ptr = nullptr;
+            // The two index spaces overlap; we look up the better one.
+            float min_d2 = std::numeric_limits<float>::infinity();
+            float bx = 0.0f, by = 0.0f;
+            for (const auto& site : buildings.sites()) {
+                float dx = site.x - s.pos_x, dy = site.y - s.pos_y;
+                float d2 = dx*dx + dy*dy;
+                if (d2 < min_d2) { min_d2 = d2; bx = site.x; by = site.y; best_completed = site.completed; (void)st_ptr; }
+            }
+            for (const auto& bld : buildings.buildings()) {
+                float dx = bld.x - s.pos_x, dy = bld.y - s.pos_y;
+                float d2 = dx*dx + dy*dy;
+                if (d2 < min_d2) { min_d2 = d2; bx = bld.x; by = bld.y; best_completed = true; (void)bd_ptr; }
+            }
+            out[p++] = clamp_norm((bx - s.pos_x) / VISION_RANGE);
+            out[p++] = clamp_norm((by - s.pos_y) / VISION_RANGE);
+            out[p++] = best_completed ? 1.0f : 0.0f;
+        } else {
+            out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 0.0f;
+        }
+    }
+
+    // ---- inventory late items (4) ----
+    out[p++] = inventory.num_of(ItemKind::Fur)        / float(Inventory::CAPACITY);
+    out[p++] = inventory.num_of(ItemKind::GrassDress) / float(Inventory::CAPACITY);
+    out[p++] = inventory.num_of(ItemKind::FurCloak)   / float(Inventory::CAPACITY);
+    out[p++] = inventory.num_of(ItemKind::Seed)       / float(Inventory::CAPACITY);
+
+    // ---- worn one-hot (3) ----
+    out[p++] = (wardrobe.worn() == ItemKind::Count)      ? 1.0f : 0.0f;
+    out[p++] = (wardrobe.worn() == ItemKind::GrassDress) ? 1.0f : 0.0f;
+    out[p++] = (wardrobe.worn() == ItemKind::FurCloak)   ? 1.0f : 0.0f;
+
+    // ---- nearest farm plot (4: dx, dy, growth, water) ----
+    {
+        float best_d2 = std::numeric_limits<float>::infinity();
+        int   best_idx = -1;
+        for (int i = 0; i < int(farming.plots().size()); ++i) {
+            const auto& fp = farming.plots()[i];
+            if (fp.harvested) continue;
+            float dx = fp.x - s.pos_x, dy = fp.y - s.pos_y;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < best_d2) { best_d2 = d2; best_idx = i; }
+        }
+        if (best_idx >= 0) {
+            const auto& fp = farming.plots()[best_idx];
+            out[p++] = clamp_norm((fp.x - s.pos_x) / VISION_RANGE);
+            out[p++] = clamp_norm((fp.y - s.pos_y) / VISION_RANGE);
+            out[p++] = clamp01(fp.growth);
+            out[p++] = clamp01(fp.water_level);
+        } else {
+            out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 0.0f;
+        }
+    }
+
+    // ---- tame follower count (1) ----
+    out[p++] = clamp01(tame.follower_count() / 4.0f);
 
     // p should equal SIZE here.
 }

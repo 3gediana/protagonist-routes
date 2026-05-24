@@ -16,9 +16,12 @@
 #include "agent/Inventory.hpp"
 #include "agent/Observation.hpp"
 #include "agent/Perception.hpp"
+#include "agent/ProgressTracker.hpp"
 #include "agent/RewardSystem.hpp"
 #include "agent/Shelter.hpp"
+#include "agent/TameSystem.hpp"
 #include "agent/VitalSystem.hpp"
+#include "agent/Wardrobe.hpp"
 #include "render/FlyCamera.hpp"
 #include "render/WorldRenderer.hpp"
 #include "world/AnimalSystem.hpp"
@@ -26,6 +29,8 @@
 #include "world/Decorations.hpp"
 #include "world/FoodSystem.hpp"
 #include "world/Physics.hpp"
+#include "world/BuildingSystem.hpp"
+#include "world/FarmingSystem.hpp"
 #include "world/PlantSystem.hpp"
 #include "world/ResourceSystem.hpp"
 #include "world/World.hpp"
@@ -395,6 +400,166 @@ int run_self_tests() {
               "AgentAction: yaw_rate*dt rotates agent over time");
     }
 
+    // --- ProgressTracker ---
+    {
+        dp::agent::ProgressTracker p;
+        check(p.stage() == dp::agent::ProgressStage::Early,
+              "ProgressTracker: starts in Early stage");
+        check(p.can_build() == false && p.can_farm() == false,
+              "ProgressTracker: Early stage gates build/farm");
+
+        // Not enough to advance yet
+        p.on_collect(15);
+        p.on_explore_step(200.0f);
+        check(p.stage() == dp::agent::ProgressStage::Early,
+              "ProgressTracker: stays Early below thresholds");
+        check(p.poll_unlock() == false,
+              "ProgressTracker: no unlock event yet");
+
+        // Cross both thresholds -> Mid
+        p.on_collect(20);   // total 35
+        p.on_explore_step(400.0f);  // total 600
+        check(p.stage() == dp::agent::ProgressStage::Mid,
+              "ProgressTracker: advances to Mid after thresholds");
+        check(p.poll_unlock() == true,
+              "ProgressTracker: unlock event fires on advance");
+        check(p.poll_unlock() == false,
+              "ProgressTracker: unlock event is single-shot");
+        check(p.can_build() == true,
+              "ProgressTracker: Mid stage enables build");
+
+        // Build a house -> Late
+        p.on_house_built();
+        check(p.stage() == dp::agent::ProgressStage::Late,
+              "ProgressTracker: Late stage after first house");
+        check(p.can_farm() && p.can_tame(),
+              "ProgressTracker: Late stage enables farm + tame");
+    }
+
+    // --- BuildingSystem ---
+    {
+        dp::world::BuildingSystem bs;
+        dp::agent::ProgressTracker prog;
+
+        // Early stage cannot place
+        int idx = bs.place_site(dp::world::BuildingType::Shed, 0, 0, 0, prog);
+        check(idx < 0, "BuildingSystem: Early stage cannot place site");
+
+        // Force progression to Mid
+        prog.on_collect(prog.mid_collect_threshold);
+        prog.on_explore_step(prog.mid_explore_threshold + 1.0f);
+        idx = bs.place_site(dp::world::BuildingType::Shed, 5, 5, 0, prog);
+        check(idx >= 0, "BuildingSystem: Mid stage places site");
+        check(bs.sites().size() == 1, "BuildingSystem: site count=1");
+
+        // Deposit materials until ready
+        const auto& r = dp::world::building_recipe(dp::world::BuildingType::Shed);
+        for (int i = 0; i < r.wood_required; ++i) {
+            bs.try_deposit(5, 5, 0, 2.0f, dp::agent::ItemKind::Wood);
+        }
+        for (int i = 0; i < r.grass_required; ++i) {
+            bs.try_deposit(5, 5, 0, 2.0f, dp::agent::ItemKind::Grass);
+        }
+        check(bs.sites()[0].ready(),
+              "BuildingSystem: site ready after all materials");
+        int finalized = bs.tick_finalize();
+        check(finalized == 1 && bs.buildings().size() == 1,
+              "BuildingSystem: tick_finalize promotes ready site");
+        check(bs.covers(5, 5) == true,
+              "BuildingSystem: completed building covers its anchor");
+    }
+
+    // --- Wardrobe + clothing craft ---
+    {
+        dp::agent::Inventory inv;
+        for (int i = 0; i < 3; ++i) inv.add(dp::agent::ItemKind::Grass);
+        check(inv.craft_grass_dress(),
+              "Wardrobe: 3 grass crafts a grass dress");
+        check(inv.num_of(dp::agent::ItemKind::GrassDress) == 1
+              && inv.num_of(dp::agent::ItemKind::Grass) == 0,
+              "Wardrobe: craft consumes grass adds dress");
+
+        dp::agent::Wardrobe w;
+        check(w.cold_resist() == 0.0f, "Wardrobe: no cold resist when naked");
+        check(w.wear(inv, dp::agent::ItemKind::GrassDress),
+              "Wardrobe: wear grass dress succeeds");
+        check(w.cold_resist() > 0.05f,
+              "Wardrobe: cold resist > 0 with grass dress");
+
+        // Fur cloak: need 2 fur
+        inv.clear();
+        inv.add(dp::agent::ItemKind::Fur);
+        inv.add(dp::agent::ItemKind::Fur);
+        check(inv.craft_fur_cloak(),
+              "Wardrobe: 2 fur crafts a cloak");
+        check(w.wear(inv, dp::agent::ItemKind::FurCloak),
+              "Wardrobe: wear cloak (replaces dress)");
+        check(w.cold_resist() > 0.20f,
+              "Wardrobe: cloak gives stronger cold resist");
+    }
+
+    // --- FarmingSystem ---
+    {
+        dp::world::FarmingSystem f;
+        int p = f.plant_seed(10, 10, 0, dp::world::PlantKind::Berry);
+        check(p == 0 && f.total_count() == 1,
+              "FarmingSystem: plant_seed creates a plot");
+
+        // Plot starts dry-ish; water periodically and tick should grow it
+        // (water drains faster than the plot grows, so re-water often).
+        for (int i = 0; i < 200; ++i) {
+            if ((i % 10) == 0) f.water_at(10, 10);
+            f.tick(1.0f);
+        }
+        check(f.ripe_count() >= 1,
+              "FarmingSystem: plot ripens with periodic watering");
+
+        // Harvest
+        auto got = f.harvest_at(10, 10);
+        check(got.size() == 1 && got[0] == dp::world::PlantKind::Berry,
+              "FarmingSystem: harvest returns the seed kind");
+        f.tick(0.1f);  // disposes harvested plots
+        check(f.total_count() == 0,
+              "FarmingSystem: harvested plot removed after tick");
+    }
+
+    // --- TameSystem ---
+    {
+        dp::world::World::Config cfg;
+        cfg.heightmap_cells_x = 32;
+        cfg.heightmap_cells_y = 32;
+        cfg.cave_count = 0;
+        cfg.river_count = 0;
+        dp::world::World w(cfg);
+
+        dp::world::AnimalSystem animals;
+        animals.initialize(77, w, 1, 0, 0, 0, 0);  // 1 rabbit only
+        const auto& a0 = animals.animals()[0];
+
+        dp::agent::TameSystem t;
+        dp::agent::Inventory inv;
+        // No food -> feed fails
+        auto fr0 = t.try_feed(animals, inv, a0.pos_x, a0.pos_y);
+        check(fr0.animal_idx < 0,
+              "TameSystem: feed with empty inventory misses");
+
+        // Stuff inventory with grass and feed enough to become follower
+        for (int i = 0; i < 3; ++i) inv.add(dp::agent::ItemKind::Grass);
+        bool became_follower = false;
+        for (int i = 0; i < 10; ++i) {
+            auto fr = t.try_feed(animals, inv, a0.pos_x, a0.pos_y);
+            if (fr.animal_idx >= 0) inv.remove_one(fr.consumed);
+            if (fr.just_became_follower) became_follower = true;
+            // refill grass so we don't run dry
+            if (inv.num_of(dp::agent::ItemKind::Grass) == 0)
+                inv.add(dp::agent::ItemKind::Grass);
+        }
+        check(became_follower,
+              "TameSystem: rabbit becomes follower after enough grass feeds");
+        check(t.follower_count() == 1,
+              "TameSystem: follower count tracks correctly");
+    }
+
     // --- Observation ---
     {
         dp::world::World::Config cfg;
@@ -427,14 +592,19 @@ int run_self_tests() {
         dp::world::Daylight   day;
         dp::agent::EpisodeManager em;
         em.begin_episode();
+        dp::agent::ProgressTracker  progress;
+        dp::world::BuildingSystem   buildings;
+        dp::agent::Wardrobe         wardrobe;
+        dp::world::FarmingSystem    farming;
+        dp::agent::TameSystem       tame;
 
         dp::agent::ObservationBuilder::Vector obs{};
         dp::agent::ObservationBuilder::compose(
             w, agent, vstate, day, plants, animals, resources,
-            inv, sh, em, obs);
+            inv, sh, em, progress, buildings, wardrobe, farming, tame, obs);
 
-        check(dp::agent::ObservationBuilder::SIZE >= 100,
-              "Observation: total dimension is at least 100");
+        check(dp::agent::ObservationBuilder::SIZE >= 140,
+              "Observation: total dimension is at least 140 (S3.10 expanded)");
         check(obs[0] == 1.0f && obs[1] == 1.0f && obs[2] == 1.0f,
               "Observation: vital slots [0..2] are 1.0 at full state");
 
@@ -454,9 +624,12 @@ int run_self_tests() {
         dp::agent::ObservationBuilder::Vector obs2{};
         dp::agent::ObservationBuilder::compose(
             w, agent, vstate, day, plants, animals, resources,
-            inv, sh, em, obs2);
-        // Last 3 slots are shelter (placed, dx, dy). placed should now be 1
-        int placed_idx = dp::agent::ObservationBuilder::SIZE - 3;
+            inv, sh, em, progress, buildings, wardrobe, farming, tame, obs2);
+        // Tame follower count slot is the very last; shelter "placed" is
+        // 3 slots before progress block. We just verify the build went OK
+        // and that the new layout still has a placed-shelter signal.
+        // (Position recomputed: shelter triplet sits 21 slots from end.)
+        int placed_idx = dp::agent::ObservationBuilder::SIZE - 21 - 3;
         check(obs2[placed_idx] > 0.5f,
               "Observation: shelter-placed flag flips after build");
     }
@@ -718,7 +891,8 @@ int run_self_tests() {
         // Reset moves to next episode and zeroes counters
         dp::agent::Inventory inv;
         dp::agent::Shelter   sh;
-        em.reset(w, agent, vsys, vstate, reward, animals, inv, sh);
+        dp::world::BuildingSystem bs;
+        em.reset(w, agent, vsys, vstate, reward, animals, inv, sh, bs);
         check(em.episode_id() == 1 && em.episodes_completed() == 1
               && em.elapsed_s() == 0.0f,
               "EpisodeManager: reset advances id and clears timers");
@@ -845,6 +1019,20 @@ int main(int argc, char** argv) {
         dp::agent::Inventory inventory;
         dp::agent::Shelter   shelter;
 
+        dp::agent::ProgressTracker progress;
+        dp::world::BuildingSystem  buildings;
+        // What building type the agent will place next time it hits P.
+        dp::world::BuildingType    selected_building = dp::world::BuildingType::Shed;
+
+        dp::agent::Wardrobe wardrobe;
+
+        dp::world::FarmingSystem farming;
+        // Last plant kind successfully harvested - used when planting a
+        // seed so the resulting plot matches what the agent has eaten.
+        dp::world::PlantKind last_seed_kind = dp::world::PlantKind::Berry;
+
+        dp::agent::TameSystem tame;
+
         dp::agent::VitalSystem vitals;
         dp::agent::VitalState  vital_state{};
 
@@ -898,27 +1086,44 @@ int main(int argc, char** argv) {
             reward.begin_step();
             reward.event_alive(dt);
 
+            // Progression: every metre travelled while alive counts.
+            float step_speed = std::sqrt(as.vel_x*as.vel_x + as.vel_y*as.vel_y);
+            progress.on_explore_step(step_speed * dt);
+
             // Animals follow the agent's position; wolves at night get
             // boosted perception+speed via night_factor. Shelter dampens
-            // wolf detection of the agent (S3.8c).
+            // wolf detection of the agent (S3.8c). Real buildings give
+            // even better coverage (S3.10a) - both stacking is fine.
             float night_factor = std::max(0.0f, -day.sun_height_normalized());
             float perc_scale = 1.0f, spd_scale = 1.0f;
-            if (shelter.covers(as.pos_x, as.pos_y)) {
+            bool  sheltered = shelter.covers(as.pos_x, as.pos_y)
+                           || buildings.covers(as.pos_x, as.pos_y);
+            if (sheltered) {
                 perc_scale = 0.3f;
                 spd_scale  = 0.7f;
             }
             animals.tick(world, as.pos_x, as.pos_y, as.pos_z, dt, night_factor,
                          perc_scale, spd_scale);
+            // Tamed followers stay near the agent regardless of their AI
+            // state. Late stage only - keeps the curriculum tidy.
+            if (progress.can_tame()) {
+                tame.apply_follow(animals, as.pos_x, as.pos_y, dt);
+            }
 
             // Plants regrow timers
             plants.tick(dt);
             resources.tick(dt);
+            farming.tick(dt);
 
             // Vitals (with movement speed for stamina)
             float speed = std::sqrt(as.vel_x*as.vel_x + as.vel_y*as.vel_y);
-            vitals.tick(vital_state, world, as.pos_x, as.pos_y, speed, day, dt);
-            // Inside shelter: body temp drifts toward neutral fast.
-            if (shelter.covers(as.pos_x, as.pos_y)) {
+            vitals.tick(vital_state, world, as.pos_x, as.pos_y, speed, day, dt,
+                        wardrobe.cold_resist());
+            // Inside shelter or building: body temp drifts toward
+            // neutral fast. Building gives the same effect (stronger
+            // would also work but keep it simple for now).
+            if (shelter.covers(as.pos_x, as.pos_y)
+                || buildings.covers(as.pos_x, as.pos_y)) {
                 vital_state.temperature += (50.0f - vital_state.temperature)
                                           * 0.3f * dt;
             }
@@ -926,9 +1131,14 @@ int main(int argc, char** argv) {
 
             // E key: harvest any nearby ripe plant. Mushrooms have a
             // 30% chance to poison instead of feed (blueprint line 16).
+            // Late stage: same key also picks up ripe farm plots.
             if (IsKeyPressed(KEY_E)) {
                 auto got = plants.try_harvest(as.pos_x, as.pos_y,
                                               as.pos_z + as.height * 0.5f, 2.5f);
+                if (progress.can_farm()) {
+                    auto farm_got = farming.harvest_at(as.pos_x, as.pos_y, 2.0f);
+                    for (auto k : farm_got) got.push_back(k);
+                }
                 for (auto k : got) {
                     float kcal = 0.0f, ml = 0.0f;
                     switch (k) {
@@ -960,6 +1170,18 @@ int main(int argc, char** argv) {
                         if (kcal > 0.0f) { vitals.eat(vital_state, kcal);  reward.event_eat(kcal); }
                         if (ml   > 0.0f) { vitals.drink(vital_state, ml);  reward.event_drink(ml); }
                     }
+                    // 30% chance to also drop a Seed for Fruit/Berry
+                    // (used to plant farms in late stage).
+                    if (k == dp::world::PlantKind::Fruit
+                        || k == dp::world::PlantKind::Berry) {
+                        unsigned r = static_cast<unsigned>(
+                            (uint64_t)(as.pos_x*991.0f) * 7919ULL
+                          ^ (uint64_t)(GetTime() * 1e6f));
+                        if ((r % 100u) < 30u) {
+                            inventory.add(dp::agent::ItemKind::Seed);
+                            last_seed_kind = k;
+                        }
+                    }
                     ++total_harvested;
                 }
             }
@@ -982,17 +1204,71 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // R key: pick up nearby resources (wood / stone / grass) and
-            // pack them into inventory. Each pickup grants a small reward.
+            // R key: priority is to deposit at a nearby construction
+            // site if the agent is carrying matching materials; otherwise
+            // fall back to picking up resources off the ground.
             if (IsKeyPressed(KEY_R)) {
-                auto picked = resources.try_collect(as.pos_x, as.pos_y,
-                                                    as.pos_z + as.height * 0.5f,
-                                                    2.0f);
-                for (auto rk : picked) {
-                    if (inventory.add(dp::agent::item_from_resource(rk))) {
-                        reward.event_collected_resource();
+                // Try deposit first (mid stage+)
+                bool deposited = false;
+                if (progress.can_build()) {
+                    for (int slot = 0; slot < inventory.size(); ++slot) {
+                        auto k = inventory.at(slot);
+                        if (k != dp::agent::ItemKind::Wood
+                         && k != dp::agent::ItemKind::Stone
+                         && k != dp::agent::ItemKind::Grass) continue;
+                        int site_idx = buildings.try_deposit(
+                            as.pos_x, as.pos_y, as.pos_z,
+                            2.5f, k);
+                        if (site_idx >= 0) {
+                            inventory.remove_one(k);
+                            reward.event_collected_resource();  // small reward per deposit
+                            deposited = true;
+                            break;  // one deposit per tick
+                        }
                     }
                 }
+                if (!deposited) {
+                    auto picked = resources.try_collect(as.pos_x, as.pos_y,
+                                                        as.pos_z + as.height * 0.5f,
+                                                        2.0f);
+                    for (auto rk : picked) {
+                        if (inventory.add(dp::agent::item_from_resource(rk))) {
+                            reward.event_collected_resource();
+                            progress.on_collect();
+                        }
+                    }
+                }
+            }
+
+            // P key: place a new construction site at the agent's feet,
+            // using the currently selected BuildingType. Gated by Mid stage.
+            if (IsKeyPressed(KEY_P)) {
+                int site = buildings.place_site(selected_building,
+                                                as.pos_x, as.pos_y, as.pos_z,
+                                                progress);
+                (void)site;  // success/failure read from buildings.sites()
+            }
+
+            // Tab cycles the next-to-place building type.
+            if (IsKeyPressed(KEY_TAB)) {
+                int t = static_cast<int>(selected_building);
+                t = (t + 1) % 4;
+                selected_building = static_cast<dp::world::BuildingType>(t);
+            }
+
+            // Each tick: promote any site that just got its last material.
+            int finished = buildings.tick_finalize();
+            for (int i = 0; i < finished; ++i) {
+                reward.event_built_shelter();  // re-use weight for now
+                progress.on_house_built();
+            }
+
+            // Stage unlock bonus (Early->Mid, Mid->Late). +50 sparse reward.
+            if (progress.poll_unlock()) {
+                // We piggyback on event_built_shelter so the magnitude
+                // (+5 default) is documented; multiply by 10 here for the
+                // milestone moment.
+                for (int i = 0; i < 10; ++i) reward.event_built_shelter();
             }
 
             // C key: craft a spear (consumes 1 wood + 1 stone, frees a slot)
@@ -1012,7 +1288,8 @@ int main(int argc, char** argv) {
             }
 
             // F key: melee attack the closest animal in front (90 deg arc).
-            // Spear in inventory boosts reach and damage.
+            // Spear in inventory boosts reach and damage. Killed mammals
+            // also drop a Fur into the inventory (if there's room).
             if (IsKeyPressed(KEY_F)) {
                 bool has_spear = inventory.num_of(dp::agent::ItemKind::Spear) > 0;
                 float reach  = has_spear ? 2.5f : 1.5f;
@@ -1025,15 +1302,75 @@ int main(int argc, char** argv) {
                         reward.event_wolf_killed();
                         vitals.eat(vital_state, 40.0f);
                         reward.event_eat(40.0f);
+                        inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Rabbit) {
                         vitals.eat(vital_state, 15.0f);
                         reward.event_eat(15.0f);
+                        inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Deer) {
                         vitals.eat(vital_state, 40.0f);
                         reward.event_eat(40.0f);
+                        inventory.add(dp::agent::ItemKind::Fur);
                     } else if (kind == dp::world::AnimalKind::Fish) {
                         vitals.eat(vital_state, 20.0f);
                         reward.event_eat(20.0f);
+                    }
+                }
+            }
+
+            // X key: craft a grass dress (3 grass -> 1 dress)
+            if (IsKeyPressed(KEY_X)) {
+                if (inventory.craft_grass_dress()) {
+                    reward.event_crafted_tool();
+                }
+            }
+            // Z key: craft a fur cloak (2 fur -> 1 cloak)
+            if (IsKeyPressed(KEY_Z)) {
+                if (inventory.craft_fur_cloak()) {
+                    reward.event_crafted_tool();
+                }
+            }
+            // V key: put on the best available clothing (cloak > dress).
+            if (IsKeyPressed(KEY_V)) {
+                if (inventory.num_of(dp::agent::ItemKind::FurCloak) > 0) {
+                    wardrobe.wear(inventory, dp::agent::ItemKind::FurCloak);
+                } else if (inventory.num_of(dp::agent::ItemKind::GrassDress) > 0) {
+                    wardrobe.wear(inventory, dp::agent::ItemKind::GrassDress);
+                }
+            }
+
+            // N key (Late only): plant the seed in inventory at the
+            // agent's feet, creating a FarmPlot of the same kind as the
+            // last fruit/berry harvested.
+            if (IsKeyPressed(KEY_N) && progress.can_farm()) {
+                if (inventory.num_of(dp::agent::ItemKind::Seed) > 0) {
+                    inventory.remove_one(dp::agent::ItemKind::Seed);
+                    farming.plant_seed(as.pos_x, as.pos_y, as.pos_z,
+                                       last_seed_kind);
+                    reward.event_collected_resource();  // small reward for planting
+                }
+            }
+            // J key (Late only): water the nearest plot within 2m.
+            if (IsKeyPressed(KEY_J) && progress.can_farm()) {
+                if (farming.water_at(as.pos_x, as.pos_y, 2.0f)) {
+                    // Small stamina cost so spamming isn't free.
+                    vital_state.stamina = std::max(0.0f,
+                        vital_state.stamina - 2.0f);
+                }
+            }
+
+            // K key (Late only): feed grass to nearest prey or fur to a
+            // wolf. Builds trust; once trust >= 0.5 the animal follows.
+            if (IsKeyPressed(KEY_K) && progress.can_tame()) {
+                auto fr = tame.try_feed(animals, inventory,
+                                        as.pos_x, as.pos_y, 3.0f);
+                if (fr.animal_idx >= 0) {
+                    inventory.remove_one(fr.consumed);
+                    reward.event_collected_resource();
+                    if (fr.just_became_follower) {
+                        // Milestone: mark as a "tool craft" so PPO sees a
+                        // clear positive event.
+                        reward.event_crafted_tool();
                     }
                 }
             }
@@ -1077,7 +1414,11 @@ int main(int argc, char** argv) {
                     reward.episode().r_death,
                     reward.episode().r_vital);
                 episodes.reset(world, agent, vitals, vital_state,
-                               reward, animals, inventory, shelter);
+                               reward, animals, inventory, shelter,
+                               buildings);
+                wardrobe.clear();
+                farming.clear();
+                tame.clear();
                 was_alive = true;
             }
 
@@ -1099,11 +1440,12 @@ int main(int argc, char** argv) {
             ClearBackground(day.sky_color());
 
             renderer.draw(cam, agent, world, decorations, plants, animals,
-                          resources, shelter, day.terrain_tint());
+                          resources, shelter, buildings, farming,
+                          day.terrain_tint());
 
             // HUD background
             const auto& s = agent.state();
-            DrawRectangle(8, 8, 420, 348, Color{ 0, 0, 0, 160 });
+            DrawRectangle(8, 8, 480, 420, Color{ 0, 0, 0, 160 });
             DrawText(TextFormat("FPS: %d   Day t=%.2f", GetFPS(), day.t()),
                      12, 12, 18, RAYWHITE);
             DrawText(TextFormat("Agent: (%.0f, %.0f, %.0f)  speed=%.1f",
@@ -1166,17 +1508,52 @@ int main(int argc, char** argv) {
                                 episodes.elapsed_s(),
                                 ecfg.max_seconds),
                      12, 236, 14, Color{ 240, 220, 120, 255 });
+            // Progression line
+            const char* stage_name = dp::agent::progress_stage_name(progress.stage());
+            DrawText(TextFormat("Stage: %s   collected=%d/%d  explored=%.0f/%.0fm  houses=%d",
+                                stage_name,
+                                progress.resources_collected(),
+                                progress.mid_collect_threshold,
+                                progress.total_explored(),
+                                progress.mid_explore_threshold,
+                                progress.houses_built()),
+                     12, 254, 14, Color{ 200, 200, 255, 255 });
+            // Building selector + active sites count
+            const auto& brec = dp::world::building_recipe(selected_building);
+            DrawText(TextFormat("Selected: %s [W%d S%d G%d]  Sites=%zu  Built=%zu",
+                                brec.name,
+                                brec.wood_required,
+                                brec.stone_required,
+                                brec.grass_required,
+                                buildings.sites().size(),
+                                buildings.buildings().size()),
+                     12, 270, 14, Color{ 220, 255, 200, 255 });
+            // Wardrobe
+            const char* worn_name = "none";
+            if (wardrobe.wearing(dp::agent::ItemKind::GrassDress)) worn_name = "grass dress (+10% cold)";
+            else if (wardrobe.wearing(dp::agent::ItemKind::FurCloak)) worn_name = "fur cloak (+30% cold)";
+            DrawText(TextFormat("Worn: %s  Fur=%d  Seeds=%d",
+                                worn_name,
+                                inventory.num_of(dp::agent::ItemKind::Fur),
+                                inventory.num_of(dp::agent::ItemKind::Seed)),
+                     12, 286, 14, Color{ 255, 220, 200, 255 });
+            // Farming + Taming line (Late stage)
+            DrawText(TextFormat("Farm: %d plots (%d ripe)   Tame: %d followers",
+                                farming.total_count(),
+                                farming.ripe_count(),
+                                tame.follower_count()),
+                     12, 302, 14, Color{ 200, 255, 200, 255 });
             DrawText(TextFormat("Camera: %s   [G] toggle follow",
                                 follow_agent ? "follow" : "fly"),
-                     12, 256, 16, RAYWHITE);
-            DrawText("E=harvest plant   Q=drink/catch fish   R=collect resource",
-                     12, 280, 14, Color{ 220, 220, 100, 255});
-            DrawText("C=craft spear (W+S)   B=build shelter (W+G)   F=attack",
-                     12, 298, 14, Color{ 220, 220, 100, 255});
-            DrawText("WASD/Space/Shift fly  Ctrl=fast  T/Y=time speed",
-                     12, 316, 14, Color{ 180, 180, 180, 255 });
-            DrawText("Esc=quit",
-                     12, 332, 14, Color{ 180, 180, 180, 255 });
+                     12, 322, 16, RAYWHITE);
+            DrawText("E=harvest   Q=drink/fish   R=collect/deposit   F=attack",
+                     12, 342, 14, Color{ 220, 220, 100, 255});
+            DrawText("C=spear   X=dress   Z=cloak   V=wear   B=quick shelter",
+                     12, 358, 14, Color{ 220, 220, 100, 255});
+            DrawText("Tab=cycle building   P=place site   N=plant seed   J=water",
+                     12, 374, 14, Color{ 220, 220, 100, 255});
+            DrawText("K=feed/tame   WASD fly  Ctrl=fast  T/Y=time  Esc=quit",
+                     12, 390, 14, Color{ 180, 180, 180, 255 });
 
             EndDrawing();
         }

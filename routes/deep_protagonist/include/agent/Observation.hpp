@@ -3,10 +3,15 @@
 #include "agent/CapsuleAgent.hpp"
 #include "agent/EpisodeManager.hpp"
 #include "agent/Inventory.hpp"
+#include "agent/ProgressTracker.hpp"
 #include "agent/Shelter.hpp"
+#include "agent/TameSystem.hpp"
 #include "agent/VitalSystem.hpp"
+#include "agent/Wardrobe.hpp"
 #include "world/AnimalSystem.hpp"
+#include "world/BuildingSystem.hpp"
 #include "world/Daylight.hpp"
+#include "world/FarmingSystem.hpp"
 #include "world/PlantSystem.hpp"
 #include "world/ResourceSystem.hpp"
 #include "world/World.hpp"
@@ -31,6 +36,16 @@ namespace dp::agent {
 //   99..116 resources 3 nearest available resources: (dx, dy, dz, one-hot 3)
 //   117..120 inventory  W/S/G/Spear counts each / capacity
 //   121..123 shelter    placed (0/1), dx, dy from agent (clipped to vision)
+//   --- S3.10 additions (21 slots) ---
+//   124..126 progress  stage one-hot (early/mid/late)
+//   127      collect_norm   resources_collected / mid_collect_threshold
+//   128      explore_norm   total_explored / mid_explore_threshold
+//   129      houses_built   houses_built / 5 (clipped)
+//   130..132 building   nearest building dx, dy, completed (0/1)
+//   133..136 inv_late   Fur / GrassDress / FurCloak / Seed counts / capacity
+//   137..139 worn       one-hot (none / dress / cloak)
+//   140..143 farm       nearest plot (dx, dy, growth, water_level)
+//   144      tame       follower_count / 4 (clipped)
 //
 // All distances are normalised by VISION_RANGE (60m) so |dx|,|dy|,|dz| <= 1.
 class ObservationBuilder {
@@ -54,7 +69,16 @@ public:
         + K_ANIMALS   * 8                 // 4 animals * (dx,dy,dz,kind_5)
         + K_RESOURCES * 6                 // 3 resources * (dx,dy,dz,kind_3)
         + 4                               // inventory counts
-        + 3;                              // shelter (placed, dx, dy)
+        + 3                               // shelter (placed, dx, dy)
+        + 3                               // progress stage one-hot
+        + 1                               // collect norm
+        + 1                               // explore norm
+        + 1                               // houses built norm
+        + 3                               // nearest building (dx, dy, completed)
+        + 4                               // inv_late (Fur/Dress/Cloak/Seed)
+        + 3                               // worn one-hot
+        + 4                               // nearest farm (dx, dy, growth, water)
+        + 1;                              // tame follower count
 
     using Vector = std::array<float, SIZE>;
 
@@ -69,6 +93,11 @@ public:
                         const Inventory&                    inventory,
                         const Shelter&                      shelter,
                         const EpisodeManager&               episodes,
+                        const ProgressTracker&              progress,
+                        const dp::world::BuildingSystem&    buildings,
+                        const Wardrobe&                     wardrobe,
+                        const dp::world::FarmingSystem&     farming,
+                        const TameSystem&                   tame,
                         Vector&                             out);
 };
 

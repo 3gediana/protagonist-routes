@@ -6,6 +6,7 @@
 #include "agent/Shelter.hpp"
 #include "agent/VitalSystem.hpp"
 #include "world/AnimalSystem.hpp"
+#include "world/BuildingSystem.hpp"
 #include "world/PlantSystem.hpp"
 #include "world/World.hpp"
 
@@ -46,16 +47,19 @@ public:
     bool is_done(const VitalState& v) const;
 
     // Reset agent to spawn, restore vitals, reset reward + animals,
-    // clear inventory and shelter. Plants and resources are left to
-    // regrow naturally.
-    void reset(const dp::world::World&  world,
-               CapsuleAgent&             agent,
-               VitalSystem&              vital_sys,
-               VitalState&               vital_state,
-               RewardSystem&             reward,
-               dp::world::AnimalSystem&  animals,
-               Inventory&                inventory,
-               Shelter&                  shelter);
+    // clear inventory / shelter / buildings. Plants and resources are
+    // left to regrow naturally; ProgressTracker is intentionally NOT
+    // cleared here (curriculum progress persists across episodes by
+    // design, matching the "single network from S4 to S6" rule).
+    void reset(const dp::world::World&    world,
+               CapsuleAgent&               agent,
+               VitalSystem&                vital_sys,
+               VitalState&                 vital_state,
+               RewardSystem&               reward,
+               dp::world::AnimalSystem&    animals,
+               Inventory&                  inventory,
+               Shelter&                    shelter,
+               dp::world::BuildingSystem&  buildings);
 
     // Useful for HUDs / PPO logs.
     int   episode_id()        const { return episode_id_; }

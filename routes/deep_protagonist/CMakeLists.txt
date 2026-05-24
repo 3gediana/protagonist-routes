@@ -88,14 +88,19 @@ add_executable(deep_protagonist
     src/world/PlantSystem.cpp
     src/world/AnimalSystem.cpp
     src/world/ResourceSystem.cpp
+    src/world/BuildingSystem.cpp
+    src/world/FarmingSystem.cpp
     src/agent/CapsuleAgent.cpp
     src/agent/EpisodeManager.cpp
     src/agent/Inventory.cpp
     src/agent/Observation.cpp
     src/agent/Perception.cpp
+    src/agent/ProgressTracker.cpp
     src/agent/RewardSystem.cpp
     src/agent/Shelter.cpp
+    src/agent/TameSystem.cpp
     src/agent/VitalSystem.cpp
+    src/agent/Wardrobe.cpp
     src/render/WorldRenderer.cpp
     src/render/FlyCamera.cpp
 )

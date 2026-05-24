@@ -4,7 +4,9 @@
 #include "agent/Shelter.hpp"
 #include "render/FlyCamera.hpp"
 #include "world/AnimalSystem.hpp"
+#include "world/BuildingSystem.hpp"
 #include "world/Decorations.hpp"
+#include "world/FarmingSystem.hpp"
 #include "world/PlantSystem.hpp"
 #include "world/ResourceSystem.hpp"
 #include "world/World.hpp"
@@ -37,6 +39,8 @@ public:
               const dp::world::AnimalSystem& animals,
               const dp::world::ResourceSystem& resources,
               const dp::agent::Shelter& shelter,
+              const dp::world::BuildingSystem& buildings,
+              const dp::world::FarmingSystem& farming,
               Color tint = WHITE);
 
 private:

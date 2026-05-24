@@ -83,6 +83,10 @@ public:
     // Mark dead so it stops moving and rendering pulls a "dead" colour.
     void kill(int idx);
 
+    // Steer the animal at `idx` toward (tx, ty) at `speed` m/s, for one
+    // tick. Used by TameSystem so tamed followers stay near the agent.
+    void steer_toward(int idx, float tx, float ty, float speed, float dt);
+
     struct AttackResult {
         int   index   = -1;     // index of the animal hit; -1 = miss
         bool  killed  = false;  // health dropped to 0 this tick

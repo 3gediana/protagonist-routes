@@ -11,11 +11,15 @@ namespace dp::agent {
 // crafted items. Capacity is intentionally tight (3 slots) so the agent
 // has to make trade-offs and plan ahead.
 enum class ItemKind : uint8_t {
-    Wood  = 0,
-    Stone = 1,
-    Grass = 2,
-    Spear = 3,        // crafted: Wood + Stone
-    Count = 4,
+    Wood       = 0,
+    Stone      = 1,
+    Grass      = 2,
+    Spear      = 3,   // crafted: Wood + Stone
+    Fur        = 4,   // raw material dropped by rabbit/deer/wolf kills
+    GrassDress = 5,   // crafted: 3 Grass
+    FurCloak   = 6,   // crafted: 2 Fur
+    Seed       = 7,   // dropped when harvesting fruit/berry (S3.10c)
+    Count      = 8,
 };
 
 const char* item_kind_name(ItemKind k);
@@ -53,6 +57,11 @@ public:
     // on success (must have both items, and at least one slot freed up by
     // consumption is enough room for the Spear).
     bool craft_spear();
+
+    // S3.10b crafting: 3 Grass -> 1 GrassDress (-2 net slots), or
+    // 2 Fur -> 1 FurCloak (-1 net slot).
+    bool craft_grass_dress();
+    bool craft_fur_cloak();
 
     void clear();
 

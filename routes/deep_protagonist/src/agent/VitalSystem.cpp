@@ -23,7 +23,8 @@ void VitalSystem::tick(VitalState& s,
                        float wx, float wy,
                        float agent_speed,
                        const dp::world::Daylight& day,
-                       float dt) const {
+                       float dt,
+                       float cold_resist) const {
     if (!s.alive) return;
 
     const float dt_min = dt / 60.0f;
@@ -56,10 +57,14 @@ void VitalSystem::tick(VitalState& s,
     bool mountain = (biome == dp::world::Biome::Mountain);
 
     if (is_night || mountain) {
-        // Drift toward cold (0) - mountain or night strips heat
+        // Drift toward cold (0) - mountain or night strips heat. Clothing
+        // (cold_resist in [0,1]) damps this drain.
         float cold_rate = cfg_.temp_cold_decay_per_min;
         if (mountain && is_night) cold_rate *= 1.5f;
-        s.temperature -= cold_rate * dt_min;
+        float resist = cold_resist;
+        if (resist < 0.0f) resist = 0.0f;
+        if (resist > 0.95f) resist = 0.95f;
+        s.temperature -= cold_rate * dt_min * (1.0f - resist);
     } else if (desert_day) {
         // Drift toward hot (100)
         s.temperature += cfg_.temp_hot_decay_per_min * dt_min;

@@ -20,14 +20,15 @@ bool EpisodeManager::is_done(const VitalState& v) const {
     return false;
 }
 
-void EpisodeManager::reset(const dp::world::World&  world,
-                           CapsuleAgent&             agent,
-                           VitalSystem&              vital_sys,
-                           VitalState&               vital_state,
-                           RewardSystem&             reward,
-                           dp::world::AnimalSystem&  animals,
-                           Inventory&                inventory,
-                           Shelter&                  shelter) {
+void EpisodeManager::reset(const dp::world::World&    world,
+                           CapsuleAgent&               agent,
+                           VitalSystem&                vital_sys,
+                           VitalState&                 vital_state,
+                           RewardSystem&               reward,
+                           dp::world::AnimalSystem&    animals,
+                           Inventory&                  inventory,
+                           Shelter&                    shelter,
+                           dp::world::BuildingSystem&  buildings) {
     // 1. Snap agent back to spawn slightly above ground.
     float gz = world.surface_height(cfg_.spawn_x, cfg_.spawn_y);
     agent.reset(cfg_.spawn_x, cfg_.spawn_y, gz + cfg_.spawn_clearance);
@@ -46,9 +47,10 @@ void EpisodeManager::reset(const dp::world::World&  world,
                    ^ static_cast<uint64_t>(episode_id_) * 0x9E3779B97F4A7C15ULL;
     animals.initialize(seed, world);
 
-    // 5. Inventory + shelter are per-episode state and reset to empty.
+    // 5. Inventory + shelter + buildings are per-episode state.
     inventory.clear();
     shelter.clear();
+    buildings.clear();
 
     // 6. Counters: this finishes the *previous* episode, then we begin
     //    the next one. begin_episode bumps id and zeros timers.

@@ -4,11 +4,15 @@ namespace dp::agent {
 
 const char* item_kind_name(ItemKind k) {
     switch (k) {
-        case ItemKind::Wood:  return "wood";
-        case ItemKind::Stone: return "stone";
-        case ItemKind::Grass: return "grass";
-        case ItemKind::Spear: return "spear";
-        default:              return "?";
+        case ItemKind::Wood:       return "wood";
+        case ItemKind::Stone:      return "stone";
+        case ItemKind::Grass:      return "grass";
+        case ItemKind::Spear:      return "spear";
+        case ItemKind::Fur:        return "fur";
+        case ItemKind::GrassDress: return "grass_dress";
+        case ItemKind::FurCloak:   return "fur_cloak";
+        case ItemKind::Seed:       return "seed";
+        default:                   return "?";
     }
 }
 
@@ -45,6 +49,20 @@ bool Inventory::craft_spear() {
     remove_one(ItemKind::Stone);
     // Net: -2 slots, +1 slot, so we always have room.
     add(ItemKind::Spear);
+    return true;
+}
+
+bool Inventory::craft_grass_dress() {
+    if (num_of(ItemKind::Grass) < 3) return false;
+    for (int i = 0; i < 3; ++i) remove_one(ItemKind::Grass);
+    add(ItemKind::GrassDress);
+    return true;
+}
+
+bool Inventory::craft_fur_cloak() {
+    if (num_of(ItemKind::Fur) < 2) return false;
+    for (int i = 0; i < 2; ++i) remove_one(ItemKind::Fur);
+    add(ItemKind::FurCloak);
     return true;
 }
 

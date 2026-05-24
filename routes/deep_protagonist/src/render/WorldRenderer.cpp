@@ -159,6 +159,8 @@ void WorldRenderer::draw(const FlyCamera& cam,
                          const dp::world::AnimalSystem& animals,
                          const dp::world::ResourceSystem& resources,
                          const dp::agent::Shelter& shelter,
+                         const dp::world::BuildingSystem& buildings,
+                         const dp::world::FarmingSystem& farming,
                          Color tint) {
     if (!built_) return;
 
@@ -323,6 +325,115 @@ void WorldRenderer::draw(const FlyCamera& cam,
                 DrawCylinderEx(b, t3, 0.05f, 0.0f, 4, gc);
                 break;
             }
+        }
+    }
+
+    // Construction sites: a white wireframe footprint + 3 stacks of
+    // material progress (1 bar per kind, height = filled / required).
+    for (const auto& s : buildings.sites()) {
+        if (s.completed) continue;
+        const auto& r = dp::world::building_recipe(s.type);
+        Vector3 c = Vector3{ s.x, s.y, s.z + 0.05f };
+        Vector3 box_size = Vector3{ r.foot_radius * 2.0f,
+                                    r.foot_radius * 2.0f,
+                                    0.10f };
+        // Footprint frame
+        DrawCubeWiresV(c, box_size, Color{ 240, 240, 240, 220 });
+        // Translucent bottom slab
+        DrawCubeV(c, box_size, Color{ 200, 200, 200, 60 });
+
+        // 3 material bars sitting on the slab. Height = deposited/required.
+        auto bar = [&](int idx, int deposited, int required, Color col) {
+            if (required <= 0) return;
+            float f = static_cast<float>(deposited) / required;
+            if (f > 1.0f) f = 1.0f;
+            float bw = r.foot_radius * 0.35f;
+            float bx = s.x + (idx - 1) * r.foot_radius * 0.7f;
+            float by = s.y;
+            float bz_low = s.z + 0.10f;
+            float bh = 1.5f * f;
+            Vector3 center = Vector3{ bx, by, bz_low + bh * 0.5f };
+            Vector3 size = Vector3{ bw, bw, std::max(0.05f, bh) };
+            DrawCubeV(center, size, tint_mul(col, tint));
+        };
+        bar(0, s.wood_deposited,  r.wood_required,  Color{160, 110, 50, 255});
+        bar(1, s.stone_deposited, r.stone_required, Color{170, 170, 170, 255});
+        bar(2, s.grass_deposited, r.grass_required, Color{ 80, 200, 80, 255});
+    }
+
+    // Buildings: completed houses. Each type gets a distinct footprint
+    // and roof. Geometry-only for now; S3.10b+ replaces with GLB models.
+    for (const auto& b : buildings.buildings()) {
+        const auto& r = dp::world::building_recipe(b.type);
+        float w  = r.foot_radius * 2.0f;
+        float h;
+        Color wall_col, roof_col;
+        switch (b.type) {
+            case dp::world::BuildingType::Shed:
+                h = 1.6f;
+                wall_col = Color{180, 130, 70, 255};
+                roof_col = Color{120,  80, 50, 255};
+                break;
+            case dp::world::BuildingType::WoodHouse:
+                h = 2.6f;
+                wall_col = Color{160, 110, 60, 255};
+                roof_col = Color{100,  70, 40, 255};
+                break;
+            case dp::world::BuildingType::StoneHouse:
+                h = 2.6f;
+                wall_col = Color{160, 160, 165, 255};
+                roof_col = Color{120, 120, 130, 255};
+                break;
+            case dp::world::BuildingType::BigHouse:
+                h = 3.4f;
+                wall_col = Color{170, 150, 120, 255};
+                roof_col = Color{100, 100, 130, 255};
+                break;
+        }
+        Vector3 walls_c = Vector3{ b.x, b.y, b.z + h * 0.5f };
+        Vector3 walls_s = Vector3{ w, w, h };
+        DrawCubeV(walls_c, walls_s, tint_mul(wall_col, tint));
+        DrawCubeWiresV(walls_c, walls_s, Color{50, 40, 30, 200});
+        // Roof: a flat slab a bit wider
+        Vector3 roof_c = Vector3{ b.x, b.y, b.z + h + 0.15f };
+        Vector3 roof_s = Vector3{ w * 1.15f, w * 1.15f, 0.30f };
+        DrawCubeV(roof_c, roof_s, tint_mul(roof_col, tint));
+        // Coverage ring on ground (faded yellow circle)
+        DrawCircle3D(Vector3{ b.x, b.y, b.z + 0.05f }, b.coverage_radius,
+                     Vector3{1, 0, 0}, 90.0f,
+                     Color{ 240, 220, 120, 100 });
+    }
+
+    // Farm plots: small dirt square; sprout grows taller as it matures;
+    // ripe plots have a brighter coloured fruit on top.
+    for (const auto& fp : farming.plots()) {
+        Color dirt = tint_mul(Color{ 96, 70, 50, 255 }, tint);
+        Vector3 c = Vector3{ fp.x, fp.y, fp.z + 0.05f };
+        DrawCubeV(c, Vector3{ 1.2f, 1.2f, 0.10f }, dirt);
+        // Water level shows as a slightly bluish overlay
+        if (fp.water_level > 0.05f) {
+            Color wet = Color{ 60, 80, 200,
+                static_cast<unsigned char>(80 * fp.water_level) };
+            DrawCubeV(c, Vector3{ 1.2f, 1.2f, 0.11f },
+                      tint_mul(wet, tint));
+        }
+        // Sprout height = growth
+        float h = 0.10f + fp.growth * 0.80f;
+        Color stalk_col = tint_mul(Color{ 80, 180, 80, 255 }, tint);
+        DrawCylinderEx(Vector3{ fp.x, fp.y, fp.z },
+                       Vector3{ fp.x, fp.y, fp.z + h },
+                       0.06f, 0.04f, 6, stalk_col);
+        if (fp.ripe) {
+            Color fruit_col;
+            switch (fp.seed_kind) {
+                case dp::world::PlantKind::Fruit:    fruit_col = Color{255, 170,  30, 255}; break;
+                case dp::world::PlantKind::Berry:    fruit_col = Color{220,  50,  90, 255}; break;
+                case dp::world::PlantKind::Cactus:   fruit_col = Color{100, 220, 150, 255}; break;
+                case dp::world::PlantKind::Mushroom: fruit_col = Color{210, 210,  90, 255}; break;
+                default:                              fruit_col = Color{255, 200, 100, 255}; break;
+            }
+            DrawSphere(Vector3{ fp.x, fp.y, fp.z + h }, 0.18f,
+                       tint_mul(fruit_col, tint));
         }
     }
 

@@ -347,6 +347,29 @@ void AnimalSystem::kill(int idx) {
     animals_[idx].vel_y = 0.0f;
 }
 
+void AnimalSystem::steer_toward(int idx, float tx, float ty,
+                                float speed, float dt) {
+    if (idx < 0 || idx >= int(animals_.size())) return;
+    auto& a = animals_[idx];
+    if (a.state == AnimalState::Dead) return;
+    float dx = tx - a.pos_x;
+    float dy = ty - a.pos_y;
+    float d  = std::sqrt(dx*dx + dy*dy);
+    if (d > 1.5f) {
+        a.vel_x = dx / (d + 1e-3f) * speed;
+        a.vel_y = dy / (d + 1e-3f) * speed;
+        a.pos_x += a.vel_x * dt;
+        a.pos_y += a.vel_y * dt;
+        if (std::abs(a.vel_x) + std::abs(a.vel_y) > 0.01f) {
+            a.yaw = std::atan2(a.vel_y, a.vel_x);
+        }
+    } else {
+        // close enough - idle next to the player
+        a.vel_x = 0.0f;
+        a.vel_y = 0.0f;
+    }
+}
+
 AnimalSystem::AttackResult AnimalSystem::agent_attack(
         float ax, float ay, float yaw,
         float reach, float damage) {

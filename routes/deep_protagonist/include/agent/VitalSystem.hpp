@@ -40,12 +40,16 @@ public:
     // Step one frame of vital evolution. `agent_speed` is m/s, used to drive
     // stamina spend. The world + daylight let us figure out biome (desert
     // overheats, swamp rains cooler) and time of day (cold night).
+    // `cold_resist` (default 0.0) scales cold drain: 0 = full drain,
+    // 1 = no drain at all. Hooks Wardrobe's clothing effect into the
+    // existing temperature model.
     void tick(VitalState& s,
               const dp::world::World& world,
               float wx, float wy,
               float agent_speed,
               const dp::world::Daylight& day,
-              float dt) const;
+              float dt,
+              float cold_resist = 0.0f) const;
 
     // Consumption events
     void eat(VitalState& s, float nutrition) const;       // food refills hunger
