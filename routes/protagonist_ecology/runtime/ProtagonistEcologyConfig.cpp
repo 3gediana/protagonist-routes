@@ -450,6 +450,14 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
                     tpl.worksite_preactivate = v.value<bool>().value_or(false);
                     tpl.has_worksite_preactivate = true;
                 }
+                if (const auto& v = (*tt)["must_build_to_survive"]; v.is_boolean()) {
+                    tpl.must_build_to_survive = v.value<bool>().value_or(false);
+                    tpl.has_must_build_to_survive = true;
+                }
+                if (const auto& v = (*tt)["must_build_penalty"]; v.is_number()) {
+                    tpl.must_build_penalty = static_cast<float>(v.value<double>().value_or(200.0));
+                    tpl.has_must_build_penalty = true;
+                }
                 // background_overrides is itself an array of {archetype, count} tables.
                 if (const auto& bg = (*tt)["background"]; bg.is_array()) {
                     if (const auto* bg_arr = bg.as_array()) {

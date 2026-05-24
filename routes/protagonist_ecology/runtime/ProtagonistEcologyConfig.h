@@ -378,6 +378,16 @@ struct TaskTemplate {
     float shelter_camp_reward{0.0f};
     bool has_worksite_preactivate{false};
     bool worksite_preactivate{false};
+    // L5 #11: optional hard "must build to survive" gate. When enabled,
+    // every protagonist that survives the episode WITHOUT contributing
+    // to at least one completed worksite during the episode receives a
+    // large fitness penalty (or, equivalently, is rewarded only if it
+    // built). Encodes the BLUEPRINT scenario "the world goes lethal
+    // unless you build a shelter" without needing predator gating.
+    bool has_must_build_to_survive{false};
+    bool must_build_to_survive{false};
+    bool has_must_build_penalty{false};
+    float must_build_penalty{200.0f};
 };
 
 struct BackgroundBrainConfig {

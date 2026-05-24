@@ -117,6 +117,13 @@ struct TrainingParams {
     float combat_death_penalty{5.0f};
     float worksite_proximity_reward{0.05f};
     float worksite_completion_reward{60.0f};
+    // L5 #11: hard "must build to survive" gate. When true, every
+    // protagonist that finishes the episode without contributing to at
+    // least one completed worksite receives a -must_build_penalty
+    // fitness adjustment at episode end. Off by default — set per-task
+    // via [[evolution.task_templates.must_build_to_survive]] = true.
+    bool must_build_to_survive{false};
+    float must_build_penalty{200.0f};
     // L5 #8 Storage deposit reward. When a protagonist deposits a stick
     // or stone into a *completed* Storage building (overflow stockpile),
     // award this bonus per deposit. Without it the protagonist never
@@ -890,6 +897,14 @@ void applyTaskTemplate(ProtagonistEcologyConfig& route,
     }
     if (tpl.has_shelter_camp_reward) {
         params.shelter_camp_reward = tpl.shelter_camp_reward;
+    }
+    // L5 #11: must_build_to_survive gate. Stored on the params so the
+    // episode-end fitness pass can apply the penalty.
+    if (tpl.has_must_build_to_survive) {
+        params.must_build_to_survive = tpl.must_build_to_survive;
+    }
+    if (tpl.has_must_build_penalty) {
+        params.must_build_penalty = tpl.must_build_penalty;
     }
 }
 
@@ -3140,6 +3155,33 @@ void evaluatePopulation(World2D& world,
         ++behavior.total_protagonists;
         if (agent->alive()) {
             ++behavior.survived_protagonists;
+        }
+    }
+
+    // L5 #11: must_build_to_survive episode-end penalty. For protagonists
+    // that completed the episode WITHOUT a single BuildWorksite goal
+    // completion, deduct must_build_penalty from their fitness. The
+    // penalty mirrors the proactive_build / wave_attack scenario design
+    // where survival requires having built something — without this gate
+    // the protagonist can collect ambient survival reward all episode
+    // and never learn that building is essential.
+    if (params.must_build_to_survive && params.must_build_penalty > 0.0f) {
+        const int build_goal = static_cast<int>(GoalType::BuildWorksite);
+        std::size_t penalised = 0;
+        for (auto* agent : agent_layer->agents()) {
+            if (agent == nullptr) continue;
+            if (!protagonist_ids.contains(agent->genomeId())) continue;
+            auto* concrete = dynamic_cast<Agent*>(agent);
+            if (concrete == nullptr) continue;
+            if (concrete->goalCompletionTotal(build_goal) > 0) continue;
+            concrete->addFitness(-static_cast<double>(params.must_build_penalty));
+            ++penalised;
+        }
+        if (penalised > 0) {
+            spdlog::info(
+                "must_build_to_survive: penalised {} protagonists by -{:.1f} fitness "
+                "(0 BuildWorksite completions this episode)",
+                penalised, params.must_build_penalty);
         }
     }
 }
