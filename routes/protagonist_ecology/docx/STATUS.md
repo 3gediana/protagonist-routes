@@ -1,9 +1,13 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-J 十件齐全 + Stone bootstrap commit 1/2/3 全 done + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 中午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-K 11 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke 验证通过 (HEALTHY verdict) + 60-gen throw_penalty AB 完成 (验证为负优化) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`6b1e24a Layer 6 R3 stage 3 commit J: borderland weight mutation + toml gate`
+> 当前 HEAD：`ef7957f smoke_tw_eval: align borderland mutate rates with sandbox NEAT (commit K)`
+>
+> **2026-05-25 中午 端到端 smoke 验证 + 60-gen throw_penalty AB 收口**：
+> - **Smoke `smoke_tw_eval.toml`（4 gen, sigma=0.01, perturb=0.8, reset=0.05）**：完整跑通 commit A-K wiring。9 个 archetype 全部 mini-tick + mutate；protagonist pool 3→12；large_herbivore mean fit **489→3178 (6.5×)**；omnivore **421→3159 (7.5×)**；10 protagonist b2m promoted；borderland_metrics.csv 36 行。**borderland_metrics_summary.py verdict: HEALTHY**。整套 graduation pipeline 端到端真闭环：sandbox→border→mutate→eval→cull→continuity-gate→main_world.
+> - **60-gen throw_penalty AB 完整结果**：throw_attempt = -0.05 验证为**负优化**。harmony_check 对比：baseline 7/7 PASS vs throw_penalty **6/7 PASS** (C6 me_coverage 从 0.40→0.28 退到 FAIL)；C3 coop -24% / C4 omnivore peak -26% / C5 worksites total 38→28 (-26%)；所有 quantitative 指标全部退步。throw_attempt toml slot 默认 0=off 不需撤回；只是 `long_run_60gen_2d_throw.toml` 那个实验 config 别再用，改回 `long_run_60gen_2d.toml` baseline。throw spam 问题 (10000/ep × 14% 命中) 需要别的机制压制 (inventory 损失或碰撞 penalty)，不是直接每 throw 扣分。
 >
 > **2026-05-25 上午 L6 R3 commit J（真正的 borderland evolution）**（commit `6b1e24a`）：
 > - 之前 commit E/F/G 只能做"选择"，同一 genome 永远评出同样 fitness。Commit J 加上"探索"。
