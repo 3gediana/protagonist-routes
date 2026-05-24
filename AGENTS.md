@@ -1,6 +1,6 @@
 # AGENTS.md · AI 助手开发导航
 
-> **最后更新**：2026-05-21
+> **最后更新**：2026-05-24（加 § 10 tool 约束：exec timeout ≤ 4 min）
 
 > **重要：这份文档是给 AI 助手看的，不是给人看的。**
 > 用户不会读这份文档。如果你是 AI 助手第一次进入这个项目，**请完整读完本文件再开始任何工作**。
@@ -148,6 +148,8 @@
 | `routes/protagonist_ecology/docx/supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md` | CPU/GPU 路线与 mixed compute 边界 | 动 CUDA / profiling / dense GPU 前 |
 | `routes/protagonist_ecology/docx/supporting/MEMORY_ABLATION_SMOKE_RESULT.md` | 早期 ablation smoke 的诚实结论；可看 wiring，但不能把 smoke 反常结果当最终科学结论 | 动 ablation 解释、补长训前 |
 | `routes/protagonist_ecology/docx/supporting/FINAL_STATE_VISION.md` | route 最终观感目标 | 需要校准“我们最终想看到什么”时 |
+| `routes/protagonist_ecology/docx/supporting/PRODUCTION_WORLD_LIFECYCLE_SPEC.md` | **主世界本体论与谱系流动**；固定主世界永不 reset、训练永远在别处做、新血脉只能通过出生或迁徙进入、灭绝场景的合法处理路径等 17 条不变量 | **动 R-002 / R-006 / R-007 / 3D viewer / 主世界 / 边境世界 / 迁徙 / 谱系 / 灭绝任何代码之前必读** |
+| `routes/protagonist_ecology/docx/supporting/SELF_GROW_CAPABILITY_LIMITS_SPEC.md` | **R-008 自长机制 7 层精确化（L0-L7）**；L7 凭空新 capability 物理不可达必须人写；任何"自长 X"表述必须指明 Layer 编号 | **动 R-008 / Stage E / 任何"自长 / 涌现"机制之前必读** |
 | `routes/protagonist_ecology/docx/archive/MODULE_DEVELOPMENT_PLAN.md` | 早期模块化推进口径；当前默认只作历史参考，不再作为主导航 | 需要追老设计思路时 |
 
 ### 🟢 第 3 优先级 · 按需查阅
@@ -375,7 +377,23 @@ git tag                 # 列出所有完成 tag
 
 ---
 
-## 10 · 修订本文件
+## 10 · Tool / 操作约束
+
+### exec timeout 上限：4 分钟
+
+- 任何 `exec` 调用的 `timeout` 参数**不超过 240000 ms（4 分钟）**
+- 原因：shell 缓存有效期 5 分钟，超过 5 min 会丢失上下文。设 4 min 留 1 min buffer
+- 长任务（30 代训练等）应该用 `cmd.exe /c "start /B ..."` 后台启动 + 间歇 polling，不要用单次长 timeout
+- WSL/MinGW shell 容易遇到 stdout 编码 UTF-16 问题；优先 `cmd.exe /c "...  > file 2>&1"` 同步等待+落盘到 file
+
+### Windows 进程管理
+- `cmd.exe /c "tasklist | findstr neural-eco"` 查进程
+- `cmd.exe /c "taskkill /F /IM neural-eco-protagonist.exe"` 强杀
+- 重新 build 前必须先 kill 占用 exe 的 process（否则 link error 1104）
+
+---
+
+## 11 · 修订本文件
 
 修改本文件时：
 - 在文件顶部"最后更新"加日期
