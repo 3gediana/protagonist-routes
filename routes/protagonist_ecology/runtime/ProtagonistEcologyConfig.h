@@ -547,6 +547,8 @@ struct ProtagonistEcologyConfig {
     bool isTrainRole() const;
     bool isEvalRole() const;
     bool isLiveRole() const;
+    bool isBorderlandRole() const;   // L6 R1
+    bool isMainWorldRole() const;    // L6 R1
 
     static ProtagonistEcologyConfig fromConfig(const config::Config& config);
 };

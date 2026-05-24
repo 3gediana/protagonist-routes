@@ -48,6 +48,18 @@ bool ProtagonistEcologyConfig::isLiveRole() const {
     return world_role == "live";
 }
 
+// Layer 6 R1 (FINAL_BLUEPRINT.md S6): three-world placeholder accessors.
+// "borderland" and "main" currently fall through to live-mode behavior
+// (single persistent world). The full TripleWorldRuntime + MigrationScheduler
+// is deferred per LAYER6_THREE_WORLDS_SPEC.md.
+bool ProtagonistEcologyConfig::isBorderlandRole() const {
+    return world_role == "borderland";
+}
+
+bool ProtagonistEcologyConfig::isMainWorldRole() const {
+    return world_role == "main" || world_role == "main_world";
+}
+
 ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Config& config) {
     const auto world_size = config.getArray<double>("world.size");
     if (world_size.size() != 2) {
@@ -58,8 +70,9 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.random_seed = static_cast<std::uint32_t>(config.getOr<int>("runtime.random_seed", 42));
     out.world_role = normalizeRole(config.getOr<std::string>("runtime.world_role", out.world_role));
     out.scenario_name = config.getOr<std::string>("runtime.scenario_name", out.scenario_name);
-    if (!out.isTrainRole() && !out.isEvalRole() && !out.isLiveRole()) {
-        throw std::runtime_error("runtime.world_role must be one of: train, eval, live");
+    if (!out.isTrainRole() && !out.isEvalRole() && !out.isLiveRole()
+        && !out.isBorderlandRole() && !out.isMainWorldRole()) {
+        throw std::runtime_error("runtime.world_role must be one of: train, eval, live, borderland, main");
     }
     out.world_size = Vec2{static_cast<float>(world_size[0]), static_cast<float>(world_size[1])};
     out.sim_time.substep_dt = config.getOr<double>("simulation.time.substep_dt", out.sim_time.substep_dt);
