@@ -2886,6 +2886,18 @@ void evaluatePopulation(World2D& world,
 
             if (bg_reward != 0.0) {
                 concrete->addFitness(bg_reward);
+                // Layer 8 R1 (FINAL_BLUEPRINT.md S8.1): Lamarckian online
+                // weight adaptation. When |reward|>threshold, apply Hebbian
+                // weight update scaled by reward sign so the agent's brain
+                // co-adapts to rewarding states within the episode.
+                if (route.lamarckian.enabled
+                    && std::abs(bg_reward) > route.lamarckian.reward_threshold) {
+                    if (auto* neat_brain = dynamic_cast<NeatBrain*>(&concrete->brain())) {
+                        const float lr = route.lamarckian.learning_rate
+                                       * (bg_reward > 0.0 ? 1.0f : -0.3f);
+                        neat_brain->hebbianUpdate(lr);
+                    }
+                }
             }
         }
 

@@ -336,6 +336,11 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.population.max_age_omnivore        = config.getOr<double>("world.population.max_age_omnivore",        out.population.max_age_omnivore);
     out.population.max_age_rabbit          = config.getOr<double>("world.population.max_age_rabbit",          out.population.max_age_rabbit);
 
+    // Layer 8 R1: Lamarckian.
+    out.lamarckian.enabled = config.getOr<bool>("evolution.lamarckian.enabled", out.lamarckian.enabled);
+    out.lamarckian.learning_rate = config.getOr<float>("evolution.lamarckian.learning_rate", out.lamarckian.learning_rate);
+    out.lamarckian.reward_threshold = config.getOr<float>("evolution.lamarckian.reward_threshold", out.lamarckian.reward_threshold);
+
     out.memory_trial.enabled = config.getOr<bool>("world.memory_trial.enabled", out.memory_trial.enabled);
     out.memory_trial.cue_duration_seconds = config.getOr<double>("world.memory_trial.cue_duration_seconds", out.memory_trial.cue_duration_seconds);
     out.memory_trial.cue_radius = config.getOr<float>("world.memory_trial.cue_radius", out.memory_trial.cue_radius);

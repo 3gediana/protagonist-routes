@@ -415,6 +415,15 @@ struct ProtagonistEcologyConfig {
     WeatherConfig weather{};   // Layer 2 (FINAL_BLUEPRINT)
     DiseaseConfig disease{};
     PopulationConfig population{};   // Layer 4 (FINAL_BLUEPRINT)
+    // Layer 8 R1 (FINAL_BLUEPRINT.md S8.1): Lamarckian online weight
+    // adaptation. When enabled, background NeatBrain.hebbianUpdate is
+    // called each tick scaled by per-tick reward sign. Default off.
+    struct LamarckianConfig {
+        bool enabled{false};
+        float learning_rate{0.001f};
+        float reward_threshold{0.05f};  // only update when |reward|>threshold
+    };
+    LamarckianConfig lamarckian{};
     MemoryTrialConfig memory_trial{};
     ProtagonistBrainConfig protagonist{};
     BackgroundBrainConfig background{};

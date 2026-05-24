@@ -292,6 +292,13 @@ task_template_dynamic_weight = false
 task_template_hard_first_generations = 0
 checkpoint_every = 30
 
+# Layer 8 R1 (FINAL_BLUEPRINT.md §8.1): Lamarckian Hebbian online weight
+# adaptation for background NeatBrain. Off by default; smoke test = on.
+[evolution.lamarckian]
+enabled = true
+learning_rate = 0.0008
+reward_threshold = 0.05
+
 [evolution.neat]
 add_node_rate = 0.04
 add_connection_rate = 0.10
