@@ -23,60 +23,97 @@ namespace {
 constexpr std::size_t kBorderlandMiniTicks = 100;
 constexpr float kBorderlandMiniDt = 0.1f;
 
-// Walk the 1-protagonist mini-world for the configured number of
-// substeps and return a scalar fitness. Current scoring is the count
-// of substeps the agent stayed alive plus its accumulated route-side
-// fitness — both are stable signals against the trivial baseline of
-// "agent does nothing". Nothing fancy: this is the first commit that
-// actually ticks a World2D for borderland eval, so the evolutionary
-// signal just has to be (a) non-trivial, (b) reproducible.
-double miniTickEvaluate(const IGenome& g, const ProtagonistEcologyConfig& route) {
+// Walk a 1-agent mini-world for the configured number of substeps and
+// return a scalar fitness. Current scoring is the count of substeps the
+// agent stayed alive plus its accumulated route-side fitness — both
+// are stable signals against the trivial baseline of "agent does
+// nothing". Nothing fancy: this is the first commit that actually
+// ticks a World2D for borderland eval, so the evolutionary signal
+// just has to be (a) non-trivial, (b) reproducible.
+double tickAndScore(World2D& world, Agent& agent) {
+    std::size_t alive_substeps = 0;
+    for (std::size_t i = 0; i < kBorderlandMiniTicks; ++i) {
+        world.tick(kBorderlandMiniDt);
+        if (agent.alive()) ++alive_substeps;
+    }
+    return static_cast<double>(alive_substeps) + agent.fitness();
+}
+
+double miniTickProtagonist(const IGenome& g, const ProtagonistEcologyConfig& route) {
     auto world = createBootstrapWorld(route);
     if (!world) return 0.0;
     auto* agent_layer = world->getLayer<AgentLayer>();
     if (agent_layer == nullptr) return 0.0;
 
-    // Deterministic per-genome RNG so the same genome always evaluates
-    // to the same fitness on identical world layouts.
     std::mt19937 rng(static_cast<std::uint32_t>(g.id().value));
     auto agent_owned = makeProtagonistAgent(
         AgentId{1u}, g, route, rng, world->getLayer<BaseLayer>());
     if (!agent_owned) return 0.0;
     Agent* agent = agent_owned.get();
     agent_layer->addAgent(std::move(agent_owned), *world);
+    return tickAndScore(*world, *agent);
+}
 
-    std::size_t alive_substeps = 0;
-    for (std::size_t i = 0; i < kBorderlandMiniTicks; ++i) {
-        world->tick(kBorderlandMiniDt);
-        if (agent->alive()) ++alive_substeps;
+// Commit F: same shape but for background species. The caller supplies
+// the concrete SpeciesArchetype so makeBackgroundAgent picks the right
+// capability mix. Returns 0.0 if the agent can't be built (e.g. a
+// non-NeatGenome leaked into the borderland pool).
+double miniTickBackground(const IGenome& g,
+                          SpeciesArchetype archetype,
+                          const ProtagonistEcologyConfig& route) {
+    auto world = createBootstrapWorld(route);
+    if (!world) return 0.0;
+    auto* agent_layer = world->getLayer<AgentLayer>();
+    if (agent_layer == nullptr) return 0.0;
+
+    std::mt19937 rng(static_cast<std::uint32_t>(g.id().value));
+    std::unique_ptr<Agent> agent_owned;
+    try {
+        agent_owned = makeBackgroundAgent(AgentId{1u}, archetype, g, route, rng);
+    } catch (const std::exception&) {
+        return 0.0;  // wrong genome layout -> fall back to zero, caller still gets 0 evaluated bump
     }
-    // Combine "survival ticks" with whatever route-side fitness the
-    // capability stack accumulated. Both are non-negative under the
-    // current reward design.
-    return static_cast<double>(alive_substeps) + agent->fitness();
+    if (!agent_owned) return 0.0;
+    Agent* agent = agent_owned.get();
+    agent_layer->addAgent(std::move(agent_owned), *world);
+    return tickAndScore(*world, *agent);
+}
+
+double placeholderFitness(const IGenome& g) {
+    return static_cast<double>(g.complexity()) * 100.0;
 }
 
 }  // namespace
 
-std::size_t BorderlandEvaluator::evaluatePool(TripleWorldRuntime& triple_world,
-                                              std::size_t archetype,
-                                              const ProtagonistEcologyConfig& route,
-                                              double aging_factor) {
-    // Mini-tick path is implemented for archetype 0 (protagonist) only:
-    // makeProtagonistAgent expects a ProtagonistGenome layout. Background
-    // archetypes 1..8 fall back to the commit-D placeholder until their
-    // own makeBackgroundAgent path is wired (deferred to a later commit).
+std::size_t BorderlandEvaluator::evaluatePool(
+    TripleWorldRuntime& triple_world,
+    std::size_t archetype,
+    const ProtagonistEcologyConfig& route,
+    double aging_factor,
+    const std::vector<SpeciesArchetype>* background_archetypes) {
     if (archetype == 0) {
         return triple_world.evaluateBorderland(
             archetype,
-            /*eval_fn=*/[&route](const IGenome& g) { return miniTickEvaluate(g, route); },
+            /*eval_fn=*/[&route](const IGenome& g) { return miniTickProtagonist(g, route); },
+            aging_factor);
+    }
+    // Commit F: archetype N (N>=1) maps to background_archetypes[N-1]
+    // when the caller supplied the mapping. Without the mapping we
+    // can't pick the right capability mix, so fall back to the
+    // commit-D complexity placeholder. archetype 0 path above is
+    // unaffected.
+    if (background_archetypes != nullptr
+        && archetype >= 1
+        && (archetype - 1) < background_archetypes->size()) {
+        const SpeciesArchetype sa = (*background_archetypes)[archetype - 1];
+        return triple_world.evaluateBorderland(
+            archetype,
+            /*eval_fn=*/[&route, sa](const IGenome& g) { return miniTickBackground(g, sa, route); },
             aging_factor);
     }
     return triple_world.evaluateBorderland(
         archetype,
-        /*eval_fn=*/[](const IGenome& g) {
-            return static_cast<double>(g.complexity()) * 100.0;
-        },
+        /*eval_fn=*/[](const IGenome& g) { return placeholderFitness(g); },
         aging_factor);
 }
 

@@ -4548,20 +4548,26 @@ int ProtagonistEcologyRuntime::runTraining() {
                     tw_cfg.top_k_background_per_gen);
             }
 
-            // L6 R3 stage 3 commit B+D: in-place borderland evaluation.
+            // L6 R3 stage 3 commit B/D/E/F: in-place borderland evaluation.
             // Every borderland_eval_period_gens generations, walk every
-            // archetype's borderland pool and refresh its stashed
-            // fitness so subsequent cull/promote ranks on borderland-side
+            // archetype's borderland pool and refresh its stashed fitness
+            // so subsequent cull/promote ranks on borderland-side
             // selection rather than the sandbox snapshot.
             //
-            // Commit D: BorderlandEvaluator::evaluatePool centralizes the
-            // eval_fn so commit E can swap in a real World2D mini-tick
-            // without touching this hook. Current implementation is still
-            // a placeholder (genome.complexity * 100); the real
-            // borderland tick is the next session's work.
+            // BorderlandEvaluator::evaluatePool routes archetype 0
+            // through the protagonist mini-tick (commit E), archetype
+            // N>=1 through the background mini-tick when
+            // bg_archetypes[N-1] is available (commit F), and any
+            // unmapped archetype falls back to the commit-D
+            // complexity*100 placeholder.
             std::size_t border_evaluated_total = 0;
             if (tw_cfg.borderland_eval_period_gens > 0
                 && (generation + 1) % tw_cfg.borderland_eval_period_gens == 0) {
+                std::vector<SpeciesArchetype> bg_archetypes;
+                bg_archetypes.reserve(species_contexts.size());
+                for (const auto& ctx : species_contexts) {
+                    bg_archetypes.push_back(ctx.archetype);
+                }
                 const auto& bp = triple_world.borderland().pools_by_archetype;
                 for (std::size_t a = 0; a < bp.size(); ++a) {
                     if (bp[a].genomes.empty()) continue;
@@ -4569,10 +4575,11 @@ int ProtagonistEcologyRuntime::runTraining() {
                         triple_world,
                         /*archetype=*/a,
                         /*route=*/route,
-                        /*aging_factor=*/tw_cfg.borderland_eval_aging_factor);
+                        /*aging_factor=*/tw_cfg.borderland_eval_aging_factor,
+                        /*background_archetypes=*/&bg_archetypes);
                 }
                 if (border_evaluated_total > 0) {
-                    spdlog::info("TripleWorld gen {}: borderland eval (placeholder fitness) updated {} genomes (aging={:.3f})",
+                    spdlog::info("TripleWorld gen {}: borderland mini-tick eval updated {} genomes (aging={:.3f})",
                                  generation, border_evaluated_total, tw_cfg.borderland_eval_aging_factor);
                 }
             }

@@ -1,9 +1,11 @@
 #pragma once
 
+#include "runtime/BootstrapPopulation.h"
 #include "runtime/ProtagonistEcologyConfig.h"
 #include "runtime/TripleWorldRuntime.h"
 
 #include <cstddef>
+#include <vector>
 
 namespace neuro::routes::protagonist {
 
@@ -35,10 +37,19 @@ public:
     // PLACEHOLDER fitness function (commit D): genome complexity scaled
     // by 100. Commit E will replace this with a real borderland World2D
     // mini-tick evaluation.
-    static std::size_t evaluatePool(TripleWorldRuntime& triple_world,
-                                    std::size_t archetype,
-                                    const ProtagonistEcologyConfig& route,
-                                    double aging_factor = 1.0);
+    // Commit F: optional `background_archetypes` lets the caller map
+    // archetype index N (where N >= 1) to a concrete SpeciesArchetype
+    // enum so the evaluator can call makeBackgroundAgent for that
+    // species. background_archetypes[N-1] is consulted; if nullptr or
+    // shorter than N-1, that archetype falls back to the
+    // commit-D placeholder fitness. archetype=0 (protagonist) ignores
+    // this argument and always goes through the protagonist mini-tick.
+    static std::size_t evaluatePool(
+        TripleWorldRuntime& triple_world,
+        std::size_t archetype,
+        const ProtagonistEcologyConfig& route,
+        double aging_factor = 1.0,
+        const std::vector<SpeciesArchetype>* background_archetypes = nullptr);
 };
 
 }  // namespace neuro::routes::protagonist
