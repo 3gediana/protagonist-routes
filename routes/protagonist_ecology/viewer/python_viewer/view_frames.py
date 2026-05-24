@@ -126,6 +126,19 @@ def main(argv: list[str]) -> int:
         tint = WEATHER_TINTS[weather % len(WEATHER_TINTS)][:3]
         screen.fill(tint)
 
+        # L7 R3: trees first (background layer). Available trees = green
+        # circle scaled by integrity ratio; harvested trees = grey stump.
+        for t in frame.get("trees", []):
+            sx, sy = world_to_screen(t["x"], t["y"])
+            iv = t.get("iv", 1.0)
+            available = t.get("av", 1)
+            if available:
+                green = (40, 130 + int(80 * iv), 40)
+                radius = 3 + int(4 * iv)
+                pygame.draw.circle(screen, green, (sx, sy), radius)
+            else:
+                pygame.draw.circle(screen, (90, 70, 50), (sx, sy), 2)
+
         for ws in frame.get("worksites", []):
             sx, sy = world_to_screen(ws["x"], ws["y"])
             bt = ws.get("bt", 0)
@@ -151,8 +164,12 @@ def main(argv: list[str]) -> int:
             elif lifecycle == 2:
                 pygame.draw.circle(screen, (100, 100, 100), (sx, sy), radius + 2, 1)
 
+        wp = frame.get("wp", 0.0)  # weather progress (0..1)
+        sp = frame.get("sp", 0.0)  # season progress (0..1)
         hud = font.render(
-            f"frame {idx}/{len(frames) - 1}  tick={frame['tick']}  t={frame['t']:.1f}s  weather={weather}  season={frame.get('s', 0)}  speed={speed:.1f}{'  [PAUSED]' if paused else ''}",
+            f"frame {idx}/{len(frames) - 1}  tick={frame['tick']}  t={frame['t']:.1f}s  "
+            f"weather={weather}({wp:.0%})  season={frame.get('s', 0)}({sp:.0%})  "
+            f"speed={speed:.1f}{'  [PAUSED]' if paused else ''}",
             True, (255, 255, 255), (0, 0, 0)
         )
         screen.blit(hud, (10, 10))

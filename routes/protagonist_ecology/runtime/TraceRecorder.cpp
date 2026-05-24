@@ -14,6 +14,7 @@
 #include "world/CampfireLayer.h"
 #include "world/NurseryLogisticsLayer.h"
 #include "world/SurvivalStatusLayer.h"
+#include "world/TreeLayer.h"
 #include "world/WorksiteLayer.h"
 
 #include <algorithm>
@@ -692,12 +693,17 @@ void TraceRecorder::writeWorldSnapshot(World2D& world) {
 }
 
 // L7 R1: emit one JSON line per N ticks for viewer consumption.
-// Format: {"tick":T,"t":S,"agents":[{id,a,x,y,e,L}...],"worksites":[{id,bt,p,x,y}...],"w":weather,"s":season}
+// Format: {"tick":T,"t":S,"agents":[{id,a,x,y,e,L}...],"worksites":[{id,bt,p,x,y}...],
+//          "trees":[{id,x,y,iv,av}...],"w":weather,"s":season,"wp":weather_progress,"sp":season_progress}
 // Field codes are short to keep file size reasonable. Each line is a
 // self-contained JSON object (jsonlines format).
+// L7 R3 (LAYER7_GODOT_VIEWER_SPEC § 4.1 close-out): trees array + weather
+// progress + season progress added so the viewer can render harvest state
+// and weather/season transitions instead of just the discrete type.
 void TraceRecorder::writeViewerFrame(World2D& world) {
     auto* agents = world.getLayer<AgentLayer>();
     auto* worksites = world.getLayer<WorksiteLayer>();
+    auto* trees = world.getLayer<TreeLayer>();
     auto* weather = world.getLayer<WeatherLayer>();
     auto* season = world.getLayer<SeasonLayer>();
 
@@ -741,8 +747,40 @@ void TraceRecorder::writeViewerFrame(World2D& world) {
     }
     viewer_frames_ << "]";
 
+    // L7 R3: trees with integrity ratio so viewer can show harvest state.
+    viewer_frames_ << ",\"trees\":[";
+    first = true;
+    if (trees != nullptr) {
+        for (const auto& t : trees->trees()) {
+            if (!first) viewer_frames_ << ',';
+            first = false;
+            const float iv = t.max_integrity > 0.0f ? (t.integrity / t.max_integrity) : 0.0f;
+            viewer_frames_ << "{\"id\":" << t.id
+                           << ",\"x\":" << t.position.x
+                           << ",\"y\":" << t.position.y
+                           << ",\"iv\":" << iv
+                           << ",\"av\":" << (t.available ? 1 : 0)
+                           << "}";
+        }
+    }
+    viewer_frames_ << "]";
+
+    // L7 R3: weather/season progress (0..1) so viewer can crossfade transitions.
+    float wp = 0.0f;
+    if (weather != nullptr) {
+        const auto planned = weather->plannedDuration();
+        if (planned > 0.0) {
+            wp = static_cast<float>(weather->timeInState() / planned);
+            if (wp > 1.0f) wp = 1.0f;
+            if (wp < 0.0f) wp = 0.0f;
+        }
+    }
+    const float sp = season != nullptr ? season->seasonProgress() : 0.0f;
+
     viewer_frames_ << ",\"w\":" << (weather != nullptr ? static_cast<int>(weather->currentWeather()) : 0)
+                   << ",\"wp\":" << wp
                    << ",\"s\":" << (season != nullptr ? static_cast<int>(season->currentSeason()) : 0)
+                   << ",\"sp\":" << sp
                    << "}\n";
     viewer_frames_.flush();
 }
