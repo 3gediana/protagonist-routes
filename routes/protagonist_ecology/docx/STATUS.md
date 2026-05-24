@@ -3,19 +3,21 @@
 > 最后巡检：2026-05-24（**FINAL_BLUEPRINT.md Layer 1-5 完整 (R1+R2+R3) + Layer 6/7/8 设计 spec**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`f2ce1a4 HANDOFF doc: update Layer 5 R1+R2+R3 commits + 30-gen long-run data`
+> 当前 HEAD：`617d5df Layer 7 R2: minimal Python viewer for viewer_frames.jsonl`
 >
-> **2026-05-24 蓝图驱动 Layer 1-5 全面落地 + 6/7/8 设计**：
+> **2026-05-24 蓝图驱动 Layer 1-5 完整 + 6/7/8 R1 baseline + 设计 spec**：
 > - Layer 1 (a0669f6, 7a098a6): 体温 + 600×600，alive 0.45→0.79
 > - Layer 2 (202186b): WeatherLayer 6 type，avg_fit +167%
 > - Layer 3 (e3d2b8b): Rabbit + 9 物种，avg_fit 6685 best 12390
-> - Layer 4 (da86050, 1377352): LifecycleStage/DeathCause/lineage_id/PopulationLayer，4 in-world births 验证
+> - Layer 4 (da86050, 1377352): LifecycleStage/DeathCause/lineage_id/PopulationLayer，4 in-world births 验证 + perf throttle
 > - Layer 5 (3501070, da86050, e598450, 5824eb7, b8326ee): BuildingType 4 type + Shelter 雨天免疫 + reward shift + building_type distribution + Storage overflow + Lookout perception bonus
 > - **Layer 5 30-gen 长跑结果**: Gen 27 peak protagonist avg=4543 best=18451 (vs v17 baseline 737 = **6.2x improvement**)
-> - Layer 6 (be33591): 三层世界 spec (sandbox→borderland→main，永不 reset)
-> - Layer 7 (31868b5): Godot 3D viewer spec (Kenney + Mixamo)
-> - Layer 8 (890e848): Lamarckian / World Model / DIAYN / Emergent Comm spec
-> - 4 个 docx/supporting/LAYER{5,6,7,8}_*.md 详细设计文档，下次会话可直接续接 implementation。
+> - Layer 6 R1 (b53a4e8): WorldRole borderland/main_world accessors (TripleWorldRuntime 实现 deferred)
+> - Layer 7 R1 (456e09b): viewer_frames.jsonl frame dumper (agents/worksites/weather/season JSONL)
+> - Layer 7 R2 (617d5df): minimal pygame Python viewer (160 LoC，PEP 723 self-contained)
+> - Layer 8 R1 (4d57714): Lamarckian Hebbian online weight adaptation (toml gate)
+> - 4 个 docx/supporting/LAYER{5,6,7,8}_*.md 详细设计文档
+> - viewer pipeline 端到端可用：C++ runtime → viewer_frames.jsonl → Python viewer 渲染。Godot 4 + Kenney 完整 vision deferred 到下次会话。
 >
 > **2026-05-23 下午 A2.4 fairness 暴露到 memory_ablation_results.csv 收口**（Stage A 100% 完成，pending commit）：
 > - **背景**：A2 Credit/EventLineage 主线唯一剩的 [~] 是 fairness 指标暴露到 CSV。`CreditLedger::computeFairness` 已实现并 4 gtest 覆盖（freeloader_ratio / share_gini / top_share_mean / total_reward），但只写到 `data/runs/_credit_log.csv` 的逐 payout 行，没有 per-(task, variant) 聚合到 `memory_ablation_results.csv`。
