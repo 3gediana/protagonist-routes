@@ -8,6 +8,8 @@
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
+#include "core/world/layers/SeasonLayer.h"
+#include "core/world/layers/WeatherLayer.h"
 #include "core/world/layers/object/ObjectLayer.h"
 #include "world/CampfireLayer.h"
 #include "world/NurseryLogisticsLayer.h"
@@ -114,6 +116,9 @@ TraceRecorderConfig loadTraceRecorderConfig(const config::Config& config) {
     out.world_interval = std::max<std::size_t>(1, config.getOr<std::size_t>("trace.world_interval", out.world_interval));
     out.max_generations = config.getOr<std::size_t>("trace.max_generations", out.max_generations);
     out.max_episodes_per_generation = config.getOr<std::size_t>("trace.max_episodes_per_generation", out.max_episodes_per_generation);
+    // L7 R1: viewer frame JSON
+    out.viewer_frames_enabled = config.getOr<bool>("trace.viewer_frames_enabled", out.viewer_frames_enabled);
+    out.viewer_frame_interval = std::max<std::size_t>(1, config.getOr<std::size_t>("trace.viewer_frame_interval", out.viewer_frame_interval));
     return out;
 }
 
@@ -155,6 +160,9 @@ TraceRecorder::TraceRecorder(World2D& world,
             world_trace_ << "tick,time_seconds,total_agents,living_agents,available_resources,loose_stones,loose_sticks,loose_spears,stockpiled_total,stockpiled_sticks,stockpiled_stones,active_fires,active_worksites,completed_worksites,avg_health_ratio,avg_hydration_ratio,dehydrated_agents,injured_agents\n";
         }
     }
+    if (config_.viewer_frames_enabled) {
+        viewer_frames_.open(trace_dir_ / "viewer_frames.jsonl", std::ios::out | std::ios::trunc);
+    }
 
     writeManifest(route, generation, episode);
 
@@ -182,6 +190,9 @@ void TraceRecorder::recordTick(World2D& world) {
     }
     if (world_trace_.is_open() && tick % config_.world_interval == 0) {
         writeWorldSnapshot(world);
+    }
+    if (viewer_frames_.is_open() && tick % config_.viewer_frame_interval == 0) {
+        writeViewerFrame(world);
     }
 }
 
@@ -678,6 +689,62 @@ void TraceRecorder::writeWorldSnapshot(World2D& world) {
                  << (survival != nullptr ? survival->dehydratedCount() : 0) << ','
                  << (survival != nullptr ? survival->injuredCount() : 0) << '\n';
     world_trace_.flush();
+}
+
+// L7 R1: emit one JSON line per N ticks for viewer consumption.
+// Format: {"tick":T,"t":S,"agents":[{id,a,x,y,e,L}...],"worksites":[{id,bt,p,x,y}...],"w":weather,"s":season}
+// Field codes are short to keep file size reasonable. Each line is a
+// self-contained JSON object (jsonlines format).
+void TraceRecorder::writeViewerFrame(World2D& world) {
+    auto* agents = world.getLayer<AgentLayer>();
+    auto* worksites = world.getLayer<WorksiteLayer>();
+    auto* weather = world.getLayer<WeatherLayer>();
+    auto* season = world.getLayer<SeasonLayer>();
+
+    viewer_frames_ << "{\"tick\":" << world.currentTick()
+                   << ",\"t\":" << world.currentTimeSeconds();
+
+    viewer_frames_ << ",\"agents\":[";
+    bool first = true;
+    if (agents != nullptr) {
+        for (const auto* a : agents->agents()) {
+            if (a == nullptr) continue;
+            if (!first) viewer_frames_ << ',';
+            first = false;
+            viewer_frames_ << "{\"id\":" << a->id().value
+                           << ",\"a\":" << static_cast<int>(a->archetypeTag())
+                           << ",\"x\":" << a->position().x
+                           << ",\"y\":" << a->position().y
+                           << ",\"e\":" << a->energy()
+                           << ",\"L\":" << static_cast<int>(a->lifecycleStage())
+                           << ",\"al\":" << (a->alive() ? 1 : 0)
+                           << "}";
+        }
+    }
+    viewer_frames_ << "]";
+
+    viewer_frames_ << ",\"worksites\":[";
+    first = true;
+    if (worksites != nullptr) {
+        for (const auto& site : worksites->sites()) {
+            if (!first) viewer_frames_ << ',';
+            first = false;
+            viewer_frames_ << "{\"id\":" << site.id
+                           << ",\"bt\":" << static_cast<int>(site.building_type)
+                           << ",\"x\":" << site.position.x
+                           << ",\"y\":" << site.position.y
+                           << ",\"p\":" << site.build_progress
+                           << ",\"a\":" << (site.active ? 1 : 0)
+                           << ",\"c\":" << (site.completed ? 1 : 0)
+                           << "}";
+        }
+    }
+    viewer_frames_ << "]";
+
+    viewer_frames_ << ",\"w\":" << (weather != nullptr ? static_cast<int>(weather->currentWeather()) : 0)
+                   << ",\"s\":" << (season != nullptr ? static_cast<int>(season->currentSeason()) : 0)
+                   << "}\n";
+    viewer_frames_.flush();
 }
 
 }  // namespace neuro::routes::protagonist

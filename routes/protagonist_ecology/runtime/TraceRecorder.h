@@ -23,6 +23,11 @@ struct TraceRecorderConfig {
     std::size_t world_interval{10};
     std::size_t max_generations{1};
     std::size_t max_episodes_per_generation{1};
+    // L7 R1 (FINAL_BLUEPRINT.md §7): frame-based JSON dumper for Godot/raylib
+    // viewer consumption. Each tick writes one JSON object to frames.jsonl
+    // with agents/worksites/weather/season snapshots. Off by default (large).
+    bool viewer_frames_enabled{false};
+    std::size_t viewer_frame_interval{20};  // every N ticks
 };
 
 class TraceRecorder final {
@@ -46,6 +51,8 @@ private:
     void writeEvent(const events::Event& event);
     void writeAgentSnapshot(World2D& world);
     void writeWorldSnapshot(World2D& world);
+    // L7 R1: viewer-friendly frame JSON
+    void writeViewerFrame(World2D& world);
 
     World2D& world_;
     TraceRecorderConfig config_;
@@ -53,6 +60,7 @@ private:
     std::ofstream event_trace_;
     std::ofstream agent_trace_;
     std::ofstream world_trace_;
+    std::ofstream viewer_frames_;  // L7 R1
     events::SubscriptionId event_subscription_{0};
 };
 

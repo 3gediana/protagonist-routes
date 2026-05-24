@@ -324,6 +324,9 @@ agent_interval = 10
 world_interval = 10
 max_generations = 1
 max_episodes_per_generation = 1
+# Layer 7 R1: viewer frame JSON dumper for Godot/raylib viewer.
+viewer_frames_enabled = true
+viewer_frame_interval = 40
 
 # Layer 5 reward paradigm shift (FINAL_BLUEPRINT.md §5.4):
 # - drop generic survival_weight 1.0 -> 0.3 (don't reward "didn't die" by itself)
