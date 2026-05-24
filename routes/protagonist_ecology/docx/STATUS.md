@@ -1,10 +1,22 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 凌晨（**Layer 1-5 全部 + Layer 6 R2 stage 3 三件齐全 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-25 上午（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A/B/C 三件齐全 + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`da3fc4f L6 R3 audit: throw_attempt penalty toml gate`
+> 当前 HEAD：`8a49dbb Layer 6 R3 stage 3 commit C: 50-generation 物种延续 gate`
 >
+> **2026-05-25 上午 Layer 6 R3 stage 3 三件落地 + harmony 工具 + stone bootstrap 提案 + 60-gen throw AB 后台跑**（commits `c14598b` + `be9dd43` + `8a49dbb`）：
+> - **背景**：用户路线图选择"1→2→3→4→5 顺序走"，且要求"训练时手头还有可以并行跑的任务就并行跑"。本会话后台启动 throw_penalty 60-gen AB 长跑（`tmp/layer1/long_run_60gen_2d_throw.toml`，2D BD + `throw_attempt = -0.05`，run_dir `data/runs/long_run_60gen_2d_throw/20260524-185129`），同时前台推进 graduation pipeline 收尾 (#2)。
+> - **Trace 配置改动**：`tmp/layer1/long_run_60gen_2d_throw.toml` 把 `[trace].max_generations` 从 4 改成 60、`agent_interval`/`world_interval` 从 10 改成 20、`viewer_frame_interval` 从 40 改成 80（控制 disk overhead）。60-gen full trace 启用第一次落地，每 gen ~50MB（event_trace 主头），60-gen 总 17GB ≤ D 盘 free space。
+> - **Stone bootstrap 提案**（`docx/supporting/STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md`，~200 行）：read-only 调研报告，给出 4 个方案对照。推荐方案 D archetype-level unlock state 持久化（与 MainWorldPersistence 哲学一致），分 3 个 commit 落地，~250 行总，4 test。
+> - **Harmony check 脚本**（`scripts/protagonist_harmony_check.py`，~200 行）：内部审计工具，读 `protagonist_behaviors.csv` + `species_metrics.csv` + `fitness.csv`，给出 7 项 harmony checklist 的 PASS/FAIL 报告（hunters active / herbivores attrition / coop co-presence / scavengers fed / worksites completed / me_coverage ≥ 0.30 / no extinction）。验证上次会话 baseline `long_run_60gen_2d/20260524-171849`：**7/7 全过**（me_cov 0.40 / coop 3254s / 38 worksites total / 全 archetype 存活），说明训练已经接近"和谐"标准线。
+> - **L6 R3 stage 3 commit A** (`c14598b`)：`TripleWorldRuntime::evaluateBorderland(archetype, eval_fn, aging_factor)` API。Spec § 1.2 "50 代考验 + 不灭绝才进入主世界"。stage 2 + R2-stage-3 留下 borderland 是 fitness pool accumulator，每个 genome 的 stashed fitness 是 sandbox→borderland promote 时的快照，从未重新评估。新 API 走 borderland pool，调 caller 提供的 eval_fn（让 TripleWorldRuntime 保持 World2D/brain 无关），用 `max(aged_old, fresh)` 更新 stashed fitness。aging_factor=1.0 默认无 aging；< 1.0 让停止表现的 genome 渐渐丢掉领先优势。max 语义防止一次差评把已证明的 survivor 立刻 demote。2 个 unit test（identity eval + aging factor decay）。
+> - **L6 R3 stage 3 commit B** (`be9dd43`)：主 loop hook。toml gate `[runtime.triple_world] borderland_eval_period_gens`（默认 0=off）+ `borderland_eval_aging_factor`（默认 1.0）。Runtime 每 N 代调一次 evaluateBorderland，eval_fn 当前是 no-op identity（按 id 配对查 stashed fitness 返回）— commit B 只负责把 plumbing 接通，commit C 才会替换成真正的 borderland tick。INFO 日志：`TripleWorld gen N: borderland eval (no-op identity) updated K genomes (aging=X.XXX)`。2 个 config parse test（默认 disabled + toml roundtrip）。
+> - **L6 R3 stage 3 commit C** (`8a49dbb`)：50-代 物种延续 gate。`WorldPopulationPool` 加 `borderland_eval_count`（每次 evaluateBorderland 自增）。toml gate `borderland_min_continuity_gens`（默认 0=off）。`promoteBorderlandToMain` 之前按 archetype 检查 eval_count ≥ min_continuity；未达标 archetype 跳过（其他 archetype 仍正常 promote）。INFO 日志：`TripleWorld gen N: borderland continuity gate blocked K archetype(s) from main promote`。2 个 gtest（eval_count tracking + early-return 不 bump counter）。
+> - **L6 R3 stage 3 真正没做的 (deferred)**：commit B 的 eval_fn 仍是 no-op identity，没有"真正在 borderland 跑 World2D + tick N ticks + 评 fitness" — 那需要 reuse `createBootstrapWorld` 或新建一个 minimal borderland world factory，工程量 ~1000+ 行新代码 + brain wiring。**这是下一个 session 的最高优先级**。当前 plumbing 已就位，只等真正的 evaluator 函数实现。Smoke (`smoke_tw_eval.toml`) 也 deferred — 60-gen AB 训练在跑没法用 neural-eco-protagonist binary。
+> - **测试总数**：194 → **200**。
+>
+
 > **2026-05-25 凌晨 训练收口审计：3D BD 验证为负优化 + throw_penalty 机制就位**（commits 用户 push 时 + `da3fc4f`）：
 > - **背景**：用户质疑"是不是过早进可视化阶段，训练真的闭环了吗"。本会话先把 long run #10 60-gen 跑完（3D BD `tmp/layer1/long_run_60gen.toml` seed=7777, 70 min），再跑 2D BD AB（`tmp/layer1/long_run_60gen_2d.toml` 把 hunt 维度撤掉退回 5×5=25 cells）做对比。
 > - **3D BD 60-gen 结果（baseline）**：avg fitness 1185→2774（2.3×），best peak 13236（gen 1 spike）后回落到 10684（gen 58），me_coverage 全程 1.5-4%（8 cells / 192）。Build chain gen 35-40 才觉醒，crafts 0→10-16，但 worksite 完成数仍 0-1/gen，stone deposit **0-2/gen**（核心瓶颈）。
