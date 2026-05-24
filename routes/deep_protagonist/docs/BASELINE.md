@@ -51,6 +51,16 @@
 ## headless 性能
 
 - **42-50k steps/s**（单线程 wander）
-- 1 episode = 9000 steps ≈ 0.18 秒墙钟
-- 100 episodes = ~17 秒
+- **~900 steps/s**（PPO，含 GPU forward + 周期性 update + 主循环）
+- 1 episode (wander) = 9000 steps ≈ 0.18 秒墙钟
+- 1 episode (PPO) ≈ 10 秒墙钟
 - 真正瓶颈在 PPO forward+backward，不在 env 模拟
+
+## 训练日记（每次训练一条，对照基线判定）
+
+格式：日期 | 步数 | 命令 | mean reward | 死亡率 | 关键观察 | verdict tag
+
+| 日期 | 步数 | 命令 | mean R | 死亡率 | 关键观察 | tag |
+|---|---|---|---|---|---|---|
+| 2026-05-24 | 10000 | smoke ppo --seed 42 | +19.0 (1ep) | 0% | smoke 验证，1 ep 不算 | 🟦 |
+| _待填_ | _1M_ | _ppo --seed 42 --metrics ..._ | _?_ | _?_ | _?_ | _?_ |

@@ -14,8 +14,9 @@ Parallel route alongside `protagonist_ecology` (NEAT-based, group emergence).
 | S3.7 | PPO prerequisites (action / reward / episode / obs / inventory / shelter) | done |
 | S3.8 | Combat / hunting / shelter dampening / fishing / mushroom poison | done |
 | S3.9 | Terrain adaptation (swamp slow / desert thirst) | done |
-| **S3.10** | **Full survival main-line (progression / building / clothing / farming / taming)** | **done** |
-| S4 | PPO + curriculum learning + 5-10M model training | next |
+| S3.10 | Full survival main-line (progression / building / clothing / farming / taming) | done |
+| **S4-pre** | **AgentAction 19 channels / headless Environment / Metrics / wander baseline / PPO skeleton** | **done** |
+| S4 | PPO long-training + curriculum learning + 5-10M model scale | next |
 | S5 | Fire + 50M scale + long training (8-16 weeks) | planned |
 | S6 | Visual polish + answer-defense polish | planned |
 
@@ -34,11 +35,51 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 # 4) Run self-tests (headless, ~2s)
 .\build\bin\deep_protagonist.exe --self-test
 
-# 5) Open the interactive viewer
+# 5) Open the interactive viewer (manual play)
 .\build\bin\deep_protagonist.exe
 ```
 
-Self-test should report `SELF-TESTS PASSED` with 100 PASS lines.
+Self-test should report `SELF-TESTS PASSED` with 102 PASS lines.
+
+## Headless training (S4-pre and beyond)
+
+```powershell
+# Wander baseline (no learning, just produces the reference numbers
+# in docs/BASELINE.md). 100 episodes, ~17s.
+.\build\bin\deep_protagonist_train.exe --policy wander --steps 1000000 `
+    --episodes 100 --seed 42 --metrics runs\wander_baseline.jsonl
+
+# PPO smoke test (fresh network, ~10s, 4 updates).
+.\build\bin\deep_protagonist_train.exe --policy ppo --steps 10000
+
+# Full PPO run with checkpoints.
+.\build\bin\deep_protagonist_train.exe --policy ppo --steps 1000000 `
+    --metrics runs\ppo_run1.jsonl `
+    --save-path runs\ppo_run1.pt --save-every 50
+
+# Resume from a checkpoint.
+.\build\bin\deep_protagonist_train.exe --policy ppo --steps 1000000 `
+    --load runs\ppo_run1.pt --metrics runs\ppo_run1_cont.jsonl
+```
+
+## Inspect a trained checkpoint visually
+
+```powershell
+.\build\bin\deep_protagonist.exe --policy ppo --load runs\ppo_run1.pt
+```
+
+Camera & day-speed keys still work; agent-action keys are disabled
+in PPO mode (network has full control).
+
+## Plot results
+
+```powershell
+python3 scripts\summarize_metrics.py runs\ppo_run1.jsonl
+python3 scripts\plot_training.py runs\ppo_run1.jsonl --window 20
+```
+
+`plot_training.py` shows an ASCII reward curve plus a four-tier
+"learning verdict" tag against the wander baseline.
 
 ## Viewer key bindings
 
