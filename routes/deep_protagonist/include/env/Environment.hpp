@@ -131,6 +131,14 @@ public:
     // MUST call reset() before stepping again.
     StepResult step(const dp::agent::AgentAction& action);
 
+    // D-049 #2: blueprint line 62 "体力低就走慢". Pure helper so self-tests
+    // can lock the curve without spinning up a full Environment. Returns
+    // the move-vector scale factor for a given stamina:
+    //   stamina >= 50 -> 1.0  (full speed)
+    //   stamina  =  0 -> 0.5  (50% floor so the agent can still crawl)
+    // Linear from 50 -> 0; clamped outside the range.
+    static float stamina_speed_multiplier(float stamina);
+
     // -- Read-only views for loggers / debug HUDs ---------------------------
     int                                       observation_size() const {
         return dp::agent::ObservationBuilder::SIZE;

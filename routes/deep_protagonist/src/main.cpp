@@ -23,6 +23,7 @@
 #include "agent/TameSystem.hpp"
 #include "agent/VitalSystem.hpp"
 #include "agent/Wardrobe.hpp"
+#include "env/Environment.hpp"
 #include "policy/PPO.hpp"
 #include "render/FlyCamera.hpp"
 #include "render/WorldRenderer.hpp"
@@ -1079,6 +1080,42 @@ int run_self_tests() {
         sm.clear();
         check(sm.visited_count() == 0,
               "SpatialMemory: clear() resets all cells");
+
+        // D-049 #3: vision-range writes mark cells the agent can SEE,
+        // not just the cell under its feet. Stamp a 'water' flag at a
+        // location 50 m NE of the origin and confirm it survives in the
+        // grid even though the agent never walked there.
+        sm.write(50.0f, 50.0f, /*water*/true, false, false, false, false);
+        // Read a window centred on the origin: cells (50,50) sit at grid
+        // index (3,3) given CELL_SIZE_M=16; from the agent at (0,0) those
+        // cells lie inside the WINDOW=8 patch and should expose water>0.
+        std::array<float, dp::agent::SpatialMemory::WINDOW_DIM> win2{};
+        sm.read_window(0.0f, 0.0f, win2.data());
+        bool any_water_in_window = false;
+        for (int i = 0; i < dp::agent::SpatialMemory::WINDOW
+                          * dp::agent::SpatialMemory::WINDOW; ++i) {
+            int off = i * dp::agent::SpatialMemory::FEATURES
+                    + dp::agent::SpatialMemory::CH_WATER;
+            if (win2[off] > 0.5f) { any_water_in_window = true; break; }
+        }
+        check(any_water_in_window,
+              "SpatialMemory: remote write seen by read_window (D-049 #3)");
+    }
+
+    // --- D-049 #2: stamina-aware speed multiplier ---
+    {
+        check(std::abs(dp::env::Environment::stamina_speed_multiplier(50.0f)
+                       - 1.0f) < 1e-5f,
+              "Environment: stamina>=50 yields full speed (D-049 #2)");
+        check(std::abs(dp::env::Environment::stamina_speed_multiplier(0.0f)
+                       - 0.5f) < 1e-5f,
+              "Environment: stamina=0 yields 0.5 speed floor (D-049 #2)");
+        check(std::abs(dp::env::Environment::stamina_speed_multiplier(25.0f)
+                       - 0.75f) < 1e-5f,
+              "Environment: stamina=25 yields 0.75 speed (D-049 #2)");
+        check(std::abs(dp::env::Environment::stamina_speed_multiplier(80.0f)
+                       - 1.0f) < 1e-5f,
+              "Environment: stamina>50 stays clamped at 1.0 (D-049 #2)");
     }
 
     spdlog::info("------------------------------------------------");

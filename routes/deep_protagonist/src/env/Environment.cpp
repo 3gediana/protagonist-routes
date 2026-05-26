@@ -208,10 +208,17 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     progress_.on_explore_step(step_speed * dt);
 
     // Animals + shelter dampening (mirrors main.cpp).
+    // D-049 #1: blueprint line 26 says "天黑找洞穴/林地躲". Pre D-049
+    // inside_cave_ was a render-only flag (color tint + don't-fly-out
+    // physics). Now caves count as a real shelter: wolves perceive the
+    // agent at 30% range and chase at 70% speed when underground, and
+    // body temperature trends back to neutral. This makes "run into the
+    // cave at night" a learnable strategy instead of a dead UI element.
     float night_factor = std::max(0.0f, -day_.sun_height_normalized());
     float perc_scale = 1.0f, spd_scale = 1.0f;
     bool  sheltered = shelter_.covers(as.pos_x, as.pos_y)
-                   || buildings_.covers(as.pos_x, as.pos_y);
+                   || buildings_.covers(as.pos_x, as.pos_y)
+                   || agent_.inside_cave();
     if (sheltered) {
         perc_scale = 0.3f;
         spd_scale  = 0.7f;
@@ -516,53 +523,116 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     const float dt = cfg_.fixed_dt;
     day_.advance(dt);
 
-    // Agent body update first (so vitals etc see the new position).
-    agent_.apply_action(action, world_, physics_, dt);
+    // D-049 #2: blueprint line 62 "体力低就走慢". Pre D-049 stamina was a
+    // read-only number on the HUD - it decayed, but the agent's actual
+    // move_speed_ never changed, so there was no reason for PPO to rest.
+    // Now low stamina scales the move command before it reaches the body
+    // via stamina_speed_multiplier (see Environment.hpp for the curve).
+    dp::agent::AgentAction scaled = action;
+    {
+        float speed_mul = Environment::stamina_speed_multiplier(
+            vital_state_.stamina);
+        scaled.move_x *= speed_mul;
+        scaled.move_y *= speed_mul;
+    }
 
-    const float step_reward_clipped = apply_action_effects_(action);
+    // Agent body update first (so vitals etc see the new position).
+    agent_.apply_action(scaled, world_, physics_, dt);
+
+    const float step_reward_clipped = apply_action_effects_(scaled);
 
     // Cognitive map: write whatever the agent currently senses around it
-    // into the spatial grid cell under its feet. This is what gives PPO
-    // long-term spatial recall ("I saw water in the NW corner earlier").
+    // into the spatial grid cells *within VISION_RANGE*, not just under
+    // its feet. This is what gives PPO long-term spatial recall
+    // ("I saw water in the NW corner earlier").
+    //
+    // D-049 #3: before this change the loop below wrote a single cell per
+    // tick (the one under the agent's feet) and tagged it with whatever
+    // was visible in a 60 m circle. That made cognitive map essentially
+    // useless for navigation: the agent had to physically step ON each
+    // water cell to remember "this is water", which never happens in a
+    // 1024 m world. Blueprint line 24 says "知道家、水源、狼出没区在哪",
+    // i.e. *seen* things should be remembered. We now mark every grid
+    // cell whose centre lies within VISION_RANGE of the agent with the
+    // observed feature, matching the "vision = memory write" semantics.
     {
         const auto& as = agent_.state();
-        auto b = world_.biome_at(as.pos_x, as.pos_y);
-        bool saw_water = (b == dp::world::Biome::River
-                          || b == dp::world::Biome::Swamp);
-        const float R = dp::agent::ObservationBuilder::VISION_RANGE;
+        const float R  = dp::agent::ObservationBuilder::VISION_RANGE;
         const float R2 = R * R;
-        bool saw_food = false;
+        const float cell = dp::agent::SpatialMemory::CELL_SIZE_M;
+
+        // Visited cell under the feet (kept for compatibility with the
+        // visited channel; also writes danger/etc. for the immediate
+        // spot).
+        spatial_.write(as.pos_x, as.pos_y,
+                       /*water*/false, /*food*/false,
+                       /*resource*/false, /*danger*/false,
+                       /*building*/false);
+
+        // Stamp every water cell within vision range.
+        for (float dy = -R; dy <= R; dy += cell) {
+            for (float dx = -R; dx <= R; dx += cell) {
+                if (dx*dx + dy*dy > R2) continue;
+                float wx = as.pos_x + dx, wy = as.pos_y + dy;
+                auto b = world_.biome_at(wx, wy);
+                if (b == dp::world::Biome::River
+                 || b == dp::world::Biome::Swamp) {
+                    spatial_.write(wx, wy, /*water*/true, false, false,
+                                   false, false);
+                }
+            }
+        }
+
+        // Plants / resources: stamp the cell that actually contains the
+        // thing, as long as the agent can see it.
         for (const auto& pl : plants_.plants()) {
             if (!pl.ripe) continue;
-            float dx = pl.x - as.pos_x, dy = pl.y - as.pos_y;
-            if (dx*dx + dy*dy <= R2) { saw_food = true; break; }
+            float ddx = pl.x - as.pos_x, ddy = pl.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(pl.x, pl.y, false, /*food*/true, false,
+                               false, false);
+            }
         }
-        bool saw_resource = false;
         for (const auto& rs : resources_.resources()) {
             if (!rs.available) continue;
-            float dx = rs.x - as.pos_x, dy = rs.y - as.pos_y;
-            if (dx*dx + dy*dy <= R2) { saw_resource = true; break; }
+            float ddx = rs.x - as.pos_x, ddy = rs.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(rs.x, rs.y, false, false,
+                               /*resource*/true, false, false);
+            }
         }
-        bool saw_danger = false;
+        // Wolves: where they currently are *plus* under the agent's own
+        // feet, so the danger map keeps track of "this region is risky".
+        bool saw_wolf_close = false;
         for (const auto& an : animals_.animals()) {
             if (an.state == dp::world::AnimalState::Dead) continue;
             if (an.kind != dp::world::AnimalKind::Wolf) continue;
-            float dx = an.pos_x - as.pos_x, dy = an.pos_y - as.pos_y;
-            if (dx*dx + dy*dy <= R2) { saw_danger = true; break; }
+            float ddx = an.pos_x - as.pos_x, ddy = an.pos_y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(an.pos_x, an.pos_y, false, false, false,
+                               /*danger*/true, false);
+                saw_wolf_close = true;
+            }
         }
-        bool saw_building = false;
+        if (saw_wolf_close) {
+            spatial_.write(as.pos_x, as.pos_y, false, false, false,
+                           /*danger*/true, false);
+        }
         for (const auto& bd : buildings_.buildings()) {
-            float dx = bd.x - as.pos_x, dy = bd.y - as.pos_y;
-            if (dx*dx + dy*dy <= R2) { saw_building = true; break; }
+            float ddx = bd.x - as.pos_x, ddy = bd.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(bd.x, bd.y, false, false, false, false,
+                               /*building*/true);
+            }
         }
         for (const auto& site : buildings_.sites()) {
             if (site.completed) continue;
-            float dx = site.x - as.pos_x, dy = site.y - as.pos_y;
-            if (dx*dx + dy*dy <= R2) { saw_building = true; break; }
+            float ddx = site.x - as.pos_x, ddy = site.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(site.x, site.y, false, false, false,
+                               false, /*building*/true);
+            }
         }
-        spatial_.write(as.pos_x, as.pos_y,
-                       saw_water, saw_food, saw_resource,
-                       saw_danger, saw_building);
     }
 
     episodes_.tick(dt);
@@ -597,6 +667,13 @@ void Environment::rebuild_observation_(
         inventory_, shelter_, episodes_, progress_,
         buildings_, wardrobe_, farming_, tame_,
         selected_building_, spatial_, out);
+}
+
+// D-049 #2: stamina-aware speed multiplier. See Environment.hpp.
+float Environment::stamina_speed_multiplier(float stamina) {
+    float clamped = stamina < 0.0f ? 0.0f
+                  : (stamina > 50.0f ? 50.0f : stamina);
+    return 0.5f + clamped * 0.01f;   // 50 -> 1.0, 0 -> 0.5
 }
 
 // D-043: snapshot the 10 first_X flags as a Crafter-style milestone vector.
