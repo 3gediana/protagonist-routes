@@ -87,22 +87,41 @@ Environment::Environment(const EnvConfig& cfg)
         return b != dp::world::Biome::River
             && b != dp::world::Biome::Swamp;
     };
+    // D-050 P3: also require ripe food within vision range. The first
+    // P2 spawn (632.5, 214.4) had water in sight but zero plants nearby
+    // in the wander 100k smoke -> food=0 across the whole episode, so
+    // PPO never sampled a successful eat() either. Blueprint line 21
+    // bundles "饿了找食物，渴了找水" as one early-stage loop, so the
+    // spawn must satisfy *both* preconditions to be learnable.
+    auto food_in_vision = [&](float cx, float cy) {
+        const float R = dp::agent::ObservationBuilder::VISION_RANGE;
+        const float R2 = R * R;
+        for (const auto& pl : plants_.plants()) {
+            if (!pl.ripe) continue;
+            float dx = pl.x - cx, dy = pl.y - cy;
+            if (dx*dx + dy*dy <= R2) return true;
+        }
+        return false;
+    };
 
     spawn_x_ = wx_max * 0.5f;
     spawn_y_ = wy_max * 0.5f;
-    if (!(has_water_in_vision(spawn_x_, spawn_y_)
-          && in_dry_land(spawn_x_, spawn_y_))) {
+    auto candidate_ok = [&](float x, float y) {
+        return has_water_in_vision(x, y)
+            && food_in_vision(x, y)
+            && in_dry_land(x, y);
+    };
+    if (!candidate_ok(spawn_x_, spawn_y_)) {
         bool found = false;
-        for (float r = 32.0f; r <= 320.0f && !found; r += 32.0f) {
-            for (int a = 0; a < 16 && !found; ++a) {
-                float ang = a * 6.2831853f / 16.0f;
+        for (float r = 32.0f; r <= 400.0f && !found; r += 32.0f) {
+            for (int a = 0; a < 24 && !found; ++a) {
+                float ang = a * 6.2831853f / 24.0f;
                 float cx = wx_max * 0.5f + r * std::cos(ang);
                 float cy = wy_max * 0.5f + r * std::sin(ang);
                 if (cx < 16.0f || cy < 16.0f
                  || cx >= wx_max - 16.0f
                  || cy >= wy_max - 16.0f) continue;
-                if (has_water_in_vision(cx, cy)
-                 && in_dry_land(cx, cy)) {
+                if (candidate_ok(cx, cy)) {
                     spawn_x_ = cx;
                     spawn_y_ = cy;
                     found = true;
@@ -110,15 +129,53 @@ Environment::Environment(const EnvConfig& cfg)
             }
         }
         if (!found) {
-            spdlog::warn("Environment D-050: no water within 320 m of "
-                         "centre - falling back to (wx/2, wy/2)");
+            // Relax: water-only fallback (still better than the old
+            // dead-centre spawn).
+            for (float r = 32.0f; r <= 400.0f && !found; r += 32.0f) {
+                for (int a = 0; a < 24 && !found; ++a) {
+                    float ang = a * 6.2831853f / 24.0f;
+                    float cx = wx_max * 0.5f + r * std::cos(ang);
+                    float cy = wy_max * 0.5f + r * std::sin(ang);
+                    if (cx < 16.0f || cy < 16.0f
+                     || cx >= wx_max - 16.0f
+                     || cy >= wy_max - 16.0f) continue;
+                    if (has_water_in_vision(cx, cy)
+                     && in_dry_land(cx, cy)) {
+                        spawn_x_ = cx;
+                        spawn_y_ = cy;
+                        found = true;
+                    }
+                }
+            }
+            spdlog::warn("Environment D-050: no spawn satisfies "
+                         "water+food within 400 m - relaxed to water-only");
         }
     }
     spawn_z_ = world_.surface_height(spawn_x_, spawn_y_) + 5.0f;
     spdlog::info("Environment D-050: spawn=({:.1f},{:.1f},{:.1f}), "
-                 "water_in_vision={}",
+                 "water_in_vision={} food_in_vision={}",
                  spawn_x_, spawn_y_, spawn_z_,
-                 has_water_in_vision(spawn_x_, spawn_y_) ? "yes" : "no");
+                 has_water_in_vision(spawn_x_, spawn_y_) ? "yes" : "no",
+                 food_in_vision(spawn_x_, spawn_y_) ? "yes" : "no");
+
+    // Debug: closest plant by kind
+    for (auto kind : {dp::world::PlantKind::Berry,
+                      dp::world::PlantKind::Fruit}) {
+        float best_d = 1e9f, best_x = 0, best_y = 0;
+        for (const auto& p : plants_.plants()) {
+            if (p.kind != kind) continue;
+            float dx = p.x - spawn_x_, dy = p.y - spawn_y_;
+            float d  = std::sqrt(dx*dx + dy*dy);
+            if (d < best_d) { best_d = d; best_x = p.x; best_y = p.y; }
+        }
+        const char* knm = (kind == dp::world::PlantKind::Berry)
+                          ? "berry" : "fruit";
+        if (best_d < 1e9f) {
+            spdlog::info("Environment D-050: closest {} at ({:.1f},{:.1f}) "
+                         "dist={:.1f} m",
+                         knm, best_x, best_y, best_d);
+        }
+    }
 
     dp::agent::EpisodeManager::Config ecfg;
     ecfg.spawn_x          = spawn_x_;
@@ -375,9 +432,31 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     }
 
     // Q -> action.drink (+ try fish)
+    // D-050 P6: drink fires if the agent is ON or *next to* a River|Swamp
+    // cell (within 2 m). The original gate required biome_at(agent) to be
+    // exactly water; in practice that meant the agent had to physically
+    // step into the river - which CapsuleAgent's gravity makes unreliable
+    // and which the blueprint never demanded ("渴了找水" is "find water",
+    // not "swim"). The looser gate matches "stand at the bank, drink".
     if (action.drink) {
-        auto b = world_.biome_at(as.pos_x, as.pos_y);
-        if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp) {
+        auto biome_here = world_.biome_at(as.pos_x, as.pos_y);
+        bool on_water = (biome_here == dp::world::Biome::River
+                      || biome_here == dp::world::Biome::Swamp);
+        bool near_water = on_water;
+        if (!on_water) {
+            const float r = 2.0f;
+            for (float dy = -r; dy <= r && !near_water; dy += 1.0f) {
+                for (float dx = -r; dx <= r && !near_water; dx += 1.0f) {
+                    auto nb = world_.biome_at(as.pos_x + dx,
+                                              as.pos_y + dy);
+                    if (nb == dp::world::Biome::River
+                     || nb == dp::world::Biome::Swamp) {
+                        near_water = true;
+                    }
+                }
+            }
+        }
+        if (near_water) {
             const float drunk = drink_drive(35.0f);
             if (drunk > 0.5f) fire_once(first_drink_fired_);
             auto fish = animals_.agent_attack(as.pos_x, as.pos_y,

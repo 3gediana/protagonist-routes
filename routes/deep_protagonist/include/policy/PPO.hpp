@@ -84,7 +84,7 @@ struct PPOConfig {
     float  lambda_         = 0.95f;
     float  clip_eps        = 0.2f;
     float  vf_coef         = 0.5f;
-    float  ent_coef        = 0.005f;  // D-039 v2: 0.01->0.001 over-collapsed to wear_clothes 65%, dial back to 0.005
+    float  ent_coef        = 0.02f;   // D-050 P2: 0.005 collapsed to NOOP-dominant before any successful drink event could be sampled. Bump to 0.02 so the policy keeps exploring drink/eat triggers long enough for "press Q on River" to actually trigger r_water > 0. (D-039 v2 used 0.005 to fix wear_clothes collapse, but we now have trigger_cost + clip + drive_reduction guarding that, so a higher entropy is safe.)
     float  lr              = 3e-4f;
     float  max_grad_norm   = 0.5f;
     bool   use_cuda        = true;
