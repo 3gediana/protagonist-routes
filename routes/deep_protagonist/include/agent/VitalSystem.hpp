@@ -27,6 +27,14 @@ struct VitalConfig {
     // because PPO without clip+wolf_killed=0 was over-grinding drink for
     // reward; with D-045/D-047 those carrots are fixed and we can put the
     // pressure back.
+    // D-053: blueprint回归。D-040~D-050 used 8/min as a "safe middle" but
+    // a 5-min episode then only burns thirst 100→60, so the agent never
+    // gets thirsty enough to die and PPO eventually unlearns drink (see
+    // D-052 final last-120 ep_water=0). 12/min makes thirst 100→40 in
+    // one episode - still survivable, but real survival pressure builds
+    // up across consecutive episodes (vital state persists in PPO's
+    // value function via the GRU). hunger paired so neither resource
+    // dominates.
     // Per-minute base decay
     float hunger_decay_per_min = 12.0f;
     // D-040 → D-041 evolution:

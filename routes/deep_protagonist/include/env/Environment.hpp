@@ -44,10 +44,12 @@ struct EnvConfig {
     uint64_t instance_seed_xor   = 0xA9E1ULL;
 
     // ---- Tunable per-run parameters (sweep-able from CLI) -----------------
-    // D-040: thirst_decay default 4.0/min ≈ 0.067/s. Original was 12.0/min
-    // (drink dominant). 8.0/min looks like a folder middle-ground. Pass the
-    // value at construction time so we don't have to recompile to sweep.
-    float    thirst_decay_per_min = 4.0f;
+    // D-053: align EnvConfig default with VitalConfig default (12/min,
+    // blueprint line 60). D-040 had used 4 as a "drink-not-dominant"
+    // workaround before clip and reward landscape were fixed; with the
+    // D-043..D-052 stack now in place the 12/min pressure is what makes
+    // the find-water loop actually necessary.
+    float    thirst_decay_per_min = 12.0f;
 
     // D-039 v4: per-trigger fee (calibrated by 100k smoke). 0.001 keeps NOOP
     // ≈10%, 0.005 collapses to NOOP 98%, 0 lets cheap noop triggers dominate.

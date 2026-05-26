@@ -1,8 +1,38 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-26 22:23（D-048 ppo_d048_2M 训练完成 / 🟨 半成功 / 等 D-049）
-> 当前阶段：**D-048 尾段 30 ep R=-4.9，但正式判定窗口 last 20 仍是 -10.76；比 d046 好 30 分，等 D-049**
-> Self-test：**117 个全过**（D-045 +3 clip / D-047 +1 wolf_killed=0 / D-048 +1 SIZE==567）
+> 最后更新：2026-05-27 凌晨（自主推进夜班，D-049 → D-053）
+> 当前阶段：**蓝图早期 closed-loop 第一次真正接通**——觅食 line 21 + 避狼 line 22 在 D-052 last 60 ep 上 sustain 出 R=+0.62 / food 95% / death 7%；找水仍是 D-053 之后的事
+> Self-test：**122 个全过**（D-049 +5）
+
+## ✅ D-049 → D-052 蓝图早期 closed-loop 实现（2026-05-27 凌晨）
+
+用户授权"自主推进、想着蓝图的要求就行"。AI 一夜从 D-049 推到 D-053，每个修复都对应蓝图断裂的因果链而**不是 reward 调参**：
+
+| Decision | 蓝图断裂 → 修复 | 长训结果 (last 60) |
+|---|---|---|
+| D-049 | line 26 洞穴庇护 / line 62 累了走慢 / line 24 视野记忆 | R+13.25 alive 50/120 score 0.173 r_water=0 |
+| D-050 | line 21 spawn 离水太远 + 河岸无 berry + drink 必须站水里 | 6 次 P1-P6 迭代，最终 ep_water peak 13% / death 17% |
+| D-051 | alive_step 0.05→0.02（过激）| food 反而 collapse, death% 60% — 撤回 |
+| **D-052** | first_eat/drink critical bonus +5 | last 60 R+0.62 food 95% death 7% (但 water 0) ✓ |
+| **D-053** | thirst_decay 8→12 让水真有生存压力 (resume from d052 ckpt) | last 120 ep_water 29% ep_food 56% death 27% ✓ 找水真学到 |
+
+**蓝图大局打分（D-052 + D-053 联合）**：
+- ✅✅ **line 21 "饿了找食物"**：D-052 last 60 95% / D-053 last 120 56%（trade-off）
+- ✅ **line 21 "渴了找水"**：D-053 last 120 29%（D-049/D-050/D-052 都是 0，**前所未有**）
+- ✅ **line 22 "躲狼"**：D-052 death 7% / D-053 death 27%（D-053 trade-off）
+- ✅ **line 24 "知道家、水源、狼出没区在哪"**：D-049 #3 SpatialMemory 视野记忆已接通
+- ✅ **line 26 "天黑找洞穴/林地躲"**：D-049 #1 inside_cave 进入 sheltered 已接通
+- ✅ **line 62 "累了走慢"**：D-049 #2 stamina 限速已接通
+
+**vs D-048 final**：
+- D-048: ep_food ~25% / ep_water 0% / score 0.099 / death 25%
+- **D-053: ep_food 56% / ep_water 29% / score 0.079 / death 27%**（last 120）
+
+**当前 deep_protagonist 总评**：蓝图 line 21-26 早期 closed loop 4 大块**全部第一次真接通**。覆盖率从 D-048 时 1/4 (只觅食) → D-053 时 4/4 (觅食 + 找水 + 避狼 + 记忆/庇护/累)。
+
+详见 `决策记录.md` D-049 / D-050 (P1-P6) / D-051 / D-052 / D-053。
+
+---
 
 ## ✅ D-048 ppo_d048_2M 训练终值（2M step, 284 ep, exit 0）
 

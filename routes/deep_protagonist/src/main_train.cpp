@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
     int         save_every = 0;           // save every N updates (0=off)
     std::string load_path;                // resume from this checkpoint
     bool        no_update  = false;       // pure-eval: skip rollout collection and PPO update
-    float       thirst_decay = 8.0f;       // EnvConfig.thirst_decay_per_min (D-041 sweet spot)
+    float       thirst_decay = 12.0f;      // D-053: blueprint line 60. D-041 used 8 as middle ground; with D-052 stack in place we need the full 12/min so drink stays a survival need across an episode.
     float       trigger_cost = 0.001f;     // EnvConfig.trigger_cost
 
     for (int i = 1; i < argc; ++i) {
