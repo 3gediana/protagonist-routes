@@ -1,8 +1,8 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-26 中（D-044 跨项目止血）
-> 当前阶段：**S4.1 D-043 ppo_d043_2M 在 1.06M 步停了（last 20 mean -20.84，撩狼回归），等下一轮决策**
-> Self-test：**112 个全过**（D-043 加 4 个 + 1 个删 first_hunt）
+> 最后更新：2026-05-26 中（D-045 reward 信号复盘 + clip 失效修复）
+> 当前阶段：**D-045 修了 D-043 的 clip 失效 bug，等下一轮训练 ppo_d044_2M 验证**
+> Self-test：**115 个全过**（D-043 加 4 + D-045 加 3 clip test - 1 删 first_hunt）
 >
 > ⚠️ **未来 AI 必读**：用户决策 D-038 —— HUD 推迟。具体待办清单见 `docs/待办_视觉化与打磨.md`
 > Wander baseline (D-043 后): mean +14 / score 0.072 / 死亡率 ~10%
@@ -11,7 +11,33 @@
 > PPO run7 (D-041, 2M): last_20 -80（撩狼塌缩，100×milestone 但反 robust）
 > PPO d043_2M (D-043, 1.06M 步停): last_20 mean -20.84 / score 0.127 / r_bites -37.6（撩狼回归 vs 早期 ep 15-19 cherry-pick noise）/ 死亡率 35% / r_milestone +183.7 高 / r_potential +83.3 高（agent 持有家衣物）
 
-## ✅ 最新会话完成（2026-05-26 中）：D-044 跨项目止血
+## ✅ 最新会话完成（2026-05-26 中）：D-045 reward 信号复盘 + clip 失效修复
+
+用户原话"你先复盘一下代码吧，然后自己决策"。AI 5 步复盘 ppo_d043_2M 撩狼塌缩：
+
+1. **PPO 网络架构 / 超参**：正常（GRU+SpatialMemory，ent_coef=0.005，trigger_cost=0.001）
+2. **RewardSystem 量级**：正常（Crafter 标准）
+3. **obs 含 wolf 信号**：正常（SpatialMemory 写 saw_danger）
+4. **🔴 reward clip 失效**：D-043 P1 写明 `end_step()` 返回 [-10,+10] 后的 clipped 值，但 `Environment::apply_action_effects_` 丢弃 return 值，`step` 用 `last_step().total()`（unclipped）填 `out.reward`。PPO 学的是 **未 clip 单 step 总和**，撩狼时大量 bite -reward 灌进 advantage → variance 爆炸
+5. **r_milestone 累加之谜**：ppo_d043_2M.jsonl 里 ep0+2→ep132+195 单调累加，但当前 binary 跑新 wander/PPO smoke 无累加。**root cause 搁置**（不可重现）
+
+修复（D-045）：
+
+| 改动 | 文件 |
+|---|---|
+| `apply_action_effects_` return float（clipped） | `include/env/Environment.hpp` + `src/env/Environment.cpp` |
+| `step` 用这个 clipped 值填 `out.reward` | 同上 |
+| 加 3 self-test（-50 dmg→-10 clip / 11 milestone→+10 clip / unclipped 各分量保留） | `src/main.cpp` |
+
+验证：
+- self-test 11/11 RewardSystem PASS（D-044 clip_min/clip_max/preserve_unclipped 三个新测试）
+- PPO 100k smoke 12 ep：`R == sum(r_X)` 完全一致（无累加假象）
+
+**deep_protagonist 主线下一步**：在干净 binary 上跑 ppo_d044_2M。
+
+---
+
+## ✅ 上轮会话完成（2026-05-26 中）：D-044 跨项目止血
 
 用户报"之前出过 190G 巨型日志，要避免再出现"。先排查 **deep_protagonist 本身日志逻辑健康**（spdlog 全 stdout / jsonl 每 ep ~400B，最大文件 ppo_run6 98K）；爆量源是 **protagonist_ecology**：`data/runs/_credit_log.csv` 2.1GB + `tmp/*.log` 5 个 856MB，CreditLedger.cpp 注释自爆 *"2026-05-23 incident hit 7.07 GB / 110M rows"*。
 

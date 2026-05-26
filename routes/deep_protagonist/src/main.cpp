@@ -976,6 +976,37 @@ int run_self_tests() {
         check(std::abs(m_crisis - 0.3f) < 1e-3f,
               "RewardSystem: milestone honors crisis scale param");
 
+        // D-044: end_step return value is CLIPPED to [-10, +10]. Pre D-044
+        // the caller (Environment::apply_action_effects_) discarded this
+        // return value and StepResult.reward leaked the unclipped sum,
+        // so PPO never saw the D-043 P1 safety clip.
+        r.reset_episode();
+        r.begin_step();
+        r.event_wolf_bite(50.0f);  // -50 raw, should clip to -10
+        float clip_lo = r.end_step();
+        check(std::abs(clip_lo - (-10.0f)) < 1e-3f,
+              "RewardSystem: end_step clips to reward_clip_min (D-044)");
+        // The component value still records the unclipped intent.
+        check(std::abs(r.last_step().bites - (-50.0f)) < 1e-3f,
+              "RewardSystem: clip preserves unclipped components for debug");
+
+        r.reset_episode();
+        r.begin_step();
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);
+        r.event_milestone(1.0f);  // 11 × +1 = +11 raw
+        float clip_hi = r.end_step();
+        check(std::abs(clip_hi - 10.0f) < 1e-3f,
+              "RewardSystem: end_step clips to reward_clip_max (D-044)");
+
         // D-043 P2: per-step state-based bonus = state_bonus_coef × phi.
         r.reset_episode();
         r.begin_step();

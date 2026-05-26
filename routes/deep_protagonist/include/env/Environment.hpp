@@ -159,7 +159,14 @@ private:
     void rebuild_observation_(dp::agent::ObservationBuilder::Vector& out) const;
 
     // Apply one AgentAction's effects (mirrors main.cpp's keyboard branch).
-    void apply_action_effects_(const dp::agent::AgentAction& action);
+    // D-044 returns the per-step CLIPPED total reward from RewardSystem
+    // (Weights::reward_clip_min/max). The unclipped per-component values
+    // remain visible via reward_.last_step() for diagnostics, but PPO
+    // training must consume the clipped scalar so a single-tick outlier
+    // (e.g. wolf bite cluster, milestone spike) cannot corrupt advantage
+    // estimation. Pre D-044 the StepResult.reward leaked the unclipped
+    // value, defeating the D-043 P1 [-10,+10] safety clip.
+    float apply_action_effects_(const dp::agent::AgentAction& action);
 
     EnvConfig                       cfg_;
     float                           spawn_x_ = 0.0f;

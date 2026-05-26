@@ -134,7 +134,7 @@ static float crisis_scale_(const dp::agent::VitalState& v) {
     return 1.0f;
 }
 
-void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
+float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     const auto& as = agent_.state();
     const float dt = cfg_.fixed_dt;
 
@@ -493,7 +493,10 @@ void Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         reward_.event_state_bonus(phi);
     }
 
-    reward_.end_step();
+    // D-044: return the CLIPPED per-step total. Pre D-044 the caller used
+    // reward_.last_step().total() which is the UNCLIPPED component sum,
+    // so the [-10,+10] safety clip declared by D-043 P1 never reached PPO.
+    return reward_.end_step();
 }
 
 StepResult Environment::step(const dp::agent::AgentAction& action) {
@@ -503,7 +506,7 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     // Agent body update first (so vitals etc see the new position).
     agent_.apply_action(action, world_, physics_, dt);
 
-    apply_action_effects_(action);
+    const float step_reward_clipped = apply_action_effects_(action);
 
     // Cognitive map: write whatever the agent currently senses around it
     // into the spatial grid cell under its feet. This is what gives PPO
@@ -554,7 +557,10 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     bool done = episodes_.is_done(vital_state_);
 
     StepResult out;
-    out.reward       = reward_.last_step().total();
+    // D-044: feed PPO the CLIPPED reward (Weights::reward_clip_min/max).
+    // The unclipped breakdown stays available via reward_.last_step() and
+    // reward_.episode() for diagnostics / EpisodeStats logging.
+    out.reward       = step_reward_clipped;
     out.done         = done;
     out.episode_id   = episodes_.episode_id();
     out.episode_step = episodes_.step_count();
