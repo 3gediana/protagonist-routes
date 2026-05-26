@@ -1,17 +1,74 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-24 下午 17:55
-> 当前阶段：**S4.1 D-041 主线驱动 reward 重塑（11 个 first_X milestone + satiation scale），2M 训练中**
-> Self-test：**110 个全过**
+> 最后更新：2026-05-26 中（D-044 跨项目止血）
+> 当前阶段：**S4.1 D-043 ppo_d043_2M 在 1.06M 步停了（last 20 mean -20.84，撩狼回归），等下一轮决策**
+> Self-test：**112 个全过**（D-043 加 4 个 + 1 个删 first_hunt）
 >
-> ⚠️ **未来 AI 必读**：用户决策 D-038 —— 所有 HUD / mini-map / 视觉化推迟到训练完毕接口冻结后。具体待办清单见 `docs/待办_视觉化与打磨.md`，**不要现在动手加 HUD**
-> Wander baseline：mean -37 / 死亡率 29%
+> ⚠️ **未来 AI 必读**：用户决策 D-038 —— HUD 推迟。具体待办清单见 `docs/待办_视觉化与打磨.md`
+> Wander baseline (D-043 后): mean +14 / score 0.072 / 死亡率 ~10%
 > PPO run3 (GRU+SpatMem, 1M, Bernoulli): mean +18.6 / 死亡率 0%
-> PPO run5 (multinomial, killed): drink 锁死 32%
-> PPO run6 (thirst 12→4): NOOP 52%, milestone 0, deaths 24%
-> **PPO run7 (D-041, 2M 训练中): 100k smoke ep 11 R=+66.8 含 milestone +60，首次破 🟧**
+> PPO run5/6 (multinomial 调参): 卡 plateau
+> PPO run7 (D-041, 2M): last_20 -80（撩狼塌缩，100×milestone 但反 robust）
+> PPO d043_2M (D-043, 1.06M 步停): last_20 mean -20.84 / score 0.127 / r_bites -37.6（撩狼回归 vs 早期 ep 15-19 cherry-pick noise）/ 死亡率 35% / r_milestone +183.7 高 / r_potential +83.3 高（agent 持有家衣物）
 
-## ✅ 最新会话完成：S4.1 D-039 multinomial 架构修复 + 4 轮迭代 + 2M 训练
+## ✅ 最新会话完成（2026-05-26 中）：D-044 跨项目止血
+
+用户报"之前出过 190G 巨型日志，要避免再出现"。先排查 **deep_protagonist 本身日志逻辑健康**（spdlog 全 stdout / jsonl 每 ep ~400B，最大文件 ppo_run6 98K）；爆量源是 **protagonist_ecology**：`data/runs/_credit_log.csv` 2.1GB + `tmp/*.log` 5 个 856MB，CreditLedger.cpp 注释自爆 *"2026-05-23 incident hit 7.07 GB / 110M rows"*。
+
+3 道护栏 + 全删旧文件（详见 `决策记录.md` D-044）：
+
+| 改动 | 文件 |
+|---|---|
+| `evaluatePopulation` 签名 bool→path; 3 个 hardcode CSV 路径迁到 `<run_dir>/...` | `routes/protagonist_ecology/runtime/ProtagonistEcologyRuntime.cpp` |
+| `CreditLedger::appendCsv` 加 200MB cap | `routes/protagonist_ecology/runtime/CreditLedger.cpp` |
+| `CommunicationMetrics::appendCsv` 加 200MB cap | `routes/protagonist_ecology/runtime/CommunicationMetrics.cpp` |
+| `_signal_debug.csv` inline 200MB cap | `routes/protagonist_ecology/runtime/ProtagonistEcologyRuntime.cpp` |
+| 顶部巡检条目 | `routes/protagonist_ecology/docx/STATUS.md` |
+
+`neural_eco_route_protagonist` 编译干净；`test_core --gtest_filter=*CreditLedger*:*Communication*` **20/20 PASS**。腾盘 ~3GB。
+
+**deep_protagonist 主线没动**——下一步仍是 D-043 plateau 后的决策（继续训 / D-044-onward 撩狼根因二次诊断 / 你直接说）。
+
+## ✅ 最新会话完成（2026-05-24 19:00-20:00）：D-043 reward 哲学重设计
+
+用户原话："你先去查查别人是怎么设计奖励的吧 / 我指的是网上的论文"。
+
+AI 用 tavily-mcp 搜索 + 精读 4 篇论文：
+1. **Crafter (Hafner ICLR 2022)**: 项目对应物，+1/achievement, score 几何均值
+2. **PBRS (Ng/Harada/Russell ICML 1999)**: 状态势函数数学定理（持有 Φ>0 时 F 反为负）
+3. **Achievement Distillation (Moon NeurIPS 2023)**: Crafter SOTA, 改架构非改 reward
+4. **Homeostatic RL (Keramati 2014)**: drive_reduction 公式 + 反向抑制
+
+**关键洞察**：你 first_X +20 vs Crafter +1 = **20× 偏离学术界**。撩狼是 specification gaming 教科书例子。
+
+### D-043 实施清单（3 个 commit）
+
+| 步 | 内容 | 状态 | Commit |
+|---|---|---|---|
+| C1 P0 | first_X +20→+1, 死亡 -100→-10, wolf_killed +5→+1, 删 first_hunt | ✅ | 45f80d3 |
+| C1 P0 | jsonl 加 unlocks[] + score (几何均值) 字段 | ✅ | 45f80d3 |
+| C2 P1 | event_eat/drink 改 drive_reduction, 加 crisis_scale, 加 reward clip | ✅ | 4535912 |
+| C2 P1 | main.cpp viewer 同步 drive 公式 (drive_v + eat_drive lambda) | ✅ | 4535912 |
+| C3 P2 | state_bonus_coef × Φ(s), Φ = house+clothes+followers+inventory_diversity | ✅ | 65ec123 |
+| Train | 2M PPO 训练（进行中）| 🔄 | — |
+
+### 早期成果（前 20 ep / 18 分钟）
+
+- **score** 从 wander 0.072 → PPO 0.189-0.223（**3× 提升**）
+- ep 15-19 **连续 5 episode 无死亡**，bites=0（避狼策略学到）
+- potential 累积 +0.4 → +27.7（agent 保持物品 + 偶建房）
+- milestone 累积 +2 → +47（每 ep 解锁 2-3 个 first_X）
+- 死亡率前 15 ep ~33% → 后 5 ep 0%（学习曲线明显）
+
+### 4 篇论文笔记
+
+`docs/论文精读_奖励设计.md` 338 行整理：
+- Crafter 17 动作 + 22 achievements 设计（"Do" 上下文动作 + 没有 hunt_wolf）
+- PBRS F=γΦ'-Φ 数学证明 + 与"持有奖励"反效果分析
+- Achievement Distillation contrastive next-achievement loss（远期方向）
+- Homeostatic drive 函数 + 反向 drive 抑制完整公式
+
+## ✅ 上轮会话完成：S4.1 D-039 multinomial 架构修复 + 4 轮迭代 + 2M 训练
 
 用户原话"规划下一步"。AI 没有盲投扩参，先做 30 分钟 **C 行为诊断** 抓 ppo_run3 5 局 act 直方图，发现"16 个 sigmoid 全 0.5"病——根因是架构问题不是参数不够。
 

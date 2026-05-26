@@ -2,8 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <limits>
+#include <set>
+
+#include "core/logging/Logger.h"
 
 namespace neuro::routes::protagonist {
 
@@ -150,8 +154,20 @@ void CommunicationMetrics::summarise(std::size_t generation_index) {
 }
 
 void CommunicationMetrics::appendCsv(const std::filesystem::path& path, std::string_view tag) const {
+    // D-044 disk-budget guard - mirrors CreditLedger::appendCsv. 200 MB
+    // per-file ceiling so a single run can't run away with disk.
+    constexpr std::uintmax_t kCapBytes = 200ull * 1024ull * 1024ull;
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
+    const auto current_size = std::filesystem::file_size(path, ec);
+    if (!ec && current_size >= kCapBytes) {
+        static std::set<std::filesystem::path> warned;
+        if (warned.insert(path).second) {
+            LOG_WARN("CommunicationMetrics::appendCsv refusing to grow {} past {} MB cap",
+                     path.string(), kCapBytes / (1024ull * 1024ull));
+        }
+        return;
+    }
     const bool need_header = !std::filesystem::exists(path, ec)
                              || std::filesystem::file_size(path, ec) == 0;
     std::ofstream out(path, std::ios::app);

@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <set>
 #include <utility>
+
+#include "core/logging/Logger.h"
 
 #include "core/events/EventPayloads.h"
 
@@ -159,8 +162,23 @@ CreditFairnessMetrics CreditLedger::computeFairness(std::uint8_t source_kind_fil
 }
 
 void CreditLedger::appendCsv(const std::filesystem::path& path, std::string_view tag) const {
+    // D-044 disk-budget guard. The 2026-05-23 incident grew _credit_log.csv
+    // to 7.07 GB / 110M rows; later runs hit 2.1 GB before disk-budget
+    // cleanup landed. Even with the per-run-dir routing in place, we keep a
+    // hard 200 MB ceiling per file as a last line of defence so a single
+    // ablation never silently grinds the disk to dust.
+    constexpr std::uintmax_t kCapBytes = 200ull * 1024ull * 1024ull;
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
+    const auto current_size = std::filesystem::file_size(path, ec);
+    if (!ec && current_size >= kCapBytes) {
+        static std::set<std::filesystem::path> warned;
+        if (warned.insert(path).second) {
+            LOG_WARN("CreditLedger::appendCsv refusing to grow {} past {} MB cap",
+                     path.string(), kCapBytes / (1024ull * 1024ull));
+        }
+        return;
+    }
     const bool need_header = !std::filesystem::exists(path, ec)
                              || std::filesystem::file_size(path, ec) == 0;
     std::ofstream out(path, std::ios::app);

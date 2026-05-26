@@ -1,10 +1,18 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-25 晚（**Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口**）
+> 最后巡检：2026-05-26 中（**D-044 disk-budget hardening：3 个全局 debug CSV 路径迁到 run_dir + 3 处 200 MB size guard + 删 ~3GB 历史日志；218/218 测试仍全过**）。前次 (2026-05-25 晚)：Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
 > 当前 HEAD：`4f493ae Layer 6 R3 stage 3 commit O: Omnivore also gets a prey peer`
 >
+> **2026-05-26 中 D-044 disk-budget hardening（防 190GB 日志复发）**：
+> - **背景**：用户报告之前出过"190G 巨型日志"，本次会话排查根因。CreditLedger.cpp 注释自爆 *"2026-05-23 incident hit 7.07 GB / 110M rows"*。盘上还残留 `data/runs/_credit_log.csv` 2.1 GB + `tmp/*.log` 5 个共 856 MB。
+> - **三道护栏**：(1) `evaluatePopulation` 签名 `bool append_episode_debug_csv = false` → `const std::filesystem::path& debug_csv_dir = {}`；ablation 调用点传 `run_dir`，training 默认空。3 个 hardcode 全局路径 `data/runs/_credit_log.csv` / `_communication_metrics.csv` / `_signal_debug.csv` 全部迁到 `<run_dir>/_xxx.csv`，不再跨 run 累加。(2) `CreditLedger::appendCsv` + `CommunicationMetrics::appendCsv` 各自加 200 MB 文件级 cap，超过则 LOG_WARN 一次 + skip。(3) Runtime.cpp 内联 `_signal_debug.csv` 同样 200 MB cap。
+> - **额外好处**：`scripts/protagonist_communication_mi.py` 注释本来就期望 `<run_dir>/_communication_metrics.csv`（hardcode 路径之前是 bug），路径迁移**反而修了脚本和代码的不一致**，无需改脚本。
+> - **验证**：`neural_eco_route_protagonist` 编译干净；`test_core --gtest_filter=*CreditLedger*:*Communication*` **20/20 PASS**。
+> - **腾盘**：删除 6 个大文件共 ~3 GB（2.1G `_credit_log.csv` + tmp 下 5 个 run.log）。
+> - **影响**：未来 ablation runs 的 `_credit_log.csv` 等会落到该次 run 自己的 run_dir 下；旧分析脚本如果硬码 `data/runs/_credit_log.csv` 需要改成扫 run_dir。`docx/` 里的历史描述（如本节、DEVELOPMENT_TASK_PLAN line 33/40、METRICS_FIELD_GUIDE line 206/218、MEMORY_EVIDENCE_AUDIT line 324）保留原文以反映写入时刻状态，不是 bug 而是历史档案。
+
 > **2026-05-25 晚 60-gen graduate AB 完整结果（关键发现）**：
 > - **AB 启动 21:05 → 完成 23:47 (2h42min, 60 gen × 2 ep)**。binary 是 commit K (20:42) 编的，commit L/M/N/O 没进 binary。
 > - **harmony_check 5/7 PASS** vs baseline `long_run_60gen_2d.toml` 7/7：

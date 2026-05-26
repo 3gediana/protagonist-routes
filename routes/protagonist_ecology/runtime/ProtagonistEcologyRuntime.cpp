@@ -1568,7 +1568,14 @@ void evaluatePopulation(World2D& world,
                         const std::atomic<bool>& stop_requested,
                         TraceRecorder* trace_recorder,
                         CreditFairnessMetrics* out_fairness = nullptr,
-                        bool append_episode_debug_csv = false) {
+                        // D-044: empty path = debug CSVs disabled. Ablation
+                        // runs pass run_dir so per-payout / per-channel /
+                        // signal_debug logs land inside that single run's
+                        // directory instead of accumulating in a global
+                        // data/runs/_*.csv across every ablation ever run
+                        // (which previously grew to multi-GB; see
+                        // 2026-05-23 7.07 GB / 110M-row incident).
+                        const std::filesystem::path& debug_csv_dir = {}) {
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) {
         throw std::runtime_error("AgentLayer missing from protagonist training world");
@@ -3071,19 +3078,19 @@ void evaluatePopulation(World2D& world,
         if (out_fairness != nullptr) {
             *out_fairness = credit_ledger.computeFairness(0xFFu);
         }
-        // Append to global _credit_log.csv ONLY when caller explicitly
-        // requests it (ablation runs need per-payout lineage; training
-        // runs accumulate millions of payouts per generation and would
-        // grow this file to GBs in a few hours - see 2026-05-23 incident
-        // where it hit 7.07 GB / 110M rows). The same gate covers
-        // _communication_metrics.csv and _signal_debug.csv below.
-        if (append_episode_debug_csv) {
-            credit_ledger.appendCsv("data/runs/_credit_log.csv", credit_tag);
+        // D-044: write debug CSVs ONLY when caller passed a non-empty
+        // run_dir (ablation does; training does not). Files now land in
+        // <run_dir>/_credit_log.csv etc. so each run owns its own log
+        // and there's no cross-run accumulation. CreditLedger::appendCsv
+        // and CommunicationMetrics::appendCsv each enforce a 200 MB
+        // per-file ceiling as a final disk-budget guard.
+        if (!debug_csv_dir.empty()) {
+            credit_ledger.appendCsv(debug_csv_dir / "_credit_log.csv", credit_tag);
             // A3.S1: flush this episode's communication metrics on the
             // same tag. Each row is (scenario_name, generation, channel).
             if (comm_num_channels > 0) {
                 comm_metrics.summarise(static_cast<std::size_t>(world.currentTick()));
-                comm_metrics.appendCsv("data/runs/_communication_metrics.csv", credit_tag);
+                comm_metrics.appendCsv(debug_csv_dir / "_communication_metrics.csv", credit_tag);
             }
         }
     }
@@ -3095,17 +3102,29 @@ void evaluatePopulation(World2D& world,
     behavior.signal_responder_count += signal_responders.size();
 
     // DEBUG INSTRUMENTATION (audit § 7 - signal_response_events root cause probe)
-    // Append one row per evaluatePopulation call to data/runs/_signal_debug.csv.
-    // Header is written once when the file is empty / does not exist.
-    // Gated by append_episode_debug_csv so training runs (which write
-    // millions of rows over 60+ generations) don't accumulate.
-    if (append_episode_debug_csv) {
+    // D-044: writes one row per evaluatePopulation call to
+    // <run_dir>/_signal_debug.csv. Same gate as the credit/comm CSVs:
+    // training runs leave debug_csv_dir empty so this is a no-op there.
+    if (!debug_csv_dir.empty()) {
         std::error_code ec;
-        std::filesystem::path debug_path = "data/runs/_signal_debug.csv";
+        std::filesystem::path debug_path = debug_csv_dir / "_signal_debug.csv";
         std::filesystem::create_directories(debug_path.parent_path(), ec);
+        // D-044 size guard: matches CreditLedger / CommunicationMetrics
+        // 200 MB ceiling. Warn once per path then skip silently.
+        constexpr std::uintmax_t kSignalDebugCapBytes = 200ull * 1024ull * 1024ull;
+        const auto current_size = std::filesystem::file_size(debug_path, ec);
+        const bool size_capped = (!ec) && (current_size >= kSignalDebugCapBytes);
+        if (size_capped) {
+            static std::set<std::filesystem::path> warned;
+            if (warned.insert(debug_path).second) {
+                LOG_WARN("_signal_debug.csv refusing to grow {} past {} MB cap",
+                         debug_path.string(),
+                         kSignalDebugCapBytes / (1024ull * 1024ull));
+            }
+        }
         const bool need_header = !std::filesystem::exists(debug_path, ec)
                                  || std::filesystem::file_size(debug_path, ec) == 0;
-        std::ofstream debug_csv(debug_path, std::ios::app);
+        std::ofstream debug_csv(size_capped ? std::filesystem::path{} : debug_path, std::ios::app);
         if (debug_csv.is_open()) {
             if (need_header) {
                 debug_csv << "scenario_name,emit_calls,subscriber_invokes,last_signal_emit_size,"
@@ -3576,11 +3595,11 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                 BehaviorAccumulator episode_behavior;
                 const std::vector<BackgroundSpecies> no_background_species;
                 CreditFairnessMetrics episode_fairness;
-                // append_episode_debug_csv=true: ablation runs need
-                // per-payout lineage in data/runs/_credit_log.csv (plus
-                // _communication_metrics.csv / _signal_debug.csv). Training
-                // runs (the other call site) leave it false to avoid
-                // 7+GB log file growth.
+                // D-044: ablation runs route per-payout lineage CSVs into
+                // their own run_dir (<run_dir>/_credit_log.csv etc.). The
+                // 200 MB per-file ceiling enforced by CreditLedger /
+                // CommunicationMetrics / the inline signal-debug guard
+                // backstops any future runaway growth.
                 evaluatePopulation(*world,
                                    episode_route,
                                    params,
@@ -3590,7 +3609,7 @@ int ProtagonistEcologyRuntime::runMemoryAblation() {
                                    stop_requested_,
                                    trace_recorder.get(),
                                    &episode_fairness,
-                                   /*append_episode_debug_csv=*/true);
+                                   /*debug_csv_dir=*/run_dir);
                 world->eventBus().unsubscribe(sub_signal);
                 world->eventBus().unsubscribe(sub_died);
                 world->eventBus().unsubscribe(sub_attack);
