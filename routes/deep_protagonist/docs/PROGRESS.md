@@ -15,6 +15,7 @@
 | D-051 | alive_step 0.05→0.02（过激）| food 反而 collapse, death% 60% — 撤回 |
 | **D-052** | first_eat/drink critical bonus +5 | last 60 R+0.62 food 95% death 7% (但 water 0) ✓ |
 | **D-053** | thirst_decay 8→12 让水真有生存压力 (resume from d052 ckpt) | last 120 ep_water 29% ep_food 56% death 27% ✓ 找水真学到 |
+| D-054 | 从 d053 ckpt 继续 2M 看联合稳定 | drink collapse 回 0，但 food **88%** sustained / score 0.141 (最高) |
 
 **蓝图大局打分（D-052 + D-053 联合）**：
 - ✅✅ **line 21 "饿了找食物"**：D-052 last 60 95% / D-053 last 120 56%（trade-off）
