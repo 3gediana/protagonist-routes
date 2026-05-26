@@ -40,9 +40,85 @@ Environment::Environment(const EnvConfig& cfg)
 
     float wx_max = world_.heightmap().world_size_x();
     float wy_max = world_.heightmap().world_size_y();
+
+    // D-050: blueprint line 9-10 demands "饿了找食物，渴了找水" be
+    // *learnable*. Pre D-050 spawn was hard-pinned at the world centre
+    // (512, 512); for the default 1024 m world with 3 procedural rivers
+    // the centre often sits >60 m from any River|Swamp cell, which means
+    // the agent's nearest_water obs is "no water in sight" from frame 0
+    // and the only way to drink is to randomly walk into a river. PPO
+    // never learns the link "Q on river -> r_water > 0" because the
+    // first such event hardly ever happens in 9000 steps. (D-049's
+    // SpatialMemory vision-write fixes "see -> remember", but only after
+    // the agent has been in vision range of water at least once.)
+    //
+    // Now we choose a spawn within the central region but require that
+    // a River or Swamp cell exists inside VISION_RANGE = 60 m. Search:
+    //   1. try the centre first (cheap, reproduces old layout when there
+    //      is already water nearby);
+    //   2. if dry, spiral outwards in 32 m steps over 16 angular slots
+    //      until a candidate is found;
+    //   3. fall back to centre if the world has no water at all (should
+    //      never trigger with the default 3-river config).
+    auto biome_at = [&](float x, float y) {
+        if (x < 0.0f || y < 0.0f || x >= wx_max || y >= wy_max) {
+            return dp::world::Biome::Plain;
+        }
+        return world_.biome_at(x, y);
+    };
+    auto has_water_in_vision = [&](float cx, float cy) {
+        const float R = dp::agent::ObservationBuilder::VISION_RANGE;
+        const float step = 8.0f;
+        const float R2 = R * R;
+        for (float dy = -R; dy <= R; dy += step) {
+            for (float dx = -R; dx <= R; dx += step) {
+                if (dx*dx + dy*dy > R2) continue;
+                auto b = biome_at(cx + dx, cy + dy);
+                if (b == dp::world::Biome::River
+                 || b == dp::world::Biome::Swamp) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    auto in_dry_land = [&](float x, float y) {
+        auto b = biome_at(x, y);
+        return b != dp::world::Biome::River
+            && b != dp::world::Biome::Swamp;
+    };
+
     spawn_x_ = wx_max * 0.5f;
     spawn_y_ = wy_max * 0.5f;
+    if (!(has_water_in_vision(spawn_x_, spawn_y_)
+          && in_dry_land(spawn_x_, spawn_y_))) {
+        bool found = false;
+        for (float r = 32.0f; r <= 320.0f && !found; r += 32.0f) {
+            for (int a = 0; a < 16 && !found; ++a) {
+                float ang = a * 6.2831853f / 16.0f;
+                float cx = wx_max * 0.5f + r * std::cos(ang);
+                float cy = wy_max * 0.5f + r * std::sin(ang);
+                if (cx < 16.0f || cy < 16.0f
+                 || cx >= wx_max - 16.0f
+                 || cy >= wy_max - 16.0f) continue;
+                if (has_water_in_vision(cx, cy)
+                 && in_dry_land(cx, cy)) {
+                    spawn_x_ = cx;
+                    spawn_y_ = cy;
+                    found = true;
+                }
+            }
+        }
+        if (!found) {
+            spdlog::warn("Environment D-050: no water within 320 m of "
+                         "centre - falling back to (wx/2, wy/2)");
+        }
+    }
     spawn_z_ = world_.surface_height(spawn_x_, spawn_y_) + 5.0f;
+    spdlog::info("Environment D-050: spawn=({:.1f},{:.1f},{:.1f}), "
+                 "water_in_vision={}",
+                 spawn_x_, spawn_y_, spawn_z_,
+                 has_water_in_vision(spawn_x_, spawn_y_) ? "yes" : "no");
 
     dp::agent::EpisodeManager::Config ecfg;
     ecfg.spawn_x          = spawn_x_;
