@@ -31,6 +31,11 @@ public:
     struct Weights {
         // "Stay alive" payout, applied per simulated second (multiplied
         // by dt internally). 0.05 ⇒ +3 reward per minute alive.
+        // (D-051 tried 0.02 to lift drink/eat above the alive baseline,
+        // but the agent stopped valuing survival entirely - food collapsed
+        // and death% spiked to 60 %. Reverted in D-052; the louder
+        // first-eat/drink critical bonus is enough to break NOOP without
+        // sacrificing alive incentive.)
         float alive_step       = 0.05f;
 
         // D-043: payouts for needs satisfaction. Semantic change from

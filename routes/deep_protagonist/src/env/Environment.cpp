@@ -285,6 +285,23 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             reward_.event_milestone(crisis);
         }
     };
+    // D-051: a single successful first_drink / first_eat is the moment
+    // the agent breaks out of "stand-still NOOP" and proves it can ride
+    // the find-water / find-food loop. Stack five milestones on top of
+    // the regular fire so the bonus is +5 instead of +1 the very first
+    // time the agent succeeds in an episode. Crisis scaling still
+    // applies (so a starving agent grabbing food gets the full reward,
+    // a fed agent grinding doesn't). Subsequent eats / drinks within
+    // the same episode follow the normal drive-reduction reward path.
+    auto fire_once_critical = [&](bool& flag) {
+        bool first = !flag;
+        if (first) {
+            flag = true;
+            for (int i = 0; i < 5; ++i) {
+                reward_.event_milestone(crisis);
+            }
+        }
+    };
 
     // D-043 P1: eat/drink with drive-reduction reward (Keramati 2014).
     // Replaces the old satiation_scale_ × kcal scheme. drive(v=100)=0 so
@@ -412,9 +429,9 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 reward_.event_eat(-0.2f);
             } else {
                 const float ate   = eat_drive(kcal);
-                if (ate > 0.5f) fire_once(first_eat_fired_);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 const float drunk = drink_drive(ml);
-                if (drunk > 0.5f) fire_once(first_drink_fired_);
+                if (drunk > 0.5f) fire_once_critical(first_drink_fired_);
             }
             // 30% chance Fruit/Berry drops a Seed for late-stage farming.
             if (k == dp::world::PlantKind::Fruit
@@ -458,14 +475,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         }
         if (near_water) {
             const float drunk = drink_drive(35.0f);
-            if (drunk > 0.5f) fire_once(first_drink_fired_);
+            if (drunk > 0.5f) fire_once_critical(first_drink_fired_);
             auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
                                               agent_.yaw(), 2.0f, 100.0f);
             if (fish.killed
                 && animals_.animals()[fish.index].kind
                     == dp::world::AnimalKind::Fish) {
                 const float ate = eat_drive(20.0f);
-                if (ate > 0.5f) fire_once(first_eat_fired_);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 // D-043: first_hunt removed (Crafter: no reward for attacking
                 // neutral animals). Fish-while-drinking still gives food via
                 // first_eat, which is the legitimate signal.
@@ -560,19 +577,19 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             if (kind == dp::world::AnimalKind::Wolf) {
                 reward_.event_wolf_killed();
                 const float ate = eat_drive(40.0f);
-                if (ate > 0.5f) fire_once(first_eat_fired_);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Rabbit) {
                 const float ate = eat_drive(15.0f);
-                if (ate > 0.5f) fire_once(first_eat_fired_);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Deer) {
                 const float ate = eat_drive(40.0f);
-                if (ate > 0.5f) fire_once(first_eat_fired_);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
             } else if (kind == dp::world::AnimalKind::Fish) {
                 const float ate = eat_drive(20.0f);
-                if (ate > 0.5f) fire_once(first_eat_fired_);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
             }
             // D-043: first_hunt removed. Killing a wolf still gives wolf_killed
             // (now +1) plus eat reward, but no big milestone spike. This breaks
