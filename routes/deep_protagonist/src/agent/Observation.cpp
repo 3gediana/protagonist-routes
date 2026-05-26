@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace dp::agent {
 
@@ -356,6 +357,43 @@ void ObservationBuilder::compose(const dp::world::World&         world,
             out[p++] = clamp01(dist / VISION_RANGE);
         } else {
             out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 1.0f;  // "no water in sight"
+        }
+    }
+
+    // ---- D-048 nearest wolf (3: dx_norm, dy_norm, dist_norm) -----------
+    // K_ANIMALS picks the 4 nearest creatures regardless of kind; if 4
+    // rabbits are closer than the wolf, PPO loses sight of its biggest
+    // threat. This dedicated slot guarantees the predator stays in obs
+    // until VISION_RANGE so the policy can learn 'see wolf -> flee'.
+    // Empty slot encodes "no wolf in sight" as dx=dy=0, dist=1.0
+    // (mirrors the nearest_water convention right above).
+    {
+        float best_d2  = std::numeric_limits<float>::infinity();
+        float best_dx  = 0.0f;
+        float best_dy  = 0.0f;
+        bool  any_wolf = false;
+        const float R2 = VISION_RANGE * VISION_RANGE;
+        for (const auto& a : animals.animals()) {
+            if (a.kind != dp::world::AnimalKind::Wolf) continue;
+            if (a.state == dp::world::AnimalState::Dead) continue;
+            float dx = a.pos_x - s.pos_x;
+            float dy = a.pos_y - s.pos_y;
+            float d2 = dx*dx + dy*dy;
+            if (d2 > R2) continue;
+            if (d2 < best_d2) {
+                best_d2  = d2;
+                best_dx  = dx;
+                best_dy  = dy;
+                any_wolf = true;
+            }
+        }
+        if (any_wolf) {
+            float dist = std::sqrt(best_d2);
+            out[p++] = clamp_norm(best_dx / VISION_RANGE);
+            out[p++] = clamp_norm(best_dy / VISION_RANGE);
+            out[p++] = clamp01(dist / VISION_RANGE);
+        } else {
+            out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 1.0f;
         }
     }
 

@@ -631,6 +631,10 @@ int run_self_tests() {
 
         check(dp::agent::ObservationBuilder::SIZE >= 140,
               "Observation: total dimension is at least 140 (S3.10 expanded)");
+        // D-048 blueprint回归: 564 → 567 by adding nearest_wolf (3 dims)
+        // so PPO sees its biggest threat even when 4 rabbits are closer.
+        check(dp::agent::ObservationBuilder::SIZE == 567,
+              "Observation: SIZE == 567 after D-048 nearest_wolf 3 dims");
         check(obs[0] == 1.0f && obs[1] == 1.0f && obs[2] == 1.0f,
               "Observation: vital slots [0..2] are 1.0 at full state");
 
@@ -653,10 +657,11 @@ int run_self_tests() {
             inv, sh, em, progress, buildings, wardrobe, farming, tame,
             dp::world::BuildingType::Shed, sm_test, obs2);
         // Sanity check: the shelter "placed" slot sits 3 slots before the
-        // S3.10 progress block, then 35 dims of P0 obs, then 384 dims of
-        // SpatialMemory window. So index = SIZE - 384 - 35 - 21 - 3.
+        // S3.10 progress block, then 38 dims of P0+D-048 obs (35 → 38 with
+        // the nearest_wolf addition), then 384 dims of SpatialMemory window.
+        // So index = SIZE - 384 - 38 - 21 - 3.
         int placed_idx = dp::agent::ObservationBuilder::SIZE
-                       - dp::agent::SpatialMemory::WINDOW_DIM - 35 - 21 - 3;
+                       - dp::agent::SpatialMemory::WINDOW_DIM - 38 - 21 - 3;
         check(obs2[placed_idx] > 0.5f,
               "Observation: shelter-placed flag flips after build");
     }
@@ -945,8 +950,11 @@ int run_self_tests() {
         r.event_eat(0.5f);    // half-recovery from depletion
         r.event_drink(0.3f);
         float b = r.end_step();
-        check(std::abs(b - (3.0f * 0.5f + 3.0f * 0.3f)) < 1e-5f,
-              "RewardSystem: eat+drink uses drive-reduction × coef");
+        // D-048 blueprint回归: food_coef/water_coef 3 → 6 to make the
+        // drink/eat gradient strong enough that PPO actually pursues
+        // water/food instead of settling on the cheaper sleep trigger.
+        check(std::abs(b - (6.0f * 0.5f + 6.0f * 0.3f)) < 1e-5f,
+              "RewardSystem: eat+drink uses drive-reduction × coef (D-048: ×6)");
 
         r.begin_step();
         r.event_death();

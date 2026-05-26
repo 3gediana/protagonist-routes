@@ -1,10 +1,35 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-26 晚（D-045/D-046/D-047 三连：clip 修了、long run 跑了、wolf_killed 杀了，撩狼根因被剥到第 3 层）
-> 当前阶段：**等用户回来选 D-048 撩狼根因第 3 层方向（A-E 5 选 1 或组合）**
-> Self-test：**116 个全过**（D-045 加 3 clip + D-047 加 1 wolf_killed=0）
+> 最后更新：2026-05-26 晚（D-048 蓝图回归综合实施 + ppo_d048_2M 后台训练中）
+> 当前阶段：**D-048 5 项一起改完编译验证 + smoke 见效（sleep% 30%→2%）+ 启动 2M long run**
+> Self-test：**117 个全过**（D-045 +3 clip / D-047 +1 wolf_killed=0 / D-048 +1 SIZE==567）
 
-## ✅ 最新会话完成（2026-05-26 晚）：D-046 → D-047 撩狼根因二次/三次诊断
+## ✅ 最新会话完成（2026-05-26 晚）：D-048 蓝图回归综合实施
+
+用户原话"看蓝图，为了实现蓝图，继续 / 不准偷工减料"。AI 重读 `docs/最终蓝图.md` 后发现当前 reward landscape **完全消解了蓝图本意**：蓝图说"饿了找食物渴了找水"——但 thirst_decay 8/min 让 thirst 一 ep 只衰减 24，agent 不需要找水也能活；蓝图说 sleep = "天黑找洞穴/林地躲"——但代码里 sleep 是 noop trigger，被 d046 学成 30% dominant 行为。
+
+5 项一次性改动（不挑一项做一项）：
+
+| # | 改动 | 蓝图依据 |
+|---|---|---|
+| A | `VitalConfig::thirst_decay_per_min` 8 → 12 | line 60 "口渴 0 死亡" |
+| B | `VitalConfig::hunger_decay_per_min` 8 → 12 | 同上 |
+| C | sleep 期间 hunger/thirst 各 burn 4/s | line 28 sleep ≠ noop |
+| D | obs 加 nearest_wolf 3 维（dx, dy, dist），SIZE 564 → 567 | line 24 "知道狼出没区" |
+| E | `RewardWeights::food_coef`/`water_coef` 3 → 6 | 让 drink/eat 梯度显著超 sleep |
+
+验证：
+- self-test 117/117 全过（11 RewardSystem + 6 Observation + 100 其他）
+- D-048 100k smoke 12 ep PPO：**sleep% 30% (d046 plateau) → 5% (d048 smoke) → 2.18% (d048 long run last 20)** ← sleep cost 立竿见影
+- ppo_d048_2M 启动（背景跑 ~1.5h），ep 43 时 R=-17.9 / drink% 1.17% / 早期死亡率 65% → ep20-43 45%
+
+详见 `决策记录.md` D-048。**ppo_d046_2M.pt / ppo_d043_2M.pt 不能 resume**（obs 维度变了），D-048 是 clean break。
+
+下一步：等 ppo_d048_2M 跑完看 last 20 是否破 0/+30/-20 三档门槛，决定 🟧/🟩/🔴。
+
+---
+
+## ✅ 上轮会话完成（2026-05-26 晚）：D-046 → D-047 撩狼根因二次/三次诊断
 
 用户原话"自己决策下一步"。AI 启动 D-046 clean slate 训练 + 数据对比 + 二次/三次诊断：
 

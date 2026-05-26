@@ -51,14 +51,18 @@ namespace dp::agent {
 //   137..139 worn       one-hot (none / dress / cloak)
 //   140..143 farm       nearest plot (dx, dy, growth, water_level)
 //   144      tame       follower_count / 4 (clipped)
-//   --- S4.0 P0 additions (35 slots) ---
+//   --- S4.0 P0 additions (38 slots after D-048) ---
 //   145..147 nearest water (dx, dy, dist_norm) scanned in radius VISION_RANGE
-//   148..153 biome one-hot at agent's feet (6 dims: Plain..Desert)
-//   154..157 selected_building_type one-hot (4 dims: Shed/Wood/Stone/Big)
-//   158..160 nearest active site materials left (wood/stone/grass each /20)
-//   161..179 last_action: 3 continuous + 16 discrete (matches AgentAction)
+//   148..150 nearest wolf (dx, dy, dist_norm) — D-048 blueprint回归.
+//            ObservationBuilder::K_ANIMALS picks the 4 nearest of any kind,
+//            so wolves can be missed when 4 rabbits are closer; this slot
+//            guarantees the policy always sees its biggest threat.
+//   151..156 biome one-hot at agent's feet (6 dims: Plain..Desert)
+//   157..160 selected_building_type one-hot (4 dims: Shed/Wood/Stone/Big)
+//   161..163 nearest active site materials left (wood/stone/grass each /20)
+//   164..182 last_action: 3 continuous + 16 discrete (matches AgentAction)
 //   --- S4.0 cognitive map (384 slots) ---
-//   180..563 SpatialMemory 8x8 window x 6 features (row-major gy,gx,feat)
+//   183..566 SpatialMemory 8x8 window x 6 features (row-major gy,gx,feat)
 //
 // All distances are normalised by VISION_RANGE (60m) so |dx|,|dy|,|dz| <= 1.
 class ObservationBuilder {
@@ -94,6 +98,7 @@ public:
         + 1                               // tame
         // S4.0 P0 additions:
         + 3                               // nearest_water (dx,dy,dist)
+        + 3                               // D-048 nearest_wolf (dx,dy,dist)
         + N_BIOMES                        // biome one-hot (6)
         + N_BUILDING_TYPES                // selected_building_type one-hot (4)
         + 3                               // nearest blueprint materials left

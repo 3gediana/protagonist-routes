@@ -38,9 +38,16 @@ public:
         // homeostatic RL). Callers now pass drive_before-drive_after instead
         // of kcal/ml. drive(v) = ((100-v)/100)^2, so drive_red ∈ [0, 1] per
         // call; coef 3.0 means a full hunger→full takes ~3.0 reward across
-        // multiple eats (in line with Crafter event scale).
-        float food_coef        = 3.0f;
-        float water_coef       = 3.0f;
+        // D-048 blueprint回归: drive_red×6 (was ×3). Keramati 2014 quadratic
+        // drive yields tiny rewards near full vitals; ×3 made drink/eat
+        // signal subordinate to the +0.05/s alive bonus and to "do nothing"
+        // (sleep) tactics. ×6 makes "drink to fullness when thirsty" worth
+        // ~+1.5 in one event - on par with milestone events - so PPO can
+        // actually see the gradient toward water/food. The drive shape
+        // still naturally bounds reward (full → 0) so this is not a
+        // reward-hacking risk like a flat per-ml carrot would be.
+        float food_coef        = 6.0f;
+        float water_coef       = 6.0f;
 
         // Wolves
         // D-043: align with Crafter "defeat_zombie/skeleton +1". 5.0 was a

@@ -190,6 +190,19 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         reward_.event_action_cost(cfg_.trigger_cost);
     }
 
+    // D-048 blueprint回归: sleep is no longer a free NOOP. Pressing sleep
+    // burns extra hunger/thirst (你睡觉的时候不会喝水也不会吃饭) and
+    // does not regenerate stamina (the trigger is a fiction in this MVP -
+    // the agent doesn't actually pause time). Without this, ppo_d046_2M
+    // collapsed to "sleep 30%" as the dominant action because it was
+    // costless and never triggered death (蓝图 line 28 makes clear sleep
+    // is supposed to be 'find a shelter from the night', not idle).
+    if (action.sleep) {
+        const float burn = 4.0f * dt;  // 4 vital points per second of sleep
+        vital_state_.hunger = std::max(0.0f, vital_state_.hunger - burn);
+        vital_state_.thirst = std::max(0.0f, vital_state_.thirst - burn);
+    }
+
     // Progression: every metre travelled while alive counts.
     float step_speed = std::sqrt(as.vel_x * as.vel_x + as.vel_y * as.vel_y);
     progress_.on_explore_step(step_speed * dt);

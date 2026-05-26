@@ -19,8 +19,16 @@ struct VitalState {
 };
 
 struct VitalConfig {
+    // D-048 blueprint回归: thirst/hunger decay restored to 12/min so the
+    // 5-min episode actually risks drying the agent out (60 of 100 in one
+    // episode without drinking) - blueprint line 60 says "口渴 0 死亡",
+    // and at 8/min an episode only burns 24, leaving thirst at 76 forever
+    // with no incentive to seek water. Earlier D-040/D-041 reduced this
+    // because PPO without clip+wolf_killed=0 was over-grinding drink for
+    // reward; with D-045/D-047 those carrots are fixed and we can put the
+    // pressure back.
     // Per-minute base decay
-    float hunger_decay_per_min = 8.0f;
+    float hunger_decay_per_min = 12.0f;
     // D-040 → D-041 evolution:
     //   12.0/min: drink dominant (r_water +1.8/ep) → agent locks into drinking
     //   4.0/min:  drink dies (r_water 0) → agent loses spatial nav cue → NOOP 52% / death 40%
@@ -28,7 +36,7 @@ struct VitalConfig {
     // Combined with D-041 satiation scaling in Environment.cpp (drink reward
     // tapers as thirst rises) and per-episode first_X milestones, this lets
     // PPO chase 8 main-line rewards instead of locking on a single one.
-    float thirst_decay_per_min = 8.0f;
+    float thirst_decay_per_min = 12.0f;
     // Stamina dynamics (per second)
     float stamina_run_decay   = 8.0f;   // when speed > run_threshold
     float stamina_walk_decay  = 0.5f;   // when moving normally
