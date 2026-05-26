@@ -1,5 +1,46 @@
 # deep_protagonist · PROGRESS
 
+> 最后更新：2026-05-26 晚（D-045/D-046/D-047 三连：clip 修了、long run 跑了、wolf_killed 杀了，撩狼根因被剥到第 3 层）
+> 当前阶段：**等用户回来选 D-048 撩狼根因第 3 层方向（A-E 5 选 1 或组合）**
+> Self-test：**116 个全过**（D-045 加 3 clip + D-047 加 1 wolf_killed=0）
+
+## ✅ 最新会话完成（2026-05-26 晚）：D-046 → D-047 撩狼根因二次/三次诊断
+
+用户原话"自己决策下一步"。AI 启动 D-046 clean slate 训练 + 数据对比 + 二次/三次诊断：
+
+**D-046 训练（kill 在 ep 142, ~1.27M 步）**：
+- last 20 R=**-31.7** / score=0.097 / death=40% / r_water=0 / r_food=0.026
+- 比 d043 last 20 (R=-20.84) **更糟**
+- top action: **sleep 30%** / blueprint 18% / drink 11%
+
+**关键诊断**：
+- 撩狼**不是主动攻击**！d046 ep100-143 attack% 4.73% / kill 0/43 / 但被咬死 35%
+- agent 学到 sleep 30% 当 dominant 行为，被狼撞死
+- "撩狼塌缩"不是单一 bug，是 **3 层洋葱**：
+  1. D-045 修：clip [-10,+10] 失效（已修，commit 564cfb2）
+  2. D-047 修：wolf_killed +1 残留 carrot（已修，self-test 11/11 通过）
+  3. **D-048 待修**：sleep 30% dominant + 没避狼 reward 梯度（路线图占位）
+
+**修了什么（D-047）**：
+- `RewardWeights::wolf_killed` 1.0f → 0.0f
+- 加 self-test: `wolf_killed contributes 0 reward (D-047)`
+- 11/11 RewardSystem self-test PASS
+- 100k smoke 12 ep 验证（noise level，没有显著差异——预期，因 attack 不是 dominant action）
+
+**没启动 D-048 训练**——撩狼根因 3 层洋葱要更深的 reward landscape 重设计，**留给用户决策**：
+- A) 加避狼 reward shaping（saw_danger 时距 wolf 增减奖罚）
+- B) 给 sleep 加成本
+- C) 加大 drink/eat 信号
+- D) 降低 alive 信号
+- E) 补 obs 字段（最近 wolf 距离/方向）
+- F) 你直接说
+
+详见 `决策记录.md` D-046 / D-047 / D-048。
+
+---
+
+## ✅ 上轮会话完成（2026-05-26 中）：D-045 reward 信号复盘 + clip 失效修复
+
 > 最后更新：2026-05-26 中（D-045 reward 信号复盘 + clip 失效修复）
 > 当前阶段：**D-045 修了 D-043 的 clip 失效 bug，等下一轮训练 ppo_d044_2M 验证**
 > Self-test：**115 个全过**（D-043 加 4 + D-045 加 3 clip test - 1 删 first_hunt）

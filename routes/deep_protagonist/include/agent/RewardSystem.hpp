@@ -46,8 +46,14 @@ public:
         // D-043: align with Crafter "defeat_zombie/skeleton +1". 5.0 was a
         // big chunk of typical episode return and combined with first_hunt
         // produced the "撩狼" pathology in run7. +1 keeps the self-defense
-        // signal small enough that PPO won't optimize for it.
-        float wolf_killed      = 1.0f;
+        // D-047: wolf_killed reward set to 0. D-043 P1 already removed
+        // first_hunt milestone (Crafter has no hunt achievement), but
+        // wolf_killed +1 was kept and turned out to be the residual carrot
+        // driving 撩狼 collapse: attack wolf had positive expected value
+        // while clip [-10,+10] capped the bite-cluster cost, making
+        // "small risk with reward" the dominant policy in d046_2M (last 20
+        // R=-31.7, water=0, death=40%). Wolves are now pure danger.
+        float wolf_killed      = 0.0f;
         float wolf_bite_dmg    = -1.0f;   // per damage point absorbed
 
         // Hard terminal

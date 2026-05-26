@@ -976,6 +976,16 @@ int run_self_tests() {
         check(std::abs(m_crisis - 0.3f) < 1e-3f,
               "RewardSystem: milestone honors crisis scale param");
 
+        // D-047: wolf_killed reward zeroed. Killing a wolf no longer pays
+        // the +1 carrot that drove 撩狼 collapse in d046_2M (after clip
+        // capped the bite-cluster cost, attack-wolf became positive EV).
+        r.reset_episode();
+        r.begin_step();
+        r.event_wolf_killed();
+        float wk = r.end_step();
+        check(std::abs(wk) < 1e-5f,
+              "RewardSystem: wolf_killed contributes 0 reward (D-047)");
+
         // D-044: end_step return value is CLIPPED to [-10, +10]. Pre D-044
         // the caller (Environment::apply_action_effects_) discarded this
         // return value and StepResult.reward leaked the unclipped sum,
