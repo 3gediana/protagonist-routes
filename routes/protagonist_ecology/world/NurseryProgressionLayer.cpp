@@ -71,12 +71,66 @@ void NurseryProgressionLayer::onAttach(IWorld& world) {
 // us the archetype's persisted unlock state right after onAttach.
 // We OR-merge into our own flags so a stale-false in `state` never
 // silently overrides a true we somehow already had set.
+//
+// Stone Bootstrap commit 4 (bug fix): persisted flags ONLY record
+// "this archetype has earned the unlock"; they do NOT carry the
+// physical world side-effects (stones on the ground, ignited fires,
+// activated worksites). Every new episode bootstraps a fresh world
+// via createBootstrapWorld with all sticks (zero stones), all
+// dormant campfires/worksites. Pre-fix behaviour: if seed carried
+// stone_unlocked=true, the layer's `if (!stone_unlocked_ ...)` gate
+// in dispatchRandomPendingEvent short-circuits and ScatterStone
+// never fires again - the agent inherits "stone_unlocked=true" but
+// lives in a stone-free world. Graduate AB 60-gen showed
+// deposits_stone=0 for every single generation as a direct result.
+//
+// For each flag that transitions false → true via seeding, we
+// replay the side-effect that dispatchRandomPendingEvent would have
+// fired when that unlock originally happened. Replay is immediate
+// (during seed, before the new episode's first tick) so stones are
+// scattered into the world during the initial intervention budget,
+// well before the agent finishes its first deposits. Each replay is
+// guarded by a null-check on the collaborating layer pointer so
+// existing unit tests that construct a bare NurseryProgressionLayer
+// without attaching it to a world keep working.
 void NurseryProgressionLayer::seedFromProgressionState(const ArchetypeProgressionState& state) {
+    const bool prev_first_fire   = first_fire_ignited_;
+    const bool prev_worksite     = worksite_unlocked_;
+    const bool prev_stone        = stone_unlocked_;
+    const bool prev_heavy        = heavy_unlocked_;
+    const bool prev_second_fire  = second_fire_ignited_;
+
     first_fire_ignited_   = first_fire_ignited_   || state.first_fire_ignited;
     worksite_unlocked_    = worksite_unlocked_    || state.worksite_unlocked;
     stone_unlocked_       = stone_unlocked_       || state.stone_unlocked;
     heavy_unlocked_       = heavy_unlocked_       || state.heavy_unlocked;
     second_fire_ignited_  = second_fire_ignited_  || state.second_fire_ignited;
+
+    if (!prev_first_fire && first_fire_ignited_ && campfire_ != nullptr) {
+        campfire_->igniteNextDormant();
+    }
+    if (!prev_worksite && worksite_unlocked_ && worksite_ != nullptr) {
+        worksite_->activateNextDormant();
+        if (director_ != nullptr) {
+            director_->submit({InterventionDirectorLayer::RequestKind::ScatterStone,
+                               "progression.worksite_support.replay", 0.08f, 0.03f});
+        }
+    }
+    if (!prev_stone && stone_unlocked_ && director_ != nullptr) {
+        for (std::size_t i = 0; i < stone_unlock_count_; ++i) {
+            director_->submit({InterventionDirectorLayer::RequestKind::ScatterStone,
+                               "progression.stone.replay", 0.08f, 0.03f});
+        }
+    }
+    if (!prev_heavy && heavy_unlocked_ && director_ != nullptr) {
+        for (std::size_t i = 0; i < heavy_unlock_count_; ++i) {
+            director_->submit({InterventionDirectorLayer::RequestKind::ScatterHeavyStone,
+                               "progression.heavy.replay", 0.14f, 0.07f});
+        }
+    }
+    if (!prev_second_fire && second_fire_ignited_ && campfire_ != nullptr) {
+        campfire_->igniteNextDormant();
+    }
 }
 
 ArchetypeProgressionState NurseryProgressionLayer::progressionState() const {
