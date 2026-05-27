@@ -85,7 +85,7 @@ struct PPOConfig {
     float  clip_eps        = 0.2f;
     float  vf_coef         = 0.5f;
     float  ent_coef        = 0.01f;   // D-068: 0.02 caused entropy drift 32->38 across D-065->D-066->D-067 with score collapse 0.296->0.144. Lower to 0.01 so policy converges to deterministic behaviors and doesn't randomize away learned line-21 baseline. D-050 NOOP-collapse was at 0.005 with no learned baseline; we now load from a strong D-065 ckpt so 0.01 is safe. Keep above 0.005 to retain some exploration for hunt/clothing unlocks. (D-050 P2 history: 0.02 was bumped from 0.005 specifically to escape NOOP-dominant when starting from random init.)
-    float  lr              = 3e-4f;
+    float  lr              = 1e-4f;   // D-070: 3e-4 caused PPO drift across D-066..D-069 (all collapsed to score 0.14, drink 0%, regardless of ent_coef or Adam reset). Lower lr by 3x to slow policy updates - if D-065 baseline truly is the 2MB shadow's capacity ceiling, slower updates should keep policy near baseline rather than overshoot into NOOP region.
     float  max_grad_norm   = 0.5f;
     bool   use_cuda        = true;
     int    seed            = 1234;
