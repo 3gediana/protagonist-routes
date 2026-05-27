@@ -223,6 +223,11 @@ private:
     // D-043: first_hunt removed. Crafter's design principle: do not reward
     // attacks on neutral animals (only defeat_zombie/skeleton). first_hunt
     // was the direct cause of run7's "撩狼" pathology.
+    // D-062: re-introduced first_hunt, but ONLY for prey kills
+    // (rabbit/deer/fish) - wolf kills still get 0 reward via wolf_killed=0
+    // so the 撩狼 carrot stays gone. Wolves remain pure danger; prey are
+    // the legitimate hunting target per blueprint line 22.
+    bool                            first_hunt_fired_           = false;
     bool                            first_seed_planted_fired_   = false;
     bool                            first_house_built_fired_    = false;
     bool                            first_crop_harvested_fired_ = false;

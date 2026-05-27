@@ -1,4 +1,4 @@
-#include "env/Environment.hpp"
+﻿#include "env/Environment.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -41,7 +41,7 @@ Environment::Environment(const EnvConfig& cfg)
     float wx_max = world_.heightmap().world_size_x();
     float wy_max = world_.heightmap().world_size_y();
 
-    // D-050: blueprint line 9-10 demands "饿了找食物，渴了找水" be
+    // D-050: blueprint line 9-10 demands "楗夸簡鎵鹃鐗╋紝娓翠簡鎵炬按" be
     // *learnable*. Pre D-050 spawn was hard-pinned at the world centre
     // (512, 512); for the default 1024 m world with 3 procedural rivers
     // the centre often sits >60 m from any River|Swamp cell, which means
@@ -91,7 +91,7 @@ Environment::Environment(const EnvConfig& cfg)
     // P2 spawn (632.5, 214.4) had water in sight but zero plants nearby
     // in the wander 100k smoke -> food=0 across the whole episode, so
     // PPO never sampled a successful eat() either. Blueprint line 21
-    // bundles "饿了找食物，渴了找水" as one early-stage loop, so the
+    // bundles "楗夸簡鎵鹃鐗╋紝娓翠簡鎵炬按" as one early-stage loop, so the
     // spawn must satisfy *both* preconditions to be learnable.
     auto food_in_vision = [&](float cx, float cy) {
         const float R = dp::agent::ObservationBuilder::VISION_RANGE;
@@ -223,17 +223,28 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     first_spear_fired_          = false;
     first_shelter_fired_        = false;
     first_clothing_fired_       = false;
+    first_hunt_fired_           = false;
     first_seed_planted_fired_   = false;
     first_house_built_fired_    = false;
     first_crop_harvested_fired_ = false;
     first_follower_fired_       = false;
 
+    // D-063: starter kit. D-062 proved +5 critical alone can't make
+    // PPO explore the craft_spear -> hunt path in 2M steps (0% first_spear,
+    // 0% first_hunt in last 60 eps). Pre-place Wood+Stone so craft_spear
+    // succeeds on first attempt -> +5 critical fires -> agent learns the
+    // 'tool gives bonus' association, then with spear in hand attacks on
+    // rabbit/deer/fish (1-2 hits @ 50 dmg) become viable to discover.
+    // Third slot left empty for PPO to fill (grass/fur).
+    inventory_.add(dp::agent::ItemKind::Wood);
+    inventory_.add(dp::agent::ItemKind::Stone);
+
     rebuild_observation_(obs_out);
 }
 
 // D-043 P1: drive function (Keramati & Gutkin 2014, Homeostatic RL).
-// Maps a vital reading in [0, 100] to a drive ∈ [0, 1]. v=100 (sated) → 0,
-// v=0 (depleted) → 1. Quadratic so deviations near the setpoint matter less
+// Maps a vital reading in [0, 100] to a drive 鈭?[0, 1]. v=100 (sated) 鈫?0,
+// v=0 (depleted) 鈫?1. Quadratic so deviations near the setpoint matter less
 // than approaching depletion (matches biological appetite).
 //   drive(100) = 0.00   (no need)
 //   drive( 80) = 0.04   (mild need; eating gives small reward)
@@ -304,7 +315,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     };
 
     // D-043 P1: eat/drink with drive-reduction reward (Keramati 2014).
-    // Replaces the old satiation_scale_ × kcal scheme. drive(v=100)=0 so
+    // Replaces the old satiation_scale_ 脳 kcal scheme. drive(v=100)=0 so
     // eating-when-full naturally yields zero reward; near-empty agents see
     // a big drive_red. Returns the *actual* vital restored so callers can
     // still detect "did the consumption happen" for first_X triggers.
@@ -340,12 +351,12 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         reward_.event_action_cost(cfg_.trigger_cost);
     }
 
-    // D-048 blueprint回归: sleep is no longer a free NOOP. Pressing sleep
-    // burns extra hunger/thirst (你睡觉的时候不会喝水也不会吃饭) and
+    // D-048 blueprint鍥炲綊: sleep is no longer a free NOOP. Pressing sleep
+    // burns extra hunger/thirst (浣犵潯瑙夌殑鏃跺€欎笉浼氬枬姘翠篃涓嶄細鍚冮キ) and
     // does not regenerate stamina (the trigger is a fiction in this MVP -
     // the agent doesn't actually pause time). Without this, ppo_d046_2M
     // collapsed to "sleep 30%" as the dominant action because it was
-    // costless and never triggered death (蓝图 line 28 makes clear sleep
+    // costless and never triggered death (钃濆浘 line 28 makes clear sleep
     // is supposed to be 'find a shelter from the night', not idle).
     if (action.sleep) {
         const float burn = 4.0f * dt;  // 4 vital points per second of sleep
@@ -358,7 +369,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     progress_.on_explore_step(step_speed * dt);
 
     // Animals + shelter dampening (mirrors main.cpp).
-    // D-049 #1: blueprint line 26 says "天黑找洞穴/林地躲". Pre D-049
+    // D-049 #1: blueprint line 26 says "澶╅粦鎵炬礊绌?鏋楀湴韬?. Pre D-049
     // inside_cave_ was a render-only flag (color tint + don't-fly-out
     // physics). Now caves count as a real shelter: wolves perceive the
     // agent at 30% range and chase at 70% speed when underground, and
@@ -424,8 +435,8 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 vital_state_.hunger  = std::max(0.0f, vital_state_.hunger  - 12.0f);
                 vital_state_.stamina = std::max(0.0f, vital_state_.stamina - 25.0f);
                 // D-043: poison = inverse drive reduction (eat made things
-                // worse). -0.2 drive ≈ -0.6 reward at food_coef=3.0,
-                // similar magnitude to old -15kcal × 0.04 = -0.6.
+                // worse). -0.2 drive 鈮?-0.6 reward at food_coef=3.0,
+                // similar magnitude to old -15kcal 脳 0.04 = -0.6.
                 reward_.event_eat(-0.2f);
             } else {
                 const float ate   = eat_drive(kcal);
@@ -453,7 +464,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // cell (within 2 m). The original gate required biome_at(agent) to be
     // exactly water; in practice that meant the agent had to physically
     // step into the river - which CapsuleAgent's gravity makes unreliable
-    // and which the blueprint never demanded ("渴了找水" is "find water",
+    // and which the blueprint never demanded ("娓翠簡鎵炬按" is "find water",
     // not "swim"). The looser gate matches "stand at the bank, drink".
     if (action.drink) {
         auto biome_here = world_.biome_at(as.pos_x, as.pos_y);
@@ -560,7 +571,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     for (int i = 0; i < finished; ++i) {
         reward_.event_built_shelter();
         progress_.on_house_built();
-        // D-059: first_house back to single milestone fire (D-056's ×5
+        // D-059: first_house back to single milestone fire (D-056's 脳5
         // critical was reverted - any reward change on top of D-055 ckpt
         // collapsed PPO). The +5 built_shelter and +1 milestone are kept;
         // PPO needs to see this combo at least once before it converges,
@@ -580,7 +591,12 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     if (action.craft_spear) {
         if (inventory_.craft_spear()) {
             reward_.event_crafted_tool();
-            fire_once(first_spear_fired_);
+            // D-062: upgrade to critical (+5). Crafting the first spear is
+            // the key gateway to line 22 hunting; making the first one
+            // worth more than a routine craft helps PPO discover the
+            // wood+stone -> spear pipeline. Subsequent spears within the
+            // same episode follow the normal crafted_tool path.
+            fire_once_critical(first_spear_fired_);
         }
     }
     if (action.place_shelter) {
@@ -595,28 +611,50 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         float damage = has_spear ? 50.0f : 20.0f;
         auto hit = animals_.agent_attack(as.pos_x, as.pos_y,
                                          agent_.yaw(), reach, damage);
+        if (hit.index >= 0) {
+            // D-064: small shaped reward for landing a prey hit (even if
+            // not fatal). D-063 showed 100% spear but only ~8% first_hunt.
+            // PPO learned craft_spear=good but not attack_while_facing_prey=good
+            // because kill is sparse (2-3 hits needed). Per-hit +0.5 makes
+            // the gesture immediately reinforcing. Wolves still excluded
+            // to preserve the D-047 anti-rou-lang policy.
+            auto k_ = animals_.animals()[hit.index].kind;
+            if (k_ != dp::world::AnimalKind::Wolf) {
+                reward_.event_collected_resource();
+            }
+        }
         if (hit.killed) {
             auto kind = animals_.animals()[hit.index].kind;
             if (kind == dp::world::AnimalKind::Wolf) {
+                // Wolf: wolf_killed stays 0 (D-047 anti-鎾╃嫾). Eat reward
+                // only if hungry; NO first_hunt milestone for wolves -
+                // we don't want PPO to gamble against predators for the
+                // line-22 unlock.
                 reward_.event_wolf_killed();
                 const float ate = eat_drive(40.0f);
                 if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
+                reward_.event_collected_resource();  // D-062: fur is a resource
             } else if (kind == dp::world::AnimalKind::Rabbit) {
                 const float ate = eat_drive(15.0f);
                 if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
+                reward_.event_collected_resource();  // D-062
+                fire_once_critical(first_hunt_fired_);  // D-062
             } else if (kind == dp::world::AnimalKind::Deer) {
                 const float ate = eat_drive(40.0f);
                 if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
+                reward_.event_collected_resource();  // D-062
+                fire_once_critical(first_hunt_fired_);  // D-062
             } else if (kind == dp::world::AnimalKind::Fish) {
                 const float ate = eat_drive(20.0f);
                 if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                fire_once_critical(first_hunt_fired_);  // D-062
             }
-            // D-043: first_hunt removed. Killing a wolf still gives wolf_killed
-            // (now +1) plus eat reward, but no big milestone spike. This breaks
-            // the run7 "撩狼 for +20 milestone" pathology.
+            // D-043: first_hunt removed. D-062: re-introduced but ONLY for
+            // prey (rabbit/deer/fish). Wolves still grant no kill bonus so
+            // the 鎾╃嫾 pathology cannot re-emerge.
         }
     }
 
@@ -635,7 +673,10 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             wardrobe_.wear(inventory_, dp::agent::ItemKind::GrassDress);
             worn = true;
         }
-        if (worn) fire_once(first_clothing_fired_);
+        // D-062: upgrade to critical (+5). First time the agent puts on
+        // any garment is the line-23 unlock; make it salient enough that
+        // PPO can connect craft_grass_dress/fur_cloak -> wear_clothes.
+        if (worn) fire_once_critical(first_clothing_fired_);
     }
 
     if (action.plant_seed && progress_.can_farm()) {
@@ -685,7 +726,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     }
     was_alive_ = vital_state_.alive;
 
-    // D-043 P2: per-step state-based bonus (Φ-style "what the agent has
+    // D-043 P2: per-step state-based bonus (桅-style "what the agent has
     // accumulated"). Awards a small ongoing payout for holding house +
     // clothes + followers + inventory diversity, so the agent learns these
     // as persistent values rather than one-shot first_X events.
@@ -718,7 +759,7 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     const float dt = cfg_.fixed_dt;
     day_.advance(dt);
 
-    // D-049 #2: blueprint line 62 "体力低就走慢". Pre D-049 stamina was a
+    // D-049 #2: blueprint line 62 "浣撳姏浣庡氨璧版參". Pre D-049 stamina was a
     // read-only number on the HUD - it decayed, but the agent's actual
     // move_speed_ never changed, so there was no reason for PPO to rest.
     // Now low stamina scales the move command before it reaches the body
@@ -746,7 +787,7 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     // was visible in a 60 m circle. That made cognitive map essentially
     // useless for navigation: the agent had to physically step ON each
     // water cell to remember "this is water", which never happens in a
-    // 1024 m world. Blueprint line 24 says "知道家、水源、狼出没区在哪",
+    // 1024 m world. Blueprint line 24 says "鐭ラ亾瀹躲€佹按婧愩€佺嫾鍑烘病鍖哄湪鍝?,
     // i.e. *seen* things should be remembered. We now mark every grid
     // cell whose centre lies within VISION_RANGE of the agent with the
     // observed feature, matching the "vision = memory write" semantics.

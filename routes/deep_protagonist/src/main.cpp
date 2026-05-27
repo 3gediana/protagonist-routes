@@ -1080,6 +1080,42 @@ int run_self_tests() {
         float bs = r.end_step();
         check(std::abs(bs - 5.0f) < 1e-3f,
               "RewardSystem: built_shelter restored to +5 (D-059)");
+
+        // D-062: a 5x milestone stack (used by Environment's
+        // fire_once_critical for first_eat / first_drink / first_spear /
+        // first_clothing / first_hunt) should land at exactly +5 with
+        // crisis_scale=1.0. This is the magnitude PPO will see the very
+        // first time it succeeds in a hunt or wears clothes inside an
+        // episode; everything after that is the normal +1 milestone path
+        // (or the per-event drive / collect rewards).
+        r.reset_episode();
+        r.begin_step();
+        for (int i = 0; i < 5; ++i) r.event_milestone(1.0f);
+        float critical = r.end_step();
+        check(std::abs(critical - 5.0f) < 1e-3f,
+              "RewardSystem: 5x milestone stack lands at +5 (D-062 critical)");
+
+        // D-062: critical milestone honours crisis scaling (so a starving
+        // agent in vital crisis only gets 0.3x of the first_hunt bonus,
+        // matching how first_eat/first_drink already behaved).
+        r.reset_episode();
+        r.begin_step();
+        for (int i = 0; i < 5; ++i) r.event_milestone(0.3f);
+        float critical_crisis = r.end_step();
+        check(std::abs(critical_crisis - 1.5f) < 1e-3f,
+              "RewardSystem: 5x milestone stack respects crisis scale (D-062)");
+
+        // D-062: fur collection on prey kill should fire event_collected_resource,
+        // i.e. each fur drop is worth +0.5 reward (matches collect of wood/stone).
+        // This gives PPO a per-kill signal even when the agent isn't hungry
+        // enough for eat_drive to pay out, and even when first_hunt has
+        // already been claimed this episode.
+        r.reset_episode();
+        r.begin_step();
+        r.event_collected_resource();
+        float fur_bump = r.end_step();
+        check(std::abs(fur_bump - 0.5f) < 1e-3f,
+              "RewardSystem: fur on kill rewards as collect (+0.5) (D-062)");
     }
 
     // --- SpatialMemory ---

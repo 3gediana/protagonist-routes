@@ -1,8 +1,31 @@
-# deep_protagonist · PROGRESS
+﻿# deep_protagonist 璺?PROGRESS
 
-> 最后更新：2026-05-27 下午（D-055 → D-061 8 个迭代完结，D-061 ckpt 史上最强 line 21 闭环）
-> 当前阶段：**蓝图 line 21 (饿了找食物渴了找水) 100% / 100% sustained，R +6.4 POSITIVE** — D-061 last 60 ep
-> Self-test：**130 个全过**
+> 鏈€鍚庢洿鏂? 2026-05-28 (D-064 autonomous run launched)
+> 褰撳墠闃舵: **D-064 in-flight** (2M from D-063 ckpt, scheduled task dp_d064, ETA ~01:00 UTC)
+> 涓婁竴绋虫€? **D-063** (last 60: spear 100% / hunt~ 5/60=8.3% / eat 100% / drink 100% / score 0.292 = 椤圭洰鍙叉渶楂?
+> Self-test: 134
+
+## D-063 鈫?D-064 autonomous (2026-05-27/28)
+
+### D-063 缁撴灉 (last 60 ep)
+- 涓绘寚鏍囧叏鏁拌揪鏍?
+  - first_spear% = 100% (>=30%)
+  - first_hunt% 鈮?8.3% (hidden milestone>16.5 鍚彂, >=5%)
+  - first_eat% = 100% / first_drink% = 100% (>=95%/85%)
+  - score = 0.292 (椤圭洰鍙叉渶楂? vs D-062 0.182, D-061 0.146)
+- 璧锋墜鍖?1 Wood + 1 Stone @ spawn) 璁?craft_spear 绗竴娆℃垚鍔?鈫?+5 critical 鈫?閿佹 path
+- ep 1 / 164 / 184 / 186 / 199 / 221 鍏?6 涓?episode 瑙﹀彂 hidden first_hunt critical
+
+### D-064 鏀瑰姩 (per-hit shaped reward for prey)
+- Environment::step() 鏀诲嚮鍒嗘敮: hit.index >= 0 && kind != Wolf 鏃?reward_.event_collected_resource() (+0.5/hit)
+- 涓嶅姩 obs / 缃戠粶 / 瓒呭弬
+- 璁粌 2M from D-063 ckpt
+
+### D-064 棰勬湡 (璁畬鐪?
+- 涓? first_hunt% 鈮?30% (hidden ms>16.5 heuristic)
+- 鍙嶉€€鍖? eat/drink 鈮?95%/85% / spear 鈮?90% / score 鈮?0.27
+- 缁煎悎: r_collect mean 鈮?3.0
+
 
 ## ✅ D-055 → D-061 8 轮迭代终态（2026-05-27 早 → 下午）
 
