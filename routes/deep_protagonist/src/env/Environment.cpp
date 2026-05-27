@@ -556,9 +556,16 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     for (int i = 0; i < finished; ++i) {
         reward_.event_built_shelter();
         progress_.on_house_built();
+        // D-056: first_house gets the same fire_once_critical bonus as
+        // first_eat/first_drink (+5 milestones × crisis scale). This makes
+        // "the first house" worth ~+5 instead of +1 at full crisis, on the
+        // same magnitude as first eating/drinking which is appropriate
+        // for the blueprint Mid->Late transition.
         if (!first_house_built_fired_) {
-            reward_.event_milestone();
             first_house_built_fired_ = true;
+            for (int k = 0; k < 5; ++k) {
+                reward_.event_milestone(crisis);
+            }
         }
     }
 

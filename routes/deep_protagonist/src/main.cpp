@@ -1070,6 +1070,18 @@ int run_self_tests() {
               "RewardSystem: deposit alone is +1.0 (D-055)");
         check(d_only > c_only + 1e-5f,
               "RewardSystem: deposit reward > collect reward (D-055)");
+
+        // D-056: built_shelter weight raised 5 → 15. Building completion
+        // is the blueprint Mid stage prize and needs to dominate over
+        // food/collect rewards even after γ=0.99 long-horizon discount.
+        r.reset_episode();
+        r.begin_step();
+        r.event_built_shelter();
+        float bs = r.end_step();
+        check(std::abs(bs - 10.0f) < 1e-3f,
+              "RewardSystem: built_shelter clipped to +10 (D-056 raw=15)");
+        check(std::abs(r.last_step().shelter - 15.0f) < 1e-3f,
+              "RewardSystem: built_shelter unclipped is +15 (D-056)");
     }
 
     // --- SpatialMemory ---

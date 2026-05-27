@@ -82,7 +82,15 @@ public:
 
         // Resource / construction (S3.7e/f/g)
         float collected        = 0.5f;
-        float built_shelter    = 5.0f;
+        // D-056: 5 → 15. With γ=0.99 and roughly 200 steps between
+        // depositing the last material and the prior "I should build"
+        // decision, +5 discounts to 5×0.99^200≈0.65 - smaller than a
+        // single deposit reward (+1). +15 discounts to ~2, large enough
+        // for PPO to value reaching the end of the chain over abandoning
+        // it for nearby food. D-055's 280-ep run never finished a
+        // building precisely because the +5 prize was too small to pull
+        // through the long horizon.
+        float built_shelter    = 15.0f;
         float crafted_tool     = 3.0f;
         // D-055: dedicated reward for depositing a material into an active
         // construction site. Larger than `collected` (0.5) so PPO can
