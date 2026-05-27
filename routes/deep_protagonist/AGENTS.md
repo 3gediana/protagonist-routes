@@ -83,3 +83,23 @@
 - 训练命令一律 `run_in_background: true`，主 turn 立刻返回 shell_id
 - 然后在每 ≤ 4 分钟内做一次 `get_output` poll；间歇期间可以做：写文档 / 改其他文件 / 准备分析脚本（让等待不浪费）
 - exec timeout 也别超过 4 分钟同理
+
+## 鏃ュ織/浜х墿鏀跺彛瑙勫垯锛圖-072锛?026-05-28锛岀鐩樼偢杩囦竴娆★級
+
+**瑙﹀彂鍘熷洜**: 鐢ㄦ埛 D 鐩?AI 璁粌鐩稿叧鏁版嵁鏇剧疮璁?~160GB 閲忕骇锛沝eep_protagonist 鑷韩涓€鏅氳窇 10 涓?D-XXX 涔熶細鐣欏嚑鍗佷釜 .opt + .pt + log銆傞渶瑕佹瘡涓?D-XXX 璁畬鑷姩 prune銆?
+### 姣忎釜 D-XXX 璁畬蹇呭仛锛堝湪 git commit 涔嬪墠锛?
+1. **璺?prune 鑴氭湰**: \powershell scripts\prune_runs.ps1\
+   - 淇濈暀: 鏈€杩?5 涓?D-XXX 鍏ㄩ儴浜х墿 + 閲戞爣鍑?ckpt (D-061, D-065)
+   - 鍒犻櫎: 鍏朵粬 D-XXX 鐨?.pt / .opt / .jsonl / .stdout.log / .stderr.log
+   - 涓嶅姩: 浠讳綍 *.opt.bak* 鏂囦欢 (浜哄伐 hide)
+2. **涓嶈鎶?runs/ 鍏?git** (.gitignore 宸插寘鍚?
+3. **涓嶈鍦?c++\data\runs\ 鎴?c++\tmp\ 涓嬭緭鍑?deep_protagonist 鏃ュ織** - 杩欎袱涓洰褰曟槸 protagonist_ecology 鐨勶紱娣风敤浼氳鐢ㄦ埛鍒嗕笉娓呰皝鐨勬棩蹇?
+### 绂佹
+
+- 鉂?闀挎湡淇濆瓨鎵€鏈?D-XXX 鐨?ckpt (鍏?30 涓氨 120 MB .opt + 60 MB .pt)
+- 鉂?璁粌鏃舵妸鏃ュ織杈撳嚭鍒?\c++\tmp\\\ 鎴?\c++\data\\\ (閭ｆ槸鍒殑椤圭洰鍦扮洏)
+- 鉂?鍦?docs/ 涔嬪鐨勪綅缃啓姘镐箙鎬?.md (闄?README/AGENTS/.gitignore 绛?
+
+### 閲戞爣鍑?ckpt 缁存姢
+
+- "閲戞爣鍑?鍦?\scripts\prune_runs.ps1\ 鐨?\-goldKeep\ 鍙傛暟閲?- 鍑虹幇鏂伴噾鏍囧噯 (e.g. D-072 score > 0.30) 鈫?鏇存柊鍙傛暟 + 鍦?PROGRESS.md 鏍囨敞
