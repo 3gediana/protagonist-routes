@@ -34,6 +34,16 @@ struct TraceRecorderConfig {
     // with agents/worksites/weather/season snapshots. Off by default (large).
     bool viewer_frames_enabled{false};
     std::size_t viewer_frame_interval{80};  // every N ticks (default sparse for disk budget)
+
+    // 2026-05-28 disk-budget guard (parity with D-044 CreditLedger /
+    // CommunicationMetrics / _signal_debug.csv 200 MB caps). Per-file
+    // ceiling on event_trace.jsonl / agent_trace.csv / world_trace.csv /
+    // viewer_frames.jsonl. Once a stream's tellp() crosses the cap, the
+    // recorder closes the stream and emits a single LOG_WARN. Safety net
+    // against runs that opt into `max_generations = 60` and unintentionally
+    // produce ~90 GB of traces (previously observed: each event_trace.jsonl
+    // ~750 MB, 60 gen x 2 ep = ~90 GB per run). 0 means no cap.
+    std::size_t max_bytes_per_file{200ULL * 1024ULL * 1024ULL};
 };
 
 class TraceRecorder final {
@@ -68,6 +78,13 @@ private:
     std::ofstream world_trace_;
     std::ofstream viewer_frames_;  // L7 R1
     events::SubscriptionId event_subscription_{0};
+
+    // 2026-05-28 disk-budget: tracks whether the per-file cap warning
+    // has already been emitted for each stream so we don't spam the log.
+    bool event_cap_warned_{false};
+    bool agent_cap_warned_{false};
+    bool world_cap_warned_{false};
+    bool viewer_cap_warned_{false};
 };
 
 TraceRecorderConfig loadTraceRecorderConfig(const config::Config& config);

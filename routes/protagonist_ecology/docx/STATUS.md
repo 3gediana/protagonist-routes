@@ -1,9 +1,23 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-28 凌晨（**Stone Bootstrap commit 4 fix 完整验证：60-gen graduate AB 重跑 `fb2c9c5` binary 拿到 harmony_check 7/7 PASS，原 5/7 的 C5(worksites=0) + C6(me_cov=0.16) 全部消除**）。前次 (2026-05-26 中)：D-044 disk-budget hardening；再前 (2026-05-25 晚)：Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口
+> 最后巡检：2026-05-28 早晨（**结构变异 60-gen AB v2 收齐 7/7 PASS + TraceRecorder 加 200 MB 每文件硬上限 + 4 个 long_run toml 把 `[trace].max_generations` 从 60 滚回 4（D-044 同款 disk-budget 守门）+ 释放 ~144 GB trace 旧数据**）。前次 (2026-05-28 凌晨)：Stone Bootstrap commit 4 fix 完整验证；再前 (2026-05-26 中)：D-044 CSV disk-budget hardening；再前 (2026-05-25 晚)：Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD（protagonist_ecology 视角）：`fb2c9c5 protagonist_ecology: Stone Bootstrap commit 4 fix: replay seed side-effects` (master HEAD 是 deep_protagonist 的 `9de5519 D-068` — 共仓不冲突)
+> 当前 HEAD（protagonist_ecology 视角）：`f5abc02 protagonist_ecology: Stone Bootstrap commit 4 fix validation docs` (master HEAD 是 deep_protagonist 的 `9de5519 D-068` — 共仓不冲突)。本节代码改动（TraceRecorder disk-budget + toml rollback）pending commit。
+
+> **2026-05-28 早晨 disk-budget 二次硬化 + structural-mutation AB v2 (7/7 PASS) + 长 run 编译管线恢复**：
+> - **背景**：凌晨连跑 graduate-AB-v2 (curriculum) + structural-mutation AB v2 各一轮，每轮 trace 输出 ~76 GB（60 gen × 2 ep × ~750 MB `event_trace.jsonl`），D: 盘从 244 GB 跌到 92 GB free（**消耗 152 GB，已逼近爆盘**）。前次 D-044 给 CSV（CreditLedger / CommunicationMetrics / `_signal_debug.csv`）加了 200 MB cap，但 trace 子系统漏配——`shouldTraceEpisode()` 只按 `max_generations / max_episodes_per_generation` gate，没有 byte-cap，配上 `max_generations = 60` 就爆。
+> - **代码修复**（pending commit，已编译验证通过）：
+>   - `routes/protagonist_ecology/runtime/TraceRecorder.{h,cpp}`：新增 `TraceRecorderConfig::max_bytes_per_file{200 MB}` 字段 + `TraceRecorder::{event,agent,world,viewer}_cap_warned_` 四个 once-flag。
+>   - 新增 `checkAndCapStream(stream, warned, path, cap)` 工具方法：`stream.is_open() && tellp() >= cap` 时立即 `stream.close()` + 单次 `LOG_WARN` 一行（D-044 同款 once-warn）。
+>   - 4 个 write 点全部前置守门：`writeEvent` (event_trace.jsonl) / `writeAgentSnapshot` (agent_trace.csv) / `writeWorldSnapshot` (world_trace.csv) / `writeViewerFrame` (viewer_frames.jsonl)。
+>   - `loadTraceRecorderConfig()` 读 `trace.max_bytes_per_file = N`（默认 200 MB，写 0 即关 cap）。
+> - **配置回滚**（pending commit）：4 个 `tmp/layer1/long_run_60gen_2d{,_curriculum,_structural,_throw}.toml` 把 `[trace].max_generations` 从 60 → 4（已验证：harmony_check 只读 CSV 不读 event_trace，4 代 trace 足够诊断回放），并叠 `max_bytes_per_file = 209715200` 兜底。其中 `_throw.toml` / 基础 `_2d.toml` 之前未入 git（`?? long_run_60gen_2d{,_throw}.toml`），改动留本地。
+> - **手工清理**：`Remove-Item D:\claude-code\c++\data\runs\long_run_60gen_2d_{curriculum,structural}\20260528-*\trace\generation_{2..58}` 删除中间代，仅保留 gen 0/1/59；释放 ~144 GB，D: 重回 ~244 GB free。
+> - **structural-mutation AB v2 结果**（curriculum + structural-mutation 双 60-gen 都收齐前）：harmony_check **7/7 PASS**，C5 worksites total **110** (curriculum 88、baseline 38)，C6 me_coverage peak **0.44** (curriculum 0.48、baseline 0.40)。结构性 NEAT mutation (`borderland_mutate_add_conn_rate=0.10 + add_node_rate=0.04`) 在 fix 后的 graduate pipeline 上**继续不退步且 build 数还高**。
+> - **编译管线恢复**：磁盘清理副作用导致 `build_ninja_cuda/` 几乎被清空（只剩 `lib/`+`routes/`，binary + build.ninja 都没了）。用 Clash proxy (`127.0.0.1:7897`) 给 git 全局 http/https.proxy 重新拉 _deps，cmake reconfigure 76s + ninja incremental rebuild 74s → `test_core.exe` + `neural-eco-protagonist.exe` 新出炉（2026-05-28 07:44:28）。`test_core.exe` **218/218 PASS**（含我新加的 TraceRecorder cap 代码，无回归）。
+> - **新长跑就位**：07:45:13 UTC 用 WMI `Win32_Process.Create` 起 PID 14576 跑 `long_run_60gen_2d_structural.toml`（同 60-gen × 24 protagonist + 8 background，但 trace 现在被限到前 4 代 + 200 MB/file）。预计 ~190 min，~10:55 UTC 结束。
+> - **结论**：trace 子系统终于和 CSV 子系统对齐 disk-budget 防线，今后即使把 `max_generations` 调回 60 也至少有 200 MB/file 兜底。**graduate pipeline + structural mutation 双双不退步 baseline**，进入 #3 main world continuous tick 节点。
 
 > **2026-05-28 凌晨 Stone Bootstrap commit 4 fix 完整验证（graduate AB 60-gen 第二轮：harmony_check 5/7→7/7）**：
 > - **commit `fb2c9c5`**（`master`）：`routes/protagonist_ecology/world/NurseryProgressionLayer.cpp` +54 行。`seedFromProgressionState` 检测每个 unlock flag 的 false→true 跨 episode 转换，立即调对应 layer 重放物理世界 side-effect（stone → 10×ScatterStone via director；heavy → heavy_unlock_count_×ScatterHeavyStone；first_fire/second_fire → `campfire_->igniteNextDormant()`；worksite → `worksite_->activateNextDormant()` + 1×ScatterStone support replay）。null-check 守 collaborator 指针让原 unit test 继续过。`test_core.exe` **218/218 PASS**，`NurseryProgressionPersistence` 3/3 PASS。

@@ -368,8 +368,17 @@ agents_enabled = true
 world_enabled = true
 agent_interval = 20            # was 10; halved sample rate to control 60-gen disk
 world_interval = 20            # was 10; halved sample rate
-max_generations = 60           # was 4; full 60-gen trace for harmony checklist
+# 2026-05-28 disk-budget rollback: was 60 which produced ~90 GB
+# event_trace.jsonl per run (60 gen x 2 ep x ~750 MB each). harmony_check
+# only reads CSVs, not event_trace, so dropping back to 4 gens of trace
+# preserves diagnostic value while staying within the D-044 budget.
+max_generations = 4
 max_episodes_per_generation = 2
+# 2026-05-28 disk-budget per-file cap (parity with D-044 CSV 200 MB caps).
+# TraceRecorder will close streams that cross this threshold and emit a
+# single LOG_WARN. Safety net against future runs that re-introduce a
+# large `max_generations` value.
+max_bytes_per_file = 209715200  # 200 MB
 # Layer 7 R1: viewer frame JSON dumper for Godot/raylib viewer.
 viewer_frames_enabled = true
 viewer_frame_interval = 80     # was 40; halve frame rate, 60-gen still ~7300 frames

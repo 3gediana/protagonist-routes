@@ -5,6 +5,7 @@
 #include "core/events/EventBus.h"
 #include "core/events/EventPayloads.h"
 #include "core/events/EventType.h"
+#include "core/logging/Logger.h"
 #include "core/world/World2D.h"
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
@@ -105,6 +106,41 @@ float l2Norm(const std::vector<float>& values) {
     return std::sqrt(sum);
 }
 
+// 2026-05-28 disk-budget: returns true if `stream` has crossed `cap` bytes
+// (via tellp()) and the caller should skip the upcoming write. On the first
+// crossing for a given stream we close it (so subsequent calls become cheap
+// no-ops via is_open()==false) and emit a single LOG_WARN. `cap == 0`
+// disables the guard entirely. Mirrors the D-044 ledger / communication /
+// signal-debug CSV pattern.
+bool checkAndCapStream(std::ofstream& stream,
+                       bool& warned_flag,
+                       const std::filesystem::path& path,
+                       std::size_t cap_bytes) {
+    if (!stream.is_open()) {
+        return true;  // already closed -> caller should skip
+    }
+    if (cap_bytes == 0) {
+        return false;  // cap disabled
+    }
+    const auto pos = stream.tellp();
+    if (pos < 0) {
+        return false;  // tellp() failed; let the write proceed
+    }
+    if (static_cast<std::size_t>(pos) < cap_bytes) {
+        return false;
+    }
+    // Reached cap: close stream + warn once.
+    stream.close();
+    if (!warned_flag) {
+        warned_flag = true;
+        LOG_WARN("TraceRecorder: closed {} after reaching disk-budget cap {} MB (D-044 parity guard); "
+                 "adjust trace.max_bytes_per_file or reduce trace.max_generations to silence",
+                 path.string(),
+                 cap_bytes / (1024ULL * 1024ULL));
+    }
+    return true;
+}
+
 }  // namespace
 
 TraceRecorderConfig loadTraceRecorderConfig(const config::Config& config) {
@@ -120,6 +156,9 @@ TraceRecorderConfig loadTraceRecorderConfig(const config::Config& config) {
     // L7 R1: viewer frame JSON
     out.viewer_frames_enabled = config.getOr<bool>("trace.viewer_frames_enabled", out.viewer_frames_enabled);
     out.viewer_frame_interval = std::max<std::size_t>(1, config.getOr<std::size_t>("trace.viewer_frame_interval", out.viewer_frame_interval));
+    // 2026-05-28 disk-budget: per-file cap. 0 disables. Defaults to 200 MB
+    // (D-044 parity). Override with `trace.max_bytes_per_file = N`.
+    out.max_bytes_per_file = config.getOr<std::size_t>("trace.max_bytes_per_file", out.max_bytes_per_file);
     return out;
 }
 
@@ -169,6 +208,9 @@ TraceRecorder::TraceRecorder(World2D& world,
 
     if (event_trace_.is_open()) {
         event_subscription_ = world_.eventBus().subscribeAny([this](const events::Event& event) {
+            // checkAndCapStream() inside writeEvent() short-circuits once the
+            // event_trace_ stream is closed (i.e. cap reached), so callbacks
+            // remain cheap after the cap kicks in.
             writeEvent(event);
         });
     }
@@ -216,7 +258,9 @@ void TraceRecorder::writeManifest(const ProtagonistEcologyConfig& route, std::si
 }
 
 void TraceRecorder::writeEvent(const events::Event& event) {
-    if (!event_trace_.is_open()) {
+    if (checkAndCapStream(event_trace_, event_cap_warned_,
+                          trace_dir_ / "event_trace.jsonl",
+                          config_.max_bytes_per_file)) {
         return;
     }
 
@@ -456,6 +500,11 @@ void TraceRecorder::writeEvent(const events::Event& event) {
 }
 
 void TraceRecorder::writeAgentSnapshot(World2D& world) {
+    if (checkAndCapStream(agent_trace_, agent_cap_warned_,
+                          trace_dir_ / "agent_trace.csv",
+                          config_.max_bytes_per_file)) {
+        return;
+    }
     auto* agents = world.getLayer<AgentLayer>();
     auto* survival = world.getLayer<SurvivalStatusLayer>();
     auto* resources = world.getLayer<ResourceLayer>();
@@ -663,6 +712,11 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
 }
 
 void TraceRecorder::writeWorldSnapshot(World2D& world) {
+    if (checkAndCapStream(world_trace_, world_cap_warned_,
+                          trace_dir_ / "world_trace.csv",
+                          config_.max_bytes_per_file)) {
+        return;
+    }
     auto* agents = world.getLayer<AgentLayer>();
     auto* resources = world.getLayer<ResourceLayer>();
     auto* objects = world.getLayer<ObjectLayer>();
@@ -701,6 +755,11 @@ void TraceRecorder::writeWorldSnapshot(World2D& world) {
 // progress + season progress added so the viewer can render harvest state
 // and weather/season transitions instead of just the discrete type.
 void TraceRecorder::writeViewerFrame(World2D& world) {
+    if (checkAndCapStream(viewer_frames_, viewer_cap_warned_,
+                          trace_dir_ / "viewer_frames.jsonl",
+                          config_.max_bytes_per_file)) {
+        return;
+    }
     auto* agents = world.getLayer<AgentLayer>();
     auto* worksites = world.getLayer<WorksiteLayer>();
     auto* trees = world.getLayer<TreeLayer>();
