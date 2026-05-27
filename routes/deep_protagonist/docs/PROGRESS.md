@@ -1,25 +1,43 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-27 早上（自主推进白班，D-055 诊断→单 site→2M 训练）
-> 当前阶段：**蓝图中期 line 30 首次被启动** — D-053 eval 暴露"PPO 放 981 图纸建 0 房子"的 building system bug；D-055 通过限 1 site + deposit reward +1 + 失败 cost +0.05 让 PPO 终于有 deposit-to-completion 梯度，2M 训练中
-> Self-test：**130 个全过**（D-055 +5）
+> 最后更新：2026-05-27 中午（D-055 → D-060 7 个迭代，D-060 fresh start 实现项目史上最强觅食+找水）
+> 当前阶段：**蓝图 line 21 (饿了找食物渴了找水) 项目史上最强** — D-060 last 60 ep food 100% / drink 85% / death 41%
+> Self-test：**130 个全过**
 
-## ✅ D-055 中期断裂诊断 + 4 项 fix（2026-05-27 上午）
+## ✅ D-055 → D-060 (2026-05-27 早 → 中午)
 
-D-053 ckpt eval (44 ep, --no-update) 揭示蓝图中期断裂：
-- ✅ stage Mid 升起来了（ep 23 时）
-- ✅ collect 34 / explored 14739m（远超 mid 阈值 30/500m）
-- ❌ **0 houses_built**，**981 sites_active**！— PPO 把 place_blueprint 当 noop spam（14.3%）
-- ❌ first_drink 100% 但 r_water max 0.028 — drink filler 不是真"渴了找水"
+D-055 诊断暴露：PPO 在 D-053 ckpt 上每 ep 放 981 个建筑图纸但完成 0 个房子。D-055-D-059 5 次 reward landscape / world 改动都无法在 D-055 ckpt 基础上让 first_house ≥ 1。最终 D-060 fresh restart + Shed 1+1 simpler recipe，PPO 在 286 ep 内学到 food+drink 同时稳定（蓝图 line 21 史上最强）。
 
-| Decision | 蓝图断裂 → 修复 | self-test |
+| Iter | 改动 | resume from | 长训结果 (last 60) |
+|---|---|---|---|
+| D-055 | 限 1 active site + deposit +1 + place_bp 失败 cost | D-053 | score 0.165 / food 56% / drink 0% / shelter 13% / house 0 |
+| D-056 | built_shelter 5→15 + first_house ×5 critical | D-055 | 🔴 collapse ep126 abort, score 0.022 ent 16.4 |
+| D-057 | built_shelter 10 + deposit milestone 0.5 | D-055 | 🔴 collapse ep86 abort, score 0.022 |
+| D-058 | + Shed 4+2 → 1+1 (world simplify) | D-055 | 🔴 collapse ep57 abort, score 0.021 |
+| D-059 | 全部回退 reward, 只保 Shed 1+1 | D-055 | 🔴 collapse ep24 abort — 证明 ckpt resume 本身是问题 |
+| **D-060** | **fresh PPO + Shed 1+1** | random init | 🟢 **score 0.125 / food 100% / drink 85% / death 41%** |
+
+**关键发现**：从 D-055 ckpt + reset_hidden + 任何改动 = PPO collapse。Fresh restart 是唯一选择。
+
+**D-060 stats**（last 60 ep, 项目史上最强觅食+找水）：
+- ✅✅ **drink 85%**: D-055 0% / D-053 29% / **D-060 最高**
+- ✅✅ **food 100%**: 全 60 ep first_eat fire
+- ✅ **death 41%**: D-055 70% 大幅改善
+- ❌ house / spear / shelter (lean-to) / clothing / seed / crop / follower 全 0
+
+**蓝图大局总评**（截至 D-060）：
+| 蓝图 line | 状态 | 最强 ckpt |
 |---|---|---|
-| D-055 #1 | `BuildingSystem::place_site` 拒绝第二个 incomplete site（蓝图 line 30 "放图纸"单数）| +4 |
-| D-055 #2 | `RewardSystem::event_deposited_material()` +1.0 (vs collect +0.5) — 让 PPO 看到 deposit > collect 梯度 | +1 |
-| D-055 #3 | `place_blueprint` 失败给 0.05 cost — 堵 noop spam 漏洞 | — |
-| D-055 #4 | jsonl 加 `stage/collect_total/explored_m/houses_built/sites_active` 进度可见 | — |
-
-**D-055 长训进行中**（resume from d053 ckpt, 2M step ETA ~3h）。期望：houses_built ≥ 1（D-049~D-054 都是 0）、place_blueprint trigger ratio 14% → <5%、deposit ratio 9% → 15%+。
+| line 21 觅食 | ✅✅ 100% | D-060 |
+| line 21 找水 | ✅✅ 85% | **D-060 史上最强** |
+| line 22 避狼 | ✅ death 7% | D-052 (D-060 41%) |
+| line 22 狩猎 spear | 🟧 0% | — |
+| line 23 造衣 | 🟧 5% | D-053 |
+| line 24 视野记忆 | ✅ | D-049 接通 |
+| line 26 洞穴庇护 | ✅ | D-049 接通 |
+| line 62 累慢 | ✅ | D-049 接通 |
+| line 30 中期建造 | ❌ 0 house | — |
+| line 34+ 后期 | ❌ Late stage 未触发 | — |
 
 ---
 
