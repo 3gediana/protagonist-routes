@@ -1,8 +1,44 @@
 # deep_protagonist 璺?PROGRESS
 
-> 鏈€鍚庢洿鏂? 2026-05-28 02:01 UTC (D-066 autonomous run launched)
-> 褰撳墠闃舵: **D-066 in-flight** (2M from D-065 ckpt; prey density 2-3x; scheduled task dp_d066, PID 46200, ETA ~02:50 UTC)
-> 涓婁竴绋虫€? **D-065** (last 60: spear 98% / col 95% / hunt 0% / score 0.296; D-064 reward hacking 宸蹭慨澶?
+> 鏈€鍚庢洿鏂? 2026-05-28 02:55 UTC (D-067 autonomous run launched)
+> 褰撳墠闃舵: **D-067 in-flight** (revert D-066 density bump, train 2M more from D-065 ckpt, scheduled task dp_d067, PID 51180, ETA ~03:44 UTC)
+> 涓婁竴绋虫€? **D-065** (last 60: score 0.296 / col 95% / spear 98% / hunt 0%) 鈥?D-066 鍏ㄩ潰 collapse 宸插簾
+
+## D-067 autonomous (2026-05-28 02:54 UTC)
+
+### D-066 澶嶇洏锛坧rey 瀵嗗害 2-3x = 鍏ㄩ潰 collapse锛?
+| metric | D-065 | D-066 |
+|---|---|---|
+| eat | 100 | 13 |
+| drink | 90 | 0 |
+| col | 95 | 0 |
+| spear | 98 | 100 |
+| score | **0.296** | **0.134** |
+| ms | 12.68 | 5.43 |
+| r_col | 1.20 | 0.07 |
+
+trajectory: ep 0-59 collapse start (drink 30), ep 60+ drink 10, ep 120+ drink 0, ep 180+ eat 17 col 0. entropy 33鈫?7 鎸佺画涓婂崌锛坧olicy 瓒婃潵瓒婇殢鏈猴級銆?
+**瀛﹀埌**: 鍗充娇绾粨鏋勬€?env 鏀瑰姩涔熻兘 collapse 宸插 policy銆傛暀璁? env 鏀瑰姩骞呭害涓婇檺 鈮?20-30%銆?
+### D-067 鏀瑰姩锛坧ure rollback, step-deficit test锛?
+- revert AnimalSystem::initialize 鍥為粯璁?(50R/20D/30F/8W)
+- 瀹屽叏涓嶅姩鍏跺畠浠ｇ爜 / reward / obs / 缃戠粶 / 瓒呭弬
+- load D-065 ckpt锛圢OT D-066锛?- 2M steps 璁粌
+- 鐩殑: 鎺掗櫎鏈€鍚庝竴涓潪-鏈哄埗鍘熷洜 (step 涓嶈冻) 鎵嶈兘 motivated 閫?PBRS/curriculum
+
+### 棰勬湡 & 璇勪及
+
+- 涓? hunt% 鈮?15% in last 60 ep
+- 鍙嶉€€鍖? 瀹堜綇 D-065 (eat 鈮?95, drink 鈮?90, spear 鈮?95, col 鈮?90, score 鈮?0.29)
+- 缁煎悎: 鑻?hunt% 鈮?15% 鈫?step 涓嶈冻鏄摱棰堬紝D-068 鍔犳; 鑻?< 5% 鈫?鏀?PBRS / curriculum
+
+### 鍛戒护琛?/ Tasks
+
+\\\powershell
+deep_protagonist_train.exe --policy ppo --steps 2000000 \
+  --load runs\ppo_d065_2M.pt --metrics runs\ppo_d067_2M.jsonl \
+  --save-path runs\ppo_d067_2M.pt --save-every 50
+# dp_d067 task PID 51180, start 02:54:35 UTC
+\\\
 
 ## D-066 autonomous (2026-05-28 02:00 UTC)
 
