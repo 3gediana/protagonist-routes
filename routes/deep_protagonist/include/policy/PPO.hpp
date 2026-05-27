@@ -84,7 +84,7 @@ struct PPOConfig {
     float  lambda_         = 0.95f;
     float  clip_eps        = 0.2f;
     float  vf_coef         = 0.5f;
-    float  ent_coef        = 0.02f;   // D-050 P2: 0.005 collapsed to NOOP-dominant before any successful drink event could be sampled. Bump to 0.02 so the policy keeps exploring drink/eat triggers long enough for "press Q on River" to actually trigger r_water > 0. (D-039 v2 used 0.005 to fix wear_clothes collapse, but we now have trigger_cost + clip + drive_reduction guarding that, so a higher entropy is safe.)
+    float  ent_coef        = 0.01f;   // D-068: 0.02 caused entropy drift 32->38 across D-065->D-066->D-067 with score collapse 0.296->0.144. Lower to 0.01 so policy converges to deterministic behaviors and doesn't randomize away learned line-21 baseline. D-050 NOOP-collapse was at 0.005 with no learned baseline; we now load from a strong D-065 ckpt so 0.01 is safe. Keep above 0.005 to retain some exploration for hunt/clothing unlocks. (D-050 P2 history: 0.02 was bumped from 0.005 specifically to escape NOOP-dominant when starting from random init.)
     float  lr              = 3e-4f;
     float  max_grad_norm   = 0.5f;
     bool   use_cuda        = true;
