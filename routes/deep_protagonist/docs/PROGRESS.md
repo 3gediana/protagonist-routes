@@ -1,9 +1,45 @@
-﻿# deep_protagonist 璺?PROGRESS
+# deep_protagonist 璺?PROGRESS
 
-> 鏈€鍚庢洿鏂? 2026-05-28 (D-064 autonomous run launched)
-> 褰撳墠闃舵: **D-064 in-flight** (2M from D-063 ckpt, scheduled task dp_d064, ETA ~01:00 UTC)
-> 涓婁竴绋虫€? **D-063** (last 60: spear 100% / hunt~ 5/60=8.3% / eat 100% / drink 100% / score 0.292 = 椤圭洰鍙叉渶楂?
-> Self-test: 134
+> 鏈€鍚庢洿鏂? 2026-05-28 01:10 UTC (D-065 autonomous run launched)
+> 褰撳墠闃舵: **D-065 in-flight** (2M from D-063 ckpt, scheduled task dp_d065, PID 41784, ETA ~02:10 UTC)
+> 涓婁竴绋虫€? **D-063** (last 60: spear 100% / hunt~ 8.3% / eat 100% / drink 100% / score 0.292 = 椤圭洰鍙叉渶楂?
+
+## D-065 autonomous (2026-05-28 01:08 UTC)
+
+### D-064 澶嶇洏锛坧er-hit reward 瀹炴祴鍙嶄緥锛?
+| metric | D-063 | D-064 | delta |
+|---|---|---|---|
+| eat% | 100 | 100 | 0 |
+| drink% | 100 | 90 | -10 |
+| col% | 68 | 37 | -32 |
+| spear% | 100 | 100 | 0 |
+| hunt% | 7 | 0 | -7 |
+| score | 0.292 | 0.281 | -0.010 |
+| ms | 15.99 | 12.55 | -3.44 |
+
+trajectory: hunt 7鈫?鈫?鈫? across 4 windows. confirms user warning: 鐩存帴 per-hit shaped reward = reward hacking銆?
+### D-065 鏀瑰姩
+
+- **revert D-064 per-hit reward**锛坅ttack 鍛戒腑闈炵嫾 prey 涓嶅啀 +0.5锛夛紝淇濈暀 first_hunt critical kill 濂栧姳 (+5)
+- **starter kit 鍔?Grass** (1Wood + 1Stone 鈫?1Wood + 1Stone + 1Grass)锛屾部鐢?D-063 缁撴瀯鏀瑰姩鍝插锛氶檷浣?craft_grass_dress 璺緞鎺㈢储鎴愭湰鍒?0 鈫?first_clothing critical +5 绗竴娆¤捣鏉?鈫?绫绘瘮 spear 瀛﹀埌 "craft = good"
+- ckpt: load D-063 (NOT D-064 鈥?宸茶 corrupt)
+- 涓嶆敼 obs / 缃戠粶 / 瓒呭弬 / reward weights
+
+### 棰勬湡
+
+- 涓? first_clothing% (闅愬紡 ms>21 鍚彂) 鈮?30%
+- 鍙嶉€€鍖? eat 鈮?95%, drink 鈮?90%, spear 鈮?90%, hunt 鈮?5%
+- 缁煎悎: score 鈮?0.29
+
+### 鍛戒护琛?/ Tasks
+
+\\\powershell
+# launched via Register-ScheduledTask
+deep_protagonist_train.exe --policy ppo --steps 2000000 \
+  --load runs\ppo_d063_2M.pt --metrics runs\ppo_d065_2M.jsonl \
+  --save-path runs\ppo_d065_2M.pt --save-every 50
+# scheduled task: dp_d065, PID 41784, start 2026-05-28 01:08:06 UTC
+\\\
 
 ## D-063 鈫?D-064 autonomous (2026-05-27/28)
 

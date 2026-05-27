@@ -238,6 +238,13 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     // Third slot left empty for PPO to fill (grass/fur).
     inventory_.add(dp::agent::ItemKind::Wood);
     inventory_.add(dp::agent::ItemKind::Stone);
+    // D-065: add Grass to starter kit. D-063 proved structural change
+    // (pre-place Wood+Stone) unlocked craft_spear path -> 100% spear, 8% hunt
+    // without any new shaped reward. Same philosophy for line-23 clothing:
+    // pre-place Grass so first craft_grass_dress works step 0 -> +5 critical
+    // for first_clothing fires -> PPO associates "craft = good" for clothes,
+    // analogous to spear. No per-event reward, no metric chasing.
+    inventory_.add(dp::agent::ItemKind::Grass);
 
     rebuild_observation_(obs_out);
 }
@@ -611,18 +618,12 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         float damage = has_spear ? 50.0f : 20.0f;
         auto hit = animals_.agent_attack(as.pos_x, as.pos_y,
                                          agent_.yaw(), reach, damage);
-        if (hit.index >= 0) {
-            // D-064: small shaped reward for landing a prey hit (even if
-            // not fatal). D-063 showed 100% spear but only ~8% first_hunt.
-            // PPO learned craft_spear=good but not attack_while_facing_prey=good
-            // because kill is sparse (2-3 hits needed). Per-hit +0.5 makes
-            // the gesture immediately reinforcing. Wolves still excluded
-            // to preserve the D-047 anti-rou-lang policy.
-            auto k_ = animals_.animals()[hit.index].kind;
-            if (k_ != dp::world::AnimalKind::Wolf) {
-                reward_.event_collected_resource();
-            }
-        }
+        // D-065: D-064 per-hit reward reverted. D-064 measured: hunt 8%->0%,
+        // col 68%->37%, drink 100%->90%, score 0.292->0.281. Confirmed user
+        // warning that direct per-hit shaping causes reward hacking. The
+        // kill-time first_hunt critical (+5) below stays; we rely on
+        // structural changes (D-063 starter kit + D-065 grass) to lower
+        // exploration cost without metric-driven shaped reward.
         if (hit.killed) {
             auto kind = animals_.animals()[hit.index].kind;
             if (kind == dp::world::AnimalKind::Wolf) {
