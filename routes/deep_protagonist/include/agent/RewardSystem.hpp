@@ -82,15 +82,15 @@ public:
 
         // Resource / construction (S3.7e/f/g)
         float collected        = 0.5f;
-        // D-056: 5 → 15. With γ=0.99 and roughly 200 steps between
-        // depositing the last material and the prior "I should build"
-        // decision, +5 discounts to 5×0.99^200≈0.65 - smaller than a
-        // single deposit reward (+1). +15 discounts to ~2, large enough
-        // for PPO to value reaching the end of the chain over abandoning
-        // it for nearby food. D-055's 280-ep run never finished a
-        // building precisely because the +5 prize was too small to pull
-        // through the long horizon.
-        float built_shelter    = 15.0f;
+        // D-056 tried 5 → 15 from D-055 ckpt and PPO collapsed into a
+        // do-nothing policy (entropy 16.4, score 0.022). The +15 paired
+        // with the new fire_once_critical first_house bonus (+5 milestones)
+        // meant a single completion event paid +20 raw, exceeding the
+        // step clip and confusing the value head into believing every
+        // step had high uncertainty. D-057 backs off to +10: still 2x the
+        // pre-D-056 prize, but inside the per-step clip so the value
+        // estimator stays calibrated.
+        float built_shelter    = 10.0f;
         float crafted_tool     = 3.0f;
         // D-055: dedicated reward for depositing a material into an active
         // construction site. Larger than `collected` (0.5) so PPO can

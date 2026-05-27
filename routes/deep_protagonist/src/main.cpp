@@ -1071,17 +1071,19 @@ int run_self_tests() {
         check(d_only > c_only + 1e-5f,
               "RewardSystem: deposit reward > collect reward (D-055)");
 
-        // D-056: built_shelter weight raised 5 → 15. Building completion
-        // is the blueprint Mid stage prize and needs to dominate over
-        // food/collect rewards even after γ=0.99 long-horizon discount.
+        // D-057: built_shelter raised 5 → 10 (D-056 tried 15 and PPO
+        // collapsed because +15 + first_house ×5 milestones overflowed
+        // the per-step clip and confused value estimation). +10 stays
+        // exactly at the clip so the unclipped sum equals the clipped
+        // total - no surprise for PPO.
         r.reset_episode();
         r.begin_step();
         r.event_built_shelter();
         float bs = r.end_step();
         check(std::abs(bs - 10.0f) < 1e-3f,
-              "RewardSystem: built_shelter clipped to +10 (D-056 raw=15)");
-        check(std::abs(r.last_step().shelter - 15.0f) < 1e-3f,
-              "RewardSystem: built_shelter unclipped is +15 (D-056)");
+              "RewardSystem: built_shelter is +10 at clip (D-057)");
+        check(std::abs(r.last_step().shelter - 10.0f) < 1e-3f,
+              "RewardSystem: built_shelter unclipped also +10 (D-057)");
     }
 
     // --- SpatialMemory ---

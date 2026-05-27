@@ -508,6 +508,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                     // from "wander around picking stuff up" to "carry it
                     // back to the construction site".
                     reward_.event_deposited_material();
+                    // D-057: each deposit also fires a +0.5 milestone
+                    // shaping bonus so the long horizon "place -> 6
+                    // deposits -> built" chain has a steady ramp instead
+                    // of a single +5 prize at the end. With 6 deposits a
+                    // full Shed earns ~+3 of milestone shaping plus +6
+                    // of deposit reward plus the +10 / +5×crisis prize
+                    // when finalize fires.
+                    reward_.event_milestone(0.5f);
                     fire_once(first_collect_fired_);
                     deposited = true;
                     break;
