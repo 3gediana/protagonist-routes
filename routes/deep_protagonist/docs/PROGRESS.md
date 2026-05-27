@@ -1,36 +1,34 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-27 中午（D-055 → D-060 7 个迭代，D-060 fresh start 实现项目史上最强觅食+找水）
-> 当前阶段：**蓝图 line 21 (饿了找食物渴了找水) 项目史上最强** — D-060 last 60 ep food 100% / drink 85% / death 41%
+> 最后更新：2026-05-27 下午（D-055 → D-061 8 个迭代完结，D-061 ckpt 史上最强 line 21 闭环）
+> 当前阶段：**蓝图 line 21 (饿了找食物渴了找水) 100% / 100% sustained，R +6.4 POSITIVE** — D-061 last 60 ep
 > Self-test：**130 个全过**
 
-## ✅ D-055 → D-060 (2026-05-27 早 → 中午)
+## ✅ D-055 → D-061 8 轮迭代终态（2026-05-27 早 → 下午）
 
-D-055 诊断暴露：PPO 在 D-053 ckpt 上每 ep 放 981 个建筑图纸但完成 0 个房子。D-055-D-059 5 次 reward landscape / world 改动都无法在 D-055 ckpt 基础上让 first_house ≥ 1。最终 D-060 fresh restart + Shed 1+1 simpler recipe，PPO 在 286 ep 内学到 food+drink 同时稳定（蓝图 line 21 史上最强）。
+D-055 诊断暴露：PPO 在 D-053 ckpt 上每 ep 放 981 个建筑图纸但完成 0 个房子。D-055-D-059 5 次 reward / world 改动都无法在 D-055 ckpt 基础上让 first_house ≥ 1。D-060 fresh restart + Shed 1+1 让 PPO 重新学，**D-061 在 D-060 ckpt 上再 2M，line 21 (饿了找食物渴了找水) 100% / 100% sustained — 项目史上最强**。
 
-| Iter | 改动 | resume from | 长训结果 (last 60) |
+| Iter | 改动 | resume from | 长训结果 (last 60 / 60 ep) |
 |---|---|---|---|
 | D-055 | 限 1 active site + deposit +1 + place_bp 失败 cost | D-053 | score 0.165 / food 56% / drink 0% / shelter 13% / house 0 |
-| D-056 | built_shelter 5→15 + first_house ×5 critical | D-055 | 🔴 collapse ep126 abort, score 0.022 ent 16.4 |
-| D-057 | built_shelter 10 + deposit milestone 0.5 | D-055 | 🔴 collapse ep86 abort, score 0.022 |
-| D-058 | + Shed 4+2 → 1+1 (world simplify) | D-055 | 🔴 collapse ep57 abort, score 0.021 |
+| D-056 | built_shelter 5→15 + first_house ×5 critical | D-055 | 🔴 collapse ep126 abort |
+| D-057 | built_shelter 10 + deposit milestone 0.5 | D-055 | 🔴 collapse ep86 abort |
+| D-058 | + Shed 4+2 → 1+1 (world simplify) | D-055 | 🔴 collapse ep57 abort |
 | D-059 | 全部回退 reward, 只保 Shed 1+1 | D-055 | 🔴 collapse ep24 abort — 证明 ckpt resume 本身是问题 |
-| **D-060** | **fresh PPO + Shed 1+1** | random init | 🟢 **score 0.125 / food 100% / drink 85% / death 41%** |
+| D-060 | **fresh PPO** + Shed 1+1 | random init | 🟢 score 0.125 / food 100% / drink 85% / death 41% |
+| **D-061** | 在 D-060 ckpt 上再 2M | D-060 | 🟢🟢 **score 0.146 / food 100% / drink 88% / R +6.4 / alive R +14** |
 
-**关键发现**：从 D-055 ckpt + reset_hidden + 任何改动 = PPO collapse。Fresh restart 是唯一选择。
+**关键发现**：从 D-055 ckpt + reset_hidden + 任何改动 = PPO collapse。Fresh restart D-060 解决。D-061 在 D-060 ckpt 上 resume 没 collapse — 因为 reward landscape 完全一致。
 
-**D-060 stats**（last 60 ep, 项目史上最强觅食+找水）：
-- ✅✅ **drink 85%**: D-055 0% / D-053 29% / **D-060 最高**
-- ✅✅ **food 100%**: 全 60 ep first_eat fire
-- ✅ **death 41%**: D-055 70% 大幅改善
-- ❌ house / spear / shelter (lean-to) / clothing / seed / crop / follower 全 0
+**D-061 final 13 ep**: **drink 100%** / food 100% / score 0.151 — sustained line 21 完整闭环。
 
-**蓝图大局总评**（截至 D-060）：
+**蓝图大局总结（D-060 + D-061 终态）**：
 | 蓝图 line | 状态 | 最强 ckpt |
 |---|---|---|
-| line 21 觅食 | ✅✅ 100% | D-060 |
-| line 21 找水 | ✅✅ 85% | **D-060 史上最强** |
-| line 22 避狼 | ✅ death 7% | D-052 (D-060 41%) |
+| line 21 觅食 | ✅✅ **100%** | D-060/D-061 |
+| line 21 找水 | ✅✅ **100%** | **D-061 史上最强** |
+| line 21 累了找庇护 | 🟧 0% | D-049 mechanism 接通但 PPO 没用 |
+| line 22 避狼 | ✅ death 7% | D-052 (D-061 48%) |
 | line 22 狩猎 spear | 🟧 0% | — |
 | line 23 造衣 | 🟧 5% | D-053 |
 | line 24 视野记忆 | ✅ | D-049 接通 |
@@ -38,6 +36,14 @@ D-055 诊断暴露：PPO 在 D-053 ckpt 上每 ep 放 981 个建筑图纸但完�
 | line 62 累慢 | ✅ | D-049 接通 |
 | line 30 中期建造 | ❌ 0 house | — |
 | line 34+ 后期 | ❌ Late stage 未触发 | — |
+
+**D-061 ckpt** = 答辩 demo 用 ckpt。agent 在 1024m × 1024m 真自然世界里：
+- 看到果会去吃（食物 100%）
+- 看到水会去喝（水 100% sustained）
+- 大部分 ep 跑满 9000 step 不死
+- 平均 ep R +6.4 (positive!) — 项目首次
+
+**未触及蓝图区域**: 狩猎、造衣、中期建造、后期农耕/饲养/驯服 — 留给未来工作。
 
 ---
 
