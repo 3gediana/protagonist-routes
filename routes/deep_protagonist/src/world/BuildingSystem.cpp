@@ -81,6 +81,15 @@ int BuildingSystem::place_site(BuildingType type, float x, float y, float z,
     if (static_cast<int>(progress.stage()) < static_cast<int>(r.min_stage)) {
         return -1;
     }
+    // D-055: blueprint line 30 says "放图纸" (singular). D-053 PPO was
+    // mashing place_blueprint at 14.3% of all triggered ticks (981 sites
+    // across 33 ep) because it was a free no-op once Mid was unlocked.
+    // Refusing a second incomplete site forces the policy to actually
+    // commit to one project at a time - which is what the blueprint
+    // means by "in the same spot, deposit until it's done".
+    for (const auto& existing : sites_) {
+        if (!existing.completed) return -1;
+    }
     ConstructionSite s;
     s.type = type;
     s.x = x; s.y = y; s.z = z;

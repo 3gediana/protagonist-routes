@@ -86,3 +86,47 @@
 - 避狼能力**大幅提升 92%**（spatial memory 标记 danger cell + GRU 短期记忆配合）
 - 但 1M 步对 GRU 还是不够：milestone 0、shelter 退化、food 略降，说明 policy 在"探索环境/避狼/找水"上偏多，没分到"建造 / 工具"
 - 需要 5-10M 步才能进 🟧 +50 区间
+
+---
+
+## D-043 新评判口径（2026-05-24 19:00 起）
+
+D-043 reward 哲学重设后，旧的 mean reward 数字不再可比（量级变了 10×）。新评判用 **score 几何均值**（Crafter 标准）+ 行为指标：
+
+### Wander baseline (D-043 reward)
+
+10 局 wander, seed 12345：
+
+| 指标 | wander |
+|---|---:|
+| mean reward | +14.0 (drink/food/milestone 全部新公式) |
+| score (geometric mean) | **0.0718** |
+| 死亡率 | 1/11 = 9% |
+| 撩狼率 (bites>50 episode) | 1/11 = 9% (偶然事件) |
+| Φ (state value) | +3-5 / ep (inventory only) |
+
+### PPO 判定基线（D-043）
+
+| 指标 | 必须达到 | 含义 |
+|---|---|---|
+| 🟥 **score < 0.07** | 失败 | 不如 wander 广度 |
+| 🟨 **score > 0.10** | 起步 | 比 wander 多解锁几种 milestone |
+| 🟧 **score > 0.15** | 学到点 | 解锁广，stably across episodes |
+| 🟩 **score > 0.20** | 真有成果 | 接近 Crafter PPO 学术水平 4.6% (注：Crafter 是 22 ach × 22 维度，难度不同) |
+
+**附加判定**（一票通过）：
+- **撩狼率 < 5%** → reward shape 工作（D-043 主目标）
+- **r_potential mean > +30** → state-value 持续奖励生效（agent 保持状态）
+- **milestone unique > 5/10** → 故事弧广度
+- **死亡率 < 10%** → drive_reduction 引导生存优先
+
+### D-043 PPO 早期数据 (前 20 ep, 2M 训练进行中)
+
+| 指标 | D-043 ppo_d043_2M | wander | run7 |
+|---|---:|---:|---:|
+| score | **0.18-0.22** | 0.07 | (旧公式) |
+| 撩狼率 | ~30% 早期 → 0% 后期 5 ep | 9% | 高（first_hunt+20）|
+| 死亡率 | 33% → 0% (ep15-19) | 9% | 24% |
+| r_potential | +27 累积 / ep | +3-5 | - (新字段) |
+
+**早期信号**：PPO 在 200k step 已经 score = wander 3 倍。等 2M 训练完看长期趋势。

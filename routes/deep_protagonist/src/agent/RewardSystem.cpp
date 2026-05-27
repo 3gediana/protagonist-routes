@@ -79,6 +79,7 @@ void RewardSystem::event_vital_pressure(const VitalState& v, float dt) {
 }
 
 void RewardSystem::event_collected_resource() { step_.collect   += w_.collected; }
+void RewardSystem::event_deposited_material() { step_.collect   += w_.deposited; }
 void RewardSystem::event_built_shelter()      { step_.shelter   += w_.built_shelter; }
 void RewardSystem::event_crafted_tool()       { step_.craft     += w_.crafted_tool; }
 void RewardSystem::event_milestone(float scale) {

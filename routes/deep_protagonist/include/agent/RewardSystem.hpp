@@ -84,6 +84,16 @@ public:
         float collected        = 0.5f;
         float built_shelter    = 5.0f;
         float crafted_tool     = 3.0f;
+        // D-055: dedicated reward for depositing a material into an active
+        // construction site. Larger than `collected` (0.5) so PPO can
+        // actually see "deposit > collect" gradient. With Shed costing 6
+        // materials, depositing all the way gives +6 reward across 6 steps,
+        // i.e. a denser breadcrumb trail toward the +5 built_shelter prize
+        // at the end. D-053 eval showed deposit was 9.4% of triggers but
+        // produced 0 buildings - the long horizon was uncrossable. This
+        // creates a per-step shaping bonus the way Crafter's per-achievement
+        // 1's do, without inventing new milestones.
+        float deposited        = 1.0f;
 
         // S3.10/D-041 main-line milestones (first house, first crop, first
         // follower, stage unlock).
@@ -176,6 +186,11 @@ public:
     // apply (sum over vitals of (max - current)) * coef * dt.
     void   event_vital_pressure(const VitalState& v, float dt);
     void   event_collected_resource();
+    // D-055: deposit gets its own reward path so PPO sees "deposit > collect"
+    // without inflating the collect bucket (which would silently make the
+    // wander baseline look stronger too). Folded into step_.collect so the
+    // jsonl schema stays at 11 components.
+    void   event_deposited_material();
     void   event_built_shelter();
     void   event_crafted_tool();
     // D-039 v3: every discrete trigger fired this tick costs a small fee

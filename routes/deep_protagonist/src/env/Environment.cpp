@@ -503,7 +503,11 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                                                      as.pos_z, 2.5f, k);
                 if (site_idx >= 0) {
                     inventory_.remove_one(k);
-                    reward_.event_collected_resource();
+                    // D-055: deposit gets its own bigger reward (+1.0 vs
+                    // collect +0.5) so PPO can finally see the gradient
+                    // from "wander around picking stuff up" to "carry it
+                    // back to the construction site".
+                    reward_.event_deposited_material();
                     fire_once(first_collect_fired_);
                     deposited = true;
                     break;
@@ -525,9 +529,19 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     }
 
     // P -> place_blueprint
+    // D-055: a failed place_blueprint (stage-locked, or another site is
+    // already in progress per the new single-site rule) now pays an extra
+    // cost on top of the normal trigger_cost. D-053 eval showed PPO mashing
+    // place_blueprint at 14.3% of all triggers (981 over 33 ep) because the
+    // first 30 sites were free and the 31st-981st were near-free. The extra
+    // failure cost gives gradient feedback "this didn't do anything".
     if (action.place_blueprint) {
-        buildings_.place_site(selected_building_,
-                              as.pos_x, as.pos_y, as.pos_z, progress_);
+        int site_id = buildings_.place_site(selected_building_,
+                                            as.pos_x, as.pos_y, as.pos_z,
+                                            progress_);
+        if (site_id < 0) {
+            reward_.event_action_cost(0.05f);
+        }
     }
 
     // Tab -> cycle_building_type

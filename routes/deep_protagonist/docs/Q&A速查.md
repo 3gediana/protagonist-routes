@@ -318,3 +318,55 @@ drink 折算成单步 +0.06/step。这是所有可控行为里最高的稳定收
 - 折中 thirst_decay = 6-8/min（原 12 与新 4 之间）
 - 或保留 4，加避狼 reward shaping 对冲死亡率
 - 或加 NOOP cost 防 agent 完全摆烂
+
+## Q-024 · "为什么 D-043 不用真正的 PBRS？"（2026-05-24 19:30）
+
+**真 PBRS 公式**：F(s, a, s') = γΦ(s') - Φ(s)
+
+**Ng/Harada/Russell 1999 定理**：上面的 F 是**唯一**保证不改变最优策略的 shaping 形式。
+
+**问题**：当 Φ(s) > 0 且保持不变（如"我有家"持续状态）时：
+- F = γΦ - Φ = (γ-1)Φ = -0.01·Φ（γ=0.99）
+- **每步给负 reward**！agent 会学"破坏 Φ"以避免持续惩罚
+
+这跟用户想要的"我有家的持续感"**反着来**。
+
+**D-043 P2 实际用的**：state-based bonus：
+
+
+每步直接给 +Φ × 系数。**违反 Ng 1999**（理论上改变最优策略），但：
+- 持有 Φ 越久越赚 → 学到"积累状态"
+- Φ 最大 ~1.5，每步 max +0.0075，9000 step max +67
+- 仍在 reward clip [-10, +10] 内
+
+**trade-off**：放弃 policy-invariance 数学保证，换来用户要的发展感。如果观察到 agent "贪积累而不顾生存"，可降低 w。
+
+参考： § 2 PBRS
+
+## Q-025 · "score 是什么？比 reward 好吗？"（2026-05-24 19:30）
+
+**score（几何均值）**：
+
+
+
+其中 success_rate_i = "解锁第 i 个 milestone 的 episode 比例"。
+
+**vs reward**：
+- reward 衡量"agent 累积赚了多少"
+- score 衡量"agent 学到多少种行为"
+
+**几何均值的好处**：单个 milestone success rate 100% **不能**主导总分，必须广泛解锁。例：
+- A: drink 100%, 其他 0% → score = (1+1)^0.1 · (1+0)^0.9 - 1 ≈ 0.072
+- B: 10 个 milestone 都 50% → score = (1+0.5)^1 - 1 = 0.5
+
+B 比 A 高 7×。这正是"故事弧"想要的——**广度优先**。
+
+**Crafter 用 score 而不是 reward 作主指标**。D-043 起本项目也输出 score 到 jsonl 和 console。
+
+**阈值参考**（Crafter 论文 5M step）：
+- Random: 1.6%
+- PPO: 4.6%
+- DreamerV2: 10%
+- Human Expert: 50%
+
+我们 wander baseline ≈ 7%，2M PPO 看能到 15-25%。

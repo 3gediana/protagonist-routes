@@ -456,6 +456,15 @@ int run_self_tests() {
         check(idx >= 0, "BuildingSystem: Mid stage places site");
         check(bs.sites().size() == 1, "BuildingSystem: site count=1");
 
+        // D-055: blueprint line 30 single-site rule. While the first site
+        // is incomplete, a second place_blueprint must be refused.
+        int reject_idx = bs.place_site(dp::world::BuildingType::WoodHouse,
+                                       50, 50, 0, prog);
+        check(reject_idx < 0,
+              "BuildingSystem: second place rejected while site incomplete (D-055)");
+        check(bs.sites().size() == 1,
+              "BuildingSystem: rejected place adds no site (D-055)");
+
         // Deposit materials until ready
         const auto& r = dp::world::building_recipe(dp::world::BuildingType::Shed);
         for (int i = 0; i < r.wood_required; ++i) {
@@ -471,6 +480,15 @@ int run_self_tests() {
               "BuildingSystem: tick_finalize promotes ready site");
         check(bs.covers(5, 5) == true,
               "BuildingSystem: completed building covers its anchor");
+
+        // D-055: once the first site is *completed*, a new place_blueprint
+        // is allowed again (single-active-site rule, not single-ever).
+        int third_idx = bs.place_site(dp::world::BuildingType::Shed,
+                                      80, 80, 0, prog);
+        check(third_idx >= 0,
+              "BuildingSystem: place allowed after previous site completes (D-055)");
+        check(bs.sites().size() == 2,
+              "BuildingSystem: new site appended after completion (D-055)");
     }
 
     // --- Wardrobe + clothing craft ---
@@ -1033,6 +1051,25 @@ int run_self_tests() {
         float sb = r.end_step();
         check(std::abs(sb - (0.005f * 1.5f)) < 1e-5f,
               "RewardSystem: state_bonus = coef × phi (D-043 P2)");
+
+        // D-055: deposit gets its own reward path (+1.0 by default vs
+        // collect +0.5). Both fold into step_.collect so the jsonl schema
+        // stays at 11 components, but the magnitudes differ so PPO can
+        // see "deposit > collect" gradient.
+        r.reset_episode();
+        r.begin_step();
+        r.event_collected_resource();
+        float c_only = r.end_step();
+        check(std::abs(c_only - 0.5f) < 1e-5f,
+              "RewardSystem: collect alone is +0.5 (D-055 baseline)");
+        r.reset_episode();
+        r.begin_step();
+        r.event_deposited_material();
+        float d_only = r.end_step();
+        check(std::abs(d_only - 1.0f) < 1e-5f,
+              "RewardSystem: deposit alone is +1.0 (D-055)");
+        check(d_only > c_only + 1e-5f,
+              "RewardSystem: deposit reward > collect reward (D-055)");
     }
 
     // --- SpatialMemory ---

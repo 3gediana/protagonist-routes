@@ -1,8 +1,29 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新：2026-05-27 凌晨（自主推进夜班，D-049 → D-053）
-> 当前阶段：**蓝图早期 closed-loop 第一次真正接通**——觅食 line 21 + 避狼 line 22 在 D-052 last 60 ep 上 sustain 出 R=+0.62 / food 95% / death 7%；找水仍是 D-053 之后的事
-> Self-test：**122 个全过**（D-049 +5）
+> 最后更新：2026-05-27 早上（自主推进白班，D-055 诊断→单 site→2M 训练）
+> 当前阶段：**蓝图中期 line 30 首次被启动** — D-053 eval 暴露"PPO 放 981 图纸建 0 房子"的 building system bug；D-055 通过限 1 site + deposit reward +1 + 失败 cost +0.05 让 PPO 终于有 deposit-to-completion 梯度，2M 训练中
+> Self-test：**130 个全过**（D-055 +5）
+
+## ✅ D-055 中期断裂诊断 + 4 项 fix（2026-05-27 上午）
+
+D-053 ckpt eval (44 ep, --no-update) 揭示蓝图中期断裂：
+- ✅ stage Mid 升起来了（ep 23 时）
+- ✅ collect 34 / explored 14739m（远超 mid 阈值 30/500m）
+- ❌ **0 houses_built**，**981 sites_active**！— PPO 把 place_blueprint 当 noop spam（14.3%）
+- ❌ first_drink 100% 但 r_water max 0.028 — drink filler 不是真"渴了找水"
+
+| Decision | 蓝图断裂 → 修复 | self-test |
+|---|---|---|
+| D-055 #1 | `BuildingSystem::place_site` 拒绝第二个 incomplete site（蓝图 line 30 "放图纸"单数）| +4 |
+| D-055 #2 | `RewardSystem::event_deposited_material()` +1.0 (vs collect +0.5) — 让 PPO 看到 deposit > collect 梯度 | +1 |
+| D-055 #3 | `place_blueprint` 失败给 0.05 cost — 堵 noop spam 漏洞 | — |
+| D-055 #4 | jsonl 加 `stage/collect_total/explored_m/houses_built/sites_active` 进度可见 | — |
+
+**D-055 长训进行中**（resume from d053 ckpt, 2M step ETA ~3h）。期望：houses_built ≥ 1（D-049~D-054 都是 0）、place_blueprint trigger ratio 14% → <5%、deposit ratio 9% → 15%+。
+
+---
+
+## ✅ D-049 → D-054 蓝图早期 closed-loop（夜班）
 
 ## ✅ D-049 → D-052 蓝图早期 closed-loop 实现（2026-05-27 凌晨）
 

@@ -318,7 +318,18 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 16; ++i) {
                 std::fprintf(mf, "%s%d", i == 0 ? "" : ",", astats.disc_count[i]);
             }
-            std::fprintf(mf, "]}\n");
+            // D-055: blueprint progression diagnostics. The episode reset
+            // wipes EpisodeManager state but ProgressTracker is *persistent*
+            // across episodes, so what we log here is the cumulative progress
+            // the policy has carried since training started (or eval started).
+            std::fprintf(mf,
+                "],\"stage\":%d,\"collect_total\":%d,\"explored_m\":%.1f,"
+                "\"houses_built\":%d,\"sites_active\":%d}\n",
+                static_cast<int>(env.progress().stage()),
+                env.progress().resources_collected(),
+                env.progress().total_explored(),
+                env.progress().houses_built(),
+                static_cast<int>(env.buildings().sites().size()));
             std::fflush(mf);
         }
         astats.reset();
