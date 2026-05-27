@@ -1071,19 +1071,15 @@ int run_self_tests() {
         check(d_only > c_only + 1e-5f,
               "RewardSystem: deposit reward > collect reward (D-055)");
 
-        // D-057: built_shelter raised 5 → 10 (D-056 tried 15 and PPO
-        // collapsed because +15 + first_house ×5 milestones overflowed
-        // the per-step clip and confused value estimation). +10 stays
-        // exactly at the clip so the unclipped sum equals the clipped
-        // total - no surprise for PPO.
+        // D-059: rolled back to the original 5 (D-056/D-057's bigger
+        // shelter bonus was unsuccessful - any reward landscape change
+        // on top of D-055 ckpt collapsed PPO into a do-nothing policy).
         r.reset_episode();
         r.begin_step();
         r.event_built_shelter();
         float bs = r.end_step();
-        check(std::abs(bs - 10.0f) < 1e-3f,
-              "RewardSystem: built_shelter is +10 at clip (D-057)");
-        check(std::abs(r.last_step().shelter - 10.0f) < 1e-3f,
-              "RewardSystem: built_shelter unclipped also +10 (D-057)");
+        check(std::abs(bs - 5.0f) < 1e-3f,
+              "RewardSystem: built_shelter restored to +5 (D-059)");
     }
 
     // --- SpatialMemory ---

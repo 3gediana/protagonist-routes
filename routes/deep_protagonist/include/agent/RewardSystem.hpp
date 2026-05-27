@@ -82,15 +82,12 @@ public:
 
         // Resource / construction (S3.7e/f/g)
         float collected        = 0.5f;
-        // D-056 tried 5 → 15 from D-055 ckpt and PPO collapsed into a
-        // do-nothing policy (entropy 16.4, score 0.022). The +15 paired
-        // with the new fire_once_critical first_house bonus (+5 milestones)
-        // meant a single completion event paid +20 raw, exceeding the
-        // step clip and confusing the value head into believing every
-        // step had high uncertainty. D-057 backs off to +10: still 2x the
-        // pre-D-056 prize, but inside the per-step clip so the value
-        // estimator stays calibrated.
-        float built_shelter    = 10.0f;
+        // D-059: rollback to original 5. D-056 tried 15, D-057 tried 10,
+        // both collapsed PPO from D-055 ckpt - any reward landscape change
+        // on top of a 280-ep ckpt knocks the value head out of calibration.
+        // Approach changed in D-059: only modify the WORLD (Shed recipe
+        // 6 -> 2 deposits) so the same policy can complete buildings.
+        float built_shelter    = 5.0f;
         float crafted_tool     = 3.0f;
         // D-055: dedicated reward for depositing a material into an active
         // construction site. Larger than `collected` (0.5) so PPO can

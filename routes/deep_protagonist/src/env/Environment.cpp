@@ -508,14 +508,10 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                     // from "wander around picking stuff up" to "carry it
                     // back to the construction site".
                     reward_.event_deposited_material();
-                    // D-057: each deposit also fires a +0.5 milestone
-                    // shaping bonus so the long horizon "place -> 6
-                    // deposits -> built" chain has a steady ramp instead
-                    // of a single +5 prize at the end. With 6 deposits a
-                    // full Shed earns ~+3 of milestone shaping plus +6
-                    // of deposit reward plus the +10 / +5×crisis prize
-                    // when finalize fires.
-                    reward_.event_milestone(0.5f);
+                    // D-057's deposit milestone shaping reverted in D-059:
+                    // any reward landscape change on top of D-055 ckpt
+                    // collapsed PPO. Only the world simplification (Shed
+                    // recipe down to 1 wood + 1 grass) survives.
                     fire_once(first_collect_fired_);
                     deposited = true;
                     break;
@@ -564,16 +560,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     for (int i = 0; i < finished; ++i) {
         reward_.event_built_shelter();
         progress_.on_house_built();
-        // D-056: first_house gets the same fire_once_critical bonus as
-        // first_eat/first_drink (+5 milestones × crisis scale). This makes
-        // "the first house" worth ~+5 instead of +1 at full crisis, on the
-        // same magnitude as first eating/drinking which is appropriate
-        // for the blueprint Mid->Late transition.
+        // D-059: first_house back to single milestone fire (D-056's ×5
+        // critical was reverted - any reward change on top of D-055 ckpt
+        // collapsed PPO). The +5 built_shelter and +1 milestone are kept;
+        // PPO needs to see this combo at least once before it converges,
+        // which is now within reach because Shed recipe is only 2 deposits.
         if (!first_house_built_fired_) {
+            reward_.event_milestone();
             first_house_built_fired_ = true;
-            for (int k = 0; k < 5; ++k) {
-                reward_.event_milestone(crisis);
-            }
         }
     }
 

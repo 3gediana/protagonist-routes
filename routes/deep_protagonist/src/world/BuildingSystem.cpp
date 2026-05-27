@@ -17,8 +17,17 @@ const char* building_type_name(BuildingType t) {
 
 namespace {
 // Recipe table. Costs scale with tier; min_stage gates progression.
+// D-058: Shed cost cut from (4 wood + 2 grass = 6 deposits) down to
+// (1 wood + 1 grass = 2 deposits). D-056/D-057 trial showed PPO could
+// not reliably finish a 6-deposit chain - the +10 prize at the end was
+// too far from the "I should commit to building" decision under γ=0.99.
+// Shrinking the chain to 2 deposits lets PPO actually see the
+// completion reward signal during training. Blueprint line 30 says
+// "反复搬木头石头草放上去" - which is still true at 2 deposits, just
+// the smallest version. WoodHouse/StoneHouse/BigHouse keep their
+// original costs so progression has a difficulty ladder.
 const std::array<BuildingRecipe, 4> kRecipes = {{
-    { BuildingType::Shed,        "shed",        4, 0, 2, dp::agent::ProgressStage::Mid,  1.2f, 3.5f },
+    { BuildingType::Shed,        "shed",        1, 0, 1, dp::agent::ProgressStage::Mid,  1.2f, 3.5f },
     { BuildingType::WoodHouse,   "wood_house",  8, 2, 4, dp::agent::ProgressStage::Mid,  1.8f, 4.5f },
     { BuildingType::StoneHouse,  "stone_house", 6, 8, 2, dp::agent::ProgressStage::Mid,  2.0f, 5.5f },
     { BuildingType::BigHouse,    "big_house",  12,10, 6, dp::agent::ProgressStage::Mid,  2.6f, 7.0f },
