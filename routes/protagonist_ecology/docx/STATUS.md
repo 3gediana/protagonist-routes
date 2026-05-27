@@ -1,9 +1,32 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-26 中（**D-044 disk-budget hardening：3 个全局 debug CSV 路径迁到 run_dir + 3 处 200 MB size guard + 删 ~3GB 历史日志；218/218 测试仍全过**）。前次 (2026-05-25 晚)：Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口
+> 最后巡检：2026-05-28 凌晨（**Stone Bootstrap commit 4 fix 完整验证：60-gen graduate AB 重跑 `fb2c9c5` binary 拿到 harmony_check 7/7 PASS，原 5/7 的 C5(worksites=0) + C6(me_cov=0.16) 全部消除**）。前次 (2026-05-26 中)：D-044 disk-budget hardening；再前 (2026-05-25 晚)：Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD：`4f493ae Layer 6 R3 stage 3 commit O: Omnivore also gets a prey peer`
+> 当前 HEAD（protagonist_ecology 视角）：`fb2c9c5 protagonist_ecology: Stone Bootstrap commit 4 fix: replay seed side-effects` (master HEAD 是 deep_protagonist 的 `9de5519 D-068` — 共仓不冲突)
+
+> **2026-05-28 凌晨 Stone Bootstrap commit 4 fix 完整验证（graduate AB 60-gen 第二轮：harmony_check 5/7→7/7）**：
+> - **commit `fb2c9c5`**（`master`）：`routes/protagonist_ecology/world/NurseryProgressionLayer.cpp` +54 行。`seedFromProgressionState` 检测每个 unlock flag 的 false→true 跨 episode 转换，立即调对应 layer 重放物理世界 side-effect（stone → 10×ScatterStone via director；heavy → heavy_unlock_count_×ScatterHeavyStone；first_fire/second_fire → `campfire_->igniteNextDormant()`；worksite → `worksite_->activateNextDormant()` + 1×ScatterStone support replay）。null-check 守 collaborator 指针让原 unit test 继续过。`test_core.exe` **218/218 PASS**，`NurseryProgressionPersistence` 3/3 PASS。
+> - **根因**（不是文档说的「stone 解锁路径不是 6 sticks 累积」那条假设，是真正的代码 bug）：原版 `seedFromProgressionState` 只 OR-merge 5 个 flag，但没重放物理世界的 side-effect。每个新 episode 用 `createBootstrapWorld` 起全新世界（全 Stick、零 Stone、所有 campfire/worksite 都 dormant）。seed 把 `stone_unlocked_=true` 灌进来后，`dispatchRandomPendingEvent` 里 `if (!stone_unlocked_ && deposits >= 6)` gate 短路，ScatterStone 永不再发——agent 继承 "stone_unlocked=true" 但活在零石头世界，整 60 代 deposits_stone=0、worksite=0、me_coverage workcraft 轴塌缩到 0.16。**C5 + C6 是同一个 bug 的两个症状**。文档第 23 行猜的「stone unlock 真实路径不是 6 sticks 累积」是错的——路径是对的，但 seed 阶段没复刻它对世界的副作用。
+> - **三段验证**：
+>   - **(1) 全测试** `test_core.exe --gtest_filter='*' --gtest_output=junit:test_results.xml`：**218/218 PASS**，无回归。
+>   - **(2) 4-gen smoke**（`tmp/layer1/smoke_4gen_curriculum_fix.toml` = curriculum.toml + generations=4，binary `build_ninja_cuda/bin/neural-eco-protagonist.exe` 2026-05-28 00:35 编入 fb2c9c5）：原 60-gen builds 全 0；smoke 4-gen 在 gen 2/3 各刷出 1 个 build；世界 stones>0 ticks 0→885；deposits_stone>0 行 0→399；me_coverage gen3 终值 5/25 (0.20) **已超原 60-gen 终值** 4/25 (0.16)。
+>   - **(3) 60-gen 全跑** (`tmp/layer1/long_run_60gen_2d_curriculum.toml`，WMI `Win32_Process.Create` 启动避免 SSH 父进程拖死，PID 29416 01:04:16→04:14:44 UTC，190 min)：
+>     - `data/runs/long_run_60gen_2d_curriculum/20260528-010417/` checkpoint_gen{9,19,29,39,49,59} 全 dump 完整；evolution.csv 60 行 fitness.csv 60 行 borderland_metrics.csv 完整。
+>     - **harmony_check 全 7 条 PASS**（baseline 是 7/7，原 5/7 修复达成）：
+>       | # | 检查 | 旧 graduate AB | **本次 fix** | baseline |
+>       |---|---|---|---|---|
+>       | C1 hunters active | PASS | PASS | PASS |
+>       | C2 herbivores attrition | PASS | PASS | PASS |
+>       | C3 coop co-presence | peak 2473s | **peak 2376s** | peak 3254s |
+>       | C4 scavengers fed | PASS | PASS | PASS |
+>       | **C5 worksites completed** | **0/total=0 ❌** | **peak=2/gen total=88 ✅** | peak=?/total=38 |
+>       | **C6 me_coverage** | **0.16 ❌** | **peak=0.480 qd=62118 ✅** | 0.40 |
+>       | C7 no extinction | PASS | PASS | PASS |
+>     - **关键 gen 数据**（fitness.csv me_coverage 列）：gen0=0.08, gen10=0.12, gen15=0.32 (首次破 0.30), gen30=0.36, **gen39=0.48 (peak)**, gen59=0.36。**比 baseline 0.40 还高 20%**。
+>     - **关键事件**：gen 10 ep 1 stone 有机解锁（01:23:28）→ 持久化 → gen 11 ep 0 tick=0 立刻看到 `stones=1`（fix 在 seed 阶段 submit 了 10×ScatterStone）+ `active_fires=1`（first_fire replay）。gen 12 ep 1 worksite 持久化解锁。后续每代 builds=1-2 稳定。
+> - **结论**：graduate pipeline (sandbox→borderland→main_world + triple_world + curriculum persistence) **真正闭环**，比 baseline 不退步反而 me_cov 略高、build 总数 88 vs 38。下一步可以直接上 structural-mutation AB。
+> - **不打扰用户**：用户在线下睡觉，整个流程（智能体决策→改代码→smoke 验证→60-gen 跑→提交）全自主，零弹窗。
 >
 > **2026-05-26 中 D-044 disk-budget hardening（防 190GB 日志复发）**：
 > - **背景**：用户报告之前出过"190G 巨型日志"，本次会话排查根因。CreditLedger.cpp 注释自爆 *"2026-05-23 incident hit 7.07 GB / 110M rows"*。盘上还残留 `data/runs/_credit_log.csv` 2.1 GB + `tmp/*.log` 5 个共 856 MB。
