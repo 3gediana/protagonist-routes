@@ -1,8 +1,43 @@
 # deep_protagonist 璺?PROGRESS
 
-> 鏈€鍚庢洿鏂? 2026-05-28 01:10 UTC (D-065 autonomous run launched)
-> 褰撳墠闃舵: **D-065 in-flight** (2M from D-063 ckpt, scheduled task dp_d065, PID 41784, ETA ~02:10 UTC)
-> 涓婁竴绋虫€? **D-063** (last 60: spear 100% / hunt~ 8.3% / eat 100% / drink 100% / score 0.292 = 椤圭洰鍙叉渶楂?
+> 鏈€鍚庢洿鏂? 2026-05-28 02:01 UTC (D-066 autonomous run launched)
+> 褰撳墠闃舵: **D-066 in-flight** (2M from D-065 ckpt; prey density 2-3x; scheduled task dp_d066, PID 46200, ETA ~02:50 UTC)
+> 涓婁竴绋虫€? **D-065** (last 60: spear 98% / col 95% / hunt 0% / score 0.296; D-064 reward hacking 宸蹭慨澶?
+
+## D-066 autonomous (2026-05-28 02:00 UTC)
+
+### D-065 澶嶇洏锛圙rass starter 瀹炴祴锛宭ine-23 浠?0%锛?
+| metric | D-063 | D-064 | D-065 |
+|---|---|---|---|
+| eat | 100 | 100 | 100 |
+| drink | 100 | 90 | 90 |
+| col | 68 | 37 | **95** |
+| spear | 100 | 100 | 98 |
+| sh | 0 | 0 | 0 |
+| cl | 0 | 0 | **0** |
+| hunt | 7 | 0 | 0 |
+| score | 0.292 | 0.281 | **0.296** |
+| r_col | 0.78 | 0.48 | **1.20** |
+
+- 鉁?D-064 reward hacking 淇锛坈ol 37鈫?5锛宒rink 90 鎸佸钩锛宻core 0.281鈫?.296锛?- 鉂?Grass starter **娌℃墦寮€ clothing**锛坈raft_grass_dress + wear_clothes 浜屾閾?PPO 娌℃帰绱㈠埌锛?- 鈿狅笍 鍓綔鐢細ep 60-119 sh=22% blip锛圙rass 鍙?deposit 鑷?building site锛夛紝鍚庣画 PPO 鏀惧純
+- 鉂?hunt 浠?0%锛坰pear 98% 浣嗘病鏉€ prey锛?
+### D-066 鏀瑰姩锛坧ure structural, no reward shaping锛?
+- AnimalSystem::initialize: rabbits 50鈫?20, deer 20鈫?0, fish 30鈫?0 (wolves 8 涓嶅彉, D-047 闃叉挬鐙?
+- 1024脳1024m 涓栫晫 prey 骞冲潎闂磋窛 140m鈫?0m
+- load D-065 ckpt锛堜繚鐣?spear 98% 绛栫暐锛?- 鍏朵綑瀹屽叏涓嶅彉锛圖-063 starter Wood+Stone+Grass / reward weights / obs / 缃戠粶 / 瓒呭弬锛?
+### 棰勬湡 & 璇勪及
+
+- 涓? hunt% 鈮?20% in last 60 ep
+- 鍙嶉€€鍖? eat 鈮?95%, drink 鈮?90%, spear 鈮?95%, score 鈮?0.29
+- 鍓骇鐗? r_col 鍙兘缁х画鍗囷紙鏇村 Fur 鍏ュ簱锛?
+### 鍛戒护琛?/ Tasks
+
+\\\powershell
+deep_protagonist_train.exe --policy ppo --steps 2000000 \
+  --load runs\ppo_d065_2M.pt --metrics runs\ppo_d066_2M.jsonl \
+  --save-path runs\ppo_d066_2M.pt --save-every 50
+# scheduled task: dp_d066, PID 46200, start 2026-05-28 02:00:36 UTC
+\\\
 
 ## D-065 autonomous (2026-05-28 01:08 UTC)
 

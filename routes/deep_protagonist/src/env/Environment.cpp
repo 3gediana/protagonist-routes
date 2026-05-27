@@ -35,7 +35,16 @@ Environment::Environment(const EnvConfig& cfg)
     // world layout for given seed.
     decorations_.generate(cfg_.world.seed ^ 0xDEC0ULL, world_);
     plants_.initialize(cfg_.world.seed     ^ 0xF00DULL, world_, decorations_);
-    animals_.initialize(cfg_.world.seed    ^ 0xA11AULL, world_);
+    // D-066: bump prey density to give PPO more hunt encounters.
+    // D-065 measured spear 98% / hunt 0% with default 50R/20D/30F: agent
+    // has the tool but rarely meets prey in 1024x1024m world (~50 rabbits
+    // / km^2 = 1 rabbit per ~20000 m^2 = ~140m apart on average). 2-3x
+    // density brings them to ~80m apart so 'attack while facing prey'
+    // becomes a discoverable behavior. Wolves stay at 8 (D-047 anti-
+    // rou-lang policy). Purely structural; no reward weight changes.
+    animals_.initialize(cfg_.world.seed    ^ 0xA11AULL, world_,
+                        /*rabbits*/120, /*deer*/50, /*wolves*/8,
+                        /*fish*/60);
     resources_.initialize(cfg_.world.seed  ^ 0xC011ULL, world_);
 
     float wx_max = world_.heightmap().world_size_x();
