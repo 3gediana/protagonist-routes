@@ -534,7 +534,13 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // R -> deposit_to_site (priority) or collect (fallback)
     if (action.deposit_to_site || action.collect) {
         bool deposited = false;
-        if (action.deposit_to_site && progress_.can_build()) {
+        // D-087: auto-placed Shed (admin_place_site in reset) exists regardless
+        // of stage; gating deposit on Mid stage created a chicken/egg loop because
+        // Mid requires collect>=5+explore>=50m but those don't fire until the
+        // agent has reason to act (which is the site). Removing the can_build()
+        // guard here lets deposit work whenever a valid site is in reach. The
+        // try_deposit() call still requires an active site within 2.5m.
+        if (action.deposit_to_site) {
             for (int slot = 0; slot < inventory_.size(); ++slot) {
                 auto k = inventory_.at(slot);
                 if (k != dp::agent::ItemKind::Wood

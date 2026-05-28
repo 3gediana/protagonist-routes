@@ -147,6 +147,196 @@ struct WanderPolicy {
     }
 };
 
+// D-087 (user mandate "改架构改算法"): rule-based scripted policy that
+// demonstrates the blueprint S1->S3 chain. Reads the observation vector
+// (layout in include/agent/Observation.hpp) and produces actions that
+// (a) walk to the auto-placed Shed site (D-086 admin_place_site at
+//     spawn_y+8), (b) deposit one Wood + one Grass to complete it,
+// (c) keep drinking/eating to survive long enough.
+//
+// Purpose 1 (verification): does the env actually permit the blueprint
+//   scene? 5 PPO runs * 5M total built ~7 houses; this lets us check
+//   "scripted = 1 house per ep" before trusting BC/demos.
+// Purpose 2 (demo source): once verified, we can record (obs, action)
+//   pairs from this policy and BC-pretrain a PPO net (D-088).
+struct ScriptedPolicy {
+    std::mt19937_64 rng;
+    float dirx = 0.0f, diry = 1.0f;   // initial: face north toward site
+    int   tick = 0;
+    int   deposit_cooldown = 0;
+
+    static constexpr int OBS_HUNGER       = 0;
+    static constexpr int OBS_THIRST       = 1;
+    static constexpr int OBS_INV_WOOD     = 117;
+    static constexpr int OBS_INV_STONE    = 118;
+    static constexpr int OBS_INV_GRASS    = 119;
+    static constexpr int OBS_STAGE_MID    = 125;
+    static constexpr int OBS_BLDG_DX      = 130;
+    static constexpr int OBS_BLDG_DY      = 131;
+    static constexpr int OBS_BLDG_DONE    = 132;
+    static constexpr int OBS_WATER_DX     = 145;
+    static constexpr int OBS_WATER_DY     = 146;
+    static constexpr int OBS_WATER_DIST   = 147;
+    static constexpr int OBS_RES_BASE     = 99;
+    static constexpr int OBS_RES_STRIDE   = 6;
+    static constexpr int OBS_PLANT_BASE   = 39;
+    static constexpr int OBS_PLANT_STRIDE = 7;
+    static constexpr float VISION_RANGE   = 60.0f;
+
+    explicit ScriptedPolicy(uint64_t seed) : rng(seed ? seed : 1) {}
+
+    bool find_resource_(const dp::agent::ObservationBuilder::Vector& obs,
+                        int kind, float& out_dx, float& out_dy) const {
+        float best_d2 = 1e9f;
+        bool  found   = false;
+        for (int i = 0; i < 3; ++i) {
+            int b = OBS_RES_BASE + i * OBS_RES_STRIDE;
+            float dx = obs[b + 0];
+            float dy = obs[b + 1];
+            float onehot = obs[b + 3 + kind];
+            if (onehot < 0.5f) continue;
+            float d2 = dx * dx + dy * dy;
+            if (d2 < best_d2) { best_d2 = d2; out_dx = dx; out_dy = dy; found = true; }
+        }
+        return found;
+    }
+
+    bool find_plant_(const dp::agent::ObservationBuilder::Vector& obs,
+                     float& out_dx, float& out_dy) const {
+        float best_d2 = 1e9f;
+        bool  found   = false;
+        for (int i = 0; i < 4; ++i) {
+            int b = OBS_PLANT_BASE + i * OBS_PLANT_STRIDE;
+            float dx = obs[b + 0];
+            float dy = obs[b + 1];
+            if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f) continue;
+            float d2 = dx * dx + dy * dy;
+            if (d2 < best_d2) { best_d2 = d2; out_dx = dx; out_dy = dy; found = true; }
+        }
+        return found;
+    }
+
+    void steer_(dp::agent::AgentAction& a, float tx, float ty) {
+        float mag = std::sqrt(tx * tx + ty * ty);
+        if (mag < 1e-4f) { a.move_x = dirx; a.move_y = diry; return; }
+        a.move_x = tx / mag;
+        a.move_y = ty / mag;
+        dirx = a.move_x;
+        diry = a.move_y;
+    }
+
+    dp::agent::AgentAction sample(const dp::agent::ObservationBuilder::Vector& obs,
+                                  float /*dt*/) {
+        ++tick;
+        if (deposit_cooldown > 0) --deposit_cooldown;
+        dp::agent::AgentAction a;
+
+        float thirst = obs[OBS_THIRST];
+        float hunger = obs[OBS_HUNGER];
+        float inv_w  = obs[OBS_INV_WOOD];
+        float inv_g  = obs[OBS_INV_GRASS];
+        float site_dx   = obs[OBS_BLDG_DX];
+        float site_dy   = obs[OBS_BLDG_DY];
+        float site_done = obs[OBS_BLDG_DONE];
+        float site_dist_norm = std::sqrt(site_dx * site_dx + site_dy * site_dy);
+        bool  site_active    = (site_dist_norm > 1e-4f) && (site_done < 0.5f);
+
+        const float THIRST_CRIT = 0.30f;
+        const float HUNGER_CRIT = 0.30f;
+        const float THIRST_LOW  = 0.55f;
+        const float HUNGER_LOW  = 0.55f;
+        const float DEPOSIT_RANGE_NORM = 2.0f / VISION_RANGE;
+        const float WATER_DRINK_RANGE  = 2.0f / VISION_RANGE;
+        const float PLANT_EAT_RANGE    = 1.5f / VISION_RANGE;
+        const float COLLECT_RANGE      = 2.0f / VISION_RANGE;
+
+        bool have_wood  = inv_w > 0.005f;
+        bool have_grass = inv_g > 0.005f;
+        bool can_deposit = site_active && (have_wood || have_grass);
+
+        if (thirst < THIRST_CRIT) {
+            float wx = obs[OBS_WATER_DX];
+            float wy = obs[OBS_WATER_DY];
+            float wd = obs[OBS_WATER_DIST];
+            if (wd > 1e-4f) {
+                steer_(a, wx, wy);
+                if (wd < WATER_DRINK_RANGE) a.drink = true;
+                return a;
+            }
+        }
+        if (hunger < HUNGER_CRIT) {
+            float px, py;
+            if (find_plant_(obs, px, py)) {
+                steer_(a, px, py);
+                float pd = std::sqrt(px * px + py * py);
+                if (pd < PLANT_EAT_RANGE) a.eat = true;
+                return a;
+            }
+        }
+
+        if (can_deposit) {
+            if (site_dist_norm < DEPOSIT_RANGE_NORM) {
+                a.move_x = 0.0f;
+                a.move_y = 0.0f;
+                if (deposit_cooldown == 0) {
+                    a.deposit_to_site = true;
+                    deposit_cooldown  = 3;
+                }
+                return a;
+            }
+            steer_(a, site_dx, site_dy);
+            return a;
+        }
+
+        if (site_active && !can_deposit) {
+            float rx, ry;
+            int   need = have_wood ? 2 : 0;
+            if (find_resource_(obs, need, rx, ry)) {
+                steer_(a, rx, ry);
+                float rd = std::sqrt(rx * rx + ry * ry);
+                if (rd < COLLECT_RANGE) a.collect = true;
+                return a;
+            }
+            int alt = have_wood ? 0 : 2;
+            if (find_resource_(obs, alt, rx, ry)) {
+                steer_(a, rx, ry);
+                float rd = std::sqrt(rx * rx + ry * ry);
+                if (rd < COLLECT_RANGE) a.collect = true;
+                return a;
+            }
+        }
+
+        if (thirst < THIRST_LOW) {
+            float wx = obs[OBS_WATER_DX];
+            float wy = obs[OBS_WATER_DY];
+            float wd = obs[OBS_WATER_DIST];
+            if (wd > 1e-4f) {
+                steer_(a, wx, wy);
+                if (wd < WATER_DRINK_RANGE) a.drink = true;
+                return a;
+            }
+        }
+        if (hunger < HUNGER_LOW) {
+            float px, py;
+            if (find_plant_(obs, px, py)) {
+                steer_(a, px, py);
+                float pd = std::sqrt(px * px + py * py);
+                if (pd < PLANT_EAT_RANGE) a.eat = true;
+                return a;
+            }
+        }
+
+        if ((tick & 31) == 0) {
+            float ang = std::uniform_real_distribution<float>(0.0f, 6.2831853f)(rng);
+            dirx = std::cos(ang);
+            diry = std::sin(ang);
+        }
+        a.move_x = dirx;
+        a.move_y = diry;
+        return a;
+    }
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -192,7 +382,7 @@ int main(int argc, char** argv) {
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
-                "       [--policy wander|noop|ppo]\n"
+                "       [--policy wander|noop|scripted|ppo]\n"
                 "       [--metrics path.jsonl]\n"
                 "       [--save-path file.pt --save-every N]\n"
                 "       [--load file.pt]\n"
@@ -239,6 +429,7 @@ int main(int argc, char** argv) {
     }
 
     WanderPolicy wander(seed ^ 0xC0DEULL);
+    ScriptedPolicy scripted(seed ^ 0xBEEFULL);
     dp::agent::ObservationBuilder::Vector obs{};
     env.reset(obs);
 
@@ -471,6 +662,8 @@ int main(int argc, char** argv) {
             // stand still
         } else if (policy == "wander") {
             action = wander.sample(ecfg.fixed_dt);
+        } else if (policy == "scripted") {
+            action = scripted.sample(obs, ecfg.fixed_dt);
         } else if (policy == "ppo") {
             // Snapshot the GRU hidden BEFORE sample_action mutates it.
             // h_in is the value PPO::update replays during the recurrent
