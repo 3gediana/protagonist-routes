@@ -610,6 +610,18 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     for (int i = 0; i < finished; ++i) {
         reward_.event_built_shelter();
         progress_.on_house_built();
+        // D-089: persistent scaffold - immediately re-seed a fresh Shed at
+        // the spawn position so PPO has a new build target the next tick.
+        // D-088 ran out after 1 Shed/ep (admin site only placed at reset);
+        // for blueprint "village" scene we need agents to build *multiple*
+        // houses per episode. Each Shed still costs 1W+1G to complete, so
+        // budget is gated by how much the agent collects mid-episode.
+        {
+            float sx = spawn_x_;
+            float sy = spawn_y_;
+            float sz = world_.surface_height(sx, sy);
+            buildings_.admin_place_site(dp::world::BuildingType::Shed, sx, sy, sz);
+        }
         // D-059: first_house back to single milestone fire (D-056's 脳5
         // critical was reverted - any reward change on top of D-055 ckpt
         // collapsed PPO). The +5 built_shelter and +1 milestone are kept;
@@ -638,11 +650,15 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             fire_once_critical(first_spear_fired_);
         }
     }
+    // D-089: place_shelter (lean-to) disabled to force PPO toward Shed/house
+    // building. D-088 5M run showed PPO learned Shed in ep 0-100 (28 houses)
+    // then converged on lean-to (1 action, same +5 r_shelter, same 1W+1G cost)
+    // for the remaining 457 ep -> 1 house in 100+ ep. Removing lean-to as a
+    // reward path forces PPO to keep using the multi-step deposit chain
+    // (which it already proved learnable in ep 0-100). Action stays in the
+    // action space (PPO sees consistent action_dim) but does nothing.
     if (action.place_shelter) {
-        if (shelter_.try_place(inventory_, as.pos_x, as.pos_y, as.pos_z)) {
-            reward_.event_built_shelter();
-            fire_once(first_shelter_fired_);
-        }
+        // intentionally no-op
     }
     if (action.attack) {
         bool has_spear = inventory_.num_of(dp::agent::ItemKind::Spear) > 0;
