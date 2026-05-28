@@ -102,6 +102,7 @@ set(DP_CORE_SOURCES
     src/agent/VitalSystem.cpp
     src/agent/Wardrobe.cpp
     src/env/Environment.cpp
+    src/env/VecEnv.cpp
     src/policy/PPO.cpp
 )
 

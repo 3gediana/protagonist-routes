@@ -14,6 +14,7 @@
 //                          --metrics path.jsonl   (optional, append-mode)
 
 #include "env/Environment.hpp"
+#include "env/VecEnv.hpp"
 #include "agent/AgentAction.hpp"
 #include "policy/PPO.hpp"
 
@@ -165,6 +166,7 @@ int main(int argc, char** argv) {
     bool        no_update  = false;       // pure-eval: skip rollout collection and PPO update
     float       thirst_decay = 12.0f;      // D-053: blueprint line 60. D-041 used 8 as middle ground; with D-052 stack in place we need the full 12/min so drink stays a survival need across an episode.
     float       trigger_cost = 0.001f;     // EnvConfig.trigger_cost
+    int         n_envs       = 1;          // D-078: VecEnv parallel envs (1 = legacy single env)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -186,6 +188,7 @@ int main(int argc, char** argv) {
         else if (a == "--no-update")  no_update    = true;
         else if (a == "--thirst-decay") thirst_decay = std::stof(next());
         else if (a == "--trigger-cost") trigger_cost = std::stof(next());
+        else if (a == "--n-envs")       n_envs       = std::stoi(next());
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
@@ -245,6 +248,7 @@ int main(int argc, char** argv) {
     dp::policy::PPOConfig pcfg;
     if (policy == "ppo") {
         pcfg.seed = static_cast<int>(seed & 0x7FFFFFFFULL);
+        pcfg.n_envs = n_envs;  // D-078: VecEnv parallelism (PPO hidden_ shape [N, HIDDEN])
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
         rollout.reserve(pcfg.rollout_steps);
         if (!load_path.empty()) {
@@ -338,6 +342,123 @@ int main(int argc, char** argv) {
     auto t0 = std::chrono::steady_clock::now();
     int steps_done    = 0;
     int episodes_done = 0;
+
+    // D-078: VecEnv path. When --n-envs N (N>1) is given AND policy=="ppo",
+    // we build N parallel Environment instances and step them through
+    // std::async, batching the policy forward into one [N, OBS_DIM] call.
+    // Falls through to the legacy single-env loop when n_envs <= 1 or
+    // when policy != "ppo".
+    if (policy == "ppo" && n_envs > 1) {
+        spdlog::info("D-078 VecEnv path: n_envs={}", n_envs);
+        dp::env::VecEnv venv(ecfg, n_envs, seed ^ 0xFEEDULL);
+        std::vector<dp::agent::ObservationBuilder::Vector> obs_batch;
+        venv.reset_all(obs_batch);
+
+        // Per-env rollouts. Each fills to pcfg.rollout_steps before a
+        // batched PPO update. Updates run sequentially across envs.
+        std::vector<std::vector<dp::policy::Transition>> rollouts(n_envs);
+        for (auto& r : rollouts) r.reserve(pcfg.rollout_steps);
+
+        std::vector<dp::agent::AgentAction>      v_actions(n_envs);
+        std::vector<std::vector<float>>          v_conts(n_envs);
+        std::vector<int>                         v_disc(n_envs);
+        std::vector<float>                       v_lp(n_envs), v_val(n_envs);
+        std::vector<std::vector<float>>          v_hin(n_envs);
+        std::vector<dp::env::StepResult>         v_sr(n_envs);
+
+        while (steps_done < max_steps) {
+            // Snapshot per-env GRU hiddens BEFORE the batched sample.
+            for (int i = 0; i < n_envs; ++i) v_hin[i] = ppo->current_hidden_at(i);
+
+            // Batched policy forward (single GPU call for N envs).
+            ppo->sample_actions_batch(obs_batch, v_actions, v_conts,
+                                      v_disc, v_lp, v_val);
+
+            // Parallel env step (N std::async tasks).
+            venv.step_all(v_actions, v_sr);
+            steps_done += n_envs;
+
+            for (int i = 0; i < n_envs; ++i) {
+                astats.accumulate(v_actions[i]);
+
+                if (!no_update) {
+                    dp::policy::Transition tr;
+                    tr.obs.assign(obs_batch[i].begin(), obs_batch[i].end());
+                    tr.cont_act = std::move(v_conts[i]);
+                    tr.disc_act = v_disc[i];
+                    tr.h_in     = std::move(v_hin[i]);
+                    tr.reward   = v_sr[i].reward;
+                    tr.value    = v_val[i];
+                    tr.log_prob = v_lp[i];
+                    tr.done     = v_sr[i].done;
+                    rollouts[i].push_back(std::move(tr));
+                }
+
+                if (v_sr[i].done) {
+                    const auto ms = venv.env(i).milestones();
+                    log_episode(v_sr[i].episode_id,
+                                venv.env(i).last_episode_stats(), ms);
+                    ++episodes_done;
+                    venv.reset(i, obs_batch[i]);
+                    ppo->reset_hidden_at(i);
+                } else {
+                    obs_batch[i] = v_sr[i].obs;
+                }
+            }
+
+            // Update when env-0's rollout fills. (Lockstep: every env
+            // ticks once per macro-step so all reach pcfg.rollout_steps
+            // at the same iteration.)
+            if (!no_update &&
+                static_cast<int>(rollouts[0].size()) >= pcfg.rollout_steps)
+            {
+                // Compute bootstrap V(s_T+1) for each env via a fresh
+                // batched forward on the CURRENT obs_batch. This advances
+                // hidden_ by one step in all rows, which is fine because
+                // we are about to clear all rollouts.
+                std::vector<dp::agent::AgentAction>  bs_a(n_envs);
+                std::vector<std::vector<float>>      bs_c(n_envs);
+                std::vector<int>                     bs_d(n_envs);
+                std::vector<float>                   bs_lp(n_envs), bs_v(n_envs);
+                ppo->sample_actions_batch(obs_batch, bs_a, bs_c, bs_d,
+                                          bs_lp, bs_v);
+
+                for (int i = 0; i < n_envs; ++i) {
+                    float last_v = rollouts[i].back().done ? 0.0f : bs_v[i];
+                    auto stats = ppo->update(rollouts[i], last_v);
+                    ++total_updates;
+                    ++updates_since_save;
+                    if (i == 0) {
+                        spdlog::info("PPO update #{:3d} (env0): pi={:+.4f}  "
+                                     "v={:.4f}  ent={:.3f}  kl={:+.4f}  clip={:.2f}",
+                                     total_updates,
+                                     stats.policy_loss, stats.value_loss,
+                                     stats.entropy,    stats.approx_kl,
+                                     stats.clip_frac);
+                    }
+                    rollouts[i].clear();
+                }
+
+                if (save_every > 0 && !save_path.empty()
+                    && updates_since_save >= save_every) {
+                    ppo->save(save_path);
+                    updates_since_save = 0;
+                }
+            }
+
+            if (max_episodes > 0 && episodes_done >= max_episodes) break;
+        }
+
+        auto t1v = std::chrono::steady_clock::now();
+        double elapsed_v = std::chrono::duration<double>(t1v - t0).count();
+        double sps_v = elapsed_v > 0.0 ? steps_done / elapsed_v : 0.0;
+        spdlog::info("VecEnv done: {} steps, {} episodes, {:.2f}s wall "
+                     "({:.0f} steps/s, n_envs={})",
+                     steps_done, episodes_done, elapsed_v, sps_v, n_envs);
+        if (!save_path.empty()) ppo->save(save_path);
+        if (mf) std::fclose(mf);
+        return 0;
+    }
 
     // Main loop. Two policy paths share the same step/done plumbing.
     std::vector<float> ppo_h_in_snapshot;   // h_in for current step

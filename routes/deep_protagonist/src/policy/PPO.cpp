@@ -74,7 +74,7 @@ PPO::PPO(const PPOConfig& cfg)
         net_->parameters(),
         torch::optim::AdamOptions(cfg.lr));
 
-    hidden_ = torch::zeros({1, ActorCriticImpl::HIDDEN},
+    hidden_ = torch::zeros({cfg.n_envs, ActorCriticImpl::HIDDEN},
                            torch::TensorOptions().dtype(torch::kFloat32)
                                                  .device(device_));
 
@@ -172,6 +172,113 @@ dp::agent::AgentAction PPO::sample_action(
         default: /* NOOP */ break;
     }
     return a;
+}
+
+// ============================================================================
+// D-078: VecEnv batched sampling.
+// Single forward pass on [N, OBS_DIM] -> sample N actions. hidden_ is
+// updated row-wise; out vectors are resized to N. Sequential CPU pack
+// of N obs into a contiguous buffer keeps allocation cheap. For N=8
+// this lifts GPU per-step utilisation since N parallel env steps are
+// rolled into one batched policy forward pass.
+// ============================================================================
+void PPO::sample_actions_batch(
+    const std::vector<dp::agent::ObservationBuilder::Vector>& obs_batch,
+    std::vector<dp::agent::AgentAction>& actions_out,
+    std::vector<std::vector<float>>& cont_acts_out,
+    std::vector<int>& disc_idxs_out,
+    std::vector<float>& log_probs_out,
+    std::vector<float>& values_out)
+{
+    constexpr int O = ActorCriticImpl::OBS_DIM;
+    constexpr int C = ActorCriticImpl::CONT_DIM;
+    const int N = static_cast<int>(obs_batch.size());
+    if (N == 0) return;
+
+    actions_out.assign(N, dp::agent::AgentAction{});
+    cont_acts_out.assign(N, std::vector<float>(C, 0.0f));
+    disc_idxs_out.assign(N, 0);
+    log_probs_out.assign(N, 0.0f);
+    values_out.assign(N, 0.0f);
+
+    // Pack [N, O] flat
+    std::vector<float> flat(static_cast<size_t>(N) * O);
+    for (int i = 0; i < N; ++i) {
+        std::copy(obs_batch[i].begin(), obs_batch[i].end(),
+                  flat.data() + static_cast<size_t>(i) * O);
+    }
+    torch::NoGradGuard ng;
+    auto t_obs = torch::from_blob(flat.data(), {N, O}, torch::kFloat32)
+                     .clone().to(device_);
+    net_->eval();
+    auto [cm, cs, dl, v, h_out] = net_->forward_step(t_obs, hidden_);
+    hidden_ = h_out.detach();
+
+    auto std_ = cs.exp();
+    auto eps  = torch::randn_like(cm);
+    auto cont = cm + std_ * eps;
+    auto cont_log_prob =
+        (-0.5f * ((cont - cm) / std_).pow(2)
+         - cs
+         - 0.5f * std::log(2.0f * static_cast<float>(M_PI)))
+            .sum(1);  // [N]
+    auto log_probs_d = torch::log_softmax(dl, /*dim=*/1);  // [N, 17]
+    auto probs_d     = log_probs_d.exp();
+    auto idx         = probs_d.multinomial(1, /*replacement=*/true);  // [N, 1]
+    auto disc_log_prob = log_probs_d.gather(1, idx).squeeze(1);       // [N]
+    auto log_prob = cont_log_prob + disc_log_prob;
+
+    auto cont_cpu = cont.to(torch::kCPU).contiguous();
+    auto idx_cpu  = idx.to(torch::kCPU).contiguous();
+    auto lp_cpu   = log_prob.to(torch::kCPU).contiguous();
+    auto v_cpu    = v.to(torch::kCPU).contiguous();
+
+    const float* cont_p = cont_cpu.data_ptr<float>();
+    const int64_t* idx_p = idx_cpu.data_ptr<int64_t>();
+    const float* lp_p   = lp_cpu.data_ptr<float>();
+    const float* v_p    = v_cpu.data_ptr<float>();
+
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < C; ++j) cont_acts_out[i][j] = cont_p[i*C + j];
+        disc_idxs_out[i] = static_cast<int>(idx_p[i]);
+        log_probs_out[i] = lp_p[i];
+        values_out[i]    = v_p[i];
+
+        dp::agent::AgentAction& a = actions_out[i];
+        a.move_x   = std::tanh(cont_acts_out[i][0]);
+        a.move_y   = std::tanh(cont_acts_out[i][1]);
+        a.yaw_rate = std::tanh(cont_acts_out[i][2]) * 3.0f;
+        switch (disc_idxs_out[i]) {
+            case  0: a.eat                  = true; break;
+            case  1: a.drink                = true; break;
+            case  2: a.attack               = true; break;
+            case  3: a.collect              = true; break;
+            case  4: a.place_shelter        = true; break;
+            case  5: a.craft_spear          = true; break;
+            case  6: a.sleep                = true; break;
+            case  7: a.craft_grass_dress    = true; break;
+            case  8: a.craft_fur_cloak      = true; break;
+            case  9: a.wear_clothes         = true; break;
+            case 10: a.place_blueprint      = true; break;
+            case 11: a.cycle_building_type  = true; break;
+            case 12: a.deposit_to_site      = true; break;
+            case 13: a.plant_seed           = true; break;
+            case 14: a.water_plot           = true; break;
+            case 15: a.feed_tame            = true; break;
+            default: /* NOOP */ break;
+        }
+    }
+}
+
+std::vector<float> PPO::current_hidden_at(int env_idx) const {
+    auto row = hidden_.index({env_idx}).detach().to(torch::kCPU).contiguous();
+    return std::vector<float>(row.data_ptr<float>(),
+                              row.data_ptr<float>() + ActorCriticImpl::HIDDEN);
+}
+
+void PPO::reset_hidden_at(int env_idx) {
+    torch::NoGradGuard ng;
+    hidden_.index({env_idx}).zero_();
 }
 
 PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,

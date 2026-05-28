@@ -78,8 +78,8 @@ struct Transition {
 // =============================================================================
 struct PPOConfig {
     int    rollout_steps   = 2048;
-    int    epochs          = 8;   // D-077: doubled from 4. Push GPU util 38% -> 60-70%. PPO robust to 4-30 epochs range.
-    int    minibatch_size  = 512; // D-077: doubled from 256. Reduce minibatch overhead, raise GPU saturation per step.
+    int    epochs          = 4;
+    int    minibatch_size  = 256;
     float  gamma           = 0.99f;
     float  lambda_         = 0.95f;
     float  clip_eps        = 0.2f;
@@ -89,6 +89,7 @@ struct PPOConfig {
     float  max_grad_norm   = 0.5f;
     bool   use_cuda        = true;
     int    seed            = 1234;
+    int    n_envs          = 1;     // D-078: VecEnv parallel envs in single PPO
 };
 
 class PPO {
@@ -115,6 +116,26 @@ public:
     // this before each sample_action so the Transition records what the
     // GRU saw at that step.
     std::vector<float> current_hidden() const;
+
+    // D-078 VecEnv API. Batched sampling for N parallel envs in one PPO
+    // forward call. Reuses the same network and hidden_ tensor (shape
+    // [N, HIDDEN]). Per-env hidden snapshots/resets via *_at(idx).
+    //
+    // out_*: each vector resized to N. cont_acts[i] has CONT_DIM floats.
+    void sample_actions_batch(
+        const std::vector<dp::agent::ObservationBuilder::Vector>& obs_batch,
+        std::vector<dp::agent::AgentAction>& actions_out,
+        std::vector<std::vector<float>>& cont_acts_out,
+        std::vector<int>& disc_idxs_out,
+        std::vector<float>& log_probs_out,
+        std::vector<float>& values_out);
+
+    // Snapshot one env's hidden row (HIDDEN floats). Use BEFORE the
+    // batched sample call so the Transition records the input state.
+    std::vector<float> current_hidden_at(int env_idx) const;
+
+    // Zero a single env's hidden row (call on episode boundary for that env).
+    void reset_hidden_at(int env_idx);
 
     // Compute and apply a PPO update from the given rollout. last_value
     // is V(s_T) for advantage bootstrapping (0 if last step ended episode).
