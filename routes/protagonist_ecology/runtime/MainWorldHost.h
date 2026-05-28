@@ -11,7 +11,7 @@ class World2D;
 
 namespace neuro::routes::protagonist {
 
-class ProtagonistEcologyConfig;
+struct ProtagonistEcologyConfig;
 
 // Layer 6 R3 stage 4 (LAYER6_THREE_WORLDS_SPEC § 1.3 + § 2.5,
 // PRODUCTION_WORLD_LIFECYCLE_SPEC invariant #1): persistent main-world

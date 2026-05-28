@@ -372,6 +372,9 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.triple_world.borderland_mutate_reset_rate = config.getOr<double>("runtime.triple_world.borderland_mutate_reset_rate", out.triple_world.borderland_mutate_reset_rate);
     out.triple_world.borderland_mutate_add_conn_rate = config.getOr<double>("runtime.triple_world.borderland_mutate_add_conn_rate", out.triple_world.borderland_mutate_add_conn_rate);
     out.triple_world.borderland_mutate_add_node_rate = config.getOr<double>("runtime.triple_world.borderland_mutate_add_node_rate", out.triple_world.borderland_mutate_add_node_rate);
+    out.triple_world.main_world_continuous_tick_enabled = config.getOr<bool>("runtime.triple_world.main_world_continuous_tick_enabled", out.triple_world.main_world_continuous_tick_enabled);
+    out.triple_world.main_world_tick_dt_seconds = config.getOr<double>("runtime.triple_world.main_world_tick_dt_seconds", out.triple_world.main_world_tick_dt_seconds);
+    out.triple_world.main_world_ticks_per_generation = config.getOr<std::size_t>("runtime.triple_world.main_world_ticks_per_generation", out.triple_world.main_world_ticks_per_generation);
     out.curriculum.archetype_progression_persistence_enabled = config.getOr<bool>(
         "runtime.curriculum.archetype_progression_persistence_enabled",
         out.curriculum.archetype_progression_persistence_enabled);

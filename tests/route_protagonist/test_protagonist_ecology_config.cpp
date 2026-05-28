@@ -304,3 +304,44 @@ borderland_mutate_add_node_rate = 0.04
     EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_add_conn_rate, 0.10);
     EXPECT_DOUBLE_EQ(route.triple_world.borderland_mutate_add_node_rate, 0.04);
 }
+
+// L6 R3 stage 4: MainWorldHost continuous-tick config defaults are
+// OFF so existing tomls keep their exact previous behavior.
+TEST(ProtagonistEcologyConfig, MainWorldContinuousTickDefaultsAreOff) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "main_world_default_test"
+
+[world]
+size = [120.0, 120.0]
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_FALSE(route.triple_world.main_world_continuous_tick_enabled);
+    EXPECT_DOUBLE_EQ(route.triple_world.main_world_tick_dt_seconds, 1.0);
+    EXPECT_EQ(route.triple_world.main_world_ticks_per_generation, 10u);
+}
+
+TEST(ProtagonistEcologyConfig, MainWorldContinuousTickParsesFromToml) {
+    constexpr const char* kSample = R"(
+[runtime]
+random_seed = 42
+world_role = "train"
+scenario_name = "main_world_enable_test"
+
+[world]
+size = [120.0, 120.0]
+
+[runtime.triple_world]
+main_world_continuous_tick_enabled = true
+main_world_tick_dt_seconds = 0.25
+main_world_ticks_per_generation = 40
+)";
+    const Config config = Config::loadFromString(kSample);
+    const auto route = ProtagonistEcologyConfig::fromConfig(config);
+    EXPECT_TRUE(route.triple_world.main_world_continuous_tick_enabled);
+    EXPECT_DOUBLE_EQ(route.triple_world.main_world_tick_dt_seconds, 0.25);
+    EXPECT_EQ(route.triple_world.main_world_ticks_per_generation, 40u);
+}

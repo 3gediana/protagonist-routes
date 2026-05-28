@@ -36,6 +36,7 @@
 #include "runtime/ProtagonistEvolution.h"
 #include "runtime/QualityDiversityArchive.h"
 #include "runtime/BorderlandEvaluator.h"
+#include "runtime/MainWorldHost.h"
 #include "runtime/MainWorldPersistence.h"
 #include "runtime/TripleWorldRuntime.h"
 #include "brain/GoalMemory.h"
@@ -4019,6 +4020,28 @@ int ProtagonistEcologyRuntime::runTraining() {
     TripleWorldRuntime triple_world;
     const auto& tw_cfg = route.triple_world;
 
+    // L6 R3 stage 4 (LAYER6_THREE_WORLDS_SPEC § 1.3 + § 2.5,
+    // PRODUCTION_WORLD_LIFECYCLE_SPEC invariant #1): persistent
+    // main-world host. Built lazily so that legacy training configs
+    // (main_world_continuous_tick_enabled=false, the default) pay
+    // zero cost. When enabled, the host owns one World2D that is
+    // NEVER destroyed across generations; the loop below ticks it
+    // by main_world_ticks_per_generation * main_world_tick_dt_seconds
+    // of simulated time at the end of every sandbox generation,
+    // accumulating physics state forever in memory.
+    //
+    // Disk serialization of the host's World2D state is explicitly
+    // out of scope (spec § 6 priority 3, deferred). The existing
+    // MainWorldPersistence path that round-trips genome pools is
+    // unaffected.
+    std::unique_ptr<MainWorldHost> main_world_host;
+    if (tw_cfg.main_world_continuous_tick_enabled) {
+        main_world_host = std::make_unique<MainWorldHost>(route);
+        spdlog::info("MainWorldHost: enabled (ticks_per_gen={}, dt_seconds={:.3f})",
+                     tw_cfg.main_world_ticks_per_generation,
+                     tw_cfg.main_world_tick_dt_seconds);
+    }
+
     // Stone Bootstrap commit 2: per-archetype curriculum unlock state
     // carried across episodes. Slot 0 = protagonist (only one we
     // currently care about); slots 1-8 reserved for background
@@ -5158,6 +5181,26 @@ int ProtagonistEcologyRuntime::runTraining() {
                      checkpoint_dir.string());
         }
 
+        // L6 R3 stage 4: advance the persistent main world by the
+        // configured tick budget. This runs AFTER all sandbox bookkeeping
+        // (NEAT generation step, triple_world promotions, checkpoint
+        // save) so the main world's clock is monotonic vs. generation
+        // index. With main_world_ticks_per_generation=0 the host stays
+        // constructed but quiescent — useful for diagnostics.
+        if (main_world_host && tw_cfg.main_world_ticks_per_generation > 0) {
+            const double dt = tw_cfg.main_world_tick_dt_seconds;
+            for (std::size_t k = 0; k < tw_cfg.main_world_ticks_per_generation; ++k) {
+                main_world_host->tick(dt);
+            }
+            LOG_INFO("MainWorldHost: gen {} advanced {} ticks (dt={:.3f}s, "
+                     "cumulative sim_time={:.3f}s tick_calls={})",
+                     generation,
+                     tw_cfg.main_world_ticks_per_generation,
+                     dt,
+                     main_world_host->simTimeSeconds(),
+                     main_world_host->tickCallCount());
+        }
+
         if (!continue_training) {
             break;
         }
@@ -5168,6 +5211,18 @@ int ProtagonistEcologyRuntime::runTraining() {
                 species_contexts[i].population = std::move(next_species_populations[i]);
             }
         }
+    }
+
+    // L6 R3 stage 4: end-of-run summary line for the persistent
+    // main-world host (only printed when the gate was on for this
+    // run). The host itself is destroyed at function exit and its
+    // World2D state is NOT persisted to disk in this commit — that
+    // is spec § 6 priority 3, deferred.
+    if (main_world_host) {
+        LOG_INFO("MainWorldHost end-of-run: cumulative sim_time={:.3f}s "
+                 "tick_calls={}",
+                 main_world_host->simTimeSeconds(),
+                 main_world_host->tickCallCount());
     }
 
     // L6 R2 stage 2: end-of-run summary. Always dumps final genome

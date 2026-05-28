@@ -540,6 +540,31 @@ struct ProtagonistEcologyConfig {
         // only NeatGenome receives structural changes.
         double borderland_mutate_add_conn_rate{0.0};
         double borderland_mutate_add_node_rate{0.0};
+        // L6 R3 stage 4 (LAYER6_THREE_WORLDS_SPEC § 1.3 + § 2.5,
+        // PRODUCTION_WORLD_LIFECYCLE_SPEC invariant #1): persistent
+        // main-world continuous tick. When enabled, the training
+        // runtime builds a MainWorldHost (one World2D, never reset)
+        // alongside the NEAT pools, and advances it by
+        // main_world_ticks_per_generation × main_world_tick_dt_seconds
+        // of simulated time at the end of every sandbox generation.
+        // This realizes "主世界永不 reset" in memory.
+        //
+        // Out of scope of this gate (priority 3 / future commits):
+        // disk serialization of the main-world physical state,
+        // automatic borderland→main_world agent seeding, in-world
+        // reproduction. The pool-side promotion still runs whether or
+        // not this gate is on.
+        //
+        // Default off so existing training configs are unaffected.
+        bool main_world_continuous_tick_enabled{false};
+        // Per-tick simulated dt for the persistent main world. The
+        // World2D itself accumulates time; the host clamps each call
+        // to >0 (negative/zero is a no-op).
+        double main_world_tick_dt_seconds{1.0};
+        // How many tick() calls to issue at the end of each sandbox
+        // generation. 0 = host is constructed but never ticked (lets
+        // callers exercise the construction-only path for diagnostics).
+        std::size_t main_world_ticks_per_generation{10};
     };
     TripleWorldConfig triple_world{};
     // Stone Bootstrap commit 2 (STONE_BOOTSTRAP_PERSISTENCE_PROPOSAL.md
