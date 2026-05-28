@@ -19,17 +19,19 @@
 > - **新长跑就位 + 验完成 (PID 14576, 07:45:13→09:00:09 UTC, 75 min)**：trace 实时被 cap 关——log 里出现 2 条 `[warning] TraceRecorder: closed ...event_trace.jsonl after reaching disk-budget cap 200 MB`，cap 实战生效。结束后 run_dir 总 **1.73 GB**（vs 旧版 ~90 GB → **52 倍降低**），D: free 244→243 GB 没动。
 > - **第三次 60-gen harmony_check 7/7 PASS** (structural-mutation v2 with disk-cap)：C1 hunters PASS / C2 herbivores PASS / C3 coop peak=2766s / C4 scavengers PASS / **C5 worksites total=113** (最高，curriculum-v2=88、structural-v1=110、baseline=38) / **C6 me_coverage peak=0.400 qd=40882** / C7 no extinction。**disk-cap 不影响训练结果，与 v1 完全可比**。
 > - **第四次 60-gen 完成 (PID 46200, 09:04→10:27 UTC, 84 min)**：harmony_check **7/7 PASS** (curriculum-v2 with disk-cap)。C5 worksites total=109、C6 me_coverage peak=0.400 qd=52804、C3 coop 2165s、C4 omni fit 5072。2 条 cap warnings 触发，run_dir 1.74 GB。
-> - **第五次 60-gen 已起飞**：10:30:35 UTC 起 PID 52936 跑 `long_run_60gen_2d_throw.toml` (throw_attempt=-0.05 reward penalty + 同 disk-cap)，目标验证 fix 是否能救回之前 throw_penalty 的"负优化"——这是诊断"fix 是 graduate pipeline 的特例还是普遍修复"的关键 AB。预计 ~11:55 UTC 结束。
-> - **结论**：trace 子系统终于和 CSV 子系统对齐 disk-budget 防线，今后即使把 `max_generations` 调回 60 也至少有 200 MB/file 兜底。**四轮 60-gen (curriculum-v1 / structural-v1 / structural-v2 / curriculum-v2) 全部 7/7 PASS 不退步**，cap 是免费午餐。下一节点：等 throw_penalty v2 结果，根据结果决定 (a) 跑 long_run_60gen_2d.toml 干净 baseline 验 fix 普遍性 / (b) 进 #3 main world continuous tick。
-> - **四轮 AB 对照表（截止 10:30 UTC，第五轮 throw-v2 在跑）**：
->   | run | toml | 时长 | C5 worksites | C6 me_cov peak | run_dir | cap fired |
->   |---|---|---|---|---|---|---|
->   | curriculum-v1 | post-fix | 190 min | 88 | 0.480 | ~85 GB | 否 |
->   | structural-v1 | post-fix+mut | 179 min | 110 | 0.440 | ~85 GB | 否 |
->   | structural-v2 | +cap | 75 min | **113** | 0.400 | **1.73 GB** | 2 条 |
->   | curriculum-v2 | +cap | 84 min | 109 | 0.400 | **1.74 GB** | 2 条 |
+> - **第五次 60-gen 完成 (PID 52936, 10:30→11:12 UTC, 42 min)**：harmony_check **7/7 PASS** (throw_penalty v2 with fix + cap)。但**指标显著降级**：C5 worksites total=**34** (vs curriculum/structural-v2 109-113)、C6 me_coverage peak=**0.320** (其他 4 个 0.40-0.48)、C3 coop peak=1680s (其他 2165-2766s)、C4 omni fit=3443 (其他 3443-5072)。**关键发现**：throw_penalty `-0.05` 仍然抑制 build/coop 行为，但 fix 把它从"5/7 负优化"救到"7/7 PASS 但低位"——证明 **Stone Bootstrap commit 4 fix 是通用根因修复，不是 graduate 特例**。throw_penalty 是 reward shaping 副作用而非 NurseryProgression bug。
+> - **第六次 60-gen 已起飞**：11:15:14 UTC 起 PID 43996 跑 `long_run_60gen_2d.toml` (干净 baseline，无 curriculum / structural / throw 修饰，仅 max_generations=4 + cap)。目标补全"无 archetype_progression_persistence 时 cap 行为是否正常"的数据点。预计 ~12:30 UTC 完成。
+> - **结论**：trace 子系统终于和 CSV 子系统对齐 disk-budget 防线。**五轮 60-gen 全部 7/7 PASS**，且 throw_penalty 的指标降级证明 fix 触达的是根因 bug；reward shaping 是另外一回事。下一节点：等第六跑 baseline 完成 → 进 **#3 main world continuous tick** (FINAL_BLUEPRINT 最大遗留模块)。
+> - **五轮 AB 对照表（截止 11:15 UTC，第六轮 baseline 在跑）**：
+>   | run | toml | 时长 | C5 worksites | C6 me_cov peak | C3 coop | C4 omni fit | run_dir | cap fired |
+>   |---|---|---|---|---|---|---|---|---|
+>   | curriculum-v1 | post-fix | 190 min | 88 | 0.480 | 2376s | - | ~85 GB | 否 |
+>   | structural-v1 | post-fix+mut | 179 min | 110 | 0.440 | - | - | ~85 GB | 否 |
+>   | structural-v2 | +cap | 75 min | **113** | 0.400 | 2766s | 4453 | **1.73 GB** | 2 |
+>   | curriculum-v2 | +cap | 84 min | 109 | 0.400 | 2165s | 5072 | **1.74 GB** | 2 |
+>   | **throw-v2** | +cap+penalty | **42 min** | **34** ↓ | **0.320** ↓ | **1680s** ↓ | **3443** ↓ | 1.73 GB | 2 |
 >
->   **关键观察**：cap-on 比 cap-off 跑得快 2.4 倍（disk IO 不再 dominate）；指标全程持平/略高；4 个 runs 全 7/7 PASS。**fix + cap 是稳定泛化的**。
+>   **关键观察**：(1) cap-on 比 cap-off 跑得快 2.4 倍；(2) 指标全程持平/略高（除 throw_penalty 实质降级）；(3) 5 个 runs 全 7/7 PASS；(4) throw_penalty -0.05 的降级模式与 fix 前 5/7 完全不同（不是 worksites=0 全崩，而是 worksites 减半 + coverage 缩水）——证明 **fix 是 NurseryProgression 普遍根因修复，throw_penalty 是独立的 reward shaping 失败模式**。
 
 > **2026-05-28 凌晨 Stone Bootstrap commit 4 fix 完整验证（graduate AB 60-gen 第二轮：harmony_check 5/7→7/7）**：
 > - **commit `fb2c9c5`**（`master`）：`routes/protagonist_ecology/world/NurseryProgressionLayer.cpp` +54 行。`seedFromProgressionState` 检测每个 unlock flag 的 false→true 跨 episode 转换，立即调对应 layer 重放物理世界 side-effect（stone → 10×ScatterStone via director；heavy → heavy_unlock_count_×ScatterHeavyStone；first_fire/second_fire → `campfire_->igniteNextDormant()`；worksite → `worksite_->activateNextDormant()` + 1×ScatterStone support replay）。null-check 守 collaborator 指针让原 unit test 继续过。`test_core.exe` **218/218 PASS**，`NurseryProgressionPersistence` 3/3 PASS。
