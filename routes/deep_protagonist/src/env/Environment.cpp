@@ -241,15 +241,15 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     // 'tool gives bonus' association, then with spear in hand attacks on
     // rabbit/deer/fish (1-2 hits @ 50 dmg) become viable to discover.
     // Third slot left empty for PPO to fill (grass/fur).
-    // D-073: removed starter kit (Wood/Stone/Grass). D-071/D-072 fresh init proved starter blocks drink/eat discovery from random init. Letting PPO find resources naturally. inventory_.add(dp::agent::ItemKind::Wood);
-    // D-073: removed starter kit (Wood/Stone/Grass). D-071/D-072 fresh init proved starter blocks drink/eat discovery from random init. Letting PPO find resources naturally. inventory_.add(dp::agent::ItemKind::Stone);
+    inventory_.add(dp::agent::ItemKind::Wood);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
+    inventory_.add(dp::agent::ItemKind::Stone);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
     // D-065: add Grass to starter kit. D-063 proved structural change
     // (pre-place Wood+Stone) unlocked craft_spear path -> 100% spear, 8% hunt
     // without any new shaped reward. Same philosophy for line-23 clothing:
     // pre-place Grass so first craft_grass_dress works step 0 -> +5 critical
     // for first_clothing fires -> PPO associates "craft = good" for clothes,
     // analogous to spear. No per-event reward, no metric chasing.
-    // D-073: removed starter kit (Wood/Stone/Grass). D-071/D-072 fresh init proved starter blocks drink/eat discovery from random init. Letting PPO find resources naturally. inventory_.add(dp::agent::ItemKind::Grass);
+    inventory_.add(dp::agent::ItemKind::Grass);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
 
     rebuild_observation_(obs_out);
 }
