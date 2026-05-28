@@ -4758,10 +4758,12 @@ int ProtagonistEcologyRuntime::runTraining() {
                 } else {
                     ++b2m_gated_total;
                 }
+                std::vector<std::size_t> b2m_bg_promoted_per_arch(species_contexts.size(), 0);
                 for (std::size_t i = 0; i < species_contexts.size(); ++i) {
                     if (isReady(i + 1)) {
-                        b2m_bg_promoted_total += triple_world.promoteBorderlandToMain(
+                        b2m_bg_promoted_per_arch[i] = triple_world.promoteBorderlandToMain(
                             /*archetype=*/i + 1, tw_cfg.borderland_to_main_top_k_background);
+                        b2m_bg_promoted_total += b2m_bg_promoted_per_arch[i];
                     } else {
                         ++b2m_gated_total;
                     }
@@ -4774,6 +4776,66 @@ int ProtagonistEcologyRuntime::runTraining() {
                 main_total = 0;
                 for (const auto& pool : triple_world.mainWorld().pools_by_archetype) {
                     main_total += pool.genomes.size();
+                }
+
+                // L6 R3 stage 4b (LAYER6_THREE_WORLDS_SPEC § 1.3 +
+                // PRODUCTION_WORLD_LIFECYCLE_SPEC invariant #1 follow-up):
+                // turn freshly-promoted genomes into live agents inside
+                // the persistent main_world_host's World2D. Before this
+                // commit, main_world_host->tick() advanced physics with
+                // zero agents present — the "main world" was a pristine
+                // empty room. Now every borderland→main_world promotion
+                // also spawns an Agent built from the same BootstrapPopulation
+                // helpers the sandbox uses, so the spawned agent has the
+                // full perception / capability wiring and persists across
+                // generations alongside the never-reset World2D.
+                if (main_world_host) {
+                    auto seedTail = [&](std::size_t archetype_idx,
+                                        SpeciesArchetype species_tag,
+                                        std::size_t promoted) -> std::size_t {
+                        if (promoted == 0) return 0u;
+                        const auto& pools = triple_world.mainWorld().pools_by_archetype;
+                        if (archetype_idx >= pools.size()) return 0u;
+                        const auto& pool = pools[archetype_idx];
+                        if (pool.genomes.size() < promoted) return 0u;
+                        const std::size_t start = pool.genomes.size() - promoted;
+                        std::size_t seeded = 0;
+                        for (std::size_t i = start; i < pool.genomes.size(); ++i) {
+                            if (pool.genomes[i] == nullptr) continue;
+                            const std::uint64_t lineage_id =
+                                (i < pool.lineage_ids.size()) ? pool.lineage_ids[i] : 0u;
+                            if (main_world_host->seedAgent(species_tag,
+                                                           *pool.genomes[i],
+                                                           lineage_id,
+                                                           route)) {
+                                ++seeded;
+                            }
+                        }
+                        return seeded;
+                    };
+                    std::size_t mw_seeded_protag = seedTail(
+                        0, SpeciesArchetype::Protagonist, b2m_protag_promoted);
+                    std::size_t mw_seeded_bg = 0;
+                    for (std::size_t i = 0; i < species_contexts.size(); ++i) {
+                        const std::size_t promoted = (i < b2m_bg_promoted_per_arch.size())
+                            ? b2m_bg_promoted_per_arch[i] : 0u;
+                        mw_seeded_bg += seedTail(i + 1,
+                                                 species_contexts[i].archetype,
+                                                 promoted);
+                    }
+                    if ((mw_seeded_protag + mw_seeded_bg) > 0) {
+                        std::size_t alive_now = 0;
+                        if (auto* mw_world = main_world_host->world()) {
+                            if (auto* al = mw_world->getLayer<AgentLayer>()) {
+                                alive_now = al->livingCount();
+                            }
+                        }
+                        spdlog::info(
+                            "MainWorldHost gen {}: seeded {} protag + {} bg agent(s) "
+                            "from b2m promote (host_total_seed_count={}, alive_now={})",
+                            generation, mw_seeded_protag, mw_seeded_bg,
+                            main_world_host->seedCount(), alive_now);
+                    }
                 }
             }
 

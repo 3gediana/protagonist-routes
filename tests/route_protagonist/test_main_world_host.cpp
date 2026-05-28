@@ -41,6 +41,10 @@ TEST(MainWorldHostContinuousTick, ConstructionYieldsWorld) {
         << "MainWorldHost should own a World2D after construction";
     EXPECT_DOUBLE_EQ(host.simTimeSeconds(), 0.0);
     EXPECT_EQ(host.tickCallCount(), 0u);
+    EXPECT_EQ(host.seedCount(), 0u)
+        << "MainWorldHost should not seed any agents until seedAgent() is "
+        << "called (the persistent World2D starts empty — only borderland→"
+        << "main_world promotions populate it, per L6 R3 stage 4b)";
 }
 
 TEST(MainWorldHostContinuousTick, TickAdvancesSimTime) {
