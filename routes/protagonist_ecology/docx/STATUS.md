@@ -18,8 +18,18 @@
 > - **编译管线恢复**：磁盘清理副作用导致 `build_ninja_cuda/` 几乎被清空（只剩 `lib/`+`routes/`，binary + build.ninja 都没了）。用 Clash proxy (`127.0.0.1:7897`) 给 git 全局 http/https.proxy 重新拉 _deps，cmake reconfigure 76s + ninja incremental rebuild 74s → `test_core.exe` + `neural-eco-protagonist.exe` 新出炉（2026-05-28 07:44:28）。`test_core.exe` **218/218 PASS**（含我新加的 TraceRecorder cap 代码，无回归）。
 > - **新长跑就位 + 验完成 (PID 14576, 07:45:13→09:00:09 UTC, 75 min)**：trace 实时被 cap 关——log 里出现 2 条 `[warning] TraceRecorder: closed ...event_trace.jsonl after reaching disk-budget cap 200 MB`，cap 实战生效。结束后 run_dir 总 **1.73 GB**（vs 旧版 ~90 GB → **52 倍降低**），D: free 244→243 GB 没动。
 > - **第三次 60-gen harmony_check 7/7 PASS** (structural-mutation v2 with disk-cap)：C1 hunters PASS / C2 herbivores PASS / C3 coop peak=2766s / C4 scavengers PASS / **C5 worksites total=113** (最高，curriculum-v2=88、structural-v1=110、baseline=38) / **C6 me_coverage peak=0.400 qd=40882** / C7 no extinction。**disk-cap 不影响训练结果，与 v1 完全可比**。
-> - **第四次 60-gen 已起飞**：09:04:08 UTC 起 PID 46200 跑 `long_run_60gen_2d_curriculum.toml` (同 disk-cap 配置)，预计 ~10:20 UTC 结束，目标累积 graduate-pipeline-curriculum 在 cap-safe 配置下的 harmony_check 数据点。
-> - **结论**：trace 子系统终于和 CSV 子系统对齐 disk-budget 防线，今后即使把 `max_generations` 调回 60 也至少有 200 MB/file 兜底。**graduate pipeline (curriculum + structural mutation) 三轮 60-gen 全部 7/7 PASS 不退步**，cap 是免费午餐。进入 #3 main world continuous tick 节点。
+> - **第四次 60-gen 完成 (PID 46200, 09:04→10:27 UTC, 84 min)**：harmony_check **7/7 PASS** (curriculum-v2 with disk-cap)。C5 worksites total=109、C6 me_coverage peak=0.400 qd=52804、C3 coop 2165s、C4 omni fit 5072。2 条 cap warnings 触发，run_dir 1.74 GB。
+> - **第五次 60-gen 已起飞**：10:30:35 UTC 起 PID 52936 跑 `long_run_60gen_2d_throw.toml` (throw_attempt=-0.05 reward penalty + 同 disk-cap)，目标验证 fix 是否能救回之前 throw_penalty 的"负优化"——这是诊断"fix 是 graduate pipeline 的特例还是普遍修复"的关键 AB。预计 ~11:55 UTC 结束。
+> - **结论**：trace 子系统终于和 CSV 子系统对齐 disk-budget 防线，今后即使把 `max_generations` 调回 60 也至少有 200 MB/file 兜底。**四轮 60-gen (curriculum-v1 / structural-v1 / structural-v2 / curriculum-v2) 全部 7/7 PASS 不退步**，cap 是免费午餐。下一节点：等 throw_penalty v2 结果，根据结果决定 (a) 跑 long_run_60gen_2d.toml 干净 baseline 验 fix 普遍性 / (b) 进 #3 main world continuous tick。
+> - **四轮 AB 对照表（截止 10:30 UTC，第五轮 throw-v2 在跑）**：
+>   | run | toml | 时长 | C5 worksites | C6 me_cov peak | run_dir | cap fired |
+>   |---|---|---|---|---|---|---|
+>   | curriculum-v1 | post-fix | 190 min | 88 | 0.480 | ~85 GB | 否 |
+>   | structural-v1 | post-fix+mut | 179 min | 110 | 0.440 | ~85 GB | 否 |
+>   | structural-v2 | +cap | 75 min | **113** | 0.400 | **1.73 GB** | 2 条 |
+>   | curriculum-v2 | +cap | 84 min | 109 | 0.400 | **1.74 GB** | 2 条 |
+>
+>   **关键观察**：cap-on 比 cap-off 跑得快 2.4 倍（disk IO 不再 dominate）；指标全程持平/略高；4 个 runs 全 7/7 PASS。**fix + cap 是稳定泛化的**。
 
 > **2026-05-28 凌晨 Stone Bootstrap commit 4 fix 完整验证（graduate AB 60-gen 第二轮：harmony_check 5/7→7/7）**：
 > - **commit `fb2c9c5`**（`master`）：`routes/protagonist_ecology/world/NurseryProgressionLayer.cpp` +54 行。`seedFromProgressionState` 检测每个 unlock flag 的 false→true 跨 episode 转换，立即调对应 layer 重放物理世界 side-effect（stone → 10×ScatterStone via director；heavy → heavy_unlock_count_×ScatterHeavyStone；first_fire/second_fire → `campfire_->igniteNextDormant()`；worksite → `worksite_->activateNextDormant()` + 1×ScatterStone support replay）。null-check 守 collaborator 指针让原 unit test 继续过。`test_core.exe` **218/218 PASS**，`NurseryProgressionPersistence` 3/3 PASS。
