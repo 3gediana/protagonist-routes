@@ -78,8 +78,8 @@ struct Transition {
 // =============================================================================
 struct PPOConfig {
     int    rollout_steps   = 2048;
-    int    epochs          = 4;
-    int    minibatch_size  = 256;
+    int    epochs          = 8;   // D-077: doubled from 4. Push GPU util 38% -> 60-70%. PPO robust to 4-30 epochs range.
+    int    minibatch_size  = 512; // D-077: doubled from 256. Reduce minibatch overhead, raise GPU saturation per step.
     float  gamma           = 0.99f;
     float  lambda_         = 0.95f;
     float  clip_eps        = 0.2f;

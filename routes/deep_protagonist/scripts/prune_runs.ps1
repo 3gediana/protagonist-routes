@@ -9,7 +9,7 @@
 
 param(
     [int]$keepLatest = 5,
-    [string[]]$goldKeep = @("d061", "d065"),
+    [string[]]$goldKeep = @("d061", "d065", "d076"),  # d076 = NEW GOLD (5M fresh init score 0.312)
     [string]$runsDir = "D:\claude-code\c++\routes\deep_protagonist\runs",
     [switch]$DryRun
 )
