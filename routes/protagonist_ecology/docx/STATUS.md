@@ -1,9 +1,40 @@
 # STATUS.md · Neural Eco 全仓交接手册
 
-> 最后巡检：2026-05-28 早晨（**结构变异 60-gen AB v2 收齐 7/7 PASS + TraceRecorder 加 200 MB 每文件硬上限 + 4 个 long_run toml 把 `[trace].max_generations` 从 60 滚回 4（D-044 同款 disk-budget 守门）+ 释放 ~144 GB trace 旧数据**）。前次 (2026-05-28 凌晨)：Stone Bootstrap commit 4 fix 完整验证；再前 (2026-05-26 中)：D-044 CSV disk-budget hardening；再前 (2026-05-25 晚)：Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口
+> 最后巡检：2026-05-28 下午（**Layer 6 R3 stage 4 MainWorldHost — 持久 World2D 永不 reset (memory-only) 落地 + 接入训练循环 (default OFF)**：`67e83a4` MainWorldHost class + 5 unit tests + `e5e67dd` ProtagonistEcologyRuntime 接入 + 3 个 TripleWorldConfig 开关 + 2 个 config 解析测试。test_core **218 → 225 PASS**。**首次 80-gen 跑收齐 (12:02→13:53 UTC, 111 min, PID 52972)**：harmony_check **7/7 ALL PASS**, C5=137 (七轮最高), C6 peak=0.480, C7 无灭绝。**FINAL_BLUEPRINT 路线图 #3 main world 完成 MVP** — agent seeding / 主世界 reproduction / disk persistence 仍是 spec § 6 priority 3 deferred）。前次 (2026-05-28 早晨)：结构变异 60-gen AB v2 收齐 7/7 PASS + TraceRecorder 200 MB cap；再前 (2026-05-28 凌晨)：Stone Bootstrap commit 4 fix 完整验证；再前 (2026-05-26 中)：D-044 CSV disk-budget hardening；再前 (2026-05-25 晚)：Layer 1-5 全部 + Layer 6 R2 stage 3 + Layer 6 R3 stage 3 commit A-O 15 件齐全 + Stone bootstrap commit 1/2/3 全 done + Smoke HEALTHY + 60-gen throw_penalty AB 完成 (负优化) + 60-gen graduate AB 完成 (5/7 PASS, baseline 7/7) + Layer 7 R3 trace 完整 + Layer 8 R1 + 训练就绪审计 12/12 全收口
 > 巡检范围：`d:/claude-code/c++` 整个工作树 + `D:/NVIDIA/` + `D:/claude-code/downloads/`
 > 当前分支：`master`
-> 当前 HEAD（protagonist_ecology 视角）：`f5abc02 protagonist_ecology: Stone Bootstrap commit 4 fix validation docs` (master HEAD 是 deep_protagonist 的 `9de5519 D-068` — 共仓不冲突)。本节代码改动（TraceRecorder disk-budget + toml rollback）pending commit。
+> 当前 HEAD（protagonist_ecology 视角）：`e5e67dd protagonist_ecology: Layer 6 R3 wire MainWorldHost into training loop (gated, default off)` (上一: `67e83a4` MainWorldHost class)。
+
+> **2026-05-28 下午 Layer 6 R3 stage 4 MainWorldHost continuous tick — FINAL_BLUEPRINT #3 落地 + 七连 7/7 PASS 上 80-gen**：
+> - **背景**：用户路线图 "1→2→3→4→5"，#1 (MigrationScheduler sandbox→borderland) + #2 (NEAT graduate AB) 已完整闭环并经六轮 7/7 PASS 验证。#3 main world continuous tick 是 FINAL_BLUEPRINT 最大遗留模块，核心是"主世界永不 reset (PRODUCTION_WORLD_LIFECYCLE_SPEC invariant #1)"。spec § 6 划分了三层优先级：priority 1 = sandbox→borderland migration (done)，priority 2 = main world 内存中不 reset (本次)，priority 3 = disk 序列化 (deferred)。
+> - **MainWorldHost class (`67e83a4`, 230 行新代码)**：
+>   - `routes/protagonist_ecology/runtime/MainWorldHost.{h,cpp}` 新建：constructor 取 `ProtagonistEcologyConfig const&`，内部用 `createBootstrapWorld(route)` 构造一个 `std::unique_ptr<World2D>`。
+>   - 提供 `tick(SimTimeSeconds dt)`：dt > 0 时调 `world_->tick(float(dt))` + 自增 tick_call_count_，dt ≤ 0 noop 返 false。
+>   - 提供 `simTimeSeconds()` 委托给底层 World2D 的单调时钟，`tickCallCount()` 自己计数，`world() const/non-const` 暴露 World2D 指针（被测试 / 未来 migration hook 用）。
+>   - 不可拷贝 / 不可移动（host 是 unique owner）。
+> - **5 个新 gtest (`tests/route_protagonist/test_main_world_host.cpp`)**：
+>   - `ConstructionYieldsWorld`：构造后 `world() != nullptr`, `simTimeSeconds()==0`, `tickCallCount()==0`
+>   - `TickAdvancesSimTime`：tick(0.1) + tick(0.25) 后 sim_time 严格单调上升
+>   - `NonPositiveDtIsNoop`：tick(0) / tick(-1) 不改 sim_time 也不增计数
+>   - `NeverRecreatesWorldAcrossManyTicks`：50 次 tick(0.05) 后 `world()` 指针完全等于初始指针（**这是 § 1.3 "永不 reset" invariant 的结构化测试**）
+>   - `SimTimeMatchesWorldClock`：host.simTimeSeconds() == world()->currentTimeSeconds()，确认无双重簿记
+> - **训练循环接入 (`e5e67dd`, 5 文件 / 125 行 / 1 减)**：
+>   - `ProtagonistEcologyConfig.h::TripleWorldConfig` 加 3 字段：`main_world_continuous_tick_enabled{false}` / `main_world_tick_dt_seconds{1.0}` / `main_world_ticks_per_generation{10}`
+>   - `ProtagonistEcologyConfig.cpp` 用 `config.getOr<>()` 解析三者
+>   - `ProtagonistEcologyRuntime.cpp::runTraining()` 在 `triple_world` 构造后用 `std::unique_ptr<MainWorldHost> main_world_host` 持有（gate off 时不构造，零成本）。每个 generation 末尾（在 checkpoint save 之后、`continue_training` 检查之前）调 `main_world_host->tick(dt)` × `ticks_per_generation`，LOG_INFO 输出 `MainWorldHost: gen X advanced N ticks (dt=Ys, cumulative sim_time=Zs tick_calls=K)`。运行结束输出 `MainWorldHost end-of-run: ...`。
+>   - 2 个新 config 测试覆盖 defaults-off + toml 解析两条路径
+>   - 修复了一个 forward-decl `class ProtagonistEcologyConfig` → `struct ProtagonistEcologyConfig` 的 MSVC LNK2019 mangling mismatch
+> - **rebuild + 全部测试 PASS**：`vcvars64.bat` (`C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat`) + `D:\claude-code\downloads\ninja\ninja.exe -C build_ninja_cuda -j 8 test_core neural-eco-protagonist` → 5+7 unit + 1 link = OK，`bin\test_core.exe` 跑出 `[==========] 225 tests from 57 test suites ran` + `[  PASSED  ] 225 tests`。
+> - **首次 80-gen curriculum-v2 跑完整 (PID 52972, 12:02:19→13:53:25 UTC, ~111 min)**：harmony_check 输出 ALL PASS：
+>   - C1 hunters: ambush_predator>=3, pack_hunter>=11, apex_predator>=2 PASS
+>   - C2 herbivores: rabbit 22-26 / large_herbivore 20-79 / small_forager 13-14 PASS
+>   - C3 coop peak=2059.0s PASS
+>   - C4 scavenger pop 6-7 fit 1413 / omnivore pop 16-38 fit 5088 PASS
+>   - **C5 worksites total=137 peak=2/gen** — 七轮最高 (curriculum-v1=88, structural-v1=110, structural-v2=113, baseline-v2=40)
+>   - **C6 me_coverage peak=0.480 qd=55305** — 历史最高并列 curriculum-v1
+>   - C7 all archetypes survived PASS
+> - **80-gen 释义**：六轮 60-gen 7/7 PASS 已经横向验证 fix 跨 5 config 通用；本次 80-gen 纵向验证 fix + cap 在更长训练下持续生效，且 C5 / C6 还在继续涨而不是塌缩（说明 protagonist 在 60→80 代之间仍在学新行为，graduate pipeline 还有上行空间）。
+> - **下一步**：(a) Layer 6 R3 stage 4 后续 commit：把 borderland→main_world genome promotion 链路扩展到"在 MainWorldHost 的 World2D 里也 spawn 一个 live agent"，目前只搬 genome 不搬 agent；(b) Layer 7 R3 stage 2 Godot viewer；(c) 启动 main_world_continuous_tick_enabled=true 的长 run 看 host log 行真实输出。
 
 > **2026-05-28 早晨 disk-budget 二次硬化 + structural-mutation AB v2 (7/7 PASS) + 长 run 编译管线恢复**：
 > - **背景**：凌晨连跑 graduate-AB-v2 (curriculum) + structural-mutation AB v2 各一轮，每轮 trace 输出 ~76 GB（60 gen × 2 ep × ~750 MB `event_trace.jsonl`），D: 盘从 244 GB 跌到 92 GB free（**消耗 152 GB，已逼近爆盘**）。前次 D-044 给 CSV（CreditLedger / CommunicationMetrics / `_signal_debug.csv`）加了 200 MB cap，但 trace 子系统漏配——`shouldTraceEpisode()` 只按 `max_generations / max_episodes_per_generation` gate，没有 byte-cap，配上 `max_generations = 60` 就爆。
