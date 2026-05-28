@@ -37,7 +37,7 @@ struct ActorCriticImpl : torch::nn::Module {
     static constexpr int DISC_DIM  = dp::agent::ACTION_DISCRETE_DIM;   // 16 trigger ids
     static constexpr int DISC_CATS = DISC_DIM + 1;                     // 17 = 16 + NOOP
     static constexpr int NOOP_IDX  = DISC_DIM;                         // 16
-    static constexpr int HIDDEN    = 1024;  // D-085 (2026-05-28): 256->1024, ~6.9M params, S4 starter capacity expansion (was shadow 545K root cause of high seed variance + low mean)
+    static constexpr int HIDDEN    = 256;   // D-086 revert: D-085 6.9M capacity expansion proved 0 houses + worse score. Back to shadow baseline (~545K). Real bottleneck is build-chain credit assignment, not capacity.
 
     torch::nn::Linear   encoder{nullptr};
     torch::nn::GRUCell  gru{nullptr};

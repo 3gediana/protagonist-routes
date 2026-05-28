@@ -83,6 +83,18 @@ float ConstructionSite::material_progress() const {
     return p;
 }
 
+int BuildingSystem::admin_place_site(BuildingType type, float x, float y, float z) {
+    // D-086: env-side seeding (Environment::reset spawns one Shed per
+    // episode 8m N of agent). Bypasses stage gate + single-site rule so
+    // the target is always there from step 0 -- shortens the build-chain
+    // credit assignment that defeated 5 prior 5M runs (~7 houses total).
+    ConstructionSite s;
+    s.type = type;
+    s.x = x; s.y = y; s.z = z;
+    sites_.push_back(s);
+    return int(sites_.size()) - 1;
+}
+
 int BuildingSystem::place_site(BuildingType type, float x, float y, float z,
                                const dp::agent::ProgressTracker& progress) {
     const auto& r = building_recipe(type);

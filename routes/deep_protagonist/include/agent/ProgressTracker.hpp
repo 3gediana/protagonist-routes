@@ -22,8 +22,8 @@ const char* progress_stage_name(ProgressStage s);
 class ProgressTracker {
 public:
     // Thresholds that gate Early -> Mid
-    int   mid_collect_threshold  = 30;   // resources collected
-    float mid_explore_threshold  = 500.0f;  // metres travelled
+    int   mid_collect_threshold  = 5;    // D-086: 30->5 (5 D-XXX runs with 30 threshold built ~7 total houses across 25M steps; lower threshold gives PPO more attempts at build chain per episode)
+    float mid_explore_threshold  = 50.0f;   // D-086: 500->50 (same reason; Mid gate unlocks within first ~30s of episode instead of mid-late)
 
     // Threshold that gates Mid -> Late
     int   late_house_threshold = 1;   // buildings completed

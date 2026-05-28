@@ -412,17 +412,21 @@ int run_self_tests() {
         check(p.can_build() == false && p.can_farm() == false,
               "ProgressTracker: Early stage gates build/farm");
 
-        // Not enough to advance yet
-        p.on_collect(15);
-        p.on_explore_step(200.0f);
+        // Not enough to advance yet (use threshold-relative values so this test
+        // stays correct if mid_collect_threshold / mid_explore_threshold change.
+        // D-086 dropped thresholds 30/500 -> 5/50, prior hard-coded 15/200 broke.)
+        const int   below_collect = (p.mid_collect_threshold > 1) ? (p.mid_collect_threshold - 1) : 0;
+        const float below_explore = (p.mid_explore_threshold > 1.0f) ? (p.mid_explore_threshold - 1.0f) : 0.0f;
+        p.on_collect(below_collect);
+        p.on_explore_step(below_explore);
         check(p.stage() == dp::agent::ProgressStage::Early,
               "ProgressTracker: stays Early below thresholds");
         check(p.poll_unlock() == false,
               "ProgressTracker: no unlock event yet");
 
         // Cross both thresholds -> Mid
-        p.on_collect(20);   // total 35
-        p.on_explore_step(400.0f);  // total 600
+        p.on_collect(p.mid_collect_threshold + 2);   // bumps total above
+        p.on_explore_step(p.mid_explore_threshold + 2.0f);  // bumps total above
         check(p.stage() == dp::agent::ProgressStage::Mid,
               "ProgressTracker: advances to Mid after thresholds");
         check(p.poll_unlock() == true,

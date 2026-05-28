@@ -74,6 +74,12 @@ public:
     int place_site(BuildingType type, float x, float y, float z,
                    const dp::agent::ProgressTracker& progress);
 
+    // D-086: Admin-placed site bypasses stage gating + single-site rule.
+    // Used by Environment::reset to seed an always-available Shed target
+    // near spawn so PPO has a concrete deposit target from step 0 instead
+    // of a 200+ step credit-assignment chain. NOT exposed to the agent.
+    int admin_place_site(BuildingType type, float x, float y, float z);
+
     // Drop one unit of `kind` from the agent's inventory into the closest
     // site within `reach` metres. Returns the site index hit, or -1 if
     // none accepted the deposit (no sites in range, or all sites full).

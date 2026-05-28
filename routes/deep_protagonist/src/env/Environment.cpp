@@ -251,6 +251,24 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     // analogous to spear. No per-event reward, no metric chasing.
     inventory_.add(dp::agent::ItemKind::Grass);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
 
+    // D-086: auto-seed a Shed construction site 8m N of spawn so PPO has
+    // a concrete deposit target visible in obs[130..132] (nearest building)
+    // and obs[161..163] (site materials left) from step 0. 5 prior 5M runs
+    // with normal place_blueprint flow built ~7 total houses across 25M
+    // steps -- the 200+ step credit-assignment chain from "Mid unlock" ->
+    // "cycle to Shed" -> "place_blueprint at a useful spot" -> "find wood"
+    // -> "find grass" -> "walk back" -> "deposit" was unlearnable under
+    // gamma=0.99. With this scaffold + Mid threshold dropped to 5/50, the
+    // agent's task collapses to "carry 1 Wood + 1 Grass to the marker
+    // already in your obs and press R". Starter inventory already has
+    // Wood + Stone + Grass, so the first deposit can fire on step ~1.
+    {
+        float sx = spawn_x_;
+        float sy = spawn_y_ + 8.0f;
+        float sz = world_.surface_height(sx, sy);
+        buildings_.admin_place_site(dp::world::BuildingType::Shed, sx, sy, sz);
+    }
+
     rebuild_observation_(obs_out);
 }
 
