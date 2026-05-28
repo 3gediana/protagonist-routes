@@ -633,6 +633,36 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         }
     }
 
+    // D-090: follow-agent Shed scaffold. D-089 finalized at 122 houses /
+    // 628 ep with build rate falling from 43% (ep 0-99) -> 4% (ep 300+).
+    // Root cause: PPO moves away from the auto-placed spawn site within
+    // ~30 ticks, leaving no nearby target for the remaining ~8970 ticks.
+    // Persistent respawn (D-089) only triggered on completion, so once
+    // the spawn Shed went stale the agent had no reachable build target.
+    // Fix: every 300 ticks check if agent has any active Shed within 6m;
+    // if not, drop a fresh Shed at the agent's current ground position.
+    // This guarantees a build target wherever the agent has roamed, so
+    // PPO's "fire deposit_to_site" action keeps paying off across the
+    // whole episode rather than just near spawn.
+    if (step_index_ > 0 && (step_index_ % 300) == 0) {
+        float ax = as.pos_x;
+        float ay = as.pos_y;
+        bool has_nearby = false;
+        for (const auto& s : buildings_.sites()) {
+            if (s.completed) continue;
+            float dxn = s.x - ax;
+            float dyn = s.y - ay;
+            if ((dxn * dxn + dyn * dyn) < 36.0f) {  // 6m radius
+                has_nearby = true;
+                break;
+            }
+        }
+        if (!has_nearby) {
+            float sz = world_.surface_height(ax, ay);
+            buildings_.admin_place_site(dp::world::BuildingType::Shed, ax, ay, sz);
+        }
+    }
+
     // Stage unlock bonus (Early->Mid, Mid->Late). +40 each (milestone x2).
     if (progress_.poll_unlock()) {
         reward_.event_milestone();
