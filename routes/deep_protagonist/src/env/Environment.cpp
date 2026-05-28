@@ -251,20 +251,23 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     // analogous to spear. No per-event reward, no metric chasing.
     inventory_.add(dp::agent::ItemKind::Grass);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
 
-    // D-086: auto-seed a Shed construction site 8m N of spawn so PPO has
-    // a concrete deposit target visible in obs[130..132] (nearest building)
-    // and obs[161..163] (site materials left) from step 0. 5 prior 5M runs
-    // with normal place_blueprint flow built ~7 total houses across 25M
-    // steps -- the 200+ step credit-assignment chain from "Mid unlock" ->
-    // "cycle to Shed" -> "place_blueprint at a useful spot" -> "find wood"
-    // -> "find grass" -> "walk back" -> "deposit" was unlearnable under
-    // gamma=0.99. With this scaffold + Mid threshold dropped to 5/50, the
-    // agent's task collapses to "carry 1 Wood + 1 Grass to the marker
-    // already in your obs and press R". Starter inventory already has
-    // Wood + Stone + Grass, so the first deposit can fire on step ~1.
+    // D-086+D-087: auto-seed Shed at spawn POSITION (not +8m N). The +8m
+    // version was tested in D-086 with 180 ep H=0 and D-087 with 115 ep
+    // H=0 -- even though obs[130..132] showed the site, PPO couldn't learn
+    // the 260-tick walk-then-deposit chain (PPO spammed deposit far from
+    // the site, never near enough for try_deposit's 2.5m gate to fire).
+    // ScriptedPolicy proved env works when agent gets to within 2m, so the
+    // bottleneck is "find the site at all". Spawning the site ON TOP of
+    // the agent collapses the chain to *one tick*: at step 0 the agent
+    // is within 2.5m of an active Shed with 1W+1S+1G starter inv ->
+    // a single deposit_to_site action succeeds and gives +1 reward.
+    // PPO has to learn nothing but "fire deposit_to_site" -- a 1-step,
+    // gamma=1.0 chain. This is the curriculum stage-0 ("learn to use the
+    // build action at all"). Once PPO learns this reliably, future runs
+    // can move the site away and start adding navigation.
     {
         float sx = spawn_x_;
-        float sy = spawn_y_ + 8.0f;
+        float sy = spawn_y_;
         float sz = world_.surface_height(sx, sy);
         buildings_.admin_place_site(dp::world::BuildingType::Shed, sx, sy, sz);
     }
