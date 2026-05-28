@@ -398,3 +398,40 @@ python3 scripts\summarize_metrics.py runs\ppo_d064_2M.jsonl
 - **修法**：让用户开 PowerShell 跑 `D:\tools\chisel\chisel.exe server --port 3303`（窗口别关）
 - 建议接力号在 chisel 长期断线时先想办法让用户启个 `schtasks /create /tn chisel_d /sc onlogon /tr "D:\tools\chisel\chisel.exe server --port 3303"` 开机自启，减少 babysitting
 - 即使 SSH 断了，**scheduled task 训练不受影响**（completely detached），SSH 回来直接读 jsonl 拿数据
+
+
+---
+
+## 2026-05-28 接力点 — D-082 mainline (D-076 GOLD baseline 已锁)
+
+### 当前状态
+
+| 项目 | 状态 |
+|---|---|
+| **D-076 GOLD** | score **0.312**, 5M fresh init, eat 100% drink 93% col 100% spr 100% hunt 73%. 永久 baseline. |
+| **D-077~D-081 速度优化** | **全部失败**. 不要再尝试 VecEnv / CPU mode / epochs/mb 调优。详见决策记录.md。 |
+| **D-082 in-flight** | fresh init 7M GPU seed 12345, default config. ETA 134 min. |
+
+### 红线 (不要再走)
+
+1. **VecEnv 多环境训练** — D-078/D-079/D-080 三次失败, 无论多种子单种子, score 都掉 36%+。
+2. **CPU mode (--cpu)** — D-081 同样掉 36%, 是 GPU 收敛细节敏感, 不是 device-equivalent。
+3. **ckpt continue (PPO --load)** — 6 次失败, 结构性 broken。所有 D-XXX 必须 fresh init。
+4. **per-hit shaped reward** — D-064 reward-hacking 实证, 用户禁止。
+5. **env structural change >20%** — D-066 prey ×2.5 = -56% 全崩, dose-response 失败。
+
+### D-082 监控命令 (poll ≤4 min)
+
+`powershell
+# Process status + jsonl tail
+ = Get-Process -Name deep_protagonist_train -ErrorAction SilentlyContinue
+if ($proc) { Write-Host ($proc.StartTime.ToString() + " elapsed=" + ((Get-Date)-$proc.StartTime).ToString("hh\:mm\:ss")) }
+Get-Content D:\claude-code\c++\routes\deep_protagonist\runs\ppo_d082_7M.jsonl | Select-Object -Last 3
+Get-Content D:\claude-code\c++\routes\deep_protagonist\runs\ppo_d082_7M.stdout.log -Tail 3
+`
+
+### D-082 后续判断
+
+- score ≥ 0.32: step depth 有效, D-083 续推 9M
+- score ~0.31: 5M 是 2MB shadow 上限, 主线扩容到 S5/S6
+- score < 0.28: 高方差实证, D-076 0.312 可能是 outlier, 需要 D-083 多 seed 平均
