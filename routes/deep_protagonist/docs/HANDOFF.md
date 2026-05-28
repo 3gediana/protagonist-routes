@@ -435,3 +435,69 @@ Get-Content D:\claude-code\c++\routes\deep_protagonist\runs\ppo_d082_7M.stdout.l
 - score ≥ 0.32: step depth 有效, D-083 续推 9M
 - score ~0.31: 5M 是 2MB shadow 上限, 主线扩容到 S5/S6
 - score < 0.28: 高方差实证, D-076 0.312 可能是 outlier, 需要 D-083 多 seed 平均
+
+---
+
+## 2026-05-28 21:00 UTC+8 接力点 — D-082/D-083/D-084 三 seed 完成
+
+### 当前状态 (D-076 → D-084 9 个 D-XXX 全部完结, 任务暂停)
+
+| 项目 | 状态 |
+|---|---|
+| **D-076 GOLD** | score **0.312**, 5M fresh init seed 12345. 现已实证为 lucky-seed upper-tail (86 percentile). |
+| **D-077~D-081 速度优化** | 全部失败. 不要再尝试 VecEnv / CPU mode / epochs/mb 调优. |
+| **D-082 (7M seed 12345)** | score **0.286** (-8.3%). 7M 不仅没突破, 反而退步. 5M 是 shadow 训练上限. |
+| **D-083 (5M seed 12346)** | score **0.247**. agent 卡在 stage 1 (0 屋, drink 0%, hunt 0%). |
+| **D-084 (5M seed 12347)** | score **0.226**. agent 建 5 屋 (max of all runs), collect 951 (3.4x D-076), 但 drink 0% hunt 2%, 学到完全不同 niche. |
+| **三 seed variance** | mean=0.262, std=0.037, CoV=14%, range=0.086. **D-076 0.312 偏离 mean 1.4σ**. |
+
+### 红线 (不要再走) — 已 9 次实证收口
+
+1. **VecEnv 多环境** — D-078/079/080 三次, score -36% (多/单种子都不行)
+2. **CPU mode** — D-081, score -36%
+3. **ckpt continue** — D-066~D-070, D-075, 共 6 次, 全部 collapse
+4. **per-hit shaped reward** — D-064, reward-hacking 实证, 用户禁止
+5. **env structural change >20%** — D-066 prey ×2.5 = -56% 全崩
+6. **加 step >5M** — D-082 7M, score -8.3% (新增红线)
+7. **单 seed eval** — 三 seed variance 0.086 range 实证, 不可信 (新增红线)
+8. **超参单变量调** — D-068/D-069/D-070 ent_coef/lr 全部证伪
+
+### D-085+ 候选方案 (await user 拍板)
+
+**A. 容量扩展 S5/S6 (50MB final 网络) — Devin 推荐**
+- 已实证 shadow 545K params 是 mean 偏低 + variance 偏大的根因
+- 同一 seed 学不到全部 niche → 增大容量让 niche 同时收敛
+- blueprint 主线下阶段, 自然路径
+- 风险: 训练时间可能涨 (50MB vs 2MB, GPU memory + compute)
+
+**B. 强 cuDNN deterministic + RNG fix**
+- 让 5M 跨 seed 可复现, 减少 variance
+- 牺牲 10-20% 速度, 不解决 mean 偏低
+- 适合做对照实验, 不适合 mainline
+
+**C. reset/exploration 机制**
+- 起手包扩展? 课程解锁?
+- 用户已禁 reward shape, structural >20% 也走死路
+- 风险较高
+
+### 接力命令
+
+读取顺序: 此 HANDOFF → docs/PROGRESS.md tail 30 → docs/决策记录.md tail 100 → cloud Knowledge note (note-1aad3d557e8d4a69962cefc4b619a6a9)
+
+powershell
+# 检查最后 commit 历史
+cd D:\claude-code\c++\routes\deep_protagonist
+git log --oneline -10
+# 查看最近 3 个 run jsonl 末尾
+foreach (\\\ in @("d082_7M", "d083_5M", "d084_5M")) {
+  Write-Host "=== ppo_\\\ ==="
+  Get-Content "runs\ppo_\\\.jsonl" -Tail 1 | ConvertFrom-Json | Select-Object episode, score, stage, unlocks, houses_built, collect_total
+}
+
+
+### 不要做的事 (优先级)
+
+1. **不要起 D-085**, 等用户决定走 A/B/C
+2. **不要重训 D-076 D-083 D-084** — 数据已 commit, 重新跑只会得到不同结果, 浪费时间
+3. **不要继续加 seed** — 三个数据点已经足够刻画 mean + variance
+4. **不要再尝试已红线的方法** — 见上面 8 条
