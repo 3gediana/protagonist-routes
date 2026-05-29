@@ -54,6 +54,14 @@ struct EnvConfig {
     // D-039 v4: per-trigger fee (calibrated by 100k smoke). 0.001 keeps NOOP
     // ≈10%, 0.005 collapses to NOOP 98%, 0 lets cheap noop triggers dominate.
     float    trigger_cost         = 0.001f;
+
+    // D-101: when true, disable the in-building hunger/thirst regen (and the
+    // D-099 in-building r_alive bonus). Used ONLY for ScriptedSettler demo
+    // recording: with regen on, the settler camps at home and never forages,
+    // so the demo set lacks eat/drink/walk-to-source transitions. Forcing
+    // regen off makes the oracle leave home to feed, yielding demos that
+    // cover the full survival loop. Never set during PPO training/eval.
+    bool     demo_no_regen        = false;
 };
 
 // One step worth of "what happened" for a learner to consume.

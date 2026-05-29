@@ -436,7 +436,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // the bonus without ever building anything, defeating the blueprint
     // (build a house then live in it). Smoke 50k showed random PPO would
     // happily camp in a cave for the bonus if gated on `sheltered`.
-    if (in_building) {
+    if (in_building && !cfg_.demo_no_regen) {
         reward_.event_alive(dt);
     }
     // D-091: count settlement ticks. building_ticks_ is "inside a finished
@@ -506,7 +506,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                     vital_state_.deaths += 1;
                 }
             }
-        } else if (in_building && vital_state_.alive) {
+        } else if (in_building && vital_state_.alive && !cfg_.demo_no_regen) {
             // D-098: bumped 3 -> 15 per minute. D-097's +3 was too small to
             // beat the per-tick foraging reward (food_coef=6.0 * 0.2 drive
             // per berry ~= +1.2 reward / eat, several per minute), so PPO

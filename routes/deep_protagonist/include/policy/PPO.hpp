@@ -160,6 +160,11 @@ public:
     // Convenience for logging.
     torch::Device device() const { return device_; }
 
+    // D-101: deterministic action mode for eval (mean continuous action,
+    // argmax discrete). Used to measure a cloned/finetuned policy without
+    // the exploration noise that exp(log_std) and multinomial sampling add.
+    void set_deterministic(bool d) { deterministic_ = d; }
+
 private:
     PPOConfig                                cfg_;
     torch::Device                            device_;
@@ -167,6 +172,7 @@ private:
     std::shared_ptr<torch::optim::Adam>      opt_;
     // Persistent recurrent state. Shape [1, HIDDEN] on `device_`.
     torch::Tensor                            hidden_;
+    bool                                     deterministic_ = false;
 };
 
 }  // namespace dp::policy

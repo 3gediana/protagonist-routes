@@ -1,8 +1,8 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新: 2026-05-29 ~20:30 UTC (D-100 ScriptedSettler 验证完成, 准备 BC pipeline)
-> 当前主线: **D-100 ScriptedSettler oracle 达标**, 下一步 D-101 BC (Behavioral Cloning) pipeline
-> 当前蓝图阶段: S3 settlement — PPO 端 8 次失败, scripted oracle 端 1 次命中, 准备走"oracle 教 PPO"路线
+> 最后更新: 2026-05-30 ~02:35 UTC (D-101 BC pipeline 实现完毕 + PPO 5M finetune 启动中)
+> 当前主线: **D-101 BC → PPO finetune**, bc_d101.pt 已可靠建房, 5M finetune GPU 训练中
+> 当前蓝图阶段: S3 settlement — PPO 8 次冷启动失败, oracle 命中, BC warm-start finetune 进行中
 
 ## D-094..D-100 settlement 攻关 实证表
 
@@ -58,6 +58,31 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 **对比 D-099**: bldg_ticks 575×, n_shel 142×, houses 147× 少.
 
 **判决**: oracle 路径完全可行. 蓝图原意"住进房子"由脚本一次实现. 接下来用此作为 BC demo source.
+
+## D-101 BC pipeline + PPO finetune (2026-05-30)
+
+**已实现** (main_train.cpp +163 LOC, 新增 include/policy/BCTrainer.hpp):
+1. `--record-demos PATH`: settler 跑时把 (obs[567], cont[3], disc_idx, done) 写入二进制 (header "DPB1")
+2. `--policy bc --bc-demos a,b,c --bc-out bc.pt`: 加载 demos → 监督训练 ActorCritic (GRU), 损失 = MSE(cont) + 加权 CE(disc), truncated-BPTT
+3. BC 调参 flags: `--bc-epochs --bc-batch --bc-bptt --bc-lr --bc-trigger-weight --bc-min-eplen --bc-max-eplen --bc-build-oversample --bc-build-len`
+4. `--deterministic`: PPO eval 用分布 mode (mean cont, argmax disc), 去采样噪声测 clone 真实学到了啥
+5. `--demo-no-regen`: 录 demo 时临时关 in-building regen (D-101 demo 多样化, 最终未用)
+
+**demo 录制**: 40 个 settler seed (100100..139100), 各 1 ep, 默认 regen, 录到 runs/demos_d101/s*.bin (39 ep 有效, 1 个 instant-death 丢弃, 346k records)
+
+**BC 调参核心难点 (deposit/camp 失衡)**:
+- oracle 行为极简: 走到 auto-seed 工地 (~30 步) → deposit 2 次 (step 31, 34) → 之后 ~8966 步纯 NOOP + 站着不动. 即 deposit 只占 0.02% token.
+- 朴素 BC (全 episode + trigger_weight 5) → 收敛到 "always NOOP", bldg=0 不建房.
+- 短 window (120-300 步) + 高 weight → 学会 deposit 建房, 但学不会长期 camp (建完就乱走觅食).
+- 长 window (1500+) → 学会 camp 但 deposit 又被淹没, 不建房.
+- **解法 (build-oversample)**: 每个 episode 额外复制前 50 步 "build 片段" N 次塞进训练集. 全 episode 教 camp, 复制片段教 deposit. `--bc-build-oversample 30 --bc-build-len 50 --bc-trigger-weight 25`.
+- 修了一个 batch 分组 bug: shuffle 把 9000 步 full episode 和 50 步 snippet 混进一个 batch → padding 爆炸 (每 epoch 5min→正常 36s). 改为只 shuffle group 顺序, 保持长度同质.
+
+**bc_d101.pt** (os30/w25, 12 epochs, total loss 1.26): deterministic eval (seed 555000, 10 ep) → 每 ep 建 1 房 (houses 1/ep), shelter=+5, collect=+2, milestone=+2, **不再乱走觅食** (collect 动作=0). 仍有 over-deposit (deposit 刷屏) + 轻微 drift 出屋 (bldg~210), 留给 PPO finetune 用 trigger_cost + in-building reward 修正.
+
+**PPO 5M finetune** (`--load bc_d101.pt --seed 12350`, Scheduled Task `dp_ppo_d101` 跑, 避免 SSH 断开杀进程):
+- 初步信号 (前 ~30k step): **每个 episode 从 step 0 就 shelter=+5 / collect=+2 / milestone=+2 / unlocks=2/10 / score 0.149** — BC warm-start 直接给了 PPO 8 次冷启动 (D-092..099) 都拿不到的稳定建房行为.
+- 5M ~96-107min, 训练中. 待完成后新 seed eval 对比 D-099.
 
 ## 后续路线 (D-101..D-110 蓝图)
 

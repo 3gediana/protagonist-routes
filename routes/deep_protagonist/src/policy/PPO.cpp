@@ -119,7 +119,10 @@ dp::agent::AgentAction PPO::sample_action(
     hidden_ = h_out.detach();
 
     auto std_  = cs.exp();                       // [1, C]
-    auto eps   = torch::randn_like(cm);
+    // D-101: deterministic eval uses the distribution mode (mean cont,
+    // argmax disc) so a cloned/finetuned policy is measured without the
+    // exploration noise. Training/rollout keeps the stochastic sampling.
+    auto eps   = deterministic_ ? torch::zeros_like(cm) : torch::randn_like(cm);
     auto cont  = cm + std_ * eps;                // reparam sample
     auto cont_log_prob =
         (-0.5f * ((cont - cm) / std_).pow(2)
@@ -132,7 +135,9 @@ dp::agent::AgentAction PPO::sample_action(
     // Bernoulli heads to break the "press every button" collapse.
     auto log_probs_d = torch::log_softmax(dl, /*dim=*/1);   // [1, 17]
     auto probs_d     = log_probs_d.exp();                    // [1, 17]
-    auto idx         = probs_d.multinomial(1, /*replacement=*/true);  // [1, 1]
+    auto idx         = deterministic_
+                         ? probs_d.argmax(1, /*keepdim=*/true)
+                         : probs_d.multinomial(1, /*replacement=*/true);  // [1, 1]
     auto disc_log_prob = log_probs_d.gather(1, idx).squeeze(1);       // [1]
 
     auto log_prob = cont_log_prob + disc_log_prob;

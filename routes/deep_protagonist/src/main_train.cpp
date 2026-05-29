@@ -17,12 +17,14 @@
 #include "env/VecEnv.hpp"
 #include "agent/AgentAction.hpp"
 #include "policy/PPO.hpp"
+#include "policy/BCTrainer.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -31,10 +33,58 @@
 #include <cstring>
 #include <filesystem>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
+
+// D-101: map a discrete AgentAction back to the categorical index PPO uses
+// (see PPO.cpp sample_action). At most one trigger should be set by the
+// ScriptedSettler; if several are, the first in canonical order wins. No
+// trigger -> NOOP (16).
+inline int action_to_disc_idx(const dp::agent::AgentAction& a) {
+    if (a.eat)                  return 0;
+    if (a.drink)                return 1;
+    if (a.attack)               return 2;
+    if (a.collect)              return 3;
+    if (a.place_shelter)        return 4;
+    if (a.craft_spear)          return 5;
+    if (a.sleep)                return 6;
+    if (a.craft_grass_dress)    return 7;
+    if (a.craft_fur_cloak)      return 8;
+    if (a.wear_clothes)         return 9;
+    if (a.place_blueprint)      return 10;
+    if (a.cycle_building_type)  return 11;
+    if (a.deposit_to_site)      return 12;
+    if (a.plant_seed)           return 13;
+    if (a.water_plot)           return 14;
+    if (a.feed_tame)            return 15;
+    return dp::policy::ActorCriticImpl::NOOP_IDX;  // 16
+}
+
+// D-101: invert the tanh squashing PPO applies (move = tanh(cont),
+// yaw_rate = tanh(cont)*3) so the recorded continuous target is in the
+// network's PRE-tanh output space. Clamp away from +/-1 to keep atanh finite.
+inline void action_to_cont(const dp::agent::AgentAction& a, float out[3]) {
+    auto inv = [](float v) {
+        v = std::clamp(v, -0.999f, 0.999f);
+        return 0.5f * std::log((1.0f + v) / (1.0f - v));   // atanh
+    };
+    out[0] = inv(a.move_x);
+    out[1] = inv(a.move_y);
+    out[2] = inv(a.yaw_rate / 3.0f);
+}
+
+std::vector<std::string> split_csv(const std::string& s) {
+    std::vector<std::string> out;
+    std::stringstream ss(s);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        if (!tok.empty()) out.push_back(tok);
+    }
+    return out;
+}
 
 dp::world::World::Config load_world_config(const std::string& path) {
     dp::world::World::Config cfg;
@@ -813,6 +863,21 @@ int main(int argc, char** argv) {
     float       thirst_decay = 12.0f;      // D-053: blueprint line 60. D-041 used 8 as middle ground; with D-052 stack in place we need the full 12/min so drink stays a survival need across an episode.
     float       trigger_cost = 0.001f;     // EnvConfig.trigger_cost
     int         n_envs       = 1;          // D-078: VecEnv parallel envs (1 = legacy single env)
+    // D-101 BC pipeline
+    std::string record_demos;              // path to write (obs,action) demos (settler/scripted only)
+    bool        demo_no_regen = false;     // disable in-building regen during demo recording
+    std::string bc_demos;                  // comma-separated demo files for --policy bc
+    std::string bc_out       = "bc.pt";    // BC output checkpoint
+    int         bc_epochs    = 8;
+    int         bc_batch     = 16;
+    int         bc_bptt      = 64;
+    float       bc_lr        = 1e-3f;
+    float       bc_trig_w    = 5.0f;
+    int         bc_min_eplen = 0;
+    int         bc_max_eplen = 0;
+    int         bc_build_os  = 0;
+    int         bc_build_len = 50;
+    bool        deterministic = false;   // PPO eval: use distribution mode (no sampling noise)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -835,6 +900,20 @@ int main(int argc, char** argv) {
         else if (a == "--thirst-decay") thirst_decay = std::stof(next());
         else if (a == "--trigger-cost") trigger_cost = std::stof(next());
         else if (a == "--n-envs")       n_envs       = std::stoi(next());
+        else if (a == "--record-demos") record_demos = next();
+        else if (a == "--demo-no-regen") demo_no_regen = true;
+        else if (a == "--bc-demos")     bc_demos     = next();
+        else if (a == "--bc-out")       bc_out       = next();
+        else if (a == "--bc-epochs")    bc_epochs    = std::stoi(next());
+        else if (a == "--bc-batch")     bc_batch     = std::stoi(next());
+        else if (a == "--bc-bptt")      bc_bptt      = std::stoi(next());
+        else if (a == "--bc-lr")        bc_lr        = std::stof(next());
+        else if (a == "--bc-trigger-weight") bc_trig_w = std::stof(next());
+        else if (a == "--bc-min-eplen") bc_min_eplen = std::stoi(next());
+        else if (a == "--bc-max-eplen") bc_max_eplen = std::stoi(next());
+        else if (a == "--bc-build-oversample") bc_build_os = std::stoi(next());
+        else if (a == "--bc-build-len") bc_build_len = std::stoi(next());
+        else if (a == "--deterministic") deterministic = true;
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
@@ -842,7 +921,11 @@ int main(int argc, char** argv) {
                 "       [--metrics path.jsonl]\n"
                 "       [--save-path file.pt --save-every N]\n"
                 "       [--load file.pt]\n"
-                "       [--thirst-decay X --trigger-cost Y]\n",
+                "       [--thirst-decay X --trigger-cost Y]\n"
+                "       [--record-demos demos.bin [--demo-no-regen]]\n"
+                "       [--policy bc --bc-demos a.bin,b.bin --bc-out bc.pt\n"
+                "        --bc-epochs N --bc-batch B --bc-bptt T --bc-lr X\n"
+                "        --bc-trigger-weight W]\n",
                 argv[0]);
             return 0;
         } else {
@@ -856,6 +939,32 @@ int main(int argc, char** argv) {
     spdlog::info("policy={}, steps={}, episodes_cap={}, seed={}",
                  policy, max_steps, max_episodes, seed);
 
+    // D-101: Behavioral Cloning mode. Needs only the demo files, no env.
+    if (policy == "bc") {
+        dp::policy::BCConfig bc;
+        bc.demo_paths     = split_csv(bc_demos);
+        bc.out_path       = bc_out;
+        bc.epochs         = bc_epochs;
+        bc.batch_eps      = bc_batch;
+        bc.bptt           = bc_bptt;
+        bc.lr             = bc_lr;
+        bc.trigger_weight = bc_trig_w;
+        bc.min_eplen      = bc_min_eplen;
+        bc.max_eplen      = bc_max_eplen;
+        bc.build_oversample = bc_build_os;
+        bc.build_len      = bc_build_len;
+        bc.seed           = static_cast<int>(seed & 0x7FFFFFFFULL);
+        if (bc.demo_paths.empty()) {
+            spdlog::error("--policy bc requires --bc-demos path[,path...]");
+            return 2;
+        }
+        spdlog::info("BC: epochs={}, batch_eps={}, bptt={}, lr={}, trig_w={}, out={}",
+                     bc.epochs, bc.batch_eps, bc.bptt, bc.lr,
+                     bc.trigger_weight, bc.out_path);
+        dp::policy::BCTrainer trainer(bc);
+        return trainer.run() ? 0 : 1;
+    }
+
     // Build EnvConfig from default.toml world settings, override seed.
     dp::env::EnvConfig ecfg;
     ecfg.world      = load_world_config("configs/default.toml");
@@ -863,6 +972,8 @@ int main(int argc, char** argv) {
     ecfg.fixed_dt   = 1.0f / 30.0f;
     ecfg.thirst_decay_per_min = thirst_decay;
     ecfg.trigger_cost         = trigger_cost;
+    ecfg.demo_no_regen        = demo_no_regen;
+    if (demo_no_regen) spdlog::info("D-101: demo_no_regen ON (in-building regen + r_alive bonus disabled)");
     spdlog::info("Env tunables: thirst_decay={}/min, trigger_cost={}/step",
                  thirst_decay, trigger_cost);
 
@@ -884,6 +995,30 @@ int main(int argc, char** argv) {
         spdlog::info("Metrics will append to: {}", metrics_path);
     }
 
+    // D-101: optional demo recorder (settler / scripted only). Streams
+    // (obs, cont_target, disc_idx, done) records; n_rec patched on close.
+    std::FILE* demo_f = nullptr;
+    uint64_t   demo_count = 0;
+    constexpr uint32_t DEMO_OBS_DIM  = dp::policy::ActorCriticImpl::OBS_DIM;
+    constexpr uint32_t DEMO_CONT_DIM = dp::policy::ActorCriticImpl::CONT_DIM;
+    if (!record_demos.empty()) {
+        demo_f = std::fopen(record_demos.c_str(), "wb");
+        if (!demo_f) {
+            spdlog::error("Could not open demo file '{}'", record_demos);
+            return 1;
+        }
+        const char magic[4] = {'D', 'P', 'B', '1'};
+        uint32_t ver = 1, od = DEMO_OBS_DIM, cd = DEMO_CONT_DIM;
+        uint64_t n0 = 0;
+        std::fwrite(magic, 1, 4, demo_f);
+        std::fwrite(&ver, sizeof(uint32_t), 1, demo_f);
+        std::fwrite(&od,  sizeof(uint32_t), 1, demo_f);
+        std::fwrite(&cd,  sizeof(uint32_t), 1, demo_f);
+        std::fwrite(&n0,  sizeof(uint64_t), 1, demo_f);
+        spdlog::info("D-101: recording demos to '{}' (obs_dim={}, cont_dim={})",
+                     record_demos, od, cd);
+    }
+
     WanderPolicy wander(seed ^ 0xC0DEULL);
     ScriptedPolicy scripted(seed ^ 0xBEEFULL);
     ScriptedSettler settler(seed ^ 0xD100ULL);
@@ -898,6 +1033,8 @@ int main(int argc, char** argv) {
         pcfg.seed = static_cast<int>(seed & 0x7FFFFFFFULL);
         pcfg.n_envs = n_envs;  // D-078: VecEnv parallelism (PPO hidden_ shape [N, HIDDEN])
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
+        ppo->set_deterministic(deterministic);
+        if (deterministic) spdlog::info("D-101: deterministic eval (mode action, no sampling noise)");
         rollout.reserve(pcfg.rollout_steps);
         if (!load_path.empty()) {
             ppo->load(load_path);
@@ -1150,6 +1287,22 @@ int main(int argc, char** argv) {
         auto sr = env.step(action);
         ++steps_done;
 
+        // D-101: record this (obs, action) pair. obs still holds the
+        // pre-step observation the policy acted on (it is overwritten by
+        // sr.obs further down). done marks the episode boundary so BC can
+        // replay episodes as sequences.
+        if (demo_f) {
+            float cont3[3];
+            action_to_cont(action, cont3);
+            uint32_t didx = static_cast<uint32_t>(action_to_disc_idx(action));
+            uint32_t done = sr.done ? 1u : 0u;
+            std::fwrite(obs.data(), sizeof(float), DEMO_OBS_DIM, demo_f);
+            std::fwrite(cont3, sizeof(float), DEMO_CONT_DIM, demo_f);
+            std::fwrite(&didx, sizeof(uint32_t), 1, demo_f);
+            std::fwrite(&done, sizeof(uint32_t), 1, demo_f);
+            ++demo_count;
+        }
+
         if (policy == "ppo" && !no_update) {
             dp::policy::Transition tr;
             tr.obs.assign(obs.begin(), obs.end());
@@ -1218,5 +1371,13 @@ int main(int argc, char** argv) {
         ppo->save(save_path);
     }
     if (mf) std::fclose(mf);
+    if (demo_f) {
+        // Patch n_rec in the header (offset 16 = 4 magic + 4 ver + 4 obs + 4 cont).
+        std::fseek(demo_f, 16, SEEK_SET);
+        std::fwrite(&demo_count, sizeof(uint64_t), 1, demo_f);
+        std::fclose(demo_f);
+        spdlog::info("D-101: wrote {} demo records to '{}'",
+                     demo_count, record_demos);
+    }
     return 0;
 }
