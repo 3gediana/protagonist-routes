@@ -517,14 +517,25 @@ int main(int argc, char** argv) {
             // wipes EpisodeManager state but ProgressTracker is *persistent*
             // across episodes, so what we log here is the cumulative progress
             // the policy has carried since training started (or eval started).
+            // D-091: settlement diagnostics. building_ticks = ticks inside
+            // any completed building (any tier). night_total = ticks during
+            // the dark half of the day cycle. night_shelter = night_total
+            // ticks during which the agent was sheltered (lean-to OR
+            // building OR cave). If "agent lives in the house" then
+            // night_shelter / night_total -> 1 over training.
+            int bldg_ticks = env.building_ticks();
+            int night_total_ticks = env.night_ticks_total();
+            int night_shelter_ticks = env.night_ticks_sheltered();
             std::fprintf(mf,
                 "],\"stage\":%d,\"collect_total\":%d,\"explored_m\":%.1f,"
-                "\"houses_built\":%d,\"sites_active\":%d}\n",
+                "\"houses_built\":%d,\"sites_active\":%d,"
+                "\"bldg_ticks\":%d,\"night_total\":%d,\"night_shelter\":%d}\n",
                 static_cast<int>(env.progress().stage()),
                 env.progress().resources_collected(),
                 env.progress().total_explored(),
                 env.progress().houses_built(),
-                static_cast<int>(env.buildings().sites().size()));
+                static_cast<int>(env.buildings().sites().size()),
+                bldg_ticks, night_total_ticks, night_shelter_ticks);
             std::fflush(mf);
         }
         astats.reset();

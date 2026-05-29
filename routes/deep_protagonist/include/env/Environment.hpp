@@ -160,6 +160,16 @@ public:
     const dp::agent::TameSystem&              tame() const { return tame_; }
     const dp::agent::Wardrobe&                wardrobe() const { return wardrobe_; }
     int                                       step_index() const { return step_index_; }
+    // D-091: 定居 / settlement metrics. Updated every step in step(); reset
+    // each episode in reset().
+    //   building_ticks: ticks the agent's (x,y) was inside any completed
+    //                   building's coverage_radius.
+    //   night_ticks:    ticks where day_.sun_height_normalized() < 0.
+    //   night_shelter_ticks: night_ticks the agent was also sheltered
+    //                   (lean-to OR building OR cave).
+    int                                       building_ticks()        const { return building_ticks_; }
+    int                                       night_ticks_total()     const { return night_ticks_total_; }
+    int                                       night_ticks_sheltered() const { return night_ticks_sheltered_; }
     // D-043: read the current episode's milestone snapshot (10 bools).
     // Call BEFORE reset() at episode-done; flags clear on reset.
     EpisodeMilestones                         milestones() const;
@@ -238,6 +248,11 @@ private:
     int                                          episodes_completed_ = 0;
     int                                          step_index_         = 0;
     dp::agent::RewardSystem::EpisodeStats        last_ep_stats_{};
+
+    // D-091: settlement metrics counters, reset per-episode.
+    int                                          building_ticks_         = 0;
+    int                                          night_ticks_total_      = 0;
+    int                                          night_ticks_sheltered_  = 0;
 };
 
 }  // namespace dp::env

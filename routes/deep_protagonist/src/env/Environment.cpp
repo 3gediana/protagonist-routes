@@ -215,6 +215,10 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     selected_building_ = dp::world::BuildingType::Shed;
     last_seed_kind_    = dp::world::PlantKind::Berry;
     spatial_.clear();   // cognitive map is per-life (one episode)
+    // D-091: settlement counters reset per episode.
+    building_ticks_        = 0;
+    night_ticks_total_     = 0;
+    night_ticks_sheltered_ = 0;
 
     // D-041: reset all first_X milestone flags PER episode (not per
     // training run as before). This is the core fix for v6's "milestone
@@ -410,12 +414,24 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // cave at night" a learnable strategy instead of a dead UI element.
     float night_factor = std::max(0.0f, -day_.sun_height_normalized());
     float perc_scale = 1.0f, spd_scale = 1.0f;
+    bool  in_building = buildings_.covers(as.pos_x, as.pos_y);
     bool  sheltered = shelter_.covers(as.pos_x, as.pos_y)
-                   || buildings_.covers(as.pos_x, as.pos_y)
+                   || in_building
                    || agent_.inside_cave();
     if (sheltered) {
         perc_scale = 0.3f;
         spd_scale  = 0.7f;
+    }
+    // D-091: count settlement ticks. building_ticks_ is "inside a finished
+    // building"; night_ticks counts the dark half of the day cycle; the
+    // sheltered subset tells us whether the agent retreated indoors at
+    // night. These feed the jsonl so analyses can chart 定居 / settlement
+    // emergence per episode.
+    if (in_building) ++building_ticks_;
+    bool is_night_now = day_.sun_height_normalized() < 0.0f;
+    if (is_night_now) {
+        ++night_ticks_total_;
+        if (sheltered) ++night_ticks_sheltered_;
     }
     animals_.tick(world_, as.pos_x, as.pos_y, as.pos_z,
                   dt, night_factor, perc_scale, spd_scale);

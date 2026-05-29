@@ -26,11 +26,17 @@ namespace {
 // "反复搬木头石头草放上去" - which is still true at 2 deposits, just
 // the smallest version. WoodHouse/StoneHouse/BigHouse keep their
 // original costs so progression has a difficulty ladder.
+// D-091: Shed coverage_radius bumped 3.5 -> 5.0. The 3.5 m porch was
+// physically smaller than the Shed itself (foot_radius 1.2 m + visual roof
+// extent ~2 m); the agent could be visually under the roof and still
+// register sheltered=false. Bumping to 5.0 makes "near the house" count as
+// inside, which matches blueprint 定居 (settling around the house) where
+// "in the courtyard" should still feel sheltered.
 const std::array<BuildingRecipe, 4> kRecipes = {{
-    { BuildingType::Shed,        "shed",        1, 0, 1, dp::agent::ProgressStage::Mid,  1.2f, 3.5f },
-    { BuildingType::WoodHouse,   "wood_house",  8, 2, 4, dp::agent::ProgressStage::Mid,  1.8f, 4.5f },
-    { BuildingType::StoneHouse,  "stone_house", 6, 8, 2, dp::agent::ProgressStage::Mid,  2.0f, 5.5f },
-    { BuildingType::BigHouse,    "big_house",  12,10, 6, dp::agent::ProgressStage::Mid,  2.6f, 7.0f },
+    { BuildingType::Shed,        "shed",        1, 0, 1, dp::agent::ProgressStage::Mid,  1.2f, 5.0f },
+    { BuildingType::WoodHouse,   "wood_house",  8, 2, 4, dp::agent::ProgressStage::Mid,  1.8f, 6.0f },
+    { BuildingType::StoneHouse,  "stone_house", 6, 8, 2, dp::agent::ProgressStage::Mid,  2.0f, 7.0f },
+    { BuildingType::BigHouse,    "big_house",  12,10, 6, dp::agent::ProgressStage::Mid,  2.6f, 8.5f },
 }};
 }  // namespace
 

@@ -51,7 +51,17 @@ struct VitalConfig {
     float stamina_recover     = 4.0f;   // when nearly still
     float run_speed_threshold = 4.0f;   // m/s
     // Temperature: cold at night, hot in desert daytime, neutral elsewhere
-    float temp_cold_decay_per_min = 6.0f;   // night drift toward 0
+    // D-091: cold rate 6 -> 18 (3x). Old value made cold near-irrelevant: a
+    // full night (~3 min of an episode) dropped T 50->32, well above the
+    // freeze threshold. With D-089 the agent built 122 houses but never
+    // returned to them, because being out at night cost almost nothing.
+    // 18/min makes a 3-min night drop T 50->-4 (death by freezing) for an
+    // unsheltered agent. Sheltered recovery rate (30%/sec * (50-T)) easily
+    // tops 6/sec so staying inside a Shed offsets cold. This forces PPO to
+    // learn 定居 / settlement behaviour: at night, retreat to a Shed; at
+    // day, leave to forage. The reward weights are untouched - r_vital just
+    // fires harder because the underlying biology became real.
+    float temp_cold_decay_per_min = 18.0f;  // night drift toward 0
     float temp_hot_decay_per_min  = 4.0f;   // desert daytime drift toward 100
     float temp_neutral_recover    = 3.0f;   // recover toward 50 in mild conditions
 };
