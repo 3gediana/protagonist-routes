@@ -4243,7 +4243,14 @@ int ProtagonistEcologyRuntime::runTraining() {
                     episode_runner = std::make_unique<ProtagonistBatchedDenseRunner>(backend);
                 }
                 std::unique_ptr<TraceRecorder> trace_recorder;
-                if (shouldTraceEpisode(trace_config, generation, episode)) {
+                // 2026-05-29 trajectory-analysis pivot: use the
+                // tail-aware overload so trace.tail_generations can
+                // capture the LAST N gens (e.g. gen 79 for analysis
+                // of trained brain behavior) instead of only the
+                // first N. Legacy callers without tail_generations
+                // set keep their original semantics via the
+                // identical max_generations < N branch.
+                if (shouldTraceEpisode(trace_config, generation, episode, params.generations)) {
                     const auto trace_dir = run_dir
                         / "trace"
                         / ("generation_" + std::to_string(generation))

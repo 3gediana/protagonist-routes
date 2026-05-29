@@ -153,6 +153,9 @@ TraceRecorderConfig loadTraceRecorderConfig(const config::Config& config) {
     out.world_interval = std::max<std::size_t>(1, config.getOr<std::size_t>("trace.world_interval", out.world_interval));
     out.max_generations = config.getOr<std::size_t>("trace.max_generations", out.max_generations);
     out.max_episodes_per_generation = config.getOr<std::size_t>("trace.max_episodes_per_generation", out.max_episodes_per_generation);
+    // 2026-05-29 trajectory-analysis pivot: trace.tail_generations.
+    // Default 0 keeps legacy behavior (first-N gens only).
+    out.tail_generations = config.getOr<std::size_t>("trace.tail_generations", out.tail_generations);
     // L7 R1: viewer frame JSON
     out.viewer_frames_enabled = config.getOr<bool>("trace.viewer_frames_enabled", out.viewer_frames_enabled);
     out.viewer_frame_interval = std::max<std::size_t>(1, config.getOr<std::size_t>("trace.viewer_frame_interval", out.viewer_frame_interval));
@@ -166,6 +169,24 @@ bool shouldTraceEpisode(const TraceRecorderConfig& config, std::size_t generatio
     return config.enabled
         && generation < config.max_generations
         && episode < config.max_episodes_per_generation;
+}
+
+bool shouldTraceEpisode(const TraceRecorderConfig& config,
+                        std::size_t generation,
+                        std::size_t episode,
+                        std::size_t total_generations) {
+    if (!config.enabled) return false;
+    if (episode >= config.max_episodes_per_generation) return false;
+    if (generation < config.max_generations) return true;
+    // Tail mode: include the last `tail_generations` gens. We guard
+    // against underflow when `total_generations < tail_generations`
+    // (e.g. very short smoke runs that opt into tail-mode anyway).
+    if (config.tail_generations == 0) return false;
+    if (total_generations == 0) return false;
+    const std::size_t tail_start = (config.tail_generations >= total_generations)
+                                       ? 0
+                                       : total_generations - config.tail_generations;
+    return generation >= tail_start;
 }
 
 TraceRecorder::TraceRecorder(World2D& world,

@@ -29,6 +29,14 @@ struct TraceRecorderConfig {
     std::size_t world_interval{50};
     std::size_t max_generations{1};
     std::size_t max_episodes_per_generation{1};
+    // 2026-05-29 trajectory-analysis pivot: capture the LAST N
+    // generations instead of (or in addition to) the FIRST N. When
+    // > 0, an episode is traced if its generation index is >=
+    // (total_generations - tail_generations). Useful for "I want
+    // to see what the trained brain actually does at gen 79" while
+    // staying within disk budget. Pass total_generations to
+    // `shouldTraceEpisode` to use this; 0 disables the tail-mode.
+    std::size_t tail_generations{0};
     // L7 R1 (FINAL_BLUEPRINT.md §7): frame-based JSON dumper for Godot/raylib
     // viewer consumption. Each tick writes one JSON object to frames.jsonl
     // with agents/worksites/weather/season snapshots. Off by default (large).
@@ -88,6 +96,15 @@ private:
 };
 
 TraceRecorderConfig loadTraceRecorderConfig(const config::Config& config);
+// Decides whether to attach a TraceRecorder to (generation, episode).
+// total_generations is used only when tail_generations > 0 (overload below).
 bool shouldTraceEpisode(const TraceRecorderConfig& config, std::size_t generation, std::size_t episode);
+// Tail-mode aware overload: also traces when
+// `generation >= total_generations - tail_generations`. The first overload
+// remains for callers that don't know the total (pre-pivot call sites).
+bool shouldTraceEpisode(const TraceRecorderConfig& config,
+                        std::size_t generation,
+                        std::size_t episode,
+                        std::size_t total_generations);
 
 }  // namespace neuro::routes::protagonist
