@@ -632,58 +632,29 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     for (int i = 0; i < finished; ++i) {
         reward_.event_built_shelter();
         progress_.on_house_built();
-        // D-089: persistent scaffold - immediately re-seed a fresh Shed at
-        // the spawn position so PPO has a new build target the next tick.
-        // D-088 ran out after 1 Shed/ep (admin site only placed at reset);
-        // for blueprint "village" scene we need agents to build *multiple*
-        // houses per episode. Each Shed still costs 1W+1G to complete, so
-        // budget is gated by how much the agent collects mid-episode.
-        {
-            float sx = spawn_x_;
-            float sy = spawn_y_;
-            float sz = world_.surface_height(sx, sy);
-            buildings_.admin_place_site(dp::world::BuildingType::Shed, sx, sy, sz);
-        }
-        // D-059: first_house back to single milestone fire (D-056's 脳5
-        // critical was reverted - any reward change on top of D-055 ckpt
-        // collapsed PPO). The +5 built_shelter and +1 milestone are kept;
-        // PPO needs to see this combo at least once before it converges,
-        // which is now within reach because Shed recipe is only 2 deposits.
+        // D-094: removed the D-089 auto-respawn-at-spawn block. Previously
+        // each completion immediately spawned a fresh Shed site at
+        // (spawn_x, spawn_y), which converged PPO to "build, walk, build,
+        // walk" because every build was instantly replaced. The blueprint
+        // wants the agent to TREAT the one Shed as home, not produce an
+        // endless stream of throwaway shelters. After D-094 the agent must
+        // explicitly choose to build more (place_blueprint + deposits) if
+        // it wants a second shelter, and ONE auto-placed site at spawn
+        // (in reset()) is the only freebie.
         if (!first_house_built_fired_) {
             reward_.event_milestone();
             first_house_built_fired_ = true;
         }
     }
 
-    // D-090: follow-agent Shed scaffold. D-089 finalized at 122 houses /
-    // 628 ep with build rate falling from 43% (ep 0-99) -> 4% (ep 300+).
-    // Root cause: PPO moves away from the auto-placed spawn site within
-    // ~30 ticks, leaving no nearby target for the remaining ~8970 ticks.
-    // Persistent respawn (D-089) only triggered on completion, so once
-    // the spawn Shed went stale the agent had no reachable build target.
-    // Fix: every 300 ticks check if agent has any active Shed within 6m;
-    // if not, drop a fresh Shed at the agent's current ground position.
-    // This guarantees a build target wherever the agent has roamed, so
-    // PPO's "fire deposit_to_site" action keeps paying off across the
-    // whole episode rather than just near spawn.
-    if (step_index_ > 0 && (step_index_ % 300) == 0) {
-        float ax = as.pos_x;
-        float ay = as.pos_y;
-        bool has_nearby = false;
-        for (const auto& s : buildings_.sites()) {
-            if (s.completed) continue;
-            float dxn = s.x - ax;
-            float dyn = s.y - ay;
-            if ((dxn * dxn + dyn * dyn) < 36.0f) {  // 6m radius
-                has_nearby = true;
-                break;
-            }
-        }
-        if (!has_nearby) {
-            float sz = world_.surface_height(ax, ay);
-            buildings_.admin_place_site(dp::world::BuildingType::Shed, ax, ay, sz);
-        }
-    }
+    // D-094: removed the D-090 follow-agent Shed respawn entirely. The
+    // 6m "if no nearby site, drop one" rule was the main driver of the
+    // "hundreds of throwaway buildings, none of them inhabited" pattern
+    // (D-089 122, D-091 122, D-092 189, D-093 233). The agent must now
+    // commit to its single starter Shed as home OR, if it has wandered
+    // very far, manually place_blueprint a new site and build it with
+    // its own collected materials. No more conveyor belt of scaffolded
+    // sites following the agent around.
 
     // Stage unlock bonus (Early->Mid, Mid->Late). +40 each (milestone x2).
     if (progress_.poll_unlock()) {

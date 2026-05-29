@@ -51,20 +51,14 @@ struct VitalConfig {
     float stamina_recover     = 4.0f;   // when nearly still
     float run_speed_threshold = 4.0f;   // m/s
     // Temperature: cold at night, hot in desert daytime, neutral elsewhere
-    // D-091 tried 6 -> 18 (3x), D-093 escalates 18 -> 50 (8.3x of original).
-    // The reason: D-091 and D-092 both confirmed that PPO actively *unlearns*
-    // sheltering during training (bldg_ticks/ep dropped 139 -> 4 in D-091 and
-    // 361 -> 6 in D-092). The agent's strategy is "build houses, die in field,
-    // respawn, repeat" because r_alive accrues anywhere alive, r_death=-10 is
-    // cheap, and at 18/min cold the agent can survive a 3 min night with
-    // some food/water buffering. To force sheltering, the cold rate must make
-    // an unsheltered night *guaranteed* fatal even with full vitals:
-    //   T_start = 50, decay 50/min -> hits 0 (freeze threshold) at t=60s.
-    //   3 min night ends at T = 50 - 150 = -100, deep freeze damage stacks.
-    // Sheltered recovery (0.3 * (50-T) per sec) still wins (~15/s near T=0)
-    // so a Shed is genuinely the only viable nighttime option. r_vital fires
-    // ~5x harder for an unsheltered agent; no reward weight is changed.
-    float temp_cold_decay_per_min = 50.0f;  // night drift toward 0
+    // D-094: reverted to 18/min after D-093's 50/min experiment confirmed
+    // that lethality alone isn't enough - the agent just dies faster while
+    // still failing to settle. The real fix is structural (removing the
+    // auto-Shed respawn) so the agent has ONE shelter to anchor to. 18/min
+    // keeps cold a meaningful pressure (50->-4 over a 3 min night for an
+    // unsheltered agent) while leaving enough survival headroom that PPO
+    // can experiment with shelter behaviour without dying off-policy in 60s.
+    float temp_cold_decay_per_min = 18.0f;  // night drift toward 0
     float temp_hot_decay_per_min  = 4.0f;   // desert daytime drift toward 100
     float temp_neutral_recover    = 3.0f;   // recover toward 50 in mild conditions
 };
