@@ -238,52 +238,38 @@ void ObservationBuilder::compose(const dp::world::World&         world,
                           ? progress.mid_explore_threshold : 1.0f));
     out[p++] = clamp01(progress.houses_built() / 5.0f);
 
-    // ---- nearest building (3) ----
+    // ---- home anchor (3) ----
+    // D-096: replaced "nearest building" with "first completed building" so
+    // PPO gets a STABLE spatial anchor across the whole episode. D-094 and
+    // D-095 both showed PPO building the auto-Shed early but then unlearning
+    // shelter use, partly because the previous "nearest" signal kept moving
+    // (auto-Shed completes -> nearest is then far+pending -> obs flips
+    // around). With insertion order = completion order, buildings[0] is
+    // always the agent's first home (or the auto-placed Shed at spawn after
+    // it finishes). This gives PPO a real "compass home" feature, matching
+    // the user's blueprint requirement (remember the home's direction /
+    // run back home at night).
+    // Fallback to the first pending site (the auto-placed Shed) before any
+    // completion, so the agent still has direction-to-future-home from tick 0.
     {
-        float best_d2 = std::numeric_limits<float>::infinity();
-        int   best_idx = -1;
-        bool  best_completed = false;
-        for (int i = 0; i < int(buildings.sites().size()); ++i) {
-            const auto& b = buildings.sites()[i];
-            float dx = b.x - s.pos_x;
-            float dy = b.y - s.pos_y;
-            float d2 = dx*dx + dy*dy;
-            if (d2 < best_d2) {
-                best_d2 = d2;
-                best_idx = i;
-                best_completed = b.completed;
-            }
+        bool   have = false;
+        float  hx = 0.0f, hy = 0.0f;
+        float  completed_flag = 0.0f;
+        if (!buildings.buildings().empty()) {
+            const auto& home = buildings.buildings().front();
+            hx = home.x; hy = home.y;
+            have = true;
+            completed_flag = 1.0f;
+        } else if (!buildings.sites().empty()) {
+            const auto& site0 = buildings.sites().front();
+            hx = site0.x; hy = site0.y;
+            have = true;
+            completed_flag = site0.completed ? 1.0f : 0.0f;
         }
-        for (int i = 0; i < int(buildings.buildings().size()); ++i) {
-            const auto& b = buildings.buildings()[i];
-            float dx = b.x - s.pos_x;
-            float dy = b.y - s.pos_y;
-            float d2 = dx*dx + dy*dy;
-            if (d2 < best_d2) {
-                best_d2 = d2;
-                best_idx = i;
-                best_completed = true;
-            }
-        }
-        if (best_idx >= 0) {
-            const dp::world::ConstructionSite* st_ptr = nullptr;
-            const dp::world::Building*         bd_ptr = nullptr;
-            // The two index spaces overlap; we look up the better one.
-            float min_d2 = std::numeric_limits<float>::infinity();
-            float bx = 0.0f, by = 0.0f;
-            for (const auto& site : buildings.sites()) {
-                float dx = site.x - s.pos_x, dy = site.y - s.pos_y;
-                float d2 = dx*dx + dy*dy;
-                if (d2 < min_d2) { min_d2 = d2; bx = site.x; by = site.y; best_completed = site.completed; (void)st_ptr; }
-            }
-            for (const auto& bld : buildings.buildings()) {
-                float dx = bld.x - s.pos_x, dy = bld.y - s.pos_y;
-                float d2 = dx*dx + dy*dy;
-                if (d2 < min_d2) { min_d2 = d2; bx = bld.x; by = bld.y; best_completed = true; (void)bd_ptr; }
-            }
-            out[p++] = clamp_norm((bx - s.pos_x) / VISION_RANGE);
-            out[p++] = clamp_norm((by - s.pos_y) / VISION_RANGE);
-            out[p++] = best_completed ? 1.0f : 0.0f;
+        if (have) {
+            out[p++] = clamp_norm((hx - s.pos_x) / VISION_RANGE);
+            out[p++] = clamp_norm((hy - s.pos_y) / VISION_RANGE);
+            out[p++] = completed_flag;
         } else {
             out[p++] = 0.0f; out[p++] = 0.0f; out[p++] = 0.0f;
         }
