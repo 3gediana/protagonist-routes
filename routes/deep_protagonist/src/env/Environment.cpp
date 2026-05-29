@@ -422,6 +422,23 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         perc_scale = 0.3f;
         spd_scale  = 0.7f;
     }
+    // D-099: per-tick alive bonus DOUBLES when inside a BUILDING (not just
+    // any shelter - caves don't count). The 5 prior settlement attempts
+    // (D-094..D-098) all failed because PPO's optimal policy is to wander
+    // and gather - sheltering only avoids penalties. Even with shelter
+    // regen +15/min (D-098), per-tick foraging (+5 r_food/min) beats
+    // sheltered regen (+3 r_food/min). D-099 closes that gap by doubling
+    // r_alive when inside a finished building: 0.05/s base + 0.05/s
+    // building bonus = +6/min vs +3/min wandering. Combined with regen
+    // (+15/min hunger/thirst), sheltering in a building nets ~+12/min
+    // total vs wandering ~+8/min. Gating on `in_building` not `sheltered`
+    // matters because caves and lean-tos would otherwise let PPO collect
+    // the bonus without ever building anything, defeating the blueprint
+    // (build a house then live in it). Smoke 50k showed random PPO would
+    // happily camp in a cave for the bonus if gated on `sheltered`.
+    if (in_building) {
+        reward_.event_alive(dt);
+    }
     // D-091: count settlement ticks. building_ticks_ is "inside a finished
     // building"; night_ticks counts the dark half of the day cycle; the
     // sheltered subset tells us whether the agent retreated indoors at
@@ -489,7 +506,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                     vital_state_.deaths += 1;
                 }
             }
-        } else if (sheltered && vital_state_.alive) {
+        } else if (in_building && vital_state_.alive) {
             // D-098: bumped 3 -> 15 per minute. D-097's +3 was too small to
             // beat the per-tick foraging reward (food_coef=6.0 * 0.2 drive
             // per berry ~= +1.2 reward / eat, several per minute), so PPO
@@ -497,6 +514,9 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             // hunger restoration translates to ~+3 r_food / min via the
             // food_coef shaping, comparable to active foraging - giving
             // sheltering a competitive per-tick value.
+            // D-099: gated on `in_building` not `sheltered` so caves and
+            // lean-tos can't substitute. Blueprint says LIVE IN THE HOUSE,
+            // not LIVE IN ANY SHELTER.
             const float regen_per_min = 15.0f;
             vital_state_.hunger = std::min(100.0f,
                                            vital_state_.hunger
