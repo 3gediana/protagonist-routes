@@ -80,7 +80,7 @@ struct PPOConfig {
     int    rollout_steps   = 2048;
     int    epochs          = 4;
     int    minibatch_size  = 256;
-    float  gamma           = 0.99f;
+    float  gamma           = 0.995f;  // D-098: bumped 0.99 -> 0.995. Effective horizon 100->200 ticks (3.3s). D-094..D-097 all hit the same wall: PPO learns shelter early then unlearns it. Root cause is partly the 100-tick horizon - sheltering for a full night (60+s = 3600+ ticks) can't be credit-assigned. Going further (0.999) is unstable on this baseline; 0.995 is a measured step. Pairs with D-098 Environment.cpp regen +3->+15/min so the per-tick value of sheltering rises enough to dominate the local-foraging spike.
     float  lambda_         = 0.95f;
     float  clip_eps        = 0.2f;
     float  vf_coef         = 0.5f;

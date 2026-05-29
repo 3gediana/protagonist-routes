@@ -490,7 +490,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 }
             }
         } else if (sheltered && vital_state_.alive) {
-            const float regen_per_min = 3.0f;
+            // D-098: bumped 3 -> 15 per minute. D-097's +3 was too small to
+            // beat the per-tick foraging reward (food_coef=6.0 * 0.2 drive
+            // per berry ~= +1.2 reward / eat, several per minute), so PPO
+            // still preferred wandering after the first 50 eps. 15/min
+            // hunger restoration translates to ~+3 r_food / min via the
+            // food_coef shaping, comparable to active foraging - giving
+            // sheltering a competitive per-tick value.
+            const float regen_per_min = 15.0f;
             vital_state_.hunger = std::min(100.0f,
                                            vital_state_.hunger
                                            + regen_per_min * dt_min);
