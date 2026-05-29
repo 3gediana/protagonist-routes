@@ -450,20 +450,31 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         vital_state_.temperature += (50.0f - vital_state_.temperature)
                                   * 0.3f * dt;
     }
-    // D-095: night outside shelter drains hunger / thirst 3x faster. D-094
-    // showed cold pressure alone is too soft (PPO sometimes survives the
-    // night by tanking T down to 5-10 and recovering next day) so we add a
-    // food/water cost: a 3-min night outside without shelter burns
-    // ~108/100 hunger and ~108/100 thirst (base 12/min * 3 mult * 3 min)
-    // which is fatal. Inside shelter at night the base rate of 12/min
-    // means only ~36/100 burn, easily survivable. Daytime is unchanged.
-    // This makes "go home at night" a survival imperative, not just a
-    // comfort, while keeping daytime exploration free.
+    // D-095: night outside shelter drains hunger / thirst 3x faster.
+    // D-097: sheltered REGENERATES hunger / thirst slowly (~3/min each).
+    // The asymmetric biology gives PPO a positive reason to be home: not
+    // just to avoid the night penalty (avoidance), but to actively bank
+    // vitals while resting (approach). D-094/D-095/D-096 all showed PPO
+    // learning shelter early then unlearning it, because avoidance alone
+    // is dominated by the per-tick food/water/collect/spear rewards
+    // available while wandering. The +3/min regen flips that math:
+    // sheltering for 60s gains +3 hunger +3 thirst, equivalent to one
+    // light meal, with zero risk and zero action cost. This matches the
+    // blueprint "build a house then LIVE in it" requirement - the agent
+    // gets food/water savings AND vital regeneration AND temperature
+    // recovery AND wolf threat reduction, all bundled in the home zone.
+    // Daytime sheltering: normal decay continues (agent should still
+    // forage during the day), but regen kicks in to offset some loss
+    // (net ~ -9/min instead of -12/min). Net incentive ordering:
+    //   night outside : -36/min (fatal in 3min)
+    //   day outside   : -12/min  (normal)
+    //   day sheltered : -9/min   (regen offsets some decay)
+    //   night sheltered: -9/min  (regen offsets temp+sleep cost)
     {
         bool is_night = day_.sun_height_normalized() < -0.1f;
+        const float dt_min = dt / 60.0f;
         if (is_night && !sheltered && vital_state_.alive) {
             const float extra_mult = 2.0f;  // total = base + 2*base = 3x
-            const float dt_min = dt / 60.0f;
             float h_extra = vitals_.config().hunger_decay_per_min
                           * dt_min * extra_mult;
             float t_extra = vitals_.config().thirst_decay_per_min
@@ -478,6 +489,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                     vital_state_.deaths += 1;
                 }
             }
+        } else if (sheltered && vital_state_.alive) {
+            const float regen_per_min = 3.0f;
+            vital_state_.hunger = std::min(100.0f,
+                                           vital_state_.hunger
+                                           + regen_per_min * dt_min);
+            vital_state_.thirst = std::min(100.0f,
+                                           vital_state_.thirst
+                                           + regen_per_min * dt_min);
         }
     }
     reward_.event_vital_pressure(vital_state_, dt);
