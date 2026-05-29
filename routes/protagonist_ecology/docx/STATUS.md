@@ -5,6 +5,16 @@
 > 当前分支：`master`
 > 当前 HEAD（protagonist_ecology 视角）：本 commit 待写 (gen 79 trajectory verdict + docs/note sync)；当前 HEAD `c1f6e16` trajectory wrap-up；前 commit `d081fd0` trajectory-analysis pivot (TraceRecorder.tail_generations + Python analyzer 三件套) + `1f4ce28` Run 10 (s58193) 7/7 PASS + 21/21 streak。再前 `35e8535` stage 4c MVP / `c76a506` Run 5 stage 4c first validation / `ffd4187` Run 9 / `4c75aa3` Run 8。
 
+> **2026-05-30 凌晨晚些 (UTC) 同 seed gen 0/3/79 复核 — gen 79 改判 PURPOSEFUL，food_eaten 疑点决起**：
+> - **动机**：上一条 gen 79 = MIXED 是跨 seed 对比（gen0/3 用 s58193，gen79 用 s71359），只能作趋势参考。本 run 用同一 seed (81527) 一次抓 gen 0/3/79 三点（`trace.max_generations=4` + `tail_generations=1`）做干净同 run 对比，并直接查 food_eaten。
+> - **执行**：`tmp/layer1/long_run_80gen_stage4b_s81527_traj3pt.toml` WMI 后台跑完（02:44→04:27 UTC，~103 min，~80s/gen）。`MainWorldHost end-of-run cumulative sim_time=800.000s tick_calls=800`；`TripleWorldRuntime end-of-run: borderland=288 main_world=338`。
+> - **harmony 7/7 ALL PASS** → **23/23 streak**。C5 worksites total=152，C6 me_cov peak=0.440 qd=54101，C3 coop peak=3131.5s，C7 无灭绝。
+> - **同 seed gen 0/3/79 (24 brained, ep0)**：headless_score 0.181 → 0.195 → **0.245**，**三代均 PURPOSEFUL**（都 < 0.35）。上条的 MIXED (0.354) 是跨 seed artifact，不是真退化。关键：dominant_goal_frac 0.62→0.65→0.69（**越来越专注于主目标**）；predator_push 0.42→0.41→0.66（天敌规避变强）；velocity_autocorr 0.90→0.79（从死直线变反应式，是好事）；goal_switches 只升到 8.1（跨 seed 那次是 16.3 = seed 特性）。
+> - **food_eaten 疑点决起**：同 seed 下 food_eaten sum gen0=1.8 (3/24) / gen3=10.2 (9/24) / gen79=3.6 (6/24) —— **不是恒零**，逐代有波动。上次跨 seed gen79=0 是单 episode/seed 采样 artifact，非感知→进食 bug。protagonist 是协调专业型（emit_signal 主导 68%）非主觅采食者，感知到食物会走过去 (food_pull 0.45)。**未改 reward**（§0 铁律 2：查 bug 不调奖励，且这里没 bug）。
+> - **goal 分布 (同 seed gen0→gen79)**：explore 41%→19%，emit_signal 33%→68%，respond_signal 23%→6%——同一 seed 内确认了从乱逛转向信号协调。
+> - **磁盘纪律**：trace 已删，D 盘 free 232 GB。产物 tmp/traj_s81527_gen0/3/79.json + traj_s81527_compare_0_79.md + compare_0_3.md + traj_s81527_verdict.md。
+> - **结论**：诚实判定 **PURPOSEFUL（不是无头苍蝇）**。跨整个 80 代 MWH run，brained protagonist 保持高目标承诺、响应食物/天敌、转向协调信号。
+
 > **2026-05-30 凌晨 (UTC) Layer 6 R3 trajectory honesty eval — gen 79 verdict 拿到，"无头苍蝇"被证伪**：
 > - **背景**：上一会话留的最高优先级洞 = gen 79 trajectory 没拿到（s71359 tail run 上次跑到 gen 38 被用户叫停占 GPU 玩游戏）。本会话接班把它补上。
 > - **执行**：`tmp/layer1/long_run_80gen_stage4b_s71359_tail.toml`（evolution.generations=80 + trace.max_generations=0 + trace.tail_generations=1，只抓 gen 79）WMI 后台跑完（00:52→02:22 UTC，~90 min，~75s/gen）。`MainWorldHost end-of-run cumulative sim_time=800.000s tick_calls=800` 第 N 次实证主世界永不 reset (invariant #1)；stage 4c snapshot 写 219 活 agent (cumulative_seed_count=320)。
