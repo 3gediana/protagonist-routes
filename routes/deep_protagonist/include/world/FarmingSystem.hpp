@@ -7,6 +7,9 @@
 
 namespace dp::world {
 
+class BuildingSystem;  // fwd decl for D-091 settlement-boost growth.
+
+
 // A single planted patch. Growth ticks up while water_level > 0; when
 // growth reaches 1.0 the plot is "ripe" and can be harvested.
 struct FarmPlot {
@@ -33,7 +36,12 @@ public:
     std::vector<PlantKind> harvest_at(float x, float y, float reach = 2.0f);
 
     // Advance growth + drain water + dispose of harvested plots.
-    void tick(float dt);
+    // D-091: optional BuildingSystem pointer. Plots that lie inside any
+    // completed building's coverage_radius grow at building_growth_mult
+    // times the base rate, so 房子周围种田长得快 — the blueprint's hint
+    // that 定居 should make farming worthwhile. nullptr keeps the old
+    // behaviour for callers that don't have a BuildingSystem.
+    void tick(float dt, const BuildingSystem* buildings = nullptr);
 
     const std::vector<FarmPlot>& plots() const { return plots_; }
 
@@ -47,6 +55,10 @@ public:
     float growth_per_second = 1.0f / 120.0f;  // 2 minutes to mature with full water
     float water_drain_per_second = 1.0f / 60.0f;  // dry in 1 minute
     float water_step = 0.5f;                  // each watering adds 0.5
+    // D-091: settlement-boost multiplier for plots near a finished building.
+    // 2.0x = mature in 1 min near home vs 2 min in the wild. Encourages
+    // 围着家种地 / farming around home.
+    float building_growth_mult = 2.0f;
 
 private:
     std::vector<FarmPlot> plots_;

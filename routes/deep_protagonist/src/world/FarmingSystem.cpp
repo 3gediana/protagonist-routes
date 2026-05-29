@@ -1,5 +1,7 @@
 #include "world/FarmingSystem.hpp"
 
+#include "world/BuildingSystem.hpp"
+
 #include <algorithm>
 
 namespace dp::world {
@@ -49,7 +51,7 @@ std::vector<PlantKind> FarmingSystem::harvest_at(float x, float y, float reach) 
     return out;
 }
 
-void FarmingSystem::tick(float dt) {
+void FarmingSystem::tick(float dt, const BuildingSystem* buildings) {
     // Remove plots that were harvested (we don't keep the dirt around).
     plots_.erase(std::remove_if(plots_.begin(), plots_.end(),
         [](const FarmPlot& p) { return p.harvested; }), plots_.end());
@@ -60,7 +62,15 @@ void FarmingSystem::tick(float dt) {
         if (p.water_level < 0.0f) p.water_level = 0.0f;
         // Only grow while there's water.
         if (p.water_level > 0.05f) {
-            p.growth += growth_per_second * dt;
+            // D-091: plots that sit inside any completed building's coverage
+            // grow building_growth_mult times faster. That's the blueprint's
+            // 房子周围庄稼长得快 — settlement should reward 围家种田.
+            float mult = 1.0f;
+            if (buildings != nullptr &&
+                buildings->covers(p.x, p.y)) {
+                mult = building_growth_mult;
+            }
+            p.growth += growth_per_second * dt * mult;
             if (p.growth >= 1.0f) {
                 p.growth = 1.0f;
                 p.ripe = true;
