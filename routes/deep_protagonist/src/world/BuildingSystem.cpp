@@ -27,16 +27,25 @@ namespace {
 // the smallest version. WoodHouse/StoneHouse/BigHouse keep their
 // original costs so progression has a difficulty ladder.
 // D-091: Shed coverage_radius bumped 3.5 -> 5.0. The 3.5 m porch was
-// physically smaller than the Shed itself (foot_radius 1.2 m + visual roof
-// extent ~2 m); the agent could be visually under the roof and still
-// register sheltered=false. Bumping to 5.0 makes "near the house" count as
-// inside, which matches blueprint 定居 (settling around the house) where
-// "in the courtyard" should still feel sheltered.
+// physically smaller than the Shed itself.
+// D-095: bumped again 5.0 -> 15.0 (Shed), 6 -> 18 (Wood), 7 -> 22 (Stone),
+// 8.5 -> 28 (Big). D-094's 1175k+1640k step partials both showed PPO
+// builds the spawn Shed early (bldg_ticks 229-406 / first 100 ep) and
+// then *unlearns* sheltering (bldg_ticks 5-43 / last 100 ep). Diagnosis:
+// the 5m circle is so small the agent crosses it in 2-3 ticks during any
+// foraging loop, so the only way to stay sheltered is to literally camp
+// on top of the building - which conflicts with eating/drinking/farming.
+// A 15m "home zone" lets the agent forage within ~10m of the house and
+// still register sheltered, which matches the blueprint's 村落
+// (settlement / courtyard) idea where the area around the house is
+// implicitly part of the home, not just the four walls. 28m for BigHouse
+// gives a proper village courtyard. Costs / Mid gate / foot_radius are
+// untouched, this is purely a comfort-zone expansion.
 const std::array<BuildingRecipe, 4> kRecipes = {{
-    { BuildingType::Shed,        "shed",        1, 0, 1, dp::agent::ProgressStage::Mid,  1.2f, 5.0f },
-    { BuildingType::WoodHouse,   "wood_house",  8, 2, 4, dp::agent::ProgressStage::Mid,  1.8f, 6.0f },
-    { BuildingType::StoneHouse,  "stone_house", 6, 8, 2, dp::agent::ProgressStage::Mid,  2.0f, 7.0f },
-    { BuildingType::BigHouse,    "big_house",  12,10, 6, dp::agent::ProgressStage::Mid,  2.6f, 8.5f },
+    { BuildingType::Shed,        "shed",        1, 0, 1, dp::agent::ProgressStage::Mid,  1.2f, 15.0f },
+    { BuildingType::WoodHouse,   "wood_house",  8, 2, 4, dp::agent::ProgressStage::Mid,  1.8f, 18.0f },
+    { BuildingType::StoneHouse,  "stone_house", 6, 8, 2, dp::agent::ProgressStage::Mid,  2.0f, 22.0f },
+    { BuildingType::BigHouse,    "big_house",  12,10, 6, dp::agent::ProgressStage::Mid,  2.6f, 28.0f },
 }};
 }  // namespace
 

@@ -450,6 +450,36 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         vital_state_.temperature += (50.0f - vital_state_.temperature)
                                   * 0.3f * dt;
     }
+    // D-095: night outside shelter drains hunger / thirst 3x faster. D-094
+    // showed cold pressure alone is too soft (PPO sometimes survives the
+    // night by tanking T down to 5-10 and recovering next day) so we add a
+    // food/water cost: a 3-min night outside without shelter burns
+    // ~108/100 hunger and ~108/100 thirst (base 12/min * 3 mult * 3 min)
+    // which is fatal. Inside shelter at night the base rate of 12/min
+    // means only ~36/100 burn, easily survivable. Daytime is unchanged.
+    // This makes "go home at night" a survival imperative, not just a
+    // comfort, while keeping daytime exploration free.
+    {
+        bool is_night = day_.sun_height_normalized() < -0.1f;
+        if (is_night && !sheltered && vital_state_.alive) {
+            const float extra_mult = 2.0f;  // total = base + 2*base = 3x
+            const float dt_min = dt / 60.0f;
+            float h_extra = vitals_.config().hunger_decay_per_min
+                          * dt_min * extra_mult;
+            float t_extra = vitals_.config().thirst_decay_per_min
+                          * dt_min * extra_mult;
+            vital_state_.hunger = std::max(0.0f,
+                                           vital_state_.hunger - h_extra);
+            vital_state_.thirst = std::max(0.0f,
+                                           vital_state_.thirst - t_extra);
+            if (vital_state_.hunger <= 0.0f || vital_state_.thirst <= 0.0f) {
+                if (vital_state_.alive) {
+                    vital_state_.alive = false;
+                    vital_state_.deaths += 1;
+                }
+            }
+        }
+    }
     reward_.event_vital_pressure(vital_state_, dt);
 
     // E -> action.eat
