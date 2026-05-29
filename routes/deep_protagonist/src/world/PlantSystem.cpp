@@ -136,8 +136,14 @@ void PlantSystem::tick(float dt) {
     }
 }
 
-std::vector<PlantKind> PlantSystem::try_harvest(float x, float y, float z, float radius) {
+std::vector<PlantKind> PlantSystem::try_harvest(float x, float y, float z, float radius,
+                                                bool is_night) {
     std::vector<PlantKind> out;
+    // D-092: 夜里采不到野果. Plants stay in place visually (the agent still
+    // sees them in obs), but try_harvest refuses to pick anything until
+    // sunrise. This nudges PPO toward the blueprint's day/night cycle:
+    // forage during day, retreat to shelter at night.
+    if (is_night) return out;
     float r2 = radius * radius;
     for (auto& p : plants_) {
         if (!p.ripe) continue;

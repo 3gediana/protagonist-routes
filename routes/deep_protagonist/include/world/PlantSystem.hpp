@@ -43,8 +43,14 @@ public:
     // Try to harvest any ripe plant within `radius` of (x,y,z). Returns the
     // KIND of plant harvested for each pellet eaten this tick. Multiple
     // plants can be harvested per call if they're within range.
+    // D-092: optional is_night flag. When true, the call returns nothing
+    // even if ripe plants are in range - the blueprint's 夜里采不到野果
+    // (no wild forage at night) rule. Existing callers that don't pass
+    // is_night keep the old "always harvestable" behaviour. The visual
+    // plant placement is unchanged; only harvest is blocked.
     std::vector<PlantKind> try_harvest(float x, float y, float z,
-                                       float radius = 1.5f);
+                                       float radius = 1.5f,
+                                       bool  is_night = false);
 
     const std::vector<PlantInstance>& plants() const { return plants_; }
 
