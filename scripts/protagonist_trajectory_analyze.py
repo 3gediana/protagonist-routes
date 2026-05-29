@@ -119,6 +119,18 @@ class AgentSummary:
     health_min: float
     hydration_min: float
 
+    # reactive purposefulness: when the agent senses food/predator,
+    # does the velocity vector point toward food / away from predator?
+    # Each ratio is over the subset of samples where the relevant
+    # stimulus is detectable. NaN-equivalent (-1.0) means "no samples
+    # had this stimulus" (cannot decide).
+    food_pull_fraction: float           # samples with nearest_food_dist < threshold
+                                        # where signed velocity toward food > 0
+    food_pull_samples: int              # n samples used to compute the above
+    predator_push_fraction: float       # samples with predator_nearby_count > 0
+                                        # where signed velocity away from danger > 0
+    predator_push_samples: int
+
 
 # ============================================================
 # Loading
@@ -239,6 +251,49 @@ def summarise_agent(df_agent: pd.DataFrame) -> AgentSummary:
     # the agent has touched.
     visited_cells = int(df_agent["visited_cells"].iloc[-1])
 
+    # reactive purposefulness:
+    # Food pull: when nearest_food_dist is < 80 units (within
+    # detection range), check whether the agent's velocity vector has
+    # a positive component along the negative gradient of distance
+    # (i.e. is moving "toward food"). Since we don't have explicit
+    # food coordinates per-tick, we use the simpler proxy:
+    # nearest_food_dist samples where d_t+1 < d_t = "moving closer".
+    if n >= 2:
+        food_d = df_agent["nearest_food_dist"].to_numpy(dtype=float)
+        food_mask = (food_d[:-1] < 80.0) & (food_d[:-1] > 0.0) & (food_d[1:] >= 0.0)
+        food_d_change = food_d[1:] - food_d[:-1]
+        if food_mask.any():
+            food_pull_fraction = float((food_d_change[food_mask] < 0.0).mean())
+            food_pull_samples = int(food_mask.sum())
+        else:
+            food_pull_fraction = -1.0
+            food_pull_samples = 0
+    else:
+        food_pull_fraction = -1.0
+        food_pull_samples = 0
+
+    # Predator push: when predator_nearby_count > 0, check whether
+    # the agent's speed is HIGHER than its lifetime mean speed (proxy
+    # for "running away" vs "hanging around"). Stronger test would
+    # require predator positions; we work with what we have.
+    if n >= 2:
+        speed = np.hypot(vx, vy)
+        baseline_speed = float(speed.mean())
+        pred = df_agent["predator_nearby_count"].to_numpy(dtype=float)
+        pred_mask = pred > 0.0
+        if pred_mask.any():
+            speed_when_pred = speed[pred_mask]
+            predator_push_fraction = float(
+                (speed_when_pred > baseline_speed).mean()
+            )
+            predator_push_samples = int(pred_mask.sum())
+        else:
+            predator_push_fraction = -1.0
+            predator_push_samples = 0
+    else:
+        predator_push_fraction = -1.0
+        predator_push_samples = 0
+
     return AgentSummary(
         agent_id=int(df_agent["agent_id"].iloc[0]),
         species_id=species_id,
@@ -275,6 +330,10 @@ def summarise_agent(df_agent: pd.DataFrame) -> AgentSummary:
         dominant_episodic_event=dominant_episodic_event,
         health_min=health_min,
         hydration_min=hydration_min,
+        food_pull_fraction=food_pull_fraction,
+        food_pull_samples=food_pull_samples,
+        predator_push_fraction=predator_push_fraction,
+        predator_push_samples=predator_push_samples,
     )
 
 
@@ -317,6 +376,16 @@ def write_biography(summary: AgentSummary, fh) -> None:
              f"dominant_event='{summary.dominant_episodic_event}'\n")
     fh.write(f"- health: min_health={summary.health_min:.2f}, "
              f"min_hydration={summary.hydration_min:.2f}\n")
+    food_pull = (f"{summary.food_pull_fraction:.2f}"
+                 if summary.food_pull_fraction >= 0 else "n/a")
+    pred_push = (f"{summary.predator_push_fraction:.2f}"
+                 if summary.predator_push_fraction >= 0 else "n/a")
+    fh.write(f"- reactivity: food_pull={food_pull} "
+             f"(n={summary.food_pull_samples}, "
+             f"0.5=random, 1.0=always approaches food), "
+             f"predator_push={pred_push} "
+             f"(n={summary.predator_push_samples}, "
+             f"0.5=random, 1.0=always speeds up when threatened)\n")
 
 
 def main() -> int:
@@ -387,6 +456,17 @@ def main() -> int:
         [s.path_length / max(s.n_samples, 1) for s in summaries]
     ))
 
+    # Reactive purposefulness aggregates (only over agents that had
+    # any valid samples)
+    food_pulls = [s.food_pull_fraction for s in summaries
+                  if s.food_pull_fraction >= 0]
+    predator_pushes = [s.predator_push_fraction for s in summaries
+                       if s.predator_push_fraction >= 0]
+    mean_food_pull = float(np.mean(food_pulls)) if food_pulls else float("nan")
+    mean_predator_push = float(np.mean(predator_pushes)) if predator_pushes else float("nan")
+    food_pull_n_agents = len(food_pulls)
+    predator_push_n_agents = len(predator_pushes)
+
     # "headless flies" verdict
     headless_score = (
         (1.0 - mean_vel_autocorr) * 0.4 +       # low autocorr = jittery
@@ -453,6 +533,20 @@ def main() -> int:
     buf.write(f"- mean bbox_area: {mean_bbox_area:.0f} (map=360000)\n")
     buf.write(f"- mean path_per_sample: {mean_path_per_sample:.2f} u\n")
     buf.write(f"- headless_score: {headless_score:.3f} -> **VERDICT: {verdict}**\n\n")
+    buf.write("### Reactive purposefulness\n")
+    if not math.isnan(mean_food_pull):
+        buf.write(f"- mean food_pull_fraction: {mean_food_pull:.3f} "
+                  f"(over {food_pull_n_agents} agents that had food within "
+                  f"detection range; 0.5=random, 1.0=always approaches)\n")
+    else:
+        buf.write("- mean food_pull_fraction: n/a (no agent had food within range)\n")
+    if not math.isnan(mean_predator_push):
+        buf.write(f"- mean predator_push_fraction: {mean_predator_push:.3f} "
+                  f"(over {predator_push_n_agents} agents that detected a "
+                  f"predator; 0.5=random, 1.0=always speeds up when threatened)\n")
+    else:
+        buf.write("- mean predator_push_fraction: n/a (no predator encounters)\n")
+    buf.write("\n")
 
     buf.write("## Top representative agents\n\n")
     buf.write(f"### Most focused (top {args.top_k} by dominant_goal_frac)\n")
@@ -491,6 +585,72 @@ def main() -> int:
     else:
         out.write_text(text)
         print(f"wrote report to {out} ({len(text)} bytes)", file=sys.stderr)
+
+    # Also emit a JSON summary alongside the .md for programmatic
+    # comparison across runs (gen 3 vs gen 79, seed-to-seed, etc).
+    summary_payload = {
+        "trace_dir": str(trace_dir),
+        "manifest": manifest,
+        "total_agents_analysed": total_agents,
+        "by_species": {k: len(v) for k, v in by_species.items()},
+        "aggregate": {
+            "mean_velocity_autocorr": mean_vel_autocorr,
+            "mean_direction_persistence": mean_dir_persistence,
+            "mean_dominant_goal_frac": mean_dominant_frac,
+            "mean_goal_switches": mean_goal_switches,
+            "mean_bbox_area": mean_bbox_area,
+            "mean_path_per_sample": mean_path_per_sample,
+            "headless_score": headless_score,
+            "verdict": verdict,
+            "mean_food_pull_fraction": mean_food_pull,
+            "food_pull_n_agents": food_pull_n_agents,
+            "mean_predator_push_fraction": mean_predator_push,
+            "predator_push_n_agents": predator_push_n_agents,
+        },
+        "agents": [
+            {
+                "agent_id": s.agent_id,
+                "species_id": s.species_id,
+                "species_name": s.species_name,
+                "genome_id": s.genome_id,
+                "lifetime_s": s.lifetime_s,
+                "final_alive": s.final_alive,
+                "final_fitness": s.final_fitness,
+                "bbox_w": s.bbox_w,
+                "bbox_h": s.bbox_h,
+                "bbox_area": s.bbox_area,
+                "path_length": s.path_length,
+                "mean_speed": s.mean_speed,
+                "radius_of_gyration": s.radius_of_gyration,
+                "visited_cells": s.visited_cells,
+                "velocity_autocorr": s.velocity_autocorr,
+                "direction_persistence": s.direction_persistence,
+                "goal_switches": s.goal_switches,
+                "dominant_goal": s.dominant_goal,
+                "dominant_goal_frac": s.dominant_goal_frac,
+                "goal_distribution": s.goal_distribution,
+                "social_relations_peak": s.social_relations_peak,
+                "best_coop_peak": s.best_coop_peak,
+                "best_hostility_peak": s.best_hostility_peak,
+                "food_eaten_final": s.food_eaten_final,
+                "kills_final": s.kills_final,
+                "damage_dealt_final": s.damage_dealt_final,
+                "episodic_events_final": s.episodic_events_final,
+                "dominant_episodic_event": s.dominant_episodic_event,
+                "health_min": s.health_min,
+                "hydration_min": s.hydration_min,
+                "food_pull_fraction": s.food_pull_fraction,
+                "food_pull_samples": s.food_pull_samples,
+                "predator_push_fraction": s.predator_push_fraction,
+                "predator_push_samples": s.predator_push_samples,
+            }
+            for s in summaries
+        ],
+    }
+    if out is not None:
+        json_path = out.with_suffix(".json")
+        json_path.write_text(json.dumps(summary_payload, indent=2))
+        print(f"wrote json summary to {json_path}", file=sys.stderr)
 
     return 0
 
