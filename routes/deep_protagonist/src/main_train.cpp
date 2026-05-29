@@ -337,6 +337,462 @@ struct ScriptedPolicy {
     }
 };
 
+// =============================================================================
+// D-100: ScriptedSettler — 7-layer nested reactive policy. Designed so a PPO
+// network trained via Behavioral Cloning on its (obs, action) pairs learns
+// MECHANISMS (and their cross-dependencies), not a fixed trajectory.
+//
+//   Layer 0  context — derive `is_night`, `at_home`, `wolf_close`, etc. ONCE
+//                      from obs, share across all subsequent layers.
+//   Layer 1  EMERGENCY — vital about to hit 0 AND a save action is in reach.
+//                        Overrides everything else. Includes "night + about to
+//                        freeze far from home -> sprint home" rule.
+//   Layer 2  SURVIVAL — wolf nearby or night-far-from-home. Drop secondary
+//                        goals. Either fight (have spear + healthy), shelter
+//                        (run home / cave / Shed), or retreat.
+//   Layer 3  VITAL MAINT — thirst/hunger trending low but not critical.
+//                          Decision branches on day/night AND distance to
+//                          target. Night + far source = stay (lose vital
+//                          slowly is better than freezing).
+//   Layer 4  CONSTRUCTION — site exists & not done. Sub-branches: have all
+//                            mats -> deposit; missing wood -> tree; missing
+//                            grass -> grass; missing stone -> stone. Pick
+//                            nearest needed.
+//   Layer 5  SETTLEMENT — home complete + vitals ok. If far from home, walk
+//                          home. If at home, idle (move=0). NOT random wander.
+//                          This is the layer that creates `bldg_ticks`.
+//   Layer 6  CRAFTING — at home + Mid stage + materials in inv. Make spear,
+//                        clothes, wear them. Triggers are cooldowned so we
+//                        don't spam.
+//   Layer 7  EXPLORATION — only when ALL above are satisfied. Short scouting
+//                           walks (8m radius) to gather wood/grass for spares.
+//
+// All distances are normalised by VISION_RANGE = 60m. We never use absolute
+// coordinates so each tick decision is purely obs -> action. Replayed with a
+// different seed the bot walks a different path but applies the same logic.
+// =============================================================================
+struct ScriptedSettler {
+    std::mt19937_64 rng;
+    float dirx = 0.0f, diry = 1.0f;
+    int   tick = 0;
+    int   deposit_cooldown = 0;
+    int   craft_cooldown   = 0;
+    int   wear_cooldown    = 0;
+
+    // ---- obs indices (match include/agent/Observation.hpp layout) ----
+    static constexpr int OBS_HUNGER       = 0;
+    static constexpr int OBS_THIRST       = 1;
+    static constexpr int OBS_STAMINA      = 2;
+    static constexpr int OBS_TEMP         = 3;
+    static constexpr int OBS_INSIDE_CAVE  = 9;
+    static constexpr int OBS_DAY_SIN      = 12;
+    static constexpr int OBS_DAY_COS      = 13;
+    static constexpr int OBS_PLANT_BASE   = 39;
+    static constexpr int OBS_PLANT_STRIDE = 7;
+    static constexpr int OBS_RES_BASE     = 99;
+    static constexpr int OBS_RES_STRIDE   = 6;
+    static constexpr int OBS_INV_WOOD     = 117;
+    static constexpr int OBS_INV_STONE    = 118;
+    static constexpr int OBS_INV_GRASS    = 119;
+    static constexpr int OBS_INV_SPEAR    = 120;
+    static constexpr int OBS_STAGE_EARLY  = 124;
+    static constexpr int OBS_STAGE_MID    = 125;
+    static constexpr int OBS_STAGE_LATE   = 126;
+    static constexpr int OBS_BLDG_DX      = 130;
+    static constexpr int OBS_BLDG_DY      = 131;
+    static constexpr int OBS_BLDG_DONE    = 132;
+    static constexpr int OBS_INV_FUR      = 133;
+    static constexpr int OBS_INV_DRESS    = 134;
+    static constexpr int OBS_INV_CLOAK    = 135;
+    static constexpr int OBS_WORN_NONE    = 137;
+    static constexpr int OBS_WATER_DX     = 145;
+    static constexpr int OBS_WATER_DY     = 146;
+    static constexpr int OBS_WATER_DIST   = 147;
+    static constexpr int OBS_WOLF_DX      = 148;
+    static constexpr int OBS_WOLF_DY      = 149;
+    static constexpr int OBS_WOLF_DIST    = 150;
+    static constexpr int OBS_SITE_W_LEFT  = 161;
+    static constexpr int OBS_SITE_S_LEFT  = 162;
+    static constexpr int OBS_SITE_G_LEFT  = 163;
+    static constexpr float VISION_RANGE   = 60.0f;
+
+    explicit ScriptedSettler(uint64_t seed) : rng(seed ? seed : 1) {}
+
+    // Find nearest resource of a given kind (0=wood, 1=stone, 2=grass) by
+    // scanning the 3 nearest-resource slots. Returns false if none of that
+    // kind is in vision.
+    bool find_resource_(const dp::agent::ObservationBuilder::Vector& obs,
+                        int kind, float& out_dx, float& out_dy) const {
+        float best = 1e9f;
+        bool  found = false;
+        for (int i = 0; i < 3; ++i) {
+            int b = OBS_RES_BASE + i * OBS_RES_STRIDE;
+            float onehot = obs[b + 3 + kind];
+            if (onehot < 0.5f) continue;
+            float dx = obs[b + 0], dy = obs[b + 1];
+            float d2 = dx*dx + dy*dy;
+            if (d2 < best) { best = d2; out_dx = dx; out_dy = dy; found = true; }
+        }
+        return found;
+    }
+
+    // Nearest ripe plant in the 4 plant slots.
+    bool find_plant_(const dp::agent::ObservationBuilder::Vector& obs,
+                     float& out_dx, float& out_dy) const {
+        float best = 1e9f;
+        bool  found = false;
+        for (int i = 0; i < 4; ++i) {
+            int b = OBS_PLANT_BASE + i * OBS_PLANT_STRIDE;
+            float dx = obs[b + 0], dy = obs[b + 1];
+            if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f) continue;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < best) { best = d2; out_dx = dx; out_dy = dy; found = true; }
+        }
+        return found;
+    }
+
+    void steer_(dp::agent::AgentAction& a, float tx, float ty) {
+        float mag = std::sqrt(tx*tx + ty*ty);
+        if (mag < 1e-4f) { a.move_x = dirx; a.move_y = diry; return; }
+        a.move_x = tx / mag;
+        a.move_y = ty / mag;
+        dirx = a.move_x;
+        diry = a.move_y;
+    }
+
+    // Walk toward an obs-space target (already normalised) and trigger
+    // `trigger_when_in` action if within range_norm. Used by Layers 3-5.
+    void walk_or_trigger_(dp::agent::AgentAction& a,
+                          float tx, float ty,
+                          float range_norm,
+                          bool* trigger_flag,
+                          int*  cooldown,
+                          int   cd_ticks) {
+        steer_(a, tx, ty);
+        float d = std::sqrt(tx*tx + ty*ty);
+        if (d < range_norm && trigger_flag && cooldown) {
+            if (*cooldown == 0) {
+                *trigger_flag = true;
+                *cooldown = cd_ticks;
+            }
+        }
+    }
+
+    dp::agent::AgentAction sample(const dp::agent::ObservationBuilder::Vector& obs,
+                                  float /*dt*/) {
+        ++tick;
+        if (deposit_cooldown > 0) --deposit_cooldown;
+        if (craft_cooldown   > 0) --craft_cooldown;
+        if (wear_cooldown    > 0) --wear_cooldown;
+        dp::agent::AgentAction a;
+
+        // ---------- Layer 0: context ----------
+        const float hunger  = obs[OBS_HUNGER];
+        const float thirst  = obs[OBS_THIRST];
+        const float temp_v  = obs[OBS_TEMP];
+        const float day_cos = obs[OBS_DAY_COS];
+        const float sun_h   = -day_cos;                  // matches Daylight::sun_height_normalized()
+        const bool  is_night    = sun_h < -0.1f;
+        const bool  deep_night  = sun_h < -0.4f;
+        const bool  approaching_night = (!is_night) && sun_h < 0.15f;
+
+        const float inv_w = obs[OBS_INV_WOOD];
+        const float inv_s = obs[OBS_INV_STONE];
+        const float inv_g = obs[OBS_INV_GRASS];
+        const float inv_fur = obs[OBS_INV_FUR];
+        const float inv_dress = obs[OBS_INV_DRESS];
+        const float inv_cloak = obs[OBS_INV_CLOAK];
+        const bool  have_wood  = inv_w > 0.005f;
+        const bool  have_stone = inv_s > 0.005f;
+        const bool  have_grass = inv_g > 0.005f;
+        const bool  have_spear = obs[OBS_INV_SPEAR] > 0.005f;
+        const bool  worn_none  = obs[OBS_WORN_NONE]  > 0.5f;
+
+        const float home_dx     = obs[OBS_BLDG_DX];
+        const float home_dy     = obs[OBS_BLDG_DY];
+        const float home_done   = obs[OBS_BLDG_DONE];
+        const float home_d2     = home_dx*home_dx + home_dy*home_dy;
+        const float home_d_norm = std::sqrt(home_d2);
+        const float home_d_m    = home_d_norm * VISION_RANGE;
+        const bool  home_complete = home_done > 0.5f;
+        const bool  have_home_anchor = home_d_norm > 1e-4f;  // false only if no site ever placed
+        const bool  at_home = have_home_anchor && home_d_m < 8.0f;
+        const bool  near_home = have_home_anchor && home_d_m < 15.0f;
+        const bool  inside_cave = obs[OBS_INSIDE_CAVE] > 0.5f;
+        const bool  sheltered_now = at_home || inside_cave;
+
+        const float wolf_dist_norm = obs[OBS_WOLF_DIST];
+        const float wolf_dx        = obs[OBS_WOLF_DX];
+        const float wolf_dy        = obs[OBS_WOLF_DY];
+        const float wolf_d_m       = wolf_dist_norm * VISION_RANGE;
+        const bool  wolf_visible   = wolf_dist_norm > 1e-4f;
+        const bool  wolf_close     = wolf_visible && wolf_d_m < 12.0f;
+        const bool  wolf_critical  = wolf_visible && wolf_d_m < 6.0f;
+
+        const float water_dx    = obs[OBS_WATER_DX];
+        const float water_dy    = obs[OBS_WATER_DY];
+        const float water_dnorm = obs[OBS_WATER_DIST];
+        const float water_d_m   = water_dnorm * VISION_RANGE;
+        const bool  water_visible = water_dnorm > 1e-4f;
+
+        const bool stage_mid  = obs[OBS_STAGE_MID]  > 0.5f;
+        const bool stage_late = obs[OBS_STAGE_LATE] > 0.5f;
+        const bool site_active = have_home_anchor && !home_complete;
+        const bool site_needs_w = obs[OBS_SITE_W_LEFT] > 0.005f;
+        const bool site_needs_s = obs[OBS_SITE_S_LEFT] > 0.005f;
+        const bool site_needs_g = obs[OBS_SITE_G_LEFT] > 0.005f;
+
+        // Thresholds reused below
+        const float TH_CRIT_LOW  = 0.20f;   // thirst/hunger < 20% -> emergency
+        const float TH_LOW       = 0.55f;   // moderate need
+        const float TH_OK_HIGH   = 0.80f;   // restocked
+        const float TEMP_CRIT    = 0.15f;   // body temp 15/100 -> freezing
+        const float TEMP_LOW     = 0.30f;
+        const float DRINK_RANGE  = 2.0f  / VISION_RANGE;
+        const float EAT_RANGE    = 1.5f  / VISION_RANGE;
+        const float COLLECT_RANGE= 2.0f  / VISION_RANGE;
+        const float DEPOSIT_RANGE= 2.0f  / VISION_RANGE;
+        const float WATER_FAR_M  = 25.0f;   // beyond this is "expensive"
+
+        // ---------- Layer 1: EMERGENCY ----------
+        // 1a) thirst about to hit 0 AND water in arm's reach (day or night)
+        if (thirst < TH_CRIT_LOW && water_visible && water_d_m < 4.0f) {
+            steer_(a, water_dx, water_dy);
+            a.drink = true;
+            return a;
+        }
+        // 1b) hunger about to hit 0 AND plant in arm's reach
+        if (hunger < TH_CRIT_LOW) {
+            float px, py;
+            if (find_plant_(obs, px, py) && std::sqrt(px*px + py*py) < EAT_RANGE) {
+                steer_(a, px, py);
+                a.eat = true;
+                return a;
+            }
+        }
+        // 1c) freezing AND home in reach -> sprint home (drop water/food goals)
+        if (temp_v < TEMP_CRIT && have_home_anchor && home_d_m < 40.0f) {
+            steer_(a, home_dx, home_dy);
+            return a;
+        }
+        // 1d) very thirsty + night + water far -> stay/return home, hold the loss
+        if (thirst < TH_CRIT_LOW && is_night && have_home_anchor && !at_home) {
+            steer_(a, home_dx, home_dy);
+            return a;
+        }
+
+        // ---------- Layer 2: SURVIVAL ----------
+        // 2a) wolf close
+        if (wolf_close) {
+            // 2a.i fight if armed + healthy enough
+            if (have_spear && hunger > TH_LOW && thirst > TH_LOW
+                && wolf_critical) {
+                steer_(a, wolf_dx, wolf_dy);
+                a.attack = true;
+                return a;
+            }
+            // 2a.ii at home -> stay put, wolves get 0.3x perception 0.7x speed
+            if (at_home) {
+                a.move_x = 0.0f; a.move_y = 0.0f;
+                return a;
+            }
+            // 2a.iii have_home_anchor -> retreat toward home, away from wolf
+            if (have_home_anchor) {
+                float bx = home_dx, by = home_dy;
+                steer_(a, bx, by);
+                return a;
+            }
+            // 2a.iv last resort: flee directly away from wolf
+            steer_(a, -wolf_dx, -wolf_dy);
+            return a;
+        }
+        // 2b) night + far from home + home complete (we built it, USE it)
+        if (is_night && have_home_anchor && !near_home) {
+            steer_(a, home_dx, home_dy);
+            return a;
+        }
+        // 2c) approaching night AND far from home AND inv has enough -> walk home
+        if (approaching_night && have_home_anchor && home_d_m > 15.0f
+            && thirst > 0.40f && hunger > 0.40f) {
+            steer_(a, home_dx, home_dy);
+            return a;
+        }
+
+        // ---------- Layer 3: VITAL MAINTENANCE ----------
+        // 3a) thirst moderate: only act if water close OR no other choice
+        if (thirst < TH_LOW) {
+            if (water_visible) {
+                bool worth_going =
+                    (water_d_m < WATER_FAR_M) ||
+                    (thirst < 0.30f) ||
+                    (!is_night && hunger > TH_LOW);
+                bool too_risky_night = is_night && water_d_m > 10.0f;
+                if (worth_going && !too_risky_night) {
+                    steer_(a, water_dx, water_dy);
+                    if (water_dnorm < DRINK_RANGE) a.drink = true;
+                    return a;
+                }
+            }
+            // fallback: if it's night, stay home & take the loss
+            if (is_night && have_home_anchor) {
+                steer_(a, home_dx, home_dy);
+                return a;
+            }
+        }
+        // 3b) hunger moderate
+        if (hunger < TH_LOW) {
+            float px, py;
+            if (find_plant_(obs, px, py)) {
+                float pd2 = px*px + py*py;
+                float pd_m = std::sqrt(pd2) * VISION_RANGE;
+                bool worth = (pd_m < 20.0f) || (hunger < 0.30f);
+                bool too_risky_night = is_night && pd_m > 10.0f;
+                if (worth && !too_risky_night) {
+                    steer_(a, px, py);
+                    if (std::sqrt(pd2) < EAT_RANGE) a.eat = true;
+                    return a;
+                }
+            }
+            if (is_night && have_home_anchor) {
+                steer_(a, home_dx, home_dy);
+                return a;
+            }
+        }
+
+        // ---------- Layer 4: CONSTRUCTION (only if site exists & not done) ----------
+        if (site_active) {
+            // Have all required mats nearby -> deposit
+            bool can_deposit_now =
+                (have_wood  || !site_needs_w) &&
+                (have_stone || !site_needs_s) &&
+                (have_grass || !site_needs_g);
+            if ((have_wood || have_grass || have_stone) && can_deposit_now) {
+                if (home_d_norm < DEPOSIT_RANGE) {
+                    a.move_x = 0.0f; a.move_y = 0.0f;
+                    if (deposit_cooldown == 0) {
+                        a.deposit_to_site = true;
+                        deposit_cooldown = 3;
+                    }
+                    return a;
+                }
+                steer_(a, home_dx, home_dy);
+                return a;
+            }
+            // Missing mats: collect the nearest needed kind
+            float bx = 0.0f, by = 0.0f;
+            float best = 1e9f;
+            int   best_kind = -1;
+            auto try_kind = [&](int kind, bool needed) {
+                if (!needed) return;
+                float dx, dy;
+                if (!find_resource_(obs, kind, dx, dy)) return;
+                float d2 = dx*dx + dy*dy;
+                if (d2 < best) { best = d2; bx = dx; by = dy; best_kind = kind; }
+            };
+            try_kind(0, site_needs_w && !have_wood);
+            try_kind(1, site_needs_s && !have_stone);
+            try_kind(2, site_needs_g && !have_grass);
+            if (best_kind >= 0) {
+                steer_(a, bx, by);
+                if (std::sqrt(best) < COLLECT_RANGE) a.collect = true;
+                return a;
+            }
+            // No visible resource of needed kind: walk back near home & wait
+            if (have_home_anchor) {
+                steer_(a, home_dx, home_dy);
+                return a;
+            }
+        }
+
+        // ---------- Layer 5: SETTLEMENT ----------
+        if (home_complete) {
+            if (!at_home) {
+                // Walk home, optionally pick something up along the way
+                steer_(a, home_dx, home_dy);
+                return a;
+            }
+            // We ARE at home + vitals ok + home done.
+            // Drift to crafting if we have stuff to make.
+            // Otherwise sit still (this is what produces bldg_ticks).
+            // Layer 6 handles crafting below; fall through.
+        }
+
+        // ---------- Layer 6: CRAFTING (only at home) ----------
+        if (at_home && craft_cooldown == 0) {
+            // 6a) no clothing + grass >= 3 -> craft_grass_dress
+            if (worn_none && inv_g > (3.0f / 20.0f) - 1e-4f && inv_dress < 0.005f) {
+                a.craft_grass_dress = true;
+                craft_cooldown = 8;
+                return a;
+            }
+            // 6b) have dress in inv but not worn -> wear
+            if (worn_none && (inv_dress > 0.005f || inv_cloak > 0.005f)
+                && wear_cooldown == 0) {
+                a.wear_clothes = true;
+                wear_cooldown = 8;
+                return a;
+            }
+            // 6c) fur >= 2 + no cloak in inv -> craft_fur_cloak
+            if (inv_fur > (2.0f / 20.0f) - 1e-4f && inv_cloak < 0.005f) {
+                a.craft_fur_cloak = true;
+                craft_cooldown = 8;
+                return a;
+            }
+            // 6d) wood >= 1 + stone >= 1 + no spear -> craft_spear
+            if (!have_spear && have_wood && have_stone) {
+                a.craft_spear = true;
+                craft_cooldown = 8;
+                return a;
+            }
+        }
+
+        // ---------- Layer 7: EXPLORATION / TOP-UP ----------
+        // At home + vitals ok + nothing to craft: short scouting walk for
+        // spare materials, then come home. Cap at ~10m so we never drift far.
+        if (at_home) {
+            // pick a needed resource even though no site needs it (build buffer)
+            float bx = 0.0f, by = 0.0f;
+            float best = 1e9f;
+            auto try_kind = [&](int kind, bool needed) {
+                if (!needed) return;
+                float dx, dy;
+                if (!find_resource_(obs, kind, dx, dy)) return;
+                float d_m = std::sqrt(dx*dx + dy*dy) * VISION_RANGE;
+                if (d_m > 12.0f) return;  // too far, don't drift
+                float d2 = dx*dx + dy*dy;
+                if (d2 < best) { best = d2; bx = dx; by = dy; }
+            };
+            try_kind(0, inv_w < (3.0f / 20.0f));
+            try_kind(1, inv_s < (3.0f / 20.0f));
+            try_kind(2, inv_g < (3.0f / 20.0f));
+            if (best < 1e9f) {
+                steer_(a, bx, by);
+                if (std::sqrt(best) < COLLECT_RANGE) a.collect = true;
+                return a;
+            }
+            // 7b) Late stage farming: water nearby plot if any
+            if (stage_late) {
+                // (plot dx at obs[140]) - intentionally not wired in v1; future expansion.
+            }
+            // Default: idle in place. This is what creates bldg_ticks.
+            a.move_x = 0.0f; a.move_y = 0.0f;
+            return a;
+        }
+
+        // Final fallback: nothing else applies & we don't have a home anchor.
+        // Wander to discover the world (will eventually trigger the auto-Shed
+        // build at spawn or find resources).
+        if ((tick & 31) == 0) {
+            float ang = std::uniform_real_distribution<float>(0.0f, 6.2831853f)(rng);
+            dirx = std::cos(ang);
+            diry = std::sin(ang);
+        }
+        a.move_x = dirx;
+        a.move_y = diry;
+        return a;
+    }
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -382,7 +838,7 @@ int main(int argc, char** argv) {
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
-                "       [--policy wander|noop|scripted|ppo]\n"
+                "       [--policy wander|noop|scripted|settler|ppo]\n"
                 "       [--metrics path.jsonl]\n"
                 "       [--save-path file.pt --save-every N]\n"
                 "       [--load file.pt]\n"
@@ -430,6 +886,7 @@ int main(int argc, char** argv) {
 
     WanderPolicy wander(seed ^ 0xC0DEULL);
     ScriptedPolicy scripted(seed ^ 0xBEEFULL);
+    ScriptedSettler settler(seed ^ 0xD100ULL);
     dp::agent::ObservationBuilder::Vector obs{};
     env.reset(obs);
 
@@ -675,6 +1132,8 @@ int main(int argc, char** argv) {
             action = wander.sample(ecfg.fixed_dt);
         } else if (policy == "scripted") {
             action = scripted.sample(obs, ecfg.fixed_dt);
+        } else if (policy == "settler") {
+            action = settler.sample(obs, ecfg.fixed_dt);
         } else if (policy == "ppo") {
             // Snapshot the GRU hidden BEFORE sample_action mutates it.
             // h_in is the value PPO::update replays during the recurrent
