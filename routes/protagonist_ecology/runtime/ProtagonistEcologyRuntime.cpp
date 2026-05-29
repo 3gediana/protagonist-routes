@@ -5285,6 +5285,22 @@ int ProtagonistEcologyRuntime::runTraining() {
                  "tick_calls={}",
                  main_world_host->simTimeSeconds(),
                  main_world_host->tickCallCount());
+
+        // L6 R3 stage 4c (end-of-training freeze snapshot, MVP):
+        // dump the live AgentLayer contents of the persistent main
+        // world to <run_dir>/main_world_agents_snapshot/. This is
+        // the "训练后丢进生产世界" data path — the JSON manifest
+        // captures every alive agent's identity + position so a
+        // future Layer 7 viewer (or follow-up training) can rebuild
+        // a plausible main-world state without having to replay the
+        // entire 80-gen training.
+        const auto agent_snapshot_dir = run_dir / "main_world_agents_snapshot";
+        const std::size_t snap_count =
+            main_world_host->saveAgentsSnapshot(agent_snapshot_dir);
+        LOG_INFO("MainWorldHost stage 4c snapshot: wrote {} alive agents to {} "
+                 "(cumulative_seed_count={})",
+                 snap_count, agent_snapshot_dir.string(),
+                 main_world_host->seedCount());
     }
 
     // L6 R2 stage 2: end-of-run summary. Always dumps final genome

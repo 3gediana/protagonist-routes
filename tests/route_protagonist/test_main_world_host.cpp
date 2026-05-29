@@ -15,6 +15,11 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+
 namespace {
 
 using neuro::routes::protagonist::MainWorldHost;
@@ -106,4 +111,73 @@ TEST(MainWorldHostContinuousTick, SimTimeMatchesWorldClock) {
     // avoid double-bookkeeping; verify the values are identical.
     EXPECT_DOUBLE_EQ(host.simTimeSeconds(),
                      host.world()->currentTimeSeconds());
+}
+
+// L6 R3 stage 4c: minimum invariants of the agent snapshot writer.
+// We don't seed any agents here (the snapshot path is reachable even
+// when the main world is empty — and an empty manifest is itself a
+// useful baseline for the future Layer 7 viewer to recognise "no
+// migration occurred"). The richer end-to-end test (after a real
+// 80-gen run seeds ~300 agents) lives in the smoke/long-run scripts.
+TEST(MainWorldHostStage4c, EmptyHostSnapshotProducesValidZeroAgentManifest) {
+    auto cfg = makeMinimalConfig();
+    MainWorldHost host(cfg);
+    ASSERT_TRUE(host.tick(0.5));
+    ASSERT_TRUE(host.tick(0.5));
+
+    const auto tmp_dir = std::filesystem::temp_directory_path()
+                       / "main_world_host_test_snapshot_empty";
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir, ec);
+
+    const std::size_t saved = host.saveAgentsSnapshot(tmp_dir);
+    EXPECT_EQ(saved, 0u)
+        << "An empty main world should write a manifest containing zero agents";
+
+    const auto manifest = tmp_dir / "main_world_agents.json";
+    EXPECT_TRUE(std::filesystem::exists(manifest))
+        << "saveAgentsSnapshot must create the manifest file";
+
+    std::ifstream in(manifest);
+    std::ostringstream body;
+    body << in.rdbuf();
+    const std::string contents = body.str();
+    // Spot-check that all the documented top-level fields are present
+    // and that the agents array is empty. We deliberately avoid pulling
+    // in a JSON dependency for unit testing — the runtime hand-writes
+    // the manifest so substring checks are sufficient for shape.
+    EXPECT_NE(contents.find("\"version\""), std::string::npos);
+    EXPECT_NE(contents.find("\"snapshot_sim_time\""), std::string::npos);
+    EXPECT_NE(contents.find("\"tick_call_count\""), std::string::npos);
+    EXPECT_NE(contents.find("\"cumulative_seed_count\""), std::string::npos);
+    EXPECT_NE(contents.find("\"agent_count\": 0"), std::string::npos);
+    EXPECT_NE(contents.find("\"agents\": []"), std::string::npos);
+
+    std::filesystem::remove_all(tmp_dir, ec);
+}
+
+TEST(MainWorldHostStage4c, SnapshotIntoNonExistentDirCreatesIt) {
+    auto cfg = makeMinimalConfig();
+    MainWorldHost host(cfg);
+
+    const auto tmp_dir = std::filesystem::temp_directory_path()
+                       / "main_world_host_test_snapshot_mkdir"
+                       / "nested" / "subdir";
+    std::error_code ec;
+    std::filesystem::remove_all(
+        std::filesystem::temp_directory_path()
+            / "main_world_host_test_snapshot_mkdir",
+        ec);
+
+    EXPECT_FALSE(std::filesystem::exists(tmp_dir));
+    const std::size_t saved = host.saveAgentsSnapshot(tmp_dir);
+    EXPECT_EQ(saved, 0u);
+    EXPECT_TRUE(std::filesystem::exists(tmp_dir))
+        << "saveAgentsSnapshot must recursively create the snapshot directory";
+    EXPECT_TRUE(std::filesystem::exists(tmp_dir / "main_world_agents.json"));
+
+    std::filesystem::remove_all(
+        std::filesystem::temp_directory_path()
+            / "main_world_host_test_snapshot_mkdir",
+        ec);
 }

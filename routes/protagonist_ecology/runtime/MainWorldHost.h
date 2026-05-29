@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <random>
 
@@ -116,6 +117,28 @@ public:
     // alive count. Use world()->getLayer<AgentLayer>()->livingCount()
     // for the live tally.
     std::size_t seedCount() const { return seed_count_; }
+
+    // L6 R3 stage 4c (end-of-training main_world freeze snapshot,
+    // MVP): dump every alive agent currently in the host's persistent
+    // World2D into a single JSON manifest at
+    // `<dir>/main_world_agents.json`.
+    //
+    // Each entry records the agent's id, archetype_tag, species_id,
+    // genome_id, lineage_id, and (x,y) position. Genome blobs are NOT
+    // duplicated here — they are reachable via genome_id which
+    // cross-references the existing MainWorldPersistence pool
+    // snapshot written alongside this file (see
+    // ProtagonistEcologyRuntime end-of-run path).
+    //
+    // The world's environment state (fires, worksites, resource
+    // patches, etc.) is intentionally NOT serialized in this MVP; a
+    // future Layer 7 viewer can rebuild a plausible environment from
+    // the same toml config that drove the run.
+    //
+    // Creates `dir` (recursively) if it does not exist. Returns the
+    // number of alive agents written; returns 0 on failure (no
+    // World2D, no AgentLayer, or filesystem error).
+    std::size_t saveAgentsSnapshot(const std::filesystem::path& dir) const;
 
     // Direct access to the owned World2D for callers that need to
     // inspect or interact with layers (e.g. tests, future migration
