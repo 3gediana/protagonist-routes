@@ -5,6 +5,14 @@
 > 当前分支：`master`
 > 当前 HEAD（protagonist_ecology 视角）：本 commit 待写 (gen 79 trajectory verdict + docs/note sync)；当前 HEAD `c1f6e16` trajectory wrap-up；前 commit `d081fd0` trajectory-analysis pivot (TraceRecorder.tail_generations + Python analyzer 三件套) + `1f4ce28` Run 10 (s58193) 7/7 PASS + 21/21 streak。再前 `35e8535` stage 4c MVP / `c76a506` Run 5 stage 4c first validation / `ffd4187` Run 9 / `4c75aa3` Run 8。
 
+> **2026-05-30 早上 (UTC) 第二 seed 交叉验证 — gen 79 PURPOSEFUL 复现，结论稳健**：
+> - **动机**：s81527 同 seed 把 gen 79 判成 PURPOSEFUL，但要排除"这只是 81527 一个 seed 的运气"，再用全新 seed 92641 同样抓 gen 0/3/79。
+> - **执行**：`tmp/layer1/long_run_80gen_stage4b_s92641_traj3pt.toml` WMI 后台跑完（04:40→06:16 UTC，~96 min）。`MainWorldHost end-of-run sim_time=800.000s tick_calls=800`；`TripleWorldRuntime end-of-run borderland=288 main_world=338`。**harmony 7/7 → 24/24 streak**（C6 qd=67154、C5 total=148、C3 peak=2528.3s、C7 无灭绝）。
+> - **s92641 gen 0/3/79**：headless 0.149 → 0.232 → **0.285，三代均 PURPOSEFUL**（都 < 0.35）。dominant_goal_frac 0.64→0.69、predator_push 0.39→0.65、velocity_autocorr 0.94→0.73、goal dist explore 53%→15% / emit_signal 18%→69% —— 和 s81527 完全同型。
+> - **三 seed gen 79 汇总**：s81527=0.245 / s92641=0.285 / s71359=0.354（跨 seed，仅这条 MIXED 且刚过线 +0.004）。**2/3 干净同 seed run 都 PURPOSEFUL，结论稳健：PURPOSEFUL，确定不是无头苍蝇**。稳定信号（dom_goal_frac↑、predator_push↑、food_pull 稳、autocorr↓=反应式）跨 seed 一致；唯一 seed 敏感项是 goal_switches（8.1/13.4/16.3），正是它把 s71359 顶过 MIXED 线。
+> - **food_eaten**：s92641 gen79 2/24 吃到（sum 1.2），同样非恒零，确认上次跨 seed=0 是采样 artifact 非 bug。未改 reward。
+> - **磁盘**：trace 已删，D free ~231 GB。产物 tmp/traj_s92641_gen0/3/79.json + docx/.../traj_3seed_verdict.md。commit 待写。**§3 #1 trajectory honesty 评估彻底闭环**。
+>
 > **2026-05-30 凌晨晚些 (UTC) 同 seed gen 0/3/79 复核 — gen 79 改判 PURPOSEFUL，food_eaten 疑点决起**：
 > - **动机**：上一条 gen 79 = MIXED 是跨 seed 对比（gen0/3 用 s58193，gen79 用 s71359），只能作趋势参考。本 run 用同一 seed (81527) 一次抓 gen 0/3/79 三点（`trace.max_generations=4` + `tail_generations=1`）做干净同 run 对比，并直接查 food_eaten。
 > - **执行**：`tmp/layer1/long_run_80gen_stage4b_s81527_traj3pt.toml` WMI 后台跑完（02:44→04:27 UTC，~103 min，~80s/gen）。`MainWorldHost end-of-run cumulative sim_time=800.000s tick_calls=800`；`TripleWorldRuntime end-of-run: borderland=288 main_world=338`。
