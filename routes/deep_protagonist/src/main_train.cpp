@@ -603,6 +603,12 @@ struct ScriptedSettler {
         const float COLLECT_RANGE= 2.0f  / VISION_RANGE;
         const float DEPOSIT_RANGE= 2.0f  / VISION_RANGE;
         const float WATER_FAR_M  = 25.0f;   // beyond this is "expensive"
+        const float HOME_CORE_M  = 3.0f;    // D-102: tight "indoors" core. At
+                                            // night the settler returns to and
+                                            // rests at this core (sleep) rather
+                                            // than foraging; the active return
+                                            // gives BC a restoring-force example
+                                            // at every drift distance.
 
         // ---------- Layer 1: EMERGENCY ----------
         // 1a) thirst about to hit 0 AND water in arm's reach (day or night)
@@ -761,10 +767,27 @@ struct ScriptedSettler {
                 steer_(a, home_dx, home_dy);
                 return a;
             }
-            // We ARE at home + vitals ok + home done.
-            // Drift to crafting if we have stuff to make.
-            // Otherwise sit still (this is what produces bldg_ticks).
-            // Layer 6 handles crafting below; fall through.
+            // We ARE at home (within 8 m) + vitals ok + home done.
+            // D-102: night routine = SLEEP at the home core. The old settler
+            // fell straight through to Layer 7 here, which let it keep
+            // foraging within 12 m even after dark (unrealistic, and it never
+            // demonstrated returning to center while already "home"). Now, at
+            // night, actively walk back to the tight core and then rest in
+            // place. The active return is the key training signal: it gives BC
+            // a "drifted -> steer home" example at every distance inside the
+            // home zone, which a frozen idle (old behaviour) never produced, so
+            // the clone's small continuous-action drift had no demonstrated
+            // correction and slowly walked it out of the coverage radius.
+            if (is_night) {
+                if (home_d_m > HOME_CORE_M) {
+                    steer_(a, home_dx, home_dy);
+                    return a;
+                }
+                a.move_x = 0.0f; a.move_y = 0.0f;  // sleep
+                return a;
+            }
+            // Daytime at home: fall through to crafting (Layer 6) and the
+            // short courtyard chores / idle (Layer 7) below.
         }
 
         // ---------- Layer 6: CRAFTING (only at home) ----------
@@ -866,6 +889,14 @@ int main(int argc, char** argv) {
     // D-101 BC pipeline
     std::string record_demos;              // path to write (obs,action) demos (settler/scripted only)
     bool        demo_no_regen = false;     // disable in-building regen during demo recording
+    // D-102 DAgger: step the env with the LOADED clone's action (so we sample
+    // the state distribution the clone actually visits at eval time) but record
+    // the ORACLE (ScriptedSettler) action as the demo LABEL. This relabels the
+    // clone's drift states with the correct expert action, fixing the camp-phase
+    // covariate shift that plain BC cannot (the clone reaches house states
+    // slightly off the oracle's distribution and wanders out). Requires
+    // --policy ppo --load clone.pt --record-demos out.bin --dagger.
+    bool        dagger = false;
     std::string bc_demos;                  // comma-separated demo files for --policy bc
     std::string bc_out       = "bc.pt";    // BC output checkpoint
     int         bc_epochs    = 8;
@@ -914,6 +945,7 @@ int main(int argc, char** argv) {
         else if (a == "--n-envs")       n_envs       = std::stoi(next());
         else if (a == "--record-demos") record_demos = next();
         else if (a == "--demo-no-regen") demo_no_regen = true;
+        else if (a == "--dagger")        dagger        = true;
         else if (a == "--bc-demos")     bc_demos     = next();
         else if (a == "--bc-out")       bc_out       = next();
         else if (a == "--bc-epochs")    bc_epochs    = std::stoi(next());
@@ -1038,6 +1070,15 @@ int main(int argc, char** argv) {
         std::fwrite(&n0,  sizeof(uint64_t), 1, demo_f);
         spdlog::info("D-101: recording demos to '{}' (obs_dim={}, cont_dim={})",
                      record_demos, od, cd);
+        if (dagger) {
+            if (policy != "ppo" || load_path.empty()) {
+                spdlog::error("--dagger needs --policy ppo --load <clone.pt> "
+                              "(env steps with the clone, labels come from the oracle)");
+                return 2;
+            }
+            spdlog::info("D-102 DAgger: stepping with clone '{}', labeling with "
+                         "ScriptedSettler oracle", load_path);
+        }
     }
 
     WanderPolicy wander(seed ^ 0xC0DEULL);
@@ -1322,9 +1363,16 @@ int main(int argc, char** argv) {
         // sr.obs further down). done marks the episode boundary so BC can
         // replay episodes as sequences.
         if (demo_f) {
+            // D-102 DAgger: env stepped with the clone's `action`, but the
+            // recorded label is the oracle's action on this same (clone-visited)
+            // obs. ScriptedSettler is purely obs-reactive (D-100: no episode
+            // history), so querying it on an arbitrary state is valid.
+            dp::agent::AgentAction label = dagger
+                ? settler.sample(obs, ecfg.fixed_dt)
+                : action;
             float cont3[3];
-            action_to_cont(action, cont3);
-            uint32_t didx = static_cast<uint32_t>(action_to_disc_idx(action));
+            action_to_cont(label, cont3);
+            uint32_t didx = static_cast<uint32_t>(action_to_disc_idx(label));
             uint32_t done = sr.done ? 1u : 0u;
             std::fwrite(obs.data(), sizeof(float), DEMO_OBS_DIM, demo_f);
             std::fwrite(cont3, sizeof(float), DEMO_CONT_DIM, demo_f);
