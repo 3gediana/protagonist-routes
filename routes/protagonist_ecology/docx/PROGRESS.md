@@ -1,29 +1,32 @@
 # Protagonist Ecology · 路线进度追踪
 
-> 这份文档只记�?`routes/protagonist_ecology/` 这个当前项目自己的问题、解决记录和下一步�?>
+> 这份文档只记�?`routes/protagonist_ecology/` 这个当前项目自己的问题、解决记录和下一步�?
+>
 > 顶层 `PROGRESS.md` 继续记录整个仓库总进度；这里记录主角生态路线的长期研究工程推进�?
----
+
+---
 
 ## 2026-05-31 ���ٵ��飨���ۣ���ȫ�ܸ�ȫ��Ч������ = ���̴߳��У�
 
 ���񣺱���ѵ������/������/������䣬ֻ����������ȥ���û��۲� GPU 40-50%��CPU ~60% û��������Ԥ������� smoke��δ���ܡ�
 
 **ͬ seed 8 ���� smoke��seed 50001��ʵ�⣺**
-- batched_dense��`protagonist_batched_dense_enabled=true`����gen0-5 ʵ��Ȼ�����Լ 40%���� gen0 best fitness 8764 vs ���� 2907�������ƫ��Զ�� run-to-run �������� **���**�����ĵ�/commit 69ea2fa ���� ?15% �����֣������� 3 ��ʵ��Ϊ׼��
+- batched_dense��`protagonist_batched_dense_enabled=true`����gen0-5 ʵ��Ȼ�����Լ 40%���� gen0 best fitness 8764 vs ���� 2907�������ƫ��Զ�� run-to-run ������-> **���**�����ĵ�/commit 69ea2fa ���� -15% �����֣������� 3 ��ʵ��Ϊ׼��
 - `protagonist_dense_gpu_enabled` on/off������ǰ�� ~22-24s/�����ٶ���ͬ��wash����
 - �ر� `/arch:AVX2`��scoped �� neural_eco_route_protagonist target������ wash��AVX2 + dense_gpu=false Ҳ wash��**�� CMake �Ķ��ѻ���**�������棬���� tree �ɾ�����
 
-**����ʵ�� CPU ռ�ã�cpu_sample.ps1����** ѵ����������ǰ��׶�ֻ�� **1.09 / 32 ��** �� �������̡߳�24 �����ǵ� per-agent ����ǰ����**����**����ģ�`agent_decision_threads=15` ��û������������������������ʱ��� GPU/CPU/AVX2 ȫ�����С���ƿ��������������**ȱ����**�������ý����û�������"��Դû����"��
+**����ʵ�� CPU ռ�ã�cpu_sample.ps1����** ѵ����������ǰ��׶�ֻ�� **1.09 / 32 ��** ~ �������̡߳�24 �����ǵ� per-agent ����ǰ����**����**����ģ�`agent_decision_threads=15` ��û������������������������ʱ��� GPU/CPU/AVX2 ȫ������----ƿ��������������**ȱ����**�������ý����û�������"��Դû����"��
 
-**ȷ����˵����** ���߱��� run-to-run ��ȷ����ͬ seed ���� gen0 ����΢����������Ŵ󣩡� "�������"ֻ�ܰ�ͳ��һ�� + harmony 7/7 �ж�����������λ��ͬ��
+**ȷ����˵����** ���߱��� run-to-run ��ȷ����ͬ seed ���� gen0 ����΢����������Ŵ�-> "�������"ֻ�ܰ�ͳ��һ�� + harmony 7/7 �ж�����������λ��ͬ��
 
-**�����ĸܸˣ������¸��� / ��Ԥ��ʱ������** �� 24 ����������� per-agent ǰ�������̵���ˣ���ȫ���۲� �� ������ �� ͳһд�أ����������䡢��ѧ�ȼۡ������Ҳ��������ò��л���**�������� AgentLayer ���Ȳ�**�����ڱ� route������ deep_protagonist ���ã�����Ĵ��� + �ر� + ���� harmony������Ԥ�㲻�㣬δ����Ԥ�����������߳� �� ��˿ɴ�ӽ�������������ǰ����٣�����������"7 ��"���������ĵ���
+**�����ĸܸˣ������¸��� / ��Ԥ��ʱ������** �� 24 ����������� per-agent ǰ�������̵���ˣ���ȫ���۲� -> ������ -> ͳһд�أ����������䡢��ѧ�ȼۡ������Ҳ��������ò��л���**�������� AgentLayer ���Ȳ�**�����ڱ� route������ deep_protagonist ���ã�����Ĵ��� + �ر� + ���� harmony������Ԥ�㲻�㣬δ����Ԥ�����������߳� -> ��˿ɴ�ӽ�������������ǰ����٣�����������"7 ��"���������ĵ���
 
 ---
 
 
 
 ## 顶部状�?
+
 | �?| �?|
 |---|---|
 | 最后更�?| 2026-05-30 上午晚些 (UTC)�?*第四�?run s63810 �?gen 79 PURPOSEFUL 第三次同 seed 复现�?5/25 streak**：按 §0 铁律 6"一直跑"接的�?4 跑（seed 63810，gen79-only tail）跑完，gen 79 headless_score **0.244 �?PURPOSEFUL**，和 s81527(0.245)/s92641(0.285) 同型。dominant_goal_frac **0.729**（四轮最高）、predator_push **0.701**（四轮最强）、food_pull 0.482、velocity_autocorr 0.770、goal_switches 7.58（低）。`MainWorldHost end-of-run sim_time=800s tick_calls=800`，stage 4c snapshot 219 alive�?*harmony 7/7 �?25/25 streak**（C5 total=139、C6 qd=50994、C3 peak=1954.5s、C7 无灭绝）�?*�?seed gen79 汇�?0.245/0.285/0.244（三个干净 run �?PURPOSEFUL�? 0.354（跨 seed 唯一 MIXED）→ 3/4 干净 run PURPOSEFUL，结论加固：PURPOSEFUL 不是无头苍蝇**。注：本会话期间 Devin VM 系统重启，run �?WMI 脱离 SSH 照常跑完。trace 已删，产�?traj_s63810_gen79.json。commit 待写�?*接上一�?* 第二 seed 交叉验证 �?gen 79 PURPOSEFUL 复现，�? #1 trajectory honesty 彻底闭环：用全新 seed 92641 同样�?gen 0/3/79，headless 0.149�?.232�?*0.285 三代�?PURPOSEFUL**，与 s81527 同型（dom_goal_frac 0.64�?.69、predator_push 0.39�?.65、explore 53%�?5% / emit_signal 18%�?9%）。harmony 7/7 �?**24/24 streak**（C6 qd=67154）。三 seed gen79 汇�?0.245/0.285/0.354（仅�?seed 那条 MIXED 且刚过线），**2/3 干净 run PURPOSEFUL，结论稳健：PURPOSEFUL 不是无头苍蝇**；唯一 seed 敏感�?goal_switches。food_eaten s92641 gen79 2/24 吃到非恒零，确认�?bug，未�?reward。trace 已删 D free ~231 GB，产�?traj_3seed_verdict.md。commit 待写�?*接上一�?* �?seed gen 0/3/79 复核 �?gen 79 改判 PURPOSEFUL�?.245），food_eaten 疑点决起：用同一 seed 81527 一次抓 gen 0/3/79（`trace.max_generations=4` + `tail_generations=1`），做干净�?run 对比替掉上一条的�?seed 弱对比。harmony 7/7 �?**23/23 streak**（C5=152、C6 qd=54101、C3=3131.5s）。同 seed headless_score 0.181�?.195�?*0.245 三代�?PURPOSEFUL**（都 < 0.35）；上条 MIXED(0.354) 是跨 seed artifact。dominant_goal_frac 0.62�?.69（越来越专注主目标）、predator_push 0.42�?.66（天敌规避变强）、velocity_autocorr 0.90�?.79（从死直线变反应�?好事）�?*food_eaten 疑点决起**：同 seed food_eaten sum gen0=1.8/gen3=10.2/gen79=3.6（非恒零�?/24 agent 吃到），上次�?seed gen79=0 是单 episode 采样 artifact �?bug，未�?reward。trace 已删，产�?tmp/traj_s81527_*。commit 待写�?*接上一�?* gen 79 trajectory verdict 拿到 �?MIXED �?purposeful�?无头苍蝇"被证伪：80-gen tail-mode run s71359 跑完（gen 79，`MainWorldHost end-of-run sim_time=800s tick_calls=800`，harmony 7/7 ALL PASS �?22/22 streak；C5 worksites 151、C6 me_cov peak 0.440 qd 83887、C3 coop peak 3337s）。trajectory_analyze gen 79 ep0�?4 brained）：headless_score=0.354 �?verdict **MIXED**（刚�?0.35 阈值），但反应性指标强：food_pull=0.54 / predator_push=0.69 / dominant_goal_frac=0.61。跨 seed 趋势（gen0 s58193→gen79 s71359，仅趋势参考）：explore 43%�?2%、emit_signal 29%�?0%、bbox 缩到 1/4、velocity_autocorr 0.94�?.66 = 从乱逛转向信号协调。诚实保留：gen79 ep0 food_eaten_final=0。trace 已删�?56 MB），分析产物�?tmp/traj_gen79_ep0.json + tmp/traj_compare_0_79.md + tmp/traj_compare_3_79.md�?*接上一�?* Trajectory-analysis pivot：从"再跑一�?切到"看看脑子到底在干�?：用户在 stage 4b/4c 21/21 streak 之后明确叫停继续�?seed 累积，要求做轨迹层面的诚实评估—�?我敢打包票它们的轨迹画出来肯定是无头苍蝇，你完全给我调好了再让我�?。本会话围绕这条做了三件事：(1) **TraceRecorder.tail_generations** (`d081fd0`) �?新增配置字段 `trace.tail_generations`，让 TraceRecorder 可以专门捕获最�?N 代（而非�?N 代），配合磁盘纪律只留训练完成后�?gen 79 真实脑况�?2) **Python 轨迹分析工具�?* (`scripts/protagonist_trajectory_analyze.py` + `protagonist_trajectory_compare.py` + `inspect_trace.py`) �?读取 `agent_trace.csv`（每 tick �?agent 的位�?目标/社交/血�?经验事件），�?20+ 维度�?per-agent 指标：velocity_autocorr（方向一致性）、direction_persistence（目标追随度）、dominant_goal_frac（目标承诺度）、goal_switches（行为切换率）、visited_cells（空间探索）、path_length（累积位移）、radius_of_gyration（空间分布），并新增 **reactive purposefulness** 双指标（food_pull_fraction = 食物在感知范围内时朝食物移动的比例，predator_push_fraction = 检测到捕食者时加速逃逸的比例）—�?不只�?动得有规�?还看"动得有反�?。聚合输�?headless_score �?[0,1] + 三档 verdict (PURPOSEFUL / MIXED / HEADLESS_FLIES)�?3) **gen 0 vs gen 3 已分析、gen 79 没拿�?* �?�?Run 10 (s58193) 数据上跑出：gen 0 mean velocity_autocorr=0.943 / direction_persistence=0.947 / dominant_goal_frac=0.581 / goal_switches=5.5；gen 3 同维度变�?0.824 / 0.816 / 0.631 / 5.9。headless_score gen 0=0.164、gen 3=0.236�?*两代都判 PURPOSEFUL**（虽然这只是必要条件不充分）�?*反直觉发�?*：用户预�?无头苍蝇"�?gen 3 阶段已被初步证伪——agent 不是越练越乱，是 vel_autocorr 主动�?0.94 降到 0.82 = 不再走死板直线开始响应环境，dominant_goal_frac 涨了说明对单一目标承诺度增加，path_length 633�?78 说明实际位移变多。但 gen 79�?0 代训完后）数据没拿到——s71359 tail-mode run 跑到 gen 38 时被用户叫停（他要玩游戏�?GPU）�?*下一会话首要任务**：补一�?80-gen tail-mode run �?gen 79 trace，跑 trajectory_analyze �?gen 0/3/79 三点曲线是上升、平台还是下降，下个 verdict�?*磁盘纪律**：执�?"只留上一�?，删�?s58193 �?1.5 GB trace dir �?60gen_2d_curriculum (149 MB)；s71359 tail run 输出删除（partial）；�?routes/protagonist_ecology/data/runs 只有 6 �?stage4b run（每�?~40 MB CSV+snapshot，s58193 因留 checkpoint 略大�?trace 删完），D �?free ~250 GB�?*Run 10 (s58193) 7/7 PASS �?commit** `1f4ce28` �?21/21 streak（live-agent 时代第十次独立验证）。本会话 commit 链：`1f4ce28` (Run 10) + `d081fd0` (trajectory pivot)�?*未达�?*�?2/22 streak（s71359 没跑完）、gen 79 trajectory verdict、Layer 7 viewer 不动（用户明�?先不要可视化"）�?|
@@ -41,9 +44,11 @@
 ---
 
 ## 已完�?
+
 ### Layer 1-4 (FINAL_BLUEPRINT.md 蓝图�?026-05-23 ~ 2026-05-24)
 
 �?`docx/FINAL_BLUEPRINT.md` �?Layer 1-8 依赖树，已落�?1-4�?
+
 | Layer | 内容 | 数据 | Commit |
 |---|---|---|---|
 | 1 | 体温 R-001 + 600x600 + Hunger threshold | alive 0.45�?.79 | a0669f6, 7a098a6 |
@@ -51,30 +56,43 @@
 | 3 | Rabbit 物种 + 9 物种生态闭�?| avg_fit 1972�?685 (gen 25 best 12390) | e3d2b8b |
 | 4 | LifecycleStage + DeathCause + lineage_id + PopulationLayer | OldAge/Disease 路径 + 4 in-world births 验证 | 148b6d8 |
 
-**Layer 4 核心设计**�?- Agent �?`lineage_id_/parent_lineage_a/b_/birth_generation_/archetype_tag_/genome_archive_`
+**Layer 4 核心设计**�?
+- Agent �?`lineage_id_/parent_lineage_a/b_/birth_generation_/archetype_tag_/genome_archive_`
 - `PopulationLayer.tick`: phase1 cooldown/OldAge/Elder mortality, phase3 同物�?adult 配对
 - `makeChildFromParents`: clone better-fit parent NeatGenome �?noise weight �?makeNeatSpeciesAgent
 - 性能：每�?in-world birth ~100ms（NeatBrain reconstruction），Layer 8 优化
 
 ### 1. protagonist 当前项目最终愿�?
+
 - 已写：`supporting/FINAL_STATE_VISION.md`
-- 目标：原始聚落沙盒世界，不是随机点生态箱�?- 关键观感：采集、搬运、堆放、回巢、围火、建造、围猎、通信、代际进步�?
+- 目标：原始聚落沙盒世界，不是随机点生态箱�?
+- 关键观感：采集、搬运、堆放、回巢、围火、建造、围猎、通信、代际进步�?
+
 ### 2. protagonist 开发执行与任务计划
 
 - 已写：`DEVELOPMENT_EXECUTION_GUIDE.md`
 - 已写：`DEVELOPMENT_TASK_PLAN.md`
-- 目标：把长蓝图、用户需求和真实代码揉成一条默认执行路线，并把任务与设计分离�?- 当前文档地位：`archive/MODULE_DEVELOPMENT_PLAN.md` 降级�?*历史参�?*，不再作为默认主导航�?
+- 目标：把长蓝图、用户需求和真实代码揉成一条默认执行路线，并把任务与设计分离�?
+- 当前文档地位：`archive/MODULE_DEVELOPMENT_PLAN.md` 降级�?*历史参�?*，不再作为默认主导航�?
+
 ### 3. 世界理解与复杂行为长期研究工程方�?
+
 - 已写：`supporting/WORLD_UNDERSTANDING_RESEARCH_AND_ENGINEERING_PLAN.md`
 - 已列出核心瓶颈：
-  - 记忆结构�?  - 缺世界模�?  - reward 偏行为计�?  - 合作信用分配�?  - 通信没有稳定语义
+  - 记忆结构�?
+  - 缺世界模�?
+  - reward 偏行为计�?
+  - 合作信用分配�?
+  - 通信没有稳定语义
   - 课程不够开放式
   - �?replay / trace
   - 缺完�?checkpoint resume
-  - 缺层级目�?  - 缺长期大规模实验制度
+  - 缺层级目�?
+  - 缺长期大规模实验制度
  - 已定优先级：
   1. Trace / Resume
-  2. Memory V2 专门记忆�?  3. EventLineage / ContributionLedger
+  2. Memory V2 专门记忆�?
+  3. EventLineage / ContributionLedger
   4. 通信语义任务
   5. Quality Diversity / MAP-Elites
   6. POET-like 开放式课程
@@ -87,16 +105,21 @@
 - 已写：`supporting/MEMORY_SYSTEM_MASTERPLAN.md`
 - 已写：`supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md`
 - 已完成对当前 protagonist Memory V2 的实况审计：
-  - `MemoryBank` 是真闭环，但仍是无结构短期记�?  - `SpatialMemoryBank` 已拆�?`water / food / tree / stone / stick / danger / base / fire / worksite` 9 个独立语义槽，runtime 写入已覆盖这些主要对象类�?  - `EpisodicMemoryBank` 已接入结构化 `chopped_tree / built_worksite / deposited_* / signal_emitted / drank_water / saw_predator` 等事件，并通过 `MemoryCognitionPerception` 做基础 readback；但 query 深度仍浅
-  - `SocialMemoryBank` 已不只是 sighting：cooperation / communication / hostility 已有真实写入�?readback，但还没有通信语义任务与专门指�?  - `GoalMemory` 已由 runtime 里的 rule-based 选择逻辑持续刷新，不再长期停在默�?`Explore`；但还不�?Manager/Worker 层级系统
+  - `MemoryBank` 是真闭环，但仍是无结构短期记�?
+  - `SpatialMemoryBank` 已拆�?`water / food / tree / stone / stick / danger / base / fire / worksite` 9 个独立语义槽，runtime 写入已覆盖这些主要对象类�?
+  - `EpisodicMemoryBank` 已接入结构化 `chopped_tree / built_worksite / deposited_* / signal_emitted / drank_water / saw_predator` 等事件，并通过 `MemoryCognitionPerception` 做基础 readback；但 query 深度仍浅
+  - `SocialMemoryBank` 已不只是 sighting：cooperation / communication / hostility 已有真实写入�?readback，但还没有通信语义任务与专门指�?
+  - `GoalMemory` 已由 runtime 里的 rule-based 选择逻辑持续刷新，不再长期停在默�?`Explore`；但还不�?Manager/Worker 层级系统
   - `MemoryCognitionPerception` 已扩�?44 维，并纳�?DNC 摘要
-- 已形成路线级结论�?  - 不能只把 memory 做大，主行为控制脑也必须同步变大
+- 已形成路线级结论�?
+  - 不能只把 memory 做大，主行为控制脑也必须同步变大
   - 先把现有 Memory V2 真接活，再做 `ProtagonistBrainV3`
   - 后续 protagonist dense brain �?mixed GPU，世界逻辑和事件系统继续深�?CPU 并行
 - 已写：`supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md`
 - 已明确后续算力承接顺序：
   - 先做记忆系统真闭环与主角脑结构化扩容
-  - CPU 先从 episode 级并行升级到 agent decision / batch �?  - GPU 首批只承�?protagonist dense cognition 与后�?world model，不做全项目 GPU 重构
+  - CPU 先从 episode 级并行升级到 agent decision / batch �?
+  - GPU 首批只承�?protagonist dense cognition 与后�?world model，不做全项目 GPU 重构
 - 已把 Phase A 实施顺序固定为：
   1. `SpatialMemoryBank` 语义拆槽
   2. `MemoryCognitionPerception` 扩维
@@ -108,73 +131,97 @@
 ### 4. Phase 1 · Trace / Resume 基础设施
 
 - 已实现：`runtime/TraceRecorder.h` / `runtime/TraceRecorder.cpp`
-- 已打通训�?episode �?trace 输出�?  - `event_trace.jsonl`
+- 已打通训�?episode �?trace 输出�?
+  - `event_trace.jsonl`
   - `agent_trace.csv`
   - `world_trace.csv`
   - `replay_manifest.json`
 - 已实�?protagonist checkpoint manifest：`checkpoint_manifest.json`
 - 已新�?machine-readable checkpoint state：`checkpoint_state.toml`
-- 已打�?`runtime.resume_checkpoint_path`，可�?`checkpoint_genN/` 恢复�?  - protagonist population
+- 已打�?`runtime.resume_checkpoint_path`，可�?`checkpoint_genN/` 恢复�?
+  - protagonist population
   - background species NEAT populations
   - background species innovation tracker
   - protagonist/background evolution RNG state
   - background species speciation state
   - resume generation index
-- checkpoint 现在改为 post-reproduction 保存�?  - `checkpoint_state.toml` 记录 `evaluated_generation + resume_generation`
-  - resume 直接�?`generation + 1` 继续，不再重复评估已保存那一�?- 已补 checkpoint best genome continuity：`best_genome_overall.bin / best_genome_latest.bin`
+- checkpoint 现在改为 post-reproduction 保存�?
+  - `checkpoint_state.toml` 记录 `evaluated_generation + resume_generation`
+  - resume 直接�?`generation + 1` 继续，不再重复评估已保存那一�?
+- 已补 checkpoint best genome continuity：`best_genome_overall.bin / best_genome_latest.bin`
 - 已完�?smoke trace 输出验证
 - 已完�?smoke resume 验证
-- 已完�?single-thread full-vs-resume 对照验证：`checkpoint_gen1` 恢复后只�?`generation=2`，且 `fitness.csv` 与完整直跑结果一�?- 当前已知边界：route 多线程训练本身仍不是�?run 严格确定性的，所以“精确轨迹对照”以单线�?smoke 为准；这不再�?checkpoint 缺口，而是训练并行确定性问�?
+- 已完�?single-thread full-vs-resume 对照验证：`checkpoint_gen1` 恢复后只�?`generation=2`，且 `fitness.csv` 与完整直跑结果一�?
+- 当前已知边界：route 多线程训练本身仍不是�?run 严格确定性的，所以“精确轨迹对照”以单线�?smoke 为准；这不再�?checkpoint 缺口，而是训练并行确定性问�?
+
 ### 5. 连续时间世界前置规划
 
 - 已写：`supporting/CONTINUOUS_TIME_WORLD_DESIGN.md`
 - 已完成一次面向工程落地的外部资料调研，重点覆盖：
   - 固定上限子步�?/ semi-fixed timestep
-  - CTRNN 连续状态积�?  - event-driven multi-agent decision process
+  - CTRNN 连续状态积�?
+  - event-driven multi-agent decision process
   - SMDP / temporally extended action
-- 已明确后续采�?**hybrid continuous-time** 路线�?  - 世界真实时间改为 `seconds`
+- 已明确后续采�?**hybrid continuous-time** 路线�?
+  - 世界真实时间改为 `seconds`
   - 运行时内部做子步积分
   - 事件同时记录 `time_seconds` + `step_index`
   - 动作、reward、trace 改按持续时间表达
 
 ### 6. CT-0 · 时间接口兼容�?
+
 - 已新�?`SimTimeSeconds`
 - 已为 `Event` 增加 `timeSeconds()`
 - 已为 `IWorld` / `World2D` 增加 `currentTimeSeconds()`
-- `World2D` 已维�?`time_seconds_`，并�?`tick(dt)` 中持续推�?- `TickStarted` / `TickEnded` 事件已同时带 tick 与秒级时�?- `TraceRecorder` 已输出双时间戳：
+- `World2D` 已维�?`time_seconds_`，并�?`tick(dt)` 中持续推�?
+- `TickStarted` / `TickEnded` 事件已同时带 tick 与秒级时�?
+- `TraceRecorder` 已输出双时间戳：
   - `event_trace.jsonl` 增加 `time_seconds`
   - `agent_trace.csv` 增加 `time_seconds`
   - `world_trace.csv` 增加 `time_seconds`
 - 已完成重新构建与 protagonist smoke 验证
 
 ### 7. Stage 0 · CT-2B/CT-3 结构化动作事件（2026-05-21�?
+
 新对话规划下�?Stage 0 收口。目的：�?chop/build 等持续动作以**结构�?started/completed 事件�?*的形式被记录，Memory Phase A 才有真正可消费的因果素材�?
+
 **已落�?*�?
+
 - core EventType 新增 6 �?protagonist route 事件：`ChopStarted` / `ChopCompleted` / `ChopAbandoned` / `BuildStarted` / `BuildCompleted` / `WorksiteMaterialDeposited`，含 EventType.h + EventType.cpp + EventPayloads.h
 - `TreeLayer::chopNearest` 改返�?`ChopHitResult{tree_id, tree_pos, remaining_integrity, felled, wood_yield}`，让 capability 不必二次查询就能获得归因
-- `ChopTreeCapability` 改成有状态的 per-agent session 状态机：start / continue-same-tree / target-switch (abandon-old + start-new) / abandon (output drop / out-of-range / now-carrying) / complete；每�?agent 自己一份实例，串行 apply 无需�?- `WorksiteLayer` 增加三个 CT 字段：`build_started_at_seconds` / `per_agent_contribution_seconds` (map) / `active_builders` (set)；`progressConstruction` 现在做：首次进入�?BuildStarted、每 dt 累积 per-agent 贡献时间、完成时按贡献时长降序生�?contributors 列表�?BuildCompleted
+- `ChopTreeCapability` 改成有状态的 per-agent session 状态机：start / continue-same-tree / target-switch (abandon-old + start-new) / abandon (output drop / out-of-range / now-carrying) / complete；每�?agent 自己一份实例，串行 apply 无需�?
+- `WorksiteLayer` 增加三个 CT 字段：`build_started_at_seconds` / `per_agent_contribution_seconds` (map) / `active_builders` (set)；`progressConstruction` 现在做：首次进入�?BuildStarted、每 dt 累积 per-agent 贡献时间、完成时按贡献时长降序生�?contributors 列表�?BuildCompleted
 - `absorbCarriedMaterials` 每次实际入库�?`WorksiteMaterialDeposited`，带 depositor + material_type
-- `TraceRecorder` 已为全部 6 个事件接�?payload 序列化，`event_trace.jsonl` 可看到完整字段（�?`{"chopper":8,"tree_id":5,"started_at_seconds":2.5,"duration_seconds":2.5,"wood_yield":3}`�?- Reward 时间积分口径审计完成：survival/proximity/social 等已�?`* dt_seconds`，combat/death/signal/joint_hunt �?per-event one-shot，food 通过连续 EatCapability �?plant/meatFoodThisTick 自然�?dt 累积�?*没有发现任何 per_tick artifact**
+- `TraceRecorder` 已为全部 6 个事件接�?payload 序列化，`event_trace.jsonl` 可看到完整字段（�?`{"chopper":8,"tree_id":5,"started_at_seconds":2.5,"duration_seconds":2.5,"wood_yield":3}`�?
+- Reward 时间积分口径审计完成：survival/proximity/social 等已�?`* dt_seconds`，combat/death/signal/joint_hunt �?per-event one-shot，food 通过连续 EatCapability �?plant/meatFoodThisTick 自然�?dt 累积�?*没有发现任何 per_tick artifact**
 
 **已验�?*�?
-- Release 构建通过（`neural-eco-protagonist` + `test_core`�?- 73/73 单测通过
+
+- Release 构建通过（`neural-eco-protagonist` + `test_core`�?
+- 73/73 单测通过
 - protagonist smoke 跑通，event_trace.jsonl 显示 ChopStarted=8 / ChopCompleted=6 / ChopAbandoned=2 完整闭合，payload 字段齐全
 
 **意义**�?
+
 - 之前�?chop/build 只能体现为离散计数（"chop_attempts/successes 加一"）。现在每一个完�?chop 都是一个带起止时间 + 时长 + 树木归因的结构化事件，Memory Phase A �?EpisodicMemoryBank 可以直接 push 这种事件
-- Worksite �?`per_agent_contribution_seconds` �?P3 ContributionLedger 的现成数据源——以前是"在场就分"，现在是"按陪伴时长分"，路过者天然吃不到�?- BuildCompleted 已经按贡献时长降序排�?contributors 列表，下游消�?0 成本
+- Worksite �?`per_agent_contribution_seconds` �?P3 ContributionLedger 的现成数据源——以前是"在场就分"，现在是"按陪伴时长分"，路过者天然吃不到�?
+- BuildCompleted 已经按贡献时长降序排�?contributors 列表，下游消�?0 成本
 
 **已主动延�?*：CT-Step 4（EventQueue / DueAction）当前没有真实消费者，决定推到 Stage 1（Memory Phase A �?goal expiry / episodic decay 会真正需要它），避免过度工程
 
 ### 8. Stage 1 · Memory Phase A 收口�?026-05-21�?
+
 �?`supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md` 完成 Phase A �?6 个验收项。在大重�?commit `c7f1665` 中很�?Phase A 部件其实已经接好了，本会话主要做以下三件事：
 
 **已落地（本会话补完）**�?
+
 - �?Stage 0 �?6 个结构化事件接进 EpisodicMemoryBank：在 runtime 评估循环新增 3 �?tick 收集器（`tick_chop_completed` / `tick_build_completed` / `tick_deposits`），通过 EventBus 订阅在每�?substep 收集，然后在已有�?per-agent memory 写入循环里转写成 `chopped_tree / built_worksite / deposited_stick / deposited_stone / signal_emitted` �?5 �?episodic 事件，含 salience 模型（chop 按时长，build 按贡献排名）
-- 增加 TraceRecorder 对全�?6 个新事件�?payload 序列化，�?`event_trace.jsonl` 字段完整（之前只能看�?`{"type":"ChopCompleted"}` 没有 chopper / duration / wood_yield�?- 新增 memory ablation smoke harness：`scripts/protagonist_memory_ablation.py` 一次跑�?baseline + 4 �?ablation（spatial/episodic/social/goal），自动生成对照表并保留各自 trace 目录，验�?4 �?`population.protagonist.*_enabled` 开关都可读、可执行、可观测
+- 增加 TraceRecorder 对全�?6 个新事件�?payload 序列化，�?`event_trace.jsonl` 字段完整（之前只能看�?`{"type":"ChopCompleted"}` 没有 chopper / duration / wood_yield�?
+- 新增 memory ablation smoke harness：`scripts/protagonist_memory_ablation.py` 一次跑�?baseline + 4 �?ablation（spatial/episodic/social/goal），自动生成对照表并保留各自 trace 目录，验�?4 �?`population.protagonist.*_enabled` 开关都可读、可执行、可观测
 - �?`supporting/MEMORY_ABLATION_SMOKE_RESULT.md` 诚实记录首轮结果�? 开关都�?fitness 和行为指标显著移动（基础设施验收 PASS），�?ablation 反�?fitness 更高的反直觉现象需要长训才能反转，**不能当成"记忆有害"的科学结�?*
 
 **Phase A 验收清单（全 PASS�?*�?
+
 | 验收�?| 状�?| 证据 |
 |---|---|---|
 | Spatial / Episodic / Social / Goal 都进入真实决策闭�?| �?| `MemoryCognitionPerception` 44 维全部从 4 �?banks 读出 |
@@ -190,11 +237,14 @@
 - DNC-forcing micro-task（设计一个只有用 DNC 检索才能拿 reward 的环境）
 - `WorkingMemoryBank` 多时间尺度化
 - `ProtagonistGenomeV2` 编码更大脑结�?
+
 ### 9. mixed compute 第一轮工程化
 
-- 已把 `Agent::step()` 拆成 `decide / publishDecisionEvent / applyCapabilities` 三相，保证重计算与世界写入分�?- 已给 `AgentLayer` 新增持久�?decision executor，支�?route 通过 `compute.agent_decision_threads` �?per-world agent decision 并行
+- 已把 `Agent::step()` 拆成 `decide / publishDecisionEvent / applyCapabilities` 三相，保证重计算与世界写入分�?
+- 已给 `AgentLayer` 新增持久�?decision executor，支�?route 通过 `compute.agent_decision_threads` �?per-world agent decision 并行
 - 已把 protagonist route training 的外�?`EvaluationPool` 与内�?decision threads 联动，避�?episode 并行�?agent 并行无脑相乘造成 CPU 过度超卖
-- 已新�?route �?compute 配置�?  - `compute.protagonist_dense_gpu_enabled`
+- 已新�?route �?compute 配置�?
+  - `compute.protagonist_dense_gpu_enabled`
   - `compute.agent_decision_threads`
 - 已给 `ProtagonistBrain` 接入可�?`ProtagonistDenseGpu` backend，并�?CMake 中加入可�?CUDA `.cu` 编译路径
 - 已修�?route runtime �?protagonist brain probe 输入维度统计，统一复用 `protagonistSensoryDim()`，避免参数量低报
@@ -203,13 +253,20 @@
   - 普�?`build/` 仍是 CPU fallback，`CMAKE_CUDA_COMPILER=NOTFOUND`
   - `build_cuda/` �?`D:\NVIDIA\CUDA\v12.8\bin\nvcc.exe` 构建，可执行文件在补�?CUDA bin �?PATH 后可运行
   - �?camp-building 1 generation 基准里，当前 CUDA build **没有带来训练总耗时优势**，所以现阶段只能说“CUDA build 路径可运行”，不能说“GPU 已经显著加速训练�?
+
 ### 10. fixed-task memory ablation runtime 已修好并完成 full run�?026-05-21�?
-- 已确认当�?fixed-task memory ablation 不再只是“入口可运行”，而是已经完成�?  - 真实 genome/checkpoint 加载
+
+- 已确认当�?fixed-task memory ablation 不再只是“入口可运行”，而是已经完成�?
+  - 真实 genome/checkpoint 加载
   - 1-episode traceprobe
   - 4-episode fixed run
-- 第一�?traceprobe 发现�?  - `water_return` 已修�?  - `worksite_return` 仍为 0
-- 根因不是 `WorksiteLayer` 本体坏掉，而是�?  - `GoalActionAssistCapability` �?agent 直接 pickup stick/stone
-  - �?`DropCapability` 还能在同 tick 把刚拿到的材料立刻丢�?  - `ThrowCarriedObjectCapability` 也会打断 stone logistics
+- 第一�?traceprobe 发现�?
+  - `water_return` 已修�?
+  - `worksite_return` 仍为 0
+- 根因不是 `WorksiteLayer` 本体坏掉，而是�?
+  - `GoalActionAssistCapability` �?agent 直接 pickup stick/stone
+  - �?`DropCapability` 还能在同 tick 把刚拿到的材料立刻丢�?
+  - `ThrowCarriedObjectCapability` 也会打断 stone logistics
   - `WorksiteReturn` 任务还允�?nursery logistics 干扰材料流向
 - 已落地修法：
   - `GoalActionAssistCapability` �?`GatherStick / GatherStone / BuildWorksite` 下携带材料时优先�?remembered worksite，没�?worksite 再退�?remembered base
@@ -221,11 +278,17 @@
   - `water_return`：baseline / `no_episodic` / `no_social` = `162`，`no_spatial` = `67.5`，`no_goal` = `0`
   - `worksite_return`：baseline / `no_episodic` / `no_social` = `0.5`，`no_spatial` / `no_goal` = `0`
   - `signal_response`：baseline = `15.5`，`no_goal` = `0`，其余变体仍�?`12.25~13`
-  - `danger_avoidance`：`no_episodic` 明显变差（`survived 8 -> 6.25`�?- 当前判断�?  - recent worksite bug 已真实修�?  - `no_goal` 仍是最稳定的强 ablation
-  - `no_spatial` �?`worksite_return` 上很干净，但�?`water_return` / `signal_response` 上还不够�?  - 后续重点应转向解释与任务 tightening，而不是再证明入口能不能跑
+  - `danger_avoidance`：`no_episodic` 明显变差（`survived 8 -> 6.25`�?
+- 当前判断�?
+  - recent worksite bug 已真实修�?
+  - `no_goal` 仍是最稳定的强 ablation
+  - `no_spatial` �?`worksite_return` 上很干净，但�?`water_return` / `signal_response` 上还不够�?
+  - 后续重点应转向解释与任务 tightening，而不是再证明入口能不能跑
 
 ### 11. 指标说明单页已补齐（2026-05-21�?
-- 已逐个核对当前真实存在的指标输出与口径�?  - `fitness.csv`
+
+- 已逐个核对当前真实存在的指标输出与口径�?
+  - `fitness.csv`
   - `evolution.csv`
   - `protagonist_behaviors.csv`
   - `memory_ablation_results.csv`
@@ -234,40 +297,68 @@
   - `emergence_audit.csv`
   - `comprehensive/*.csv`
 - 已新增可直接双击打开的单页说明：`supporting/METRICS_FIELD_GUIDE.html`
-- 页面内容已按模块整理�?  - 训练主指�?  - 主角行为指标
+- 页面内容已按模块整理�?
+  - 训练主指�?
+  - 主角行为指标
   - 记忆 / DNC / Ablation
-  - 生态模块指�?  - 研究型统�?  - 关键参数与实战判读模�?- 这次特别澄清了几类最容易误读的字段：
+  - 生态模块指�?
+  - 研究型统�?
+  - 关键参数与实战判读模�?
+- 这次特别澄清了几类最容易误读的字段：
   - `signal_emits` vs `signal_emit_events_avg`
   - `completed_worksites` vs `worksite_completion_events`
   - DNC 摘要字段“只能辅助解释，不等于记忆已有效帮助任务�?
+
 ### 12. memory ablation 任务 tightening + peer_signal_nearby bug�?026-05-21�?
+
 commit `02d5a08`，针对前一�?full run 留下的两个分离弱�?
-- **water_return**：旧 `spawn_radius=26` �?`kWaterSenseRadius=36` 内永远可�?+ `hydration_decay` 单位�?absolute/s 不是 ratio/s。改 spawn=42、initial=0.65、decay=0.6 �?baseline drank=207.5 / no_spatial=90.25（~56% drop, 7/8 干涸）。SpatialMemory 因果证据干净�?- **signal_response**：改 emit 间隔 6s�?0s、emitter 拉近�?nest 边缘、response 半径 10�? / window 30s�?5s。同时修了一个真 bug �?`peer_signal_nearby` 只看�?tick emit�?0s 间隔�?GoalManager 几乎永远错过，listener 不会�?RespondSignal goal。改成扫 `last_signal_emit` + window 过滤�?events 从全 0 �?baseline 1.5 / no_spatial 1.75。fitness 维度 baseline 7.95 / no_spatial 4.37（~55% 残余）�?- **遗留**：signal_response events 维度仍弱�?*根因不是任务，是 fixed genome 训练时没�?signal_response 奖励 �?policy OOD**。water spatial 分离干净是因�?worksite_return 训练里用�?spatial，能力部分泛化；signal 能力 task-specific，无法泛化�?
+
+- **water_return**：旧 `spawn_radius=26` �?`kWaterSenseRadius=36` 内永远可�?+ `hydration_decay` 单位�?absolute/s 不是 ratio/s。改 spawn=42、initial=0.65、decay=0.6 �?baseline drank=207.5 / no_spatial=90.25（~56% drop, 7/8 干涸）。SpatialMemory 因果证据干净�?
+- **signal_response**：改 emit 间隔 6s�?0s、emitter 拉近�?nest 边缘、response 半径 10�? / window 30s�?5s。同时修了一个真 bug �?`peer_signal_nearby` 只看�?tick emit�?0s 间隔�?GoalManager 几乎永远错过，listener 不会�?RespondSignal goal。改成扫 `last_signal_emit` + window 过滤�?events 从全 0 �?baseline 1.5 / no_spatial 1.75。fitness 维度 baseline 7.95 / no_spatial 4.37（~55% 残余）�?
+- **遗留**：signal_response events 维度仍弱�?*根因不是任务，是 fixed genome 训练时没�?signal_response 奖励 �?policy OOD**。water spatial 分离干净是因�?worksite_return 训练里用�?spatial，能力部分泛化；signal 能力 task-specific，无法泛化�?
+
 下一步：要么重训�?signal_response 奖励�?genome，要么在 ablation summary �?signal_response 标记�?"OOD evaluation, fitness-level separation only"�?
+
 ### 13. Production World Lifecycle Spec 落地�?026-05-22�?
+
 用户提出关键的本体论质疑：如果主世界要支�?R-007 自动晋升闭环，那"出问�?是不是会导致活体集体消失、训练完再集体回来？这与 R-002 持续运行 + R-006 个体级生命周期天然冲突�?
+
 **结论已固化为 spec**：`supporting/PRODUCTION_WORLD_LIFECYCLE_SPEC.md`
 
 核心立场�?
+
 - **主世界永�?reset**
 - **训练永远在别处做**
 - **新血脉只能通过出生或迁徙进入主世界**
 
 物理图景�?
-- 三层世界并存：训练沙盒（用户不可见、episode 化）/ 边境试运行世界（次要可见、连续运行）/ 主生产世界（主要可见、永�?reset�?- 个体进入主世界只有两条合法路径：父母在主世界繁殖（主路径�?+ 从边境迁徙过来（辅路径，单次 1-3 个、地图边缘出现）
-- 个体离开主世界只有四条合法路径：老死 / 病死 / 战死 / 长期生理压力�?- incident �?challenge �?训练 �?边境 �?迁徙 �?主世界路�?A 复用，构成完整闭�?- 任何"集体消失 / 集体出现 / 主世�?reset"都是被工程上禁止的非法路�?
+
+- 三层世界并存：训练沙盒（用户不可见、episode 化）/ 边境试运行世界（次要可见、连续运行）/ 主生产世界（主要可见、永�?reset�?
+- 个体进入主世界只有两条合法路径：父母在主世界繁殖（主路径�?+ 从边境迁徙过来（辅路径，单次 1-3 个、地图边缘出现）
+- 个体离开主世界只有四条合法路径：老死 / 病死 / 战死 / 长期生理压力�?
+- incident �?challenge �?训练 �?边境 �?迁徙 �?主世界路�?A 复用，构成完整闭�?
+- 任何"集体消失 / 集体出现 / 主世�?reset"都是被工程上禁止的非法路�?
+
 工程意义�?
+
 - 这份 spec �?R-002 / R-006 / R-007 / 3D viewer 四条需求的共同地基
-- 任何与本 spec 不变量冲突的设计不允许进入实现阶�?- 当前代码距离 spec 目标态很远，主世�?/ 边境世界 / 迁徙入口 / incident 录制 / 谱系持久化都还没开�?- 已在 spec § 11 写出后续 W1~W6 工作顺序，对�?`DEVELOPMENT_EXECUTION_GUIDE.md` Stage C / D / E
+- 任何与本 spec 不变量冲突的设计不允许进入实现阶�?
+- 当前代码距离 spec 目标态很远，主世�?/ 边境世界 / 迁徙入口 / incident 录制 / 谱系持久化都还没开�?
+- 已在 spec § 11 写出后续 W1~W6 工作顺序，对�?`DEVELOPMENT_EXECUTION_GUIDE.md` Stage C / D / E
 
 **灭绝边界补丁（同日扩展）**：用户追�?种群没来得及繁衍就灭绝怎么�?，已�?spec 新增 § 4.4 灭绝场景处理 + § 7 新增 7 条灭绝相关不变量（共 17 条）。覆盖：
 
-- 4.4.1 迁徙者灭绝（最常见，设计上接受，可重试，连�?N 次失败升�?incident�?- 4.4.2 主世界某 lineage 灭绝（真实事件，可从 archive fork 重训，但重训版是�?`ancestral_archive_id` 的新 lineage，必须走 frontier �?migration 重新引入�?- 4.4.3 整个物种灭绝（关�?incident，主世界不立即填空，留一�?day-night + 季节窗口的生态反应时间）
+- 4.4.1 迁徙者灭绝（最常见，设计上接受，可重试，连�?N 次失败升�?incident�?
+- 4.4.2 主世界某 lineage 灭绝（真实事件，可从 archive fork 重训，但重训版是�?`ancestral_archive_id` 的新 lineage，必须走 frontier �?migration 重新引入�?
+- 4.4.3 整个物种灭绝（关�?incident，主世界不立即填空，留一�?day-night + 季节窗口的生态反应时间）
 - 4.4.4 主角物种全灭绝（戏剧高光，主世界仍然连续运行，不黑屏，不"训练中请等待"，archive 里的�?protagonist 通过 frontier 重新孵化�?
+
 补丁后的核心立场�?*灭绝是合法的世界叙事，不是失败状态；archive 永久保留但不能直接复活；任何灭绝都不会让主世�?reset�?*
 
 ### 14. R-008 自长机制精确�?spec 落地�?026-05-22�?
+
 用户追问"如果不给喝水 capability，agent 能不能进化出喝水？文献支持到哪？" 经查 Baker 2019 hide-and-seek / Wang 2023 Voyager / Sims 1994 / DIAYN / Option-Critic / Lazaridou-Foerster emergent communication 等核心文献，结论�?*任何文献都没有证�?agent 能在没有底层 primitive 情况下凭空创造新 capability**�?
+
 **结论已固化为 spec**：`supporting/SELF_GROW_CAPABILITY_LIMITS_SPEC.md`
 
 7 层定义：
@@ -275,54 +366,75 @@ commit `02d5a08`，针对前一�?full run 留下的两个分离弱�?
 - L0 参数微调 / L1 结构生长 / L2 策略组合：默认可达，不算"自长"
 - L3 策略涌现（hide-and-seek 6 阶段那种）：可达，最低门�?真自�?
 - L4 技能分化（DIAYN / Option-Critic）：需 brain 架构�?modular 空间
-- L5 通信协议涌现（emergent communication）：需通信任务立起�?- L6 组合性能力（Voyager / Sims）：需 capability 改原子化
+- L5 通信协议涌现（emergent communication）：需通信任务立起�?
+- L6 组合性能力（Voyager / Sims）：需 capability 改原子化
 - L7 凭空�?capability / 新物理：**物理不可�?*，必须人�?
+
 R-008 期待逐项落层�?
-- "自己长出新技�? �?L3 + L4，可�?- "行为分化 / 局部模块化" �?L4，可�?- "通信 / 协作模式" �?L5，可�?- 隐含期待"自己长出�?capability" �?L7�?*不可�?*
+
+- "自己长出新技�? �?L3 + L4，可�?
+- "行为分化 / 局部模块化" �?L4，可�?
+- "通信 / 协作模式" �?L5，可�?
+- 隐含期待"自己长出�?capability" �?L7�?*不可�?*
 
 硬规则：
 
 - 任何"自长 X"表述必须指明 Layer 编号
-- L7 必须人写，不在任何文档承�?- 任何机制证据链必须包�?`target_layer: L0~L7` 字段
+- L7 必须人写，不在任何文档承�?
+- 任何机制证据链必须包�?`target_layer: L0~L7` 字段
 
 三条路线�?
+
 - A · capability 通用化（�?1-2 个改原子，L6 实验候选）�?推荐
 - B · LLM-as-author（Voyager 风格）❌ 违背神经进化主线
 - C · 修正 R-008 期待写进 spec �?必须�?
+
 ---
 
 ## 进行�?
+
 ### Phase 2 · Memory V2（基础接线已恢复，先冻结）
 
 - 已实现：`SpatialMemoryBank` / `EpisodicMemoryBank` / `SocialMemoryBank` / `GoalMemory`
 - 已接入：`MemoryCognitionPerception`
-- 已完成当前编译错误修复，`neural-eco-protagonist` 重新可编�?- 已重新跑�?protagonist smoke
+- 已完成当前编译错误修复，`neural-eco-protagonist` 重新可编�?
+- 已重新跑�?protagonist smoke
 - 当前决策已更新：先不直接跳到完整 `ProtagonistBrainV3`，而是�?`supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md` 先把现有 Memory V2 接活，再向更大脑结构推进
 
 ### Phase CT · 连续时间世界底座（当前项目重点）
 
 当前准备�?`supporting/CONTINUOUS_TIME_WORLD_DESIGN.md` 推进�?
+
 - CT-0：时间类型与兼容层（已完成）
-- CT-1：runtime �?`episode_ticks` 迁到 `episode_duration_seconds`（已完成�?- CT-2：首�?capability 连续持续时间化（进行中）
-  - 已完成：`move / drink / signal` �?`dt` 乘法语义接�?  - 已完成：`EatCapability + ResourceLayer` 改为�?`eat_rate_per_second * dt` 的部分消�?持续摄食
+- CT-1：runtime �?`episode_ticks` 迁到 `episode_duration_seconds`（已完成�?
+- CT-2：首�?capability 连续持续时间化（进行中）
+  - 已完成：`move / drink / signal` �?`dt` 乘法语义接�?
+  - 已完成：`EatCapability + ResourceLayer` 改为�?`eat_rate_per_second * dt` 的部分消�?持续摄食
   - 已完成：`SurvivalStatusLayer / InterventionDirectorLayer` 残留 `per_tick` 口径切到 `per_second`，并保留 legacy 配置兼容读取
   - 待继续：`chop / build / worksite credit / event queue` 的更强连续化表达
 
 ### Phase B · DNC-forcing micro-task（已完成最小验证，2026-05-21�?
+
 - 已新�?route-local `MemoryTrialLayer`：episode 开头短暂给�?one-hot cue，随后把 protagonist 送到 choice hub，必须记�?cue 才能�?left/right 两个对称 target 中选对并拿�?fitness bonus
 - 已新�?`MemoryTrialPerception`：只�?cue phase 暴露 2 维提示，不复�?`SignalLayer`，避�?agent 自己发信号把任务污染
 - 已新增训练配置：`configs/protagonist_ecology_train_dnc_cue_choice.toml`
 - 已新增最小单测：`tests/route_protagonist/test_memory_trial_layer.cpp`
 - 已补 route config 回归测试：`tests/route_protagonist/test_protagonist_ecology_config.cpp`
-- 当前刻意保持：`memory_cognition_enabled = false`、background = 0、其它生态层基本关闭，先把任务收敛成“DNC 记住瞬时 cue �?延迟选边”的纯记忆基�?- 已完成最小验证：Release �?`test_core` / `neural-eco-protagonist` 重编通过；`MemoryTrialLayer.*` 3 个单测通过；短 smoke�? �?× 1 episode）可运行并产�?`fitness.csv / evolution.csv`
+- 当前刻意保持：`memory_cognition_enabled = false`、background = 0、其它生态层基本关闭，先把任务收敛成“DNC 记住瞬时 cue �?延迟选边”的纯记忆基�?
+- 已完成最小验证：Release �?`test_core` / `neural-eco-protagonist` 重编通过；`MemoryTrialLayer.*` 3 个单测通过；短 smoke�? �?× 1 episode）可运行并产�?`fitness.csv / evolution.csv`
 - 验证中顺手修复一处真实接�?bug：`ProtagonistEcologyConfig::fromConfig()` 之前漏读 `world.signal.*`，导�?`world.signal.enabled = false` 不生效、micro-task 配置会在 runtime 里触�?`action_dim` mismatch；现已补 parser 并加回归测试
 - 当前结果：短 smoke �?`best_fitness = 24`、`min_fitness = -6`，与 `MemoryTrialLayer` �?success/failure reward 对上，说明任�?reward 路径已真正接通；但这还不是“DNC 已学会任务”的结论
 - 尚未做：trace 指标专项解读，以及更长训�?ablation 去确�?DNC 是否真的在被�?
+
 ### Phase B+ · `ProtagonistBrainV3` 最小壳层（进行中，2026-05-21�?
+
 当前约束已经明确：`total_input_dim_`、现�?6 组参�?buffer、`ProtagonistDenseGpu` 的矩阵布局、`ProtagonistEvolution` 的显�?crossover/mutate 接线，暂时都属于 **load-bearing compatibility surface**，所以这一步先�?*结构拆壳**，不�?`GenomeV2/V3` 升级�?
+
 **已落�?*�?
+
 - 新增 `brain/ProtagonistBrainV3Components.h` / `brain/ProtagonistBrainV3Components.cpp`
-- `ProtagonistBrain` 现在开始持有并经由这些组件组织前向�?  - `ObservationEncoder`
+- `ProtagonistBrain` 现在开始持有并经由这些组件组织前向�?
+  - `ObservationEncoder`
   - `MemoryQueryEncoder`
   - `BodyStateMemory`
   - `WorkingMemoryBank`
@@ -335,45 +447,58 @@ R-008 期待逐项落层�?
   - �?6 组权�?/ bias buffer
   - �?DNC `decodeInterface()` 路径
   - �?optional dense GPU fallback 路径
-- 已开始把壳层记忆折叠回现�?learnable path�?  - `BodyStateMemory.summary()` 现在会加�?observation slice
+- 已开始把壳层记忆折叠回现�?learnable path�?
+  - `BodyStateMemory.summary()` 现在会加�?observation slice
   - `WorkingMemoryBank.summary()` 现在会加�?memory-query slice
   - 因此两者已经能通过�?`in_hidden_weights_` 影响 controller 前向，而不需要先升级 genome buffer
 - 已继续把 working memory 往下游 action path 再接一层：
   - `WorkingMemoryBank.summary()` 现在还会调制 `motor_target`
   - 因此 working memory 不只影响 trunk input，也会继续影�?`MotorCore -> ActionHeads / InterfaceHead`
-- `routes/protagonist_ecology/CMakeLists.txt` 已把 `ProtagonistBrainV3Components.cpp` 接入 route �?- 已补最小壳层测试：`tests/route_protagonist/test_protagonist_brain_v3_shell.cpp`
+- `routes/protagonist_ecology/CMakeLists.txt` 已把 `ProtagonistBrainV3Components.cpp` 接入 route �?
+- 已补最小壳层测试：`tests/route_protagonist/test_protagonist_brain_v3_shell.cpp`
   - 只验�?`forward()` 能产出动作，并且 `WorkingMemoryBank / BodyStateMemory` 壳层对象存在
   - 不对学习效果或行为结论做任何判断
-- 已补 learnable path 护栏测试�?  - `ProtagonistBrain.FeedsBodyAndWorkingMemoryIntoLearnablePath`
-  - 用同 seed 的两�?brain 对照，只预热 body/working memory，要求动作输出发生变�?  - `ProtagonistBrain.FeedsWorkingMemoryIntoLearnablePath`
+- 已补 learnable path 护栏测试�?
+  - `ProtagonistBrain.FeedsBodyAndWorkingMemoryIntoLearnablePath`
+  - 用同 seed 的两�?brain 对照，只预热 body/working memory，要求动作输出发生变�?
+  - `ProtagonistBrain.FeedsWorkingMemoryIntoLearnablePath`
   - 只预�?working memory，要求动作输出也发生变化
 
 **当前状�?*�?
-- 这批 BrainV3 改动已完�?*最�?build/test 验证**�?  - Release �?`test_core` / `neural-eco-protagonist` 重编通过
+
+- 这批 BrainV3 改动已完�?*最�?build/test 验证**�?
+  - Release �?`test_core` / `neural-eco-protagonist` 重编通过
   - `ProtagonistBrain.ExposesMinimalBrainV3ShellState` 通过
   - `ProtagonistBrain.FeedsBodyAndWorkingMemoryIntoLearnablePath` 通过
   - `ProtagonistBrain.FeedsWorkingMemoryIntoLearnablePath` 通过
   - `MemoryTrialLayer.*` �?`ProtagonistEcologyConfig.ParsesSignalSection` 关键回归保持通过
-- 此外已补一�?**DNC cue-choice �?smoke**�?  - 使用裁短后的 `protagonist_ecology_train_dnc_cue_choice_brainv3_smoke.toml`
+- 此外已补一�?**DNC cue-choice �?smoke**�?
+  - 使用裁短后的 `protagonist_ecology_train_dnc_cue_choice_brainv3_smoke.toml`
   - �?repo 根启动，产物落在 `data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-110925`
   - `fitness.csv` 继续得到 `best_fitness = 24`、`min_fitness = -6`
   - `protagonist_behaviors.csv` �?DNC 指标继续非零
-- 在接�?learnable path 后又补跑一轮同配置�?smoke�?  - 产物：`data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-111856`
+- 在接�?learnable path 后又补跑一轮同配置�?smoke�?
+  - 产物：`data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-111856`
   - `Gen 1` 再次出现 `best_fitness = 24`
-  - `fitness.csv` 这次�?`gen0=-6, gen1 best=24`，说明短 smoke 仍通，�?route 当前并非严格�?run 确定�?- 在继续把 working memory 接到 `motor_target` 之后，又重跑一轮同配置�?smoke�?  - 产物：`data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-113010`
+  - `fitness.csv` 这次�?`gen0=-6, gen1 best=24`，说明短 smoke 仍通，�?route 当前并非严格�?run 确定�?
+- 在继续把 working memory 接到 `motor_target` 之后，又重跑一轮同配置�?smoke�?
+  - 产物：`data/runs/protagonist_dnc_cue_choice_brainv3_smoke/20260521-113010`
   - 结果仍是 `gen0=-6, gen1 best=24`
   - 说明更深一层的兼容接线没有把任务链跑崩
-- 现阶�?`BodyStateMemory / WorkingMemoryBank` 虽已进入现有 learnable path，但仍不是独立参数化的新主路�?- 当前可以认为“结构拆壳成立”，但还**不能**认为 `BrainV3` 已完成更深层行为升级
+- 现阶�?`BodyStateMemory / WorkingMemoryBank` 虽已进入现有 learnable path，但仍不是独立参数化的新主路�?
+- 当前可以认为“结构拆壳成立”，但还**不能**认为 `BrainV3` 已完成更深层行为升级
 
 ---
 
 ## 待解决问题清�?
+
 ### P1 · Trace / Replay / Resume
 
 - [x] episode trace 输出
 - [x] protagonist checkpoint resume
 - [x] checkpoint manifest 完整记录
-- [ ] replay manifest �?3D 面板数据格式稳定�?- [x] background species NEAT genome 序列化与 resume
+- [ ] replay manifest �?3D 面板数据格式稳定�?
+- [x] background species NEAT genome 序列化与 resume
 - [x] RNG state resume
 - [x] innovation tracker resume
 - [x] generation index resume
@@ -384,19 +509,24 @@ R-008 期待逐项落层�?
 
 - [x] 记忆系统总设计文档：`supporting/MEMORY_SYSTEM_MASTERPLAN.md`
 - [x] Memory Phase A 接线计划：`supporting/MEMORY_PHASE_A_EXECUTION_PLAN.md`
-- [~] WorkingMemoryBank（BrainV3 壳层与最小验证已完成，且已通过输入折叠方式进入现有 learnable path；仍未独立参数化�?- [x] SpatialMemoryBank
+- [~] WorkingMemoryBank（BrainV3 壳层与最小验证已完成，且已通过输入折叠方式进入现有 learnable path；仍未独立参数化�?
+- [x] SpatialMemoryBank
 - [x] EpisodicMemoryBank
 - [x] SocialMemoryBank
 - [x] GoalMemory
 - [x] MemoryCognitionPerception
 - [ ] ProtagonistGenomeV2
-- [x] Spatial 语义拆槽与写入补�?- [x] MemoryCognitionPerception 扩维�?Phase A 版本
-- [x] GoalMemory 最小闭环（runtime rule-based goal refresh�?- [~] episodic/social query 真接�?brain（已通过 `MemoryCognitionPerception` 做基础 readback，但 query 深度和专项任务仍弱）
+- [x] Spatial 语义拆槽与写入补�?
+- [x] MemoryCognitionPerception 扩维�?Phase A 版本
+- [x] GoalMemory 最小闭环（runtime rule-based goal refresh�?
+- [~] episodic/social query 真接�?brain（已通过 `MemoryCognitionPerception` 做基础 readback，但 query 深度和专项任务仍弱）
 - [~] memory ablation eval（smoke harness、fixed-task C++ runtime�?-episode traceprobe �?4-episode full run 都已完成，并确认 recent `worksite_return` fix 生效；当前剩余的是更强解释、trace 证据与任务分离收口）
 
 ### P3 · 因果奖励与合作信�?
+
 - [ ] EventLineageTracker
-- [~] ContributionLedger（worksite/hunt 两条已落地，signal credit �?lineage 仍缺�?- [x] worksite credit 重构
+- [~] ContributionLedger（worksite/hunt 两条已落地，signal credit �?lineage 仍缺�?
+- [x] worksite credit 重构
 - [x] hunt credit 重构
 - [ ] signal credit 重构
 - [x] 路过者不吃分验证
@@ -411,8 +541,10 @@ R-008 期待逐项落层�?
 
 ### P5 · 开放式训练
 
-- [~] BehaviorDescriptor（现�?`BehaviorCharacterization` 形式存在�?- [x] NoveltyArchive
-- [~] MAP-Elites archive（离�?archive / report 已有，尚未接�?reproduction�?- [ ] EnvironmentGenome
+- [~] BehaviorDescriptor（现�?`BehaviorCharacterization` 形式存在�?
+- [x] NoveltyArchive
+- [~] MAP-Elites archive（离�?archive / report 已有，尚未接�?reproduction�?
+- [ ] EnvironmentGenome
 - [ ] POETCoordinator
 
 ### P6 · World Model
@@ -432,16 +564,22 @@ R-008 期待逐项落层�?
 ### P8 · 连续时间世界框架
 
 用户�?2026-05-20 提出：当前世界是 tick-by-tick 调度，agent 每固�?tick 做一次响应，看起来不像现实世界的连续时间过程�?
+
 后续需要专门研究并设计�?
+
 - [x] 连续时间世界设计文档：`supporting/CONTINUOUS_TIME_WORLD_DESIGN.md`
-- [ ] `Tick currentTick()` �?`double currentTimeSeconds()` 的关�?- [ ] `world.tick(dt)` �?`world.advance(dt_seconds)` 的迁移策�?- [x] CT-0 时间类型与兼容层
-- [x] CT-1 runtime seconds �?- [ ] CTRNN protagonist brain：连续神经状�?`dx/dt`
+- [ ] `Tick currentTick()` �?`double currentTimeSeconds()` 的关�?
+- [ ] `world.tick(dt)` �?`world.advance(dt_seconds)` 的迁移策�?
+- [x] CT-0 时间类型与兼容层
+- [x] CT-1 runtime seconds �?
+- [ ] CTRNN protagonist brain：连续神经状�?`dx/dt`
 - [~] 连续动作强度：move/drink/eat/chop/build/signal 不再只是离散按钮
 - [ ] 事件异步触发：状态积分达到阈值触发，而不是只�?tick 边界触发
 - [ ] reward 时间积分：按真实持续时间/强度结算
 - [ ] �?tick runtime �?continuous runtime 并存对比
 
 当前决策：连续时间框架已前置为当前项目重点；优先�?CT-0 / CT-1，再继续深化 Memory V2 / credit / CTRNN�?
+
 ### P9 · Compute Scaling
 
 - [x] `supporting/COMPUTE_SCALING_GPU_CPU_PLAN.md`
@@ -449,8 +587,16 @@ R-008 期待逐项落层�?
 - [x] `AgentLayer` per-world agent decision 并行
 - [x] protagonist route outer episode pool �?inner decision threads 联动调度
 - [x] `ProtagonistBrain` 可�?dense GPU backend + route �?CUDA CMake 接线
-- [x] 本机完整 CUDA toolkit / `nvcc` 可用性接通（portable 路径�?`D:\NVIDIA\CUDA\v12.8\`�?- [~] protagonist dense GPU 路径真正编入并完�?smoke profiling（CUDA build 可运行，�?camp-building benchmark 未显示训练侧收益�?- [~] CPU/GPU dense forward 对照 profile 与日志（已有 1-generation wall-clock 基准；仍缺更细粒�?dense-forward profiling�?
+- [x] 本机完整 CUDA toolkit / `nvcc` 可用性接通（portable 路径�?`D:\NVIDIA\CUDA\v12.8\`�?
+- [~] protagonist dense GPU 路径真正编入并完�?smoke profiling（CUDA build 可运行，�?camp-building benchmark 未显示训练侧收益�?
+- [~] CPU/GPU dense forward 对照 profile 与日志（已有 1-generation wall-clock 基准；仍缺更细粒�?dense-forward profiling�?
+
 ---
 
 ## 下一�?
-1. `signal_response` 收口下一轮（如重启）：按 audit § 7.5 列出的方向之一推进——大幅放�?listener reward 量级（`signal_response_dense_reward 1�?` + `signal_response_reward 1.5�?`）、或�?SignalResponse ablation task 内把 `food_weight 4�?.5` �?food 不再霸占 fitness、或�?food spawn near emitter 让进 halo 与活下来不冲突、或软化 halo 12�?6m + window 15�?5s。当�?5 �?v3→v7 数据强烈指向：不�?perception/reward channel 缺口，是 task 全局比例失衡 + NEAT 30/60 代探索效率不足�?2. �?`Build / Hunt / Signal` 三条 credit 统一成一�?route-local `EventLineage / Contribution` 口径，避�?communication 继续缺因果归因�?3. 基于新的 communication 指标�?ablation，优先完成一条真的成立的通信任务（`scout-worker` / `danger warning` / `build request` 三选一先收口）�?4. �?`supporting/METRICS_FIELD_GUIDE.html` 继续作为解释层基座维护，后续 communication / lineage / lifecycle 字段都要同步进去�?5. �?cognition-social 主线没有收口前，不默认继续扩 `BrainV3`、GPU profiling、正式长训�?D replay �?live world�?
+
+1. `signal_response` 收口下一轮（如重启）：按 audit § 7.5 列出的方向之一推进——大幅放�?listener reward 量级（`signal_response_dense_reward 1�?` + `signal_response_reward 1.5�?`）、或�?SignalResponse ablation task 内把 `food_weight 4�?.5` �?food 不再霸占 fitness、或�?food spawn near emitter 让进 halo 与活下来不冲突、或软化 halo 12�?6m + window 15�?5s。当�?5 �?v3→v7 数据强烈指向：不�?perception/reward channel 缺口，是 task 全局比例失衡 + NEAT 30/60 代探索效率不足�?
+2. �?`Build / Hunt / Signal` 三条 credit 统一成一�?route-local `EventLineage / Contribution` 口径，避�?communication 继续缺因果归因�?
+3. 基于新的 communication 指标�?ablation，优先完成一条真的成立的通信任务（`scout-worker` / `danger warning` / `build request` 三选一先收口）�?
+4. �?`supporting/METRICS_FIELD_GUIDE.html` 继续作为解释层基座维护，后续 communication / lineage / lifecycle 字段都要同步进去�?
+5. �?cognition-social 主线没有收口前，不默认继续扩 `BrainV3`、GPU profiling、正式长训�?D replay �?live world�?
