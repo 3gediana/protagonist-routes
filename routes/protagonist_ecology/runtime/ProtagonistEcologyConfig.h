@@ -609,6 +609,14 @@ struct ProtagonistEcologyConfig {
     // GoalManager. Set false to ablate (network must reverse-engineer
     // goal from the 1-scalar dim 32 of MemoryCognitionPerception).
     bool goal_context_perception_enabled{true};
+    // Realism (2026-05-30): when true, protagonists also perceive the
+    // ambient environment (time-of-day, season, weather) — mirroring the
+    // sensors background species already carry via attachBackgroundCommonSensors.
+    // Adds TimeOfDay(2)+Season(2)+Weather(6) input dims, each gated on the
+    // corresponding world layer being enabled. This changes the protagonist
+    // genome input_dim, so enabling it starts a fresh lineage. Default false
+    // keeps existing checkpoints loadable.
+    bool protagonist_environment_perception_enabled{false};
     // L2.7 v13 (HRL sub-rewards): per-goal-type completion reward
     // weights. Index = GoalType int value (0..12). reward delta per
     // tick = goal_completion_rewards[g] * agent.goalCompletionThisTick(g).

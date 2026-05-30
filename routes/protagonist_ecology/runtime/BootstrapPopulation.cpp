@@ -171,6 +171,17 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
         sensory_dim += GoalContextPerception::kDim;
     }
 
+    // Realism (2026-05-30): protagonist environmental perception. Mirrors
+    // attachBackgroundCommonSensors / computeBackgroundSensoryDim so the
+    // protagonist now senses the same ambient environment the background
+    // species already do. Gated per-layer; the addPerception calls in
+    // createProtagonist must add exactly these same dims.
+    if (config.protagonist_environment_perception_enabled) {
+        if (config.day_night.enabled) sensory_dim += TimeOfDayPerception::kDim;
+        if (config.season.enabled) sensory_dim += SeasonPerception::kDim;
+        if (config.weather.enabled) sensory_dim += WeatherPerception::kDim;
+    }
+
     return sensory_dim;
 }
 
@@ -316,6 +327,16 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // L2.7 v13 goal context perception (HRL worker conditioning).
     if (config.goal_context_perception_enabled) {
         agent->addPerception(std::make_unique<GoalContextPerception>());
+    }
+
+    // Realism (2026-05-30): environmental perception, matching the dim
+    // summation in protagonistSensoryDim. Lets protagonists sense the
+    // ambient world (time-of-day / season / weather) the background
+    // species already perceive.
+    if (config.protagonist_environment_perception_enabled) {
+        if (config.day_night.enabled) agent->addPerception(std::make_unique<TimeOfDayPerception>());
+        if (config.season.enabled) agent->addPerception(std::make_unique<SeasonPerception>());
+        if (config.weather.enabled) agent->addPerception(std::make_unique<WeatherPerception>());
     }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));

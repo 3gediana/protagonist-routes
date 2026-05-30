@@ -525,6 +525,11 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.goal_context_perception_enabled = config.getOr<bool>(
         "evolution.goal_context_perception_enabled",
         out.goal_context_perception_enabled);
+    // Realism (2026-05-30): protagonist environmental perception toggle
+    // (default false -> existing lineages unchanged; true -> fresh lineage).
+    out.protagonist_environment_perception_enabled = config.getOr<bool>(
+        "evolution.protagonist_environment_perception_enabled",
+        out.protagonist_environment_perception_enabled);
     // L2.7 v13: per-goal-type sub-reward weights. Defaults reflect the
     // relative difficulty of each goal: ChopTree/GatherStick/Stone are
     // common and easy (small reward); BuildWorksite is the long
