@@ -106,6 +106,9 @@ public:
                                  ? torch::Device(torch::kCUDA, 0)
                                  : torch::Device(torch::kCPU));
         torch::manual_seed(cfg_.seed);
+        // D-103 throughput: let cuDNN pick the fastest kernels. No effect on
+        // results (autotune only), helps keep the GPU saturated.
+        if (device.is_cuda()) torch::globalContext().setBenchmarkCuDNN(true);
 
         ActorCritic net;
         net->to(device);
@@ -142,8 +145,13 @@ public:
         for (int ep = 0; ep < cfg_.epochs; ++ep) {
             if (ep > 0) std::shuffle(group_starts.begin(), group_starts.end(), rng);
 
-            double epoch_cont = 0.0, epoch_disc = 0.0;
-            long   epoch_steps = 0;
+            // D-103: accumulate epoch stats on-device so the per-window
+            // GPU->CPU .item() syncs (which stalled the pipeline) are gone;
+            // we sync exactly once at the end of the epoch for logging.
+            auto dev_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+            torch::Tensor epoch_cont_t  = torch::zeros({}, dev_opts);
+            torch::Tensor epoch_disc_t  = torch::zeros({}, dev_opts);
+            torch::Tensor epoch_steps_t = torch::zeros({}, dev_opts);
             int    n_groups = 0;
 
             for (size_t gi = 0; gi < group_starts.size(); ++gi) {
@@ -186,40 +194,63 @@ public:
 
                 // Truncated BPTT over windows of cfg_.bptt steps. Hidden is
                 // carried across windows but detached at each boundary.
+                //
+                // D-103 throughput: move the whole length-padded group to the
+                // device ONCE (was: a host->device copy per window), then run
+                // the windows entirely on-device. Inside each window the
+                // non-recurrent encoder and the output heads are now computed
+                // for the ENTIRE window in single batched matmuls instead of
+                // W tiny per-timestep ones; only the GRUCell recurrence stays
+                // sequential (it inherently must). This is mathematically the
+                // same computation and the same per-window optimiser step as
+                // before -- identical gradients -- it just keeps the GPU fed
+                // (was 35-67% util, 2.9/8G VRAM). No change to the BC
+                // objective, the data, or any hyperparameter.
+                auto d_obs  = t_obs .to(device);
+                auto d_cont = t_cont.to(device);
+                auto d_disc = t_disc.to(device);
+                auto d_mask = t_mask.to(device);
+
                 auto h = torch::zeros({B, H},
                                       torch::TensorOptions().dtype(torch::kFloat32).device(device));
                 net->train();
                 for (int w0 = 0; w0 < maxT; w0 += cfg_.bptt) {
                     int w1 = std::min(maxT, w0 + cfg_.bptt);
+                    int W  = w1 - w0;
 
-                    auto win_obs  = t_obs .slice(0, w0, w1).to(device);
-                    auto win_cont = t_cont.slice(0, w0, w1).to(device);
-                    auto win_disc = t_disc.slice(0, w0, w1).to(device);
-                    auto win_mask = t_mask.slice(0, w0, w1).to(device);
+                    auto win_obs  = d_obs .slice(0, w0, w1);   // [W,B,O]
+                    auto win_cont = d_cont.slice(0, w0, w1);   // [W,B,C]
+                    auto win_disc = d_disc.slice(0, w0, w1);   // [W,B]
+                    auto win_mask = d_mask.slice(0, w0, w1);   // [W,B]
 
                     opt.zero_grad();
-                    torch::Tensor cont_loss_sum = torch::zeros({}, torch::TensorOptions().device(device));
-                    torch::Tensor disc_loss_sum = torch::zeros({}, torch::TensorOptions().device(device));
-                    torch::Tensor valid_sum     = torch::zeros({}, torch::TensorOptions().device(device));
 
-                    for (int t = 0; t < (w1 - w0); ++t) {
-                        auto obs_t  = win_obs[t];                 // [B,O]
-                        auto cont_t = win_cont[t];                // [B,C]
-                        auto disc_t = win_disc[t];                // [B]
-                        auto mask_t = win_mask[t];                // [B]
+                    // Non-recurrent encoder for the whole window at once.
+                    auto enc = torch::relu(net->encoder(win_obs));   // [W,B,H]
 
-                        auto [cm, cs, dl, v, h_out] = net->forward_step(obs_t, h);
-                        h = h_out;
-
-                        auto cont_l = ((cm - cont_t).pow(2)).sum(1);          // [B]
-                        auto logp   = torch::log_softmax(dl, 1);              // [B,CATS]
-                        auto ce     = -logp.gather(1, disc_t.unsqueeze(1)).squeeze(1);  // [B]
-                        auto wsamp  = class_w.index_select(0, disc_t);        // [B]
-
-                        cont_loss_sum = cont_loss_sum + (cont_l * mask_t).sum();
-                        disc_loss_sum = disc_loss_sum + (ce * wsamp * mask_t).sum();
-                        valid_sum     = valid_sum + mask_t.sum();
+                    // Recurrent core: GRUCell is the only per-step op left.
+                    std::vector<torch::Tensor> hs;
+                    hs.reserve(W);
+                    for (int t = 0; t < W; ++t) {
+                        h = net->gru(enc.select(0, t), h);
+                        hs.push_back(h);
                     }
+                    auto h_seq = torch::stack(hs, 0);                // [W,B,H]
+
+                    // Heads + losses, batched across the window. (value /
+                    // log_std heads are intentionally not touched here -- BC
+                    // only supervises cont_mean + disc_logits, exactly as the
+                    // old per-step loop did.)
+                    auto cm   = net->cont_mean(h_seq);              // [W,B,C]
+                    auto dl   = net->disc_logits(h_seq);            // [W,B,CATS]
+                    auto cont_l = ((cm - win_cont).pow(2)).sum(-1); // [W,B]
+                    auto logp   = torch::log_softmax(dl, -1);       // [W,B,CATS]
+                    auto ce     = -logp.gather(-1, win_disc.unsqueeze(-1)).squeeze(-1); // [W,B]
+                    auto wsamp  = class_w.index_select(0, win_disc.reshape(-1)).reshape({W, B}); // [W,B]
+
+                    auto cont_loss_sum = (cont_l * win_mask).sum();
+                    auto disc_loss_sum = (ce * wsamp * win_mask).sum();
+                    auto valid_sum     = win_mask.sum();
 
                     auto denom = valid_sum.clamp_min(1.0f);
                     auto loss  = (cont_loss_sum + disc_loss_sum) / denom;
@@ -229,14 +260,18 @@ public:
 
                     h = h.detach();
 
-                    float vcount = valid_sum.item<float>();
-                    epoch_cont  += cont_loss_sum.item<float>();
-                    epoch_disc  += disc_loss_sum.item<float>();
-                    epoch_steps += static_cast<long>(vcount);
+                    // Accumulate on-device; no per-window sync.
+                    epoch_cont_t  += cont_loss_sum.detach();
+                    epoch_disc_t  += disc_loss_sum.detach();
+                    epoch_steps_t += valid_sum.detach();
                 }
                 ++n_groups;
             }
 
+            // D-103: single GPU->CPU sync per epoch (was once per window).
+            long   epoch_steps = static_cast<long>(epoch_steps_t.item<float>());
+            double epoch_cont  = static_cast<double>(epoch_cont_t.item<float>());
+            double epoch_disc  = static_cast<double>(epoch_disc_t.item<float>());
             double mc = epoch_steps > 0 ? epoch_cont / epoch_steps : 0.0;
             double md = epoch_steps > 0 ? epoch_disc / epoch_steps : 0.0;
             spdlog::info("BC epoch {}/{}: groups={} steps={} "
