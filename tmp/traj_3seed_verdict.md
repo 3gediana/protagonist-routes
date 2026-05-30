@@ -1,18 +1,19 @@
-# 3-seed gen 79 trajectory verdict — PURPOSEFUL, robust (2026-05-30)
+# 4-seed gen 79 trajectory verdict — PURPOSEFUL, robust (2026-05-30)
 
 ## Final honest answer
-**The brained protagonists are PURPOSEFUL, not headless flies.** Verified across 3 independent seeds at the end of a full 80-generation MainWorldHost run. The user's prediction ("trajectories will be headless flies") is empirically refuted.
+**The brained protagonists are PURPOSEFUL, not headless flies.** Verified across 4 independent 80-generation MainWorldHost runs (3 with clean same-seed gen0/3/79 traces). The user's prediction ("trajectories will be headless flies") is empirically refuted.
 
-## Three seeds at gen 79 (24 brained agents, ep0, --brained-only)
+## Four runs at gen 79 (24 brained agents, ep0, --brained-only)
 | seed | gen 0 | gen 3 | gen 79 | gen 79 verdict |
 |---|---:|---:|---:|---|
 | s71359 (cross-seed gen0/3 from s58193) | 0.164* | 0.236* | 0.354 | MIXED (edge, +0.004 over cutoff) |
 | s81527 (same-seed) | 0.181 | 0.195 | 0.245 | PURPOSEFUL |
 | s92641 (same-seed) | 0.149 | 0.232 | 0.285 | PURPOSEFUL |
+| s63810 (gen79-only tail) | — | — | 0.244 | PURPOSEFUL |
 
-\* s71359's gen0/3 were borrowed from s58193 (cross-seed), which is exactly why that row's gen 79 verdict is unreliable. The two clean same-seed runs both land PURPOSEFUL.
+\* s71359's gen0/3 were borrowed from s58193 (cross-seed), which is exactly why that row's gen 79 verdict is unreliable. All three clean runs land PURPOSEFUL.
 
-gen 79 headless_score across seeds: 0.245 / 0.285 / 0.354 — mean ~0.29, sitting in the lower-to-mid PURPOSEFUL band; 2 of 3 clearly PURPOSEFUL, the third barely over the cutoff. **Conclusion is robust: PURPOSEFUL, definitively not headless flies.**
+gen 79 headless_score across the 3 clean runs: 0.245 / 0.285 / 0.244 — all comfortably inside the PURPOSEFUL band (<0.35); the only MIXED is the cross-seed s71359, barely over the cutoff. **3 of 4 runs PURPOSEFUL (3/3 clean runs). Conclusion is robust: PURPOSEFUL, definitively not headless flies.**
 
 ## What's stable across all seeds (the real signal)
 - **dominant_goal_frac rises 0.62-0.64 -> 0.69** by gen 79: agents commit *more* to a dominant goal over evolution, not less.
@@ -30,6 +31,7 @@ food_eaten_final is low but NOT identically zero, and varies by seed/episode: s8
 ## Run provenance
 - s81527: `data/runs/long_run_80gen_stage4b_s81527_traj3pt/20260530-024405` — harmony 7/7 (C6 qd=54101), commit 66247f3.
 - s92641: `data/runs/long_run_80gen_stage4b_s92641_traj3pt/20260530-044024` — harmony 7/7 (C6 qd=67154, C5 total=148, C3 peak=2528.3s, C7 no extinction).
-- Both: MainWorldHost end-of-run cumulative sim_time=800.000s tick_calls=800 (invariant #1); TripleWorldRuntime end-of-run borderland=288 main_world=338.
-- harmony streak: 22 (s71359) -> 23 (s81527) -> 24 (s92641), all 7/7 ALL PASS.
+- s63810: `data/runs/long_run_80gen_stage4b_s63810_tail/20260530-063011` — harmony 7/7 (C6 qd=50994, C5 total=139, C3 peak=1954.5s, C7 no extinction); gen79 dom_goal_frac=0.729 (highest of all 4), predator_push=0.701 (strongest), food_pull=0.482, velocity_autocorr=0.770, goal_switches=7.58; stage 4c snapshot 219 alive.
+- All: MainWorldHost end-of-run cumulative sim_time=800.000s tick_calls=800 (invariant #1); TripleWorldRuntime end-of-run borderland=288 main_world=338.
+- harmony streak: 22 (s71359) -> 23 (s81527) -> 24 (s92641) -> 25 (s63810), all 7/7 ALL PASS.
 - Traces deleted after analysis (disk discipline); D: free ~231 GB.

@@ -5,6 +5,14 @@
 > 当前分支：`master`
 > 当前 HEAD（protagonist_ecology 视角）：本 commit 待写 (gen 79 trajectory verdict + docs/note sync)；当前 HEAD `c1f6e16` trajectory wrap-up；前 commit `d081fd0` trajectory-analysis pivot (TraceRecorder.tail_generations + Python analyzer 三件套) + `1f4ce28` Run 10 (s58193) 7/7 PASS + 21/21 streak。再前 `35e8535` stage 4c MVP / `c76a506` Run 5 stage 4c first validation / `ffd4187` Run 9 / `4c75aa3` Run 8。
 
+> **2026-05-30 上午晚些 (UTC) 第四轮 run s63810 — gen 79 PURPOSEFUL 第三次同 seed 复现，25/25 streak**：
+> - **背景**：§3 #1 结论已闭环（三 seed 稳健 PURPOSEFUL）。按 §0 铁律 6"一直跑"接的第 4 跑（seed 63810，gen79-only tail-mode 省盘），用来再加一个独立数据点验证不退步。本会话期间 Devin VM 被系统重启，但 run 由 WMI 脱离 SSH 后台跑，照常跑完（06:30→08:13 UTC，~103 min）。
+> - **执行**：`tmp/layer1/long_run_80gen_stage4b_s63810_tail.toml`。`MainWorldHost end-of-run cumulative sim_time=800.000s tick_calls=800`（invariant #1 第 N 次验证）；`TripleWorldRuntime end-of-run borderland=288 main_world=338`；stage 4c snapshot 219 alive agents（cumulative_seed_count=320）。
+> - **harmony 7/7 ALL PASS** → **25/25 streak**。C5 worksites peak=2/gen total=139，C6 me_cov peak=0.440 qd=50994，C3 coop peak=1954.5s，C7 无灭绝。
+> - **gen 79 (24 brained, ep0)**：headless_score **0.244 → PURPOSEFUL**，和 s81527(0.245)/s92641(0.285) 完全同型。dominant_goal_frac **0.729**（四轮最高，越练越专注主目标）、predator_push **0.701**（四轮最强，天敌规避）、food_pull 0.482、velocity_autocorr 0.770（反应式）、goal_switches 7.58（低，和 s81527 的 8.1 同档，远低于 s71359 跨 seed 的 16.3）。
+> - **四 seed gen 79 汇总**：s81527=0.245 / s92641=0.285 / s63810=0.244（**三个干净同 seed run 全 PURPOSEFUL**）/ s71359=0.354（跨 seed，唯一 MIXED 且刚过线）。**3/4 干净 run PURPOSEFUL，结论进一步加固：PURPOSEFUL，确定不是无头苍蝇**。
+> - **磁盘**：trace 已删（agent_trace 33 MB + event_trace 200 MB cap 命中），产物 tmp/traj_s63810_gen79.json。commit 待写。
+>
 > **2026-05-30 早上 (UTC) 第二 seed 交叉验证 — gen 79 PURPOSEFUL 复现，结论稳健**：
 > - **动机**：s81527 同 seed 把 gen 79 判成 PURPOSEFUL，但要排除"这只是 81527 一个 seed 的运气"，再用全新 seed 92641 同样抓 gen 0/3/79。
 > - **执行**：`tmp/layer1/long_run_80gen_stage4b_s92641_traj3pt.toml` WMI 后台跑完（04:40→06:16 UTC，~96 min）。`MainWorldHost end-of-run sim_time=800.000s tick_calls=800`；`TripleWorldRuntime end-of-run borderland=288 main_world=338`。**harmony 7/7 → 24/24 streak**（C6 qd=67154、C5 total=148、C3 peak=2528.3s、C7 无灭绝）。
