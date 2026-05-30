@@ -877,7 +877,19 @@ int main(int argc, char** argv) {
     int         bc_max_eplen = 0;
     int         bc_build_os  = 0;
     int         bc_build_len = 50;
+    int         bc_trig_os   = 0;
+    int         bc_trig_pre  = 8;
+    int         bc_trig_post = 12;
     bool        deterministic = false;   // PPO eval: use distribution mode (no sampling noise)
+    // D-101 finetune: override PPO defaults from CLI (sentinel <0 = keep D-099
+    // baseline). ent_coef=0.01 is tuned for FRESH init; when finetuning a BC
+    // warm-start it over-rewards entropy and inflates the unbounded continuous
+    // log_std, eroding the cloned behavior (entropy climbs 2.9->7.9, bldg
+    // collapses). A small finetune ent_coef keeps PPO refining inside the BC
+    // basin instead of exploring back out to the foraging attractor.
+    float       ppo_ent_coef = -1.0f;
+    float       ppo_lr       = -1.0f;
+    int         ppo_critic_warmup = 0;   // D-101: value-only updates before policy training (BC->PPO)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -913,7 +925,13 @@ int main(int argc, char** argv) {
         else if (a == "--bc-max-eplen") bc_max_eplen = std::stoi(next());
         else if (a == "--bc-build-oversample") bc_build_os = std::stoi(next());
         else if (a == "--bc-build-len") bc_build_len = std::stoi(next());
+        else if (a == "--bc-trigger-oversample") bc_trig_os = std::stoi(next());
+        else if (a == "--bc-trig-pre")  bc_trig_pre  = std::stoi(next());
+        else if (a == "--bc-trig-post") bc_trig_post = std::stoi(next());
         else if (a == "--deterministic") deterministic = true;
+        else if (a == "--ent-coef")   ppo_ent_coef = std::stof(next());
+        else if (a == "--lr")         ppo_lr       = std::stof(next());
+        else if (a == "--critic-warmup") ppo_critic_warmup = std::stoi(next());
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
@@ -953,6 +971,9 @@ int main(int argc, char** argv) {
         bc.max_eplen      = bc_max_eplen;
         bc.build_oversample = bc_build_os;
         bc.build_len      = bc_build_len;
+        bc.trigger_oversample = bc_trig_os;
+        bc.trig_pre       = bc_trig_pre;
+        bc.trig_post      = bc_trig_post;
         bc.seed           = static_cast<int>(seed & 0x7FFFFFFFULL);
         if (bc.demo_paths.empty()) {
             spdlog::error("--policy bc requires --bc-demos path[,path...]");
@@ -1032,6 +1053,14 @@ int main(int argc, char** argv) {
     if (policy == "ppo") {
         pcfg.seed = static_cast<int>(seed & 0x7FFFFFFFULL);
         pcfg.n_envs = n_envs;  // D-078: VecEnv parallelism (PPO hidden_ shape [N, HIDDEN])
+        if (ppo_ent_coef >= 0.0f) {
+            pcfg.ent_coef = ppo_ent_coef;
+            spdlog::info("D-101: ent_coef override {} (finetune; D-099 default 0.01)", ppo_ent_coef);
+        }
+        if (ppo_lr >= 0.0f) {
+            pcfg.lr = ppo_lr;
+            spdlog::info("D-101: lr override {} (finetune; D-099 default 3e-4)", ppo_lr);
+        }
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
         ppo->set_deterministic(deterministic);
         if (deterministic) spdlog::info("D-101: deterministic eval (mode action, no sampling noise)");
@@ -1221,7 +1250,8 @@ int main(int argc, char** argv) {
 
                 for (int i = 0; i < n_envs; ++i) {
                     float last_v = rollouts[i].back().done ? 0.0f : bs_v[i];
-                    auto stats = ppo->update(rollouts[i], last_v);
+                    auto stats = ppo->update(rollouts[i], last_v,
+                                             total_updates < ppo_critic_warmup);
                     ++total_updates;
                     ++updates_since_save;
                     if (i == 0) {
@@ -1325,12 +1355,13 @@ int main(int argc, char** argv) {
                     ppo->sample_action(sr.obs, dummy_c, dummy_idx,
                                        dummy_lp, last_v);
                 }
-                auto stats = ppo->update(rollout, last_v);
+                bool warming = total_updates < ppo_critic_warmup;
+                auto stats = ppo->update(rollout, last_v, warming);
                 ++total_updates;
                 ++updates_since_save;
-                spdlog::info("PPO update #{:3d}: pi={:+.4f}  v={:.4f}  "
+                spdlog::info("PPO update #{:3d}{}: pi={:+.4f}  v={:.4f}  "
                              "ent={:.3f}  kl={:+.4f}  clip={:.2f}",
-                             total_updates,
+                             total_updates, warming ? " [warmup]" : "",
                              stats.policy_loss, stats.value_loss,
                              stats.entropy,    stats.approx_kl,
                              stats.clip_frac);

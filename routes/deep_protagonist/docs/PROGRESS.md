@@ -1,8 +1,8 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新: 2026-05-30 ~02:35 UTC (D-101 BC pipeline 实现完毕 + PPO 5M finetune 启动中)
-> 当前主线: **D-101 BC → PPO finetune**, bc_d101.pt 已可靠建房, 5M finetune GPU 训练中
-> 当前蓝图阶段: S3 settlement — PPO 8 次冷启动失败, oracle 命中, BC warm-start finetune 进行中
+> 最后更新: 2026-05-30 ~11:20 UTC (D-101 BC→PPO 5M finetune 完成, 结论: 建房可靠保留 / camp 被 gamma 墙侵蚀)
+> 当前主线: **D-101 收尾** — BC warm-start 实现可靠建房 (30/30), 但单步 PPO 无法保住长程 camp; 下一步 D-102 分层/macro-action
+> 当前蓝图阶段: S3 settlement — BC 可教建房不可教 camp + PPO 侵蚀 camp = 双墙, settle 目标 (bldg≥5000/nShel≥0.8) 未达成
 
 ## D-094..D-100 settlement 攻关 实证表
 
@@ -18,6 +18,7 @@
 | D-098 | gamma 0.99→0.995 + regen +3→+15/min | TBD | ep 502→0 | 0.111→0.000 | **no** |
 | D-099 | + 在房子里 r_alive 翻倍 (0.05→0.10/s) | 147/ep last 100 | 14.8 last 100 | **0.007** last 100 | **no** |
 | **D-100 ScriptedSettler (oracle)** | **手写 7 层决策树, 非 PPO** | **1/ep** | **8505/9000 (94.5%)** | **0.996** | **YES (oracle)** |
+| **D-101 BC→PPO 5M finetune** | **trigger-oversample BC (bc_g) + critic-warmup 64 + ent 0.001** | **30/30 集建房** | **32-83 (newseed)** | **0.014-0.033** | **建房 YES / camp NO** |
 
 ## D-099 失败结论
 
@@ -80,13 +81,12 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 
 **bc_d101.pt** (os30/w25, 12 epochs, total loss 1.26): deterministic eval (seed 555000, 10 ep) → 每 ep 建 1 房 (houses 1/ep), shelter=+5, collect=+2, milestone=+2, **不再乱走觅食** (collect 动作=0). 仍有 over-deposit (deposit 刷屏) + 轻微 drift 出屋 (bldg~210), 留给 PPO finetune 用 trigger_cost + in-building reward 修正.
 
-**PPO 5M finetune** (`--load bc_d101.pt --seed 12350`, Scheduled Task `dp_ppo_d101` 跑, 避免 SSH 断开杀进程):
-- 初步信号 (前 ~30k step): **每个 episode 从 step 0 就 shelter=+5 / collect=+2 / milestone=+2 / unlocks=2/10 / score 0.149** — BC warm-start 直接给了 PPO 8 次冷启动 (D-092..099) 都拿不到的稳定建房行为.
-- 5M ~96-107min, 训练中. 待完成后新 seed eval 对比 D-099.
+**D-101 BC pipeline (完成, 详见上文 + 决策记录.md)**:
+✓ 全部实现并跑通 (BC pipeline + trigger-oversample + critic-warmup + ent-coef CLI). 5M finetune 完成, 双墙结论如上.
 
 ## 后续路线 (D-101..D-110 蓝图)
 
-**D-101 BC pipeline (下一 session)**:
+**D-101 BC pipeline (✓ 完成 2026-05-30 — 原计划如下, 全部落地; 结论见上文)**:
 1. main_train.cpp 加 `--record-demos PATH` flag → settler 跑时把 (obs, cont_act, disc_idx) 写入二进制
 2. 加 `--policy bc --bc-demos PATH --bc-epochs N` mode → 加载 demos, 监督训练 ActorCritic 网络 (MSE on cont + CE on disc), 出 ckpt
 3. 加 demo 多样化机制: `--demo-no-regen` 临时禁用 in_building regen → 强制 settler 周期性出门觅食 → demos 涵盖 eat/drink/walk/return

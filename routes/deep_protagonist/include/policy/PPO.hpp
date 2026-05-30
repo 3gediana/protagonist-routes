@@ -147,8 +147,17 @@ public:
         float approx_kl   = 0.0f;
         float clip_frac   = 0.0f;
     };
+    // D-101: critic_only restricts the loss to the value term. Because the
+    // value head is a separate branch (does not feed cont_mean/disc_logits),
+    // value_loss.backward() produces ZERO gradient on the policy-head params,
+    // so the cloned policy is preserved exactly while the critic (and shared
+    // trunk) learns to estimate V for the BC policy. Run this for the first
+    // few dozen updates of a BC->PPO finetune: BC trains only the actor, so
+    // the critic starts random; without a warmup the first updates compute
+    // garbage advantages and destroy the warm-started policy before the
+    // critic converges (observed: bldg_ticks 1806 -> 0 by update ~250).
     UpdateStats update(const std::vector<Transition>& rollout,
-                       float last_value);
+                       float last_value, bool critic_only = false);
 
     // Persist / restore. Saves both the network weights AND the optimizer
     // state to a single file using libtorch's archive format. Use this

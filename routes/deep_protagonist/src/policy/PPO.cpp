@@ -287,7 +287,7 @@ void PPO::reset_hidden_at(int env_idx) {
 }
 
 PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
-                             float last_value)
+                             float last_value, bool critic_only)
 {
     constexpr int O = ActorCriticImpl::OBS_DIM;
     constexpr int C = ActorCriticImpl::CONT_DIM;
@@ -397,8 +397,13 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             auto clipped   = ratio.clamp(1.0f - cfg_.clip_eps, 1.0f + cfg_.clip_eps) * b_adv;
             auto policy_loss = -torch::min(unclipped, clipped).mean();
             auto value_loss  = (v - b_ret).pow(2).mean();
-            auto loss = policy_loss + cfg_.vf_coef * value_loss
-                      - cfg_.ent_coef * entropy;
+            // D-101 critic warmup: value-only loss. value_loss does not flow
+            // through the policy heads, so the BC policy is frozen exactly
+            // while the critic learns V(s) for it.
+            auto loss = critic_only
+                ? (cfg_.vf_coef * value_loss)
+                : (policy_loss + cfg_.vf_coef * value_loss
+                   - cfg_.ent_coef * entropy);
 
             opt_->zero_grad();
             loss.backward();

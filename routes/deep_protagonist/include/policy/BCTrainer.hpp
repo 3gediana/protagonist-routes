@@ -65,6 +65,19 @@ struct BCConfig {
                                           // steps build_oversample times rebalances the data so the
                                           // clone learns BOTH to deposit/build AND to camp.
     int   build_len             = 50;     // length of an oversampled build-phase snippet
+    int   trigger_oversample    = 0;      // replicate a short window AROUND each non-NOOP
+                                          // (trigger) event this many times. Unlike
+                                          // build_oversample -- which replays the first
+                                          // build_len steps including the long walk-to-site,
+                                          // biasing the continuous head toward movement so the
+                                          // clone wanders instead of camping -- this amplifies
+                                          // ONLY the rare deposit decision in-context, leaving
+                                          // the NOOP-camp majority and the near-zero-movement
+                                          // continuous targets intact. The oracle deposits ~2x
+                                          // early then idles, so this is the clean way to make
+                                          // the clone BOTH deposit/build AND camp.
+    int   trig_pre              = 8;      // steps before a trigger event to include in its window
+    int   trig_post             = 12;     // steps after
     bool  use_cuda              = true;
     int   seed                  = 1234;
 };
@@ -291,6 +304,7 @@ private:
                         int blen = std::min(cfg_.build_len, len);
                         for (int r = 0; r < cfg_.build_oversample; ++r)
                             episodes_.push_back({ep_start, blen});
+                        add_trigger_windows(ep_start, ep_start + len);
                     } else {
                         ++dropped_eps_;
                     }
@@ -307,6 +321,7 @@ private:
                     int blen = std::min(cfg_.build_len, tail);
                     for (int r = 0; r < cfg_.build_oversample; ++r)
                         episodes_.push_back({ep_start, blen});
+                    add_trigger_windows(ep_start, ep_start + tail);
                 } else {
                     ++dropped_eps_;
                 }
@@ -315,6 +330,24 @@ private:
             spdlog::info("BC: '{}' -> {} records", path, n);
         }
         return true;
+    }
+
+    // Scan [ep_start, ep_end) for non-NOOP (trigger) events and replicate a
+    // short [t-trig_pre, t+trig_post) window around each, cfg_.trigger_oversample
+    // times. The window starts mid-episode (Episode.start is a global index, so
+    // this is supported directly); the GRU just starts that window from h=0,
+    // the same as any truncated-BPTT boundary.
+    void add_trigger_windows(int ep_start, int ep_end) {
+        if (cfg_.trigger_oversample <= 0) return;
+        for (int g = ep_start; g < ep_end; ++g) {
+            if (disc_[g] == ActorCriticImpl::NOOP_IDX) continue;
+            int w0 = std::max(ep_start, g - cfg_.trig_pre);
+            int w1 = std::min(ep_end,   g + cfg_.trig_post);
+            int wlen = w1 - w0;
+            if (wlen <= 0) continue;
+            for (int r = 0; r < cfg_.trigger_oversample; ++r)
+                episodes_.push_back({w0, wlen});
+        }
     }
 
     BCConfig cfg_;
