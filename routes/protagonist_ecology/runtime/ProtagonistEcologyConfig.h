@@ -154,6 +154,16 @@ struct SurvivalConfig {
     float warmth_recovery_per_second{0.06f};
     float nest_recovery_per_second{0.1f};
     float injured_threshold_ratio{0.45f};
+    // Realism Phase B (2026-05-30): environmental survival-pressure knobs,
+    // previously hardcoded as SurvivalStatusLayer ctor defaults (softened
+    // 2026-05-24 into a non-lethal "floor"). Exposed so winter cold / hunger
+    // pressure can be tuned per-toml. Defaults reproduce the prior hardcoded
+    // values exactly -> zero behavior change unless overridden.
+    float hunger_damage_threshold{0.9f};
+    float hunger_damage_per_second{0.08f};
+    float cold_temp_threshold{25.0f};
+    float hot_temp_threshold{45.0f};
+    float thermal_damage_per_second{0.15f};
 };
 
 struct TreeConfig {

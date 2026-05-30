@@ -218,6 +218,13 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
                                                           "world.survival.nest_recovery_per_tick",
                                                           out.survival.nest_recovery_per_second);
     out.survival.injured_threshold_ratio = config.getOr<float>("world.survival.injured_threshold_ratio", out.survival.injured_threshold_ratio);
+    // Realism Phase B (2026-05-30): tunable environmental survival pressure
+    // (cold / heat / hunger). Defaults match the prior hardcoded ctor values.
+    out.survival.hunger_damage_threshold = config.getOr<float>("world.survival.hunger_damage_threshold", out.survival.hunger_damage_threshold);
+    out.survival.hunger_damage_per_second = config.getOr<float>("world.survival.hunger_damage_per_second", out.survival.hunger_damage_per_second);
+    out.survival.cold_temp_threshold = config.getOr<float>("world.survival.cold_temp_threshold", out.survival.cold_temp_threshold);
+    out.survival.hot_temp_threshold = config.getOr<float>("world.survival.hot_temp_threshold", out.survival.hot_temp_threshold);
+    out.survival.thermal_damage_per_second = config.getOr<float>("world.survival.thermal_damage_per_second", out.survival.thermal_damage_per_second);
 
     out.tree.enabled = config.getOr<bool>("world.tree.enabled", out.tree.enabled);
     out.tree.count = config.getOr<std::size_t>("world.tree.count", out.tree.count);

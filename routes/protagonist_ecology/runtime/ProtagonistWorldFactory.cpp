@@ -239,7 +239,16 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.survival.fire_health_damage_per_second,
             config.survival.warmth_recovery_per_second,
             config.survival.nest_recovery_per_second,
-            config.survival.injured_threshold_ratio));
+            config.survival.injured_threshold_ratio,
+            // Realism Phase B (2026-05-30): preserve prior ctor defaults for
+            // these two, then route the tunable pressure knobs from config.
+            /*track_all_living=*/true,
+            /*background_hydration_decay_per_second=*/0.0f,
+            config.survival.hunger_damage_threshold,
+            config.survival.hunger_damage_per_second,
+            config.survival.cold_temp_threshold,
+            config.survival.hot_temp_threshold,
+            config.survival.thermal_damage_per_second));
     }
 
     if (config.base.enabled && config.worksite.enabled) {
