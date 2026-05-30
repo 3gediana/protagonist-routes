@@ -10,6 +10,7 @@
 #include "core/world/layers/AgentLayer.h"
 #include "core/world/layers/ResourceLayer.h"
 #include "core/world/layers/SeasonLayer.h"
+#include "core/world/layers/TimeOfDayLayer.h"
 #include "core/world/layers/WeatherLayer.h"
 #include "core/world/layers/object/ObjectLayer.h"
 #include "world/CampfireLayer.h"
@@ -212,7 +213,7 @@ TraceRecorder::TraceRecorder(World2D& world,
     if (config_.agents_enabled) {
         agent_trace_.open(trace_dir_ / "agent_trace.csv", std::ios::out | std::ios::trunc);
         if (agent_trace_.is_open()) {
-            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills,goal_index,goal_name,goal_commitment,goal_elapsed_seconds,goal_progress,episodic_event_count,episodic_top_type,episodic_top_salience,social_relation_count,social_best_coop,social_best_comm,social_best_hostility,spatial_water_cells,spatial_food_cells,spatial_danger_cells,spatial_fire_cells,spatial_worksite_cells,dnc_usage_mean,dnc_usage_max,dnc_write_peak,dnc_read_peak,dnc_read_norm,dnc_precedence_peak,dnc_write_focus_slot,dnc_read_focus_slot,recent_signal_dx,recent_signal_dy,recent_signal_salience,recent_signal_age_seconds,nearest_food_dist,predator_nearby_count,worksite_distance\n";
+            agent_trace_ << "step_index,time_seconds,agent_id,genome_id,species_id,x,y,vx,vy,alive,energy,age_seconds,fitness,carried_object,is_carrying,health_ratio,hydration_ratio,infected,immune,immune_memory_count,food_eaten,plant_food,meat_food,visited_cells,damage_dealt,kills,goal_index,goal_name,goal_commitment,goal_elapsed_seconds,goal_progress,episodic_event_count,episodic_top_type,episodic_top_salience,social_relation_count,social_best_coop,social_best_comm,social_best_hostility,spatial_water_cells,spatial_food_cells,spatial_danger_cells,spatial_fire_cells,spatial_worksite_cells,dnc_usage_mean,dnc_usage_max,dnc_write_peak,dnc_read_peak,dnc_read_norm,dnc_precedence_peak,dnc_write_focus_slot,dnc_read_focus_slot,recent_signal_dx,recent_signal_dy,recent_signal_salience,recent_signal_age_seconds,nearest_food_dist,predator_nearby_count,worksite_distance,season,season_progress,time_of_day,light_level,weather,core_temperature,hunger\n";
         }
     }
     if (config_.world_enabled) {
@@ -533,6 +534,18 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
     if (agents == nullptr) {
         return;
     }
+    // Realism Phase B (2026-05-30): ground-truth ambient environment state,
+    // recorded so env-responsiveness can be measured against true season/
+    // weather/time-of-day instead of being reconstructed from episode time.
+    // World-global per snapshot; computed once outside the agent loop.
+    auto* season_layer = world.getLayer<SeasonLayer>();
+    auto* tod_layer = world.getLayer<TimeOfDayLayer>();
+    auto* weather_layer = world.getLayer<WeatherLayer>();
+    const int env_season = season_layer != nullptr ? static_cast<int>(season_layer->currentSeason()) : -1;
+    const float env_season_progress = season_layer != nullptr ? season_layer->seasonProgress() : -1.0f;
+    const float env_time_of_day = tod_layer != nullptr ? tod_layer->timeOfDay() : -1.0f;
+    const float env_light_level = tod_layer != nullptr ? tod_layer->lightLevel() : -1.0f;
+    const int env_weather = weather_layer != nullptr ? static_cast<int>(weather_layer->currentWeather()) : -1;
 
     for (const auto* agent : agents->agents()) {
         if (agent == nullptr) {
@@ -727,7 +740,14 @@ void TraceRecorder::writeAgentSnapshot(World2D& world) {
         agent_trace_ << ','
                      << nearest_food_dist << ','
                      << predator_nearby_count << ','
-                     << worksite_distance << '\n';
+                     << worksite_distance << ','
+                     << env_season << ','
+                     << env_season_progress << ','
+                     << env_time_of_day << ','
+                     << env_light_level << ','
+                     << env_weather << ','
+                     << agent->coreTemperature() << ','
+                     << agent->driveState().hunger << '\n';
     }
     agent_trace_.flush();
 }
