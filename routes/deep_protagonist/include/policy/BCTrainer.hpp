@@ -228,14 +228,27 @@ public:
                     // Non-recurrent encoder for the whole window at once.
                     auto enc = torch::relu(net->encoder(win_obs));   // [W,B,H]
 
-                    // Recurrent core: GRUCell is the only per-step op left.
-                    std::vector<torch::Tensor> hs;
-                    hs.reserve(W);
-                    for (int t = 0; t < W; ++t) {
-                        h = net->gru(enc.select(0, t), h);
-                        hs.push_back(h);
-                    }
-                    auto h_seq = torch::stack(hs, 0);                // [W,B,H]
+                    // Recurrent core. D-103b throughput: replace the manual
+                    // per-step GRUCell loop (which fired W tiny, launch-bound
+                    // kernels per window -- the dominant remaining bottleneck)
+                    // with the fused multi-step GRU op run over the whole
+                    // window at once, reusing the SAME GRUCell weights. PyTorch
+                    // GRU and GRUCell share the identical gate formulation and
+                    // (r,z,n) weight ordering, so this is the same recurrence
+                    // and the same gradients -- no change to the model, the
+                    // saved checkpoint format, the data, or any hyperparameter;
+                    // it just lets one fused (cuDNN) kernel do the sequence
+                    // instead of W separate launches.
+                    auto hx = h.unsqueeze(0);                       // [1,B,H]
+                    auto gru_out = torch::gru(
+                        enc, hx,
+                        {net->gru->weight_ih, net->gru->weight_hh,
+                         net->gru->bias_ih,   net->gru->bias_hh},
+                        /*has_biases=*/true, /*num_layers=*/1,
+                        /*dropout=*/0.0, /*train=*/true,
+                        /*bidirectional=*/false, /*batch_first=*/false);
+                    auto h_seq = std::get<0>(gru_out);              // [W,B,H]
+                    h          = std::get<1>(gru_out).squeeze(0);   // [B,H]
 
                     // Heads + losses, batched across the window. (value /
                     // log_std heads are intentionally not touched here -- BC
