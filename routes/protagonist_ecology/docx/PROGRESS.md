@@ -600,3 +600,20 @@ R-008 期待逐项落层�?
 3. 基于新的 communication 指标�?ablation，优先完成一条真的成立的通信任务（`scout-worker` / `danger warning` / `build request` 三选一先收口）�?
 4. �?`supporting/METRICS_FIELD_GUIDE.html` 继续作为解释层基座维护，后续 communication / lineage / lifecycle 字段都要同步进去�?
 5. �?cognition-social 主线没有收口前，不默认继续扩 `BrainV3`、GPU profiling、正式长训�?D replay �?live world�?
+
+
+## 2026-05-30/31 拟真验证：env-perc 因果（OFF 对照 + 确定性多 seed 矩阵）
+
+任务（拟真主线，非提速）：验证"环境感知 protagonist_environment_perception 在生存压力下是否被进化因果选择"。北极星=拟真度；A/B 必须零科学改动。inbox/outbox 协同：结论写 inbox，决策者回 outbox。
+
+**Round 2（单 seed OFF 对照）**：与已完成 ON（seed50001 / dmg0.25 / cold30 / epg2 / 80代）逐行同配、仅关 env-perc 跑 OFF（data/runs/realism_pressure_long_off/20260531-015823）。结果：ON/OFF 双双 harmony 7/7；ON avg_fitness 末值 +74%、best +25%，但趋火(active_fires)/工地/造具无差异 → 诚实判"弱/弥散支持"。
+
+**线程裁决（实测，回应"数学等价提速"建议）**：episode pool(num_threads) 数学等价（同 seed gen0 位元一致）但被 epg 封顶（epg=2→pool=2）；in-world agent_decision_threads>1 **非**数学等价（同 seed gen0 偏离 58%）→ 科学混淆量，禁入 A/B。源码 src/core/world/layers/AgentLayer.cpp:167-208 写回串行且按 agent index 有序，分歧来自并行 decide() 阶段的共享 scratch / beginTick 竞态（潜在正确性 bug）。
+
+**Round 3（确定性多 seed 矩阵，推翻 round_2 假阳性）**：用确定性配置（agent_decision_threads=1 去竞态 + num_threads=2 pool 数学等价）跑 seed 50001/50002/50003 × ON/OFF 共 6 run（data/runs/realism_det_*）。结果：全 6 harmony 7/7；但 ON>OFF 跨 seed **不一致**——avg_fitness AUC 仅 1/3 seed ON 胜、me_coverage gen79 仅 1/3、存活 OFF 全 3 seed ≥ ON、趋火/工地/造具无 ON 优势。→ **判决：当前压力(dmg0.25/cold30)下 env-perc 未被因果选择**；round_2 的 +74% 是单 seed 噪声 + auto 非确定配置的假阳性，确定性多 seed 一跑即蒸发（方法论胜利，诚实>达标）。唯一弱信号：ON best_fitness 峰值在 50002/50003 显著更高(~13-14k vs ~7.6k)，但未扩散到种群级 avg/存活。
+
+**CPU 吃满（用户第一优先级）= 实验级并发解决**：单 run 受 epg 封顶 + in-world 非等价双限只能 ~2 核；6 个独立进程并发 = ~10-11 核（单 run 5.5×）、VRAM 峰值 2.5/8.1GB 无 OOM、整矩阵 wall≈单 run。这是"32 核吃满"的正解（进程隔离、数学零风险），非 run 内线程。
+
+**Round 4（进行中）**：决策门"ON≈OFF→加压"分支。单变量 thermal_damage_per_second 0.25→0.5、其余全冻结，同确定性多 seed 矩阵（data/runs/realism_detP2_*），保 harmony 7/7（C7 不灭绝为硬天花板）。用于判别根因"压力不足(b)"vs"编码太粗(a)"，二者都通向 Phase C。
+
+**红线遵守**：未动 reward/HRL 权重、未动 epg、未碰 deep_protagonist；所有科学 run 一律 adt=1。配置：tmp/layer1/det_{seed}_{on,off}.toml、tmp/layer1/detP2_{seed}_{on,off}.toml。decide() 竞态修复列为 Phase C 工程项（非阻塞、低优先）。
