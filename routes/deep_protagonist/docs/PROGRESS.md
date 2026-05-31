@@ -199,3 +199,14 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - **阶段切换**：Stage2 BC 主线（夜宿进屋残差）→ S4 PPO；按 decision_round_15 §6 例外已 ping 用户。
 - **磁盘红线告警**：本路线已清全部过期数据（旧火污染 night_dagger、过期 demos_d101 1.9GB、bc_v10/11/12、训练/eval 日志），D free 仍跌至 196.2GB（<200），持续下跌源自共享 D 盘其它 route/决策者，非本路线可独自解决。
 - commit 本地（前缀 deep_protagonist:，不 push）。
+
+
+## D-116 / round_16 收尾 — decision_round_16：§4 确认，采纳 C（夜宿残差→S4 PPO）；Step1 固化完成
+- 决策者确认 **§4 触发**：v13（5 bin os20）软退 5–11pt、v14（2 bin os8）反而 1700000 崩盘 −74pt + 训练 bank 退 → **减小扰动非单调改善** = BC 全局克隆在夜宿残差上的**结构性专化/泛化权衡**；v10–v14 五连 NO-GO 已证伪 BC 路径。**BC 夜宿进屋主线收尾。**
+- **Step1 固化（非破坏，已做）**：
+  - **bc_v9 锁为最终 BC 部署冠军，永不覆盖**；bc_v10–v14 全部归档 NO-GO（bc_v9.pt 在盘未动；v10/11/12.pt 已为腾盘删除，v13/v14.pt 留盘作 NO-GO 记录）。
+  - 可复用资产固化记档：`--oracle-no-fire` fire-free 采集链 + 训前 action17==0 硬断言（EXIT9 护栏）+ 9-seed 多轴门 harness（eval_gate.ps1 / eval_parse.py）+ night 专属降权通道（`--bc-low-os` / `--bc-low-os-demos`，base 不动只降夜宿）。
+  - 夜宿进屋残差记为 **known-gap**；fire-free night demos（runs/night_dagger_ff，action17==0）留存作 S4 PPO 的 warmstart / 参考轨迹。
+- **Step2（待用户发令后展开）**：S4 PPO smoke，from bc_v9 暖启动（critic 重初始化）+ 夜宿走 **potential-based reward shaping**（F=γΦ(s')−Φ(s)，Φ=夜间在屋内/近庇护势函数，policy-invariant，Ng+1999）；**严禁**对 nShel/进屋/食物直接加奖（Goodhart）。smoke 验：不退已赢 bank / 残差方向正确 / fire=atk=0 cold 不回升 / 全新 bank food-death ≤ bc_v9（v13·v14 双栽的轴）。
+  - 决策者已 ping 用户给 C（现在投 S4 PPO 修夜宿）vs B（先冻结夜宿为 known-gap、S4 PPO 待整体就绪统一修）的取舍；执行者 Step1 已固化完成，**S4 PPO 具体投入按用户对 C/B 的发令再启**（遵用户"模型运行需统一发号施令"红线）。
+- 磁盘：DP 侧已清全部过期数据，D free 196GB；决策者核实持续下跌主因为另一 route（protagonist_ecology）在途 event_trace 累积，距 30GB 硬停线极远，非紧急，DP 照常推进。
