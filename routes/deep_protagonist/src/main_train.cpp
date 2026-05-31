@@ -715,6 +715,65 @@ struct ScriptedSettler {
             }
         }
 
+        // ---------- Layer 3.5: WARMTH-PREP (D-111 Stage3 Level-1) ----------
+        // PROACTIVE clothing. Diag-1 (round_9): the clone almost never wears
+        // clothes (token ~ 0) because the old clothing logic (Layer 6) only
+        // fires at home, in daytime, with spare grass >= 3 -- yet grass is
+        // spent on the build site and the night routine sleeps before reaching
+        // Layer 6. The performance-limiting deaths are freeze deaths (temp -> 0
+        // at night when unsheltered); a grass dress (cold_resist 0.10) damps
+        // that drain. craft_grass_dress / wear_clothes are location-independent
+        // (Environment.cpp: inventory-only), so we get dressed in the field
+        // BEFORE the cold night, not only at home. Grass-dress only (Level-1);
+        // never sets attack; adds no reward. Self-limiting: once worn,
+        // worn_none is false so this layer stops firing.
+        // NOTE on CAPACITY: Inventory::CAPACITY == 3. obs inventory counts are
+        // normalised by /3, and a grass dress costs 3 grass -> the agent must
+        // hold a FULL grass load (all 3 slots) to craft one. The old Layer 6
+        // used `inv_g > 3/20` (= 0.15), which is >=1 grass under /3 norm, so it
+        // requested craft with too little grass; craft_grass_dress() returned
+        // false, grass was never consumed and the request looped forever
+        // (smoke: dress=1101, wear=0). We require a full grass load here.
+        {
+            const float TEMP_PREP  = 0.55f;  // body temp cooling below neutral
+            const float GRASS_FULL = 0.95f;  // 3/3 grass under /CAPACITY norm
+            const bool cold_risk = approaching_night || is_night
+                                   || temp_v < TEMP_PREP;
+            if (worn_none && cold_risk) {
+                // 3.5a) have a garment -> wear it (instant, anywhere). Best ROI.
+                if ((inv_dress > 0.005f || inv_cloak > 0.005f)
+                    && wear_cooldown == 0) {
+                    a.wear_clothes = true;
+                    wear_cooldown = 8;
+                    return a;
+                }
+                // 3.5b) hold a full grass load -> craft the dress now (instant).
+                if (inv_g > GRASS_FULL && inv_dress < 0.005f
+                    && craft_cooldown == 0) {
+                    a.craft_grass_dress = true;
+                    craft_cooldown = 8;
+                    return a;
+                }
+                // 3.5c) build a dress proactively, but ONLY where it won't
+                // compete with the core build/survival: home complete, daytime,
+                // vitals ok, no active site. Fill the (now-free) inventory with
+                // grass within short reach; once 3 grass -> 3.5b crafts -> wear.
+                if (home_complete && !is_night && !site_active
+                    && hunger > TH_LOW && thirst > TH_LOW && inv_dress < 0.005f) {
+                    float gx, gy;
+                    if (find_resource_(obs, 2, gx, gy)) {
+                        float gd2  = gx*gx + gy*gy;
+                        float gd_m = std::sqrt(gd2) * VISION_RANGE;
+                        if (gd_m < 12.0f) {
+                            steer_(a, gx, gy);
+                            if (std::sqrt(gd2) < COLLECT_RANGE) a.collect = true;
+                            return a;
+                        }
+                    }
+                }
+            }
+        }
+
         // ---------- Layer 4: CONSTRUCTION (only if site exists & not done) ----------
         if (site_active) {
             // Have all required mats nearby -> deposit
@@ -792,8 +851,10 @@ struct ScriptedSettler {
 
         // ---------- Layer 6: CRAFTING (only at home) ----------
         if (at_home && craft_cooldown == 0) {
-            // 6a) no clothing + grass >= 3 -> craft_grass_dress
-            if (worn_none && inv_g > (3.0f / 20.0f) - 1e-4f && inv_dress < 0.005f) {
+            // 6a) no clothing + FULL grass load (3 = CAPACITY) -> craft dress.
+            // (was 3/20 = 0.15, i.e. >=1 grass under /CAPACITY norm -> craft
+            //  failed and looped; need a full grass load to actually craft.)
+            if (worn_none && inv_g > 0.95f && inv_dress < 0.005f) {
                 a.craft_grass_dress = true;
                 craft_cooldown = 8;
                 return a;
@@ -805,8 +866,8 @@ struct ScriptedSettler {
                 wear_cooldown = 8;
                 return a;
             }
-            // 6c) fur >= 2 + no cloak in inv -> craft_fur_cloak
-            if (inv_fur > (2.0f / 20.0f) - 1e-4f && inv_cloak < 0.005f) {
+            // 6c) fur >= 2 (2/3 under /CAPACITY norm) + no cloak -> craft cloak
+            if (inv_fur > 0.6f && inv_cloak < 0.005f) {
                 a.craft_fur_cloak = true;
                 craft_cooldown = 8;
                 return a;
