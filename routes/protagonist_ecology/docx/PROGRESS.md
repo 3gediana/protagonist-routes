@@ -633,3 +633,8 @@ R-008 鏈熷緟閫愰」钀藉眰锛?
 **Round 7（判别诊断：rise vs plateau，进行中）**：决策 round_6 选最便宜、零结构风险的候选 3 —— 把选择延长到 160 代，看趋火预判 R2/振幅是否随更多代继续上升（涨=编码够用、继续选择）还是 plateau（平=编码是天花板、才开新血脉锐化）。工程点：原拟从 gen79 checkpoint 续跑，但引擎 full-resume 校验要求背景物种数量等于配置初始值，而背景种群经 borderland 进化后数量已变（pack_hunter 到 450 等），续跑直接报错；续跑需改引擎+重编译（超安全范围）。决策本就允许等长重跑兜底，且 adt=1 确定性 = 从头跑到 160 代精确复现 gen0-79 再延伸到 159，科学等价。配置：tmp/layer1/detP2c_th22_{seed}_{on,off}.toml（generations=160，tail_generations=20 抓 gen140-159，max_episodes_per_generation=1 省盘），输出 realism_detP2c_th22_*。曲线点：gen0/gen79（detP2b 已有）+ gen145/gen155（本轮尾段）。新血脉编码 spec 已并行预设计、按决策"先不提交"暂存待命。
 
 **红线遵守（持续）**：未动 reward/HRL 权重、未动 epg、未碰 deep_protagonist；所有科学 run 一律 adt=1；物理调参（cold 阈值/dmg）属合法、reward 重加权禁止；改输入维=新血脉（需显式 PR + smoke）。
+
+
+---
+
+**Round 7 EOD 收尾（2026-05-31 UTC 07:35）**：决策者在 outbox 写 EOD handoff（今日收尾、不再开新长跑、更新交接文档）。candidate 3（gen→160 rise/plateau 诊断）矩阵进行中、未跑完：6 run（3 seed × ON/OFF，th22/dmg0.3，adt=1 确定性，realism_detP2c_th22_*）全活到 gen 24-25/160。处置 = 默认后台继续跑（WMI 脱钩，不随 SSH 会话死），明早新执行者直接续读进度；若关机/停电，adt=1 确定性保证从 gen0 等长重跑逐位复现、零数据损失（checkpoint 因背景物种数不匹配不可被引擎续跑）。R2/phase-lead 曲线待 gen140-159 trace 完成后由 build_aggs_p2c.ps1 + phase_harmonic.py 取。round_7 结论已写 inbox（自归档，未等 decision_round_7）；交接 note 已更新到 v6。下次第一步 = gen159 取趋火 R2 曲线判 rise（编码够用、继续选择）/ plateau（编码天花板、开新血脉 cand1+2）。红线不变（不靠 reward 逼节律、改输入维=新血脉、C7 地板、harmony 7/7、adt=1 确定性、fitness 仅附录）。

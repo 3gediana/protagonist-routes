@@ -929,3 +929,13 @@ set PATH=%CUDA_PATH%\bin;%PATH%
 - 进化对比 gen0->gen79：受冻 health 0.585->0.660、火源接近度 0->1.576 => 更扛冻 + 被带到篝火附近。
 - 诚实保留：受冻时火源仅 +0.115、worksite 反而更远 => 主动避寒信号真实但偏弱（部分成立）。详见 docx/PHASE_B_2C_VERDICT.md。
 - 用户要重启电脑，遵守跑完这一轮即停，未起 ON/OFF 对照跑（留下次）。
+
+
+---
+
+[巡检 2026-05-31 UTC 07:35 — Round 7 EOD 收尾]
+- candidate 3（gen→160 rise/plateau 诊断）进行中：6 run（3 seed × ON/OFF，th22/dmg0.3，adt=1，realism_detP2c_th22_*）全活到 gen 24-25/160，harmony 待 gen79/gen159 窗口评判。
+- 决策者写 outbox EOD handoff，令今日收尾、不再开新长跑、更新交接文档。
+- run 处置 = 默认后台继续跑（WMI 脱钩，不随会话死），明早续读；若关机则 adt=1 等长重跑复现、零损失。
+- 已更：交接 note v6（节律拟真定向 / 首个阳性 +11~12s 趋火预判 / 好梯度物理参数 / gen→160 诊断 / plateau 才开新血脉 / 全套红线）；round_7 写 inbox 自归档。
+- 未闭环（下次第一步）= gen159 取 gen140-159 trace → 趋火 R2 曲线 gen79→~150 判 rise / plateau。
