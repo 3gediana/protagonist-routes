@@ -439,6 +439,7 @@ struct ScriptedSettler {
     static constexpr int FIRE_FUEL_TICKS = 2700;   // ~90s at 30Hz
     int   fire_timer       = 0;
     int   fire_cooldown    = 0;
+    bool  no_fire          = false;   // D-114: gate fire (tend_fire) branches off for fire-free DAgger relabel
 
     // ---- obs indices (match include/agent/Observation.hpp layout) ----
     static constexpr int OBS_HUNGER       = 0;
@@ -650,7 +651,7 @@ struct ScriptedSettler {
         // adjacent. With no wood, fall back to the old best-effort sprint home.
         if (temp_v < TEMP_CRIT) {
             const bool home_adjacent = have_home_anchor && home_d_m < 8.0f;
-            if (have_wood && !home_adjacent) {
+            if (!no_fire && have_wood && !home_adjacent) {
                 if (fire_cooldown == 0) {
                     a.tend_fire   = true;
                     fire_cooldown = 6;
@@ -708,7 +709,7 @@ struct ScriptedSettler {
         {
             const bool night_or_dusk = is_night || approaching_night;
             const bool home_far = !have_home_anchor || home_d_m > 28.0f;
-            if (night_or_dusk && home_far) {
+            if (!no_fire && night_or_dusk && home_far) {
                 if (have_wood) {
                     if (fire_cooldown == 0 && fire_timer <= (FIRE_FUEL_TICKS / 2)) {
                         a.tend_fire   = true;
@@ -867,7 +868,7 @@ struct ScriptedSettler {
             // Protect the core build: never burn wood needed by an in-progress
             // home site (the r8 dilution lesson). Once the home is up (or none
             // is pending) fire is unrestricted, everywhere cold.
-            if (cold_risk && (fuel_low || body_cold) && fire_cooldown == 0
+            if (!no_fire && cold_risk && (fuel_low || body_cold) && fire_cooldown == 0
                 && !site_active) {
                 // Have wood -> build a fire at my feet / refuel the nearby one.
                 if (have_wood) {
@@ -1068,6 +1069,7 @@ int main(int argc, char** argv) {
     // D-101 BC pipeline
     std::string record_demos;              // path to write (obs,action) demos (settler/scripted only)
     bool        demo_no_regen = false;     // disable in-building regen during demo recording
+    bool        oracle_no_fire = false;    // D-114: suppress oracle fire layer (fire-free night DAgger)
     // D-102 DAgger: step the env with the LOADED clone's action (so we sample
     // the state distribution the clone actually visits at eval time) but record
     // the ORACLE (ScriptedSettler) action as the demo LABEL. This relabels the
@@ -1124,6 +1126,7 @@ int main(int argc, char** argv) {
         else if (a == "--n-envs")       n_envs       = std::stoi(next());
         else if (a == "--record-demos") record_demos = next();
         else if (a == "--demo-no-regen") demo_no_regen = true;
+        else if (a == "--oracle-no-fire") oracle_no_fire = true;
         else if (a == "--dagger")        dagger        = true;
         else if (a == "--bc-demos")     bc_demos     = next();
         else if (a == "--bc-out")       bc_out       = next();
@@ -1263,6 +1266,8 @@ int main(int argc, char** argv) {
     WanderPolicy wander(seed ^ 0xC0DEULL);
     ScriptedPolicy scripted(seed ^ 0xBEEFULL);
     ScriptedSettler settler(seed ^ 0xD100ULL);
+    settler.no_fire = oracle_no_fire;
+    if (oracle_no_fire) spdlog::info("D-114: oracle_no_fire ON -> ScriptedSettler suppresses tend_fire (fire-free relabel)");
     dp::agent::ObservationBuilder::Vector obs{};
     env.reset(obs);
 

@@ -1,4 +1,4 @@
-﻿# deep_protagonist · PROGRESS
+# deep_protagonist · PROGRESS
 
 > 最后更新: 2026-05-31 (D-110 C＋ 第二全新 bank 复核 + 脆性死亡诊断 — 1900k/2000k/2100k=90/90/40, 双 bank 合并中位 **85%** 无 0% 世界; 残余 13/60 = 7 夜宿地形+5 出生早狼, 均现有能力内 → 轻量 r8)
 > 当前主线: **阶段2 双 bank 确认完成; Stage3 oracle 扩展严格挂起等用户定范围(S3-BC 延伸 vs S4-PPO)**。本轮地基加固: 脆性死亡主因=夜宿地形覆盖深度(7/13, 2100000 同 1000000 型)+出生区早狼(5/13), 均在现有 oracle 能力内 → 轻量 r8(不扩 oracle, 零范围扩散)。全新未训 bank 1600k/1700k/1800k = 80/80/90, nShel 全 1.00, attack 全 0; 诊断: clone 仅做纯定居(r_craft=0/r_kills=0/多屋未展), Stage3 造衣/狩猎/中期建造 需 oracle Layer 扩展(结构性, 待授权)。bc_v9 6-seed bank 跨 seed 中位 90% (700k100/800k100/900k80/1000k60/1100k90/1200k90)；**6/6 seed ≥6/10 且无 0% 世界**; 1000000 脱 0(nShel 0.04→0.92, 死29→8, bldg258→8159); attack 全 seed=0 无跷跷板; 555k sanity 17%→67%
@@ -176,3 +176,12 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - ③学到：**夜宿残差杠杆是真的**——瓶颈 seed 2100000 **40→100**、2200102 50→60，证明针对性夜宿纠错能修残差，方向对。
 - ④坑（坐实根因）：bc_v12 多轴 eval 中位 **60%** vs bc_v9 90% → NO-GO。退步因 5 个 night demo 是在 oracle 火层开启的 build 下采的，夜困态吐了 **107 个 action17(tend_fire) 标签**（解析 bin 实测 83+6+6+6+6），选择器没筛 fire==0 → bc_v12 又学了火-营地 → 冷死在已赢 seed 复现(700000 cold0→25、1100000 0→36、fire-token14~35)。同病 bc_v11。**教训：Path A 的 night DAgger 必须 fire-free（关 oracle 火层 或 选择器加 fire==0）**。
 - ⑤EOD：bc_v12 不采用、不覆盖 bc_v9。清理 runs 22.16→10.61GB(-11.54)。写 inbox/round_14（自归档）。本地 commit 未 push，未开新轮。下次=纠正版 fire-free 夜宿 DAgger 重做（预期复现 2100000 40→100 而无冷死副作用）。
+
+## D-114 (round_15) — Path A 关火层 fire-free 夜宿 → bc_v13 多轴门 = NO-GO（全新 bank 真退），冠军保持 bc_v9；火污染病根治
+- ①做啥：执行 decision_round_14。先验 Path B（旧 demo 加 fire 过滤）= 死路（5 个旧 night bin 解析 action17=107 全污染）→ 走 Path A：给 oracle 加 `--oracle-no-fire` 门控 3 个火分支（Layer 1c/2a'/3.6）、重编 EXIT0、smoke 验 fire-free demo 的 action17==0 且 clone 仍建房+夜宿（无火拐杖）→ 同 5 残差 seed 重采 fire-free（5 个新 bin action17 全 0）→ 训前硬断言 action17==0 才放行 → 基 bc_v9 聚焦增量训 **bc_v13**（349+5=354，8ep/b16/bptt64/lr3e-4/os20，loss 1.0114→0.3587，EXIT0）。
+- ②同口径 A/B（同 session 同 exe 新跑 9 seed，10 局/seed，attack 双方 0）：训练 bank 中位 80=80（1000000 +20、余平）；全新 bank 中位 **90→80**（1700000 80→70、1900000 100→80、2000000 90→100）；残差 **2100000 30→80**（nShel0.30→0.78、食/冷死29→0）、2200102 50→50。**全 9 seed fire=0、attack=0、cold=0**（bc_v9 在 2000000 有 cold=3）。
+- ③噪声复核（30 局）：1700000 80→75、1900000 86→75 → 全新退是真实非噪声；机理=夜宿"回家"偏置挤压白天觅食 → food-death↑（1900000 food死 7→29）。注意 bc_v13 的 nShel 不降反升，pass% 降仅因 food-death 拖累。
+- ④多轴门：训练 bank ✅、全新 bank ❌（关键阻挡）、残差 ⚠️半（2100000 大胜、2200102 平）、attack==0 ✅、零火污染 ✅。**bc_v13 = NO-GO，不采用、不覆盖 bc_v9**（v10/v11/v12/v13 四连 NO-GO）。
+- ⑤学到（关键）：与 v11/v12 根本不同——`--oracle-no-fire`+训前 action17==0 断言这条工程链**彻底根治火污染病**（全 9 seed fire=0/cold=0），且残差杠杆**干净复现**（2100000 30→80 无任何火/冷副作用）。新暴露的是 BC 全局聚焦增量的**专化/泛化权衡**（夜宿偏置→全新 bank 觅食代价），非 Goodhart、非污染。
+- ⑥下一步候选（写入 inbox/round_15）：A=缩小/锐化增量（只留 ≤2~3 个最硬 nShel≈0.30 bin + 下调 night oversample）重训 bc_v14（推荐，留胜去损）；B=补少量白天觅食 demo 反向平衡；C=夜宿残差也收编 S4 PPO。工程链已现成可复用。
+- ⑦收尾：冠军 bc_v9 完好未覆盖（已校验 .pt + 06:46 时戳）。清理：压缩 bc_v13_train.log 290.9MB→366行摘要、删 night_ff_smoke/eval 日志。D 盘 free 200.0→200.35GB（红线 ≥200 已守）。本地 commit（`deep_protagonist:` 前缀、不 push）。写 inbox/round_15，盯 outbox 下一条决策。
