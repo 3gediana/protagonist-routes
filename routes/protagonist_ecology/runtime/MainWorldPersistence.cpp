@@ -111,7 +111,9 @@ bool saveSlot(const WorldSlot& slot,
         if (!savePool(slot.pools_by_archetype[a], a, archetype_dir, entries_json)) {
             return false;
         }
-        slot_json << "    {\"archetype\":" << a << ",\"entries\":[\n"
+        slot_json << "    {\"archetype\":" << a
+                  << ",\"borderland_eval_count\":" << slot.pools_by_archetype[a].borderland_eval_count
+                  << ",\"entries\":[\n"
                   << entries_json.str() << "\n    ]}";
     }
     slot_json << "\n  ]";
@@ -272,6 +274,7 @@ bool loadSlot(JsonScanner& sc,
     while (!sc.peek(']')) {
         if (!sc.consume('{')) return false;
         std::size_t archetype = 0;
+        std::size_t eval_count_val = 0;
         // Parse the "archetype" key first so we know where to scope the
         // pool load. Then handle "entries". Manifest keys are emitted in
         // a fixed order by save, but we don't depend on that here.
@@ -284,6 +287,8 @@ bool loadSlot(JsonScanner& sc,
             if (key == "archetype") {
                 archetype = static_cast<std::size_t>(sc.readUint());
                 seen_archetype = true;
+            } else if (key == "borderland_eval_count") {
+                eval_count_val = static_cast<std::size_t>(sc.readUint());
             } else if (key == "entries") {
                 if (!seen_archetype) {
                     // Save format always emits archetype before entries;
@@ -305,6 +310,12 @@ bool loadSlot(JsonScanner& sc,
                 sc.skipValue();
             }
             sc.consume(',');
+        }
+        // Restore the per-pool borderland_eval_count (the 50-gen
+        // continuity gate ranks promotion on it). Applied after the
+        // entries pass so the pool slot is guaranteed to exist.
+        if (seen_archetype && archetype < out_slot.pools_by_archetype.size()) {
+            out_slot.pools_by_archetype[archetype].borderland_eval_count = eval_count_val;
         }
         sc.consume('}');
         sc.consume(',');

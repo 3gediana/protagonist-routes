@@ -1109,7 +1109,7 @@ std::vector<std::unique_ptr<IGenome>> loadBackgroundCheckpointPopulation(const P
         throw std::runtime_error("background checkpoint contains no genome_*.bin files: " + checkpoint_dir.string());
     }
     if (expected_count > 0 && population.size() != expected_count) {
-        throw std::runtime_error("background checkpoint population count does not match configured scenario: " + checkpoint_dir.string());
+        throw std::runtime_error("background checkpoint genome file count does not match the count recorded in the checkpoint manifest: " + checkpoint_dir.string());
     }
     return population;
 }
@@ -1291,7 +1291,13 @@ std::optional<LoadedTrainingCheckpoint> tryLoadTrainingCheckpoint(const Protagon
         const auto species_dir = checkpoint_dir / entry_it->directory;
         LoadedTrainingCheckpoint::BackgroundSpeciesState species_state;
         species_state.archetype = slot.archetype;
-        species_state.population = loadBackgroundCheckpointPopulation(route, slot.archetype, slot.count, species_dir);
+        // Background populations evolve in size across generations (predator/prey
+        // dynamics grow or shrink each species), so the saved count is authoritative
+        // for resume rather than the configured initial count. Validate the on-disk
+        // genome files against the checkpoint manifest's recorded population_count
+        // (integrity), not against slot.count (the scenario's initial seed count).
+        species_state.population = loadBackgroundCheckpointPopulation(
+            route, slot.archetype, entry_it->population_count, species_dir);
         species_state.evolution_state = loadBackgroundEvolutionState(species_dir);
         loaded.background_species.push_back(std::move(species_state));
         ++expected_slot_index;
@@ -3869,6 +3875,10 @@ int ProtagonistEcologyRuntime::runTraining() {
     std::vector<std::unique_ptr<IGenome>> population;
     std::size_t start_generation = 0;
     double best_fitness_seen = -std::numeric_limits<double>::infinity();
+    // When resuming a full checkpoint, this points at that checkpoint's
+    // triple_world snapshot subdir so the TripleWorldRuntime can restore
+    // its borderland/main pools below (empty otherwise = fresh start).
+    std::filesystem::path resume_triple_world_dir;
     const auto checkpoint_path = config_.getOr<std::string>("runtime.resume_checkpoint_path", "");
     if (checkpoint_path.empty()) {
         population = createInitialPopulation(route);
@@ -3902,6 +3912,7 @@ int ProtagonistEcologyRuntime::runTraining() {
             }
             copyIfExists(checkpoint_dir / "best_genome_overall.bin", run_dir / "best_genome_overall.bin");
             copyIfExists(checkpoint_dir / "best_genome_latest.bin", run_dir / "best_genome_latest.bin");
+            resume_triple_world_dir = checkpoint_dir / "triple_world";
             LOG_INFO("ProtagonistEcologyRuntime: resumed full checkpoint from {} (generation={} protagonist_count={} background_species={})",
                      checkpoint_path,
                      start_generation,
@@ -4108,6 +4119,69 @@ int ProtagonistEcologyRuntime::runTraining() {
                              "(or it is unparseable) - starting fresh",
                              tw_cfg.persist_dir);
             }
+        }
+
+        // Full-resume: if we resumed from a training checkpoint that
+        // carries a triple_world snapshot, restore the borderland +
+        // main_world pools (and curriculum unlock state) from it so the
+        // resumed run reproduces the evolved triple-world state bit for
+        // bit instead of re-seeding from an empty pool. This is
+        // independent of persist_dir (the optional cross-run
+        // accumulator); the checkpoint snapshot is the authoritative
+        // per-generation state for resume.
+        if (!resume_triple_world_dir.empty()
+            && std::filesystem::exists(resume_triple_world_dir / "main_world_manifest.json")) {
+            MainWorldSnapshotMetadata ckpt_meta;
+            if (MainWorldPersistence::load(resume_triple_world_dir, triple_world, &ckpt_meta)) {
+                std::size_t border_total = 0;
+                for (const auto& p : triple_world.borderland().pools_by_archetype) {
+                    border_total += p.genomes.size();
+                }
+                std::size_t main_total = 0;
+                for (const auto& p : triple_world.mainWorld().pools_by_archetype) {
+                    main_total += p.genomes.size();
+                }
+                spdlog::info("TripleWorldRuntime: resumed triple_world snapshot from checkpoint {} (border={} main={})",
+                             resume_triple_world_dir.string(), border_total, main_total);
+                // L6 R3 follow-up (KNOWN LIMITATION): restoring the
+                // borderland/main pools + curriculum gets a resumed
+                // triple_world run *close* to the original, but it is NOT yet
+                // bit-identical. The per-generation borderland eval / promote /
+                // cull / extinction-rescue path plus in-world background
+                // reproduction consume runtime-level state that is not captured
+                // in evolution.exportState() (a hidden runtime RNG / counter is
+                // the prime suspect), so a resumed gen N+1 diverges from a
+                // straight run's gen N+1. The authoritative determinism
+                // guarantee for triple_world runs therefore remains
+                // deterministic replay (adt=1, fixed seed) from gen0 -- a
+                // resumed run is a fast warm-start, not a bit-exact continuation.
+                spdlog::warn("TripleWorldRuntime: triple_world resume restores pools+curriculum but is NOT "
+                             "bit-identical to a straight run (per-gen borderland/rescue + in-world reproduction "
+                             "carry un-checkpointed runtime state). For exact reproducibility rely on deterministic "
+                             "replay (adt=1, fixed seed) from gen0; treat this resume as a warm-start.");
+                if (curriculum_persist && !ckpt_meta.archetype_progression.empty()) {
+                    const std::size_t n = std::min(ckpt_meta.archetype_progression.size(),
+                                                   archetype_progression.size());
+                    for (std::size_t a = 0; a < n; ++a) {
+                        const auto& s = ckpt_meta.archetype_progression[a];
+                        archetype_progression[a].first_fire_ignited  = archetype_progression[a].first_fire_ignited  || s.first_fire_ignited;
+                        archetype_progression[a].worksite_unlocked   = archetype_progression[a].worksite_unlocked   || s.worksite_unlocked;
+                        archetype_progression[a].stone_unlocked      = archetype_progression[a].stone_unlocked      || s.stone_unlocked;
+                        archetype_progression[a].heavy_unlocked      = archetype_progression[a].heavy_unlocked      || s.heavy_unlocked;
+                        archetype_progression[a].second_fire_ignited = archetype_progression[a].second_fire_ignited || s.second_fire_ignited;
+                    }
+                    spdlog::info("Curriculum: restored {} archetype progression states from checkpoint snapshot", n);
+                }
+            } else {
+                spdlog::warn("TripleWorldRuntime: checkpoint triple_world snapshot at {} failed to load; "
+                             "resuming with fresh triple_world (resume will NOT be bit-identical)",
+                             resume_triple_world_dir.string());
+            }
+        } else if (!resume_triple_world_dir.empty()) {
+            spdlog::warn("TripleWorldRuntime: resumed checkpoint has no triple_world snapshot at {}; "
+                         "borderland/main pools start empty (pre-snapshot checkpoint; resume will NOT "
+                         "be bit-identical for triple_world runs)",
+                         resume_triple_world_dir.string());
         }
     }
 
@@ -5205,6 +5279,30 @@ int ProtagonistEcologyRuntime::runTraining() {
                 });
             copyIfExists(run_dir / "best_genome_overall.bin", checkpoint_dir / "best_genome_overall.bin");
             copyIfExists(run_dir / "best_genome_latest.bin", checkpoint_dir / "best_genome_latest.bin");
+
+            // L6: persist the TripleWorldRuntime borderland + main_world
+            // pools (plus curriculum unlock state) INTO the checkpoint so a
+            // full resume reproduces the evolved triple-world state rather
+            // than re-seeding from empty. The snapshot reflects the
+            // end-of-generation-N state (after this gen's promote / eval /
+            // cull / rescue), matching resume_generation = N+1. Additive:
+            // older checkpoints simply lack this subdir and resume falls
+            // back to a fresh triple_world with a loud warning.
+            if (tw_cfg.enabled) {
+                MainWorldSnapshotMetadata tw_meta;
+                tw_meta.snapshot_id = static_cast<std::uint64_t>(generation + 1);
+                tw_meta.generations_elapsed = generation + 1;
+                tw_meta.scenario_name = route.scenario_name;
+                if (curriculum_persist) {
+                    tw_meta.archetype_progression.assign(
+                        archetype_progression.begin(), archetype_progression.end());
+                }
+                if (!MainWorldPersistence::save(triple_world, tw_meta,
+                                                checkpoint_dir / "triple_world")) {
+                    spdlog::error("ProtagonistEcologyRuntime: failed to write triple_world snapshot into checkpoint {}",
+                                  checkpoint_dir.string());
+                }
+            }
 
             std::ofstream manifest(checkpoint_dir / "checkpoint_manifest.json", std::ios::out | std::ios::trunc);
             if (manifest.is_open()) {
