@@ -537,6 +537,12 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist_environment_perception_enabled = config.getOr<bool>(
         "evolution.protagonist_environment_perception_enabled",
         out.protagonist_environment_perception_enabled);
+    // Candidate-1 (decision_round_9): rhythm perception toggle (cyclic day/year
+    // phase + body-temp trend). Default false -> existing lineages unchanged;
+    // true -> fresh lineage with +5 input dims.
+    out.protagonist_rhythm_perception_enabled = config.getOr<bool>(
+        "evolution.protagonist_rhythm_perception_enabled",
+        out.protagonist_rhythm_perception_enabled);
     // L2.7 v13: per-goal-type sub-reward weights. Defaults reflect the
     // relative difficulty of each goal: ChopTree/GatherStick/Stone are
     // common and easy (small reward); BuildWorksite is the long

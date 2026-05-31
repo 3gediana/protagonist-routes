@@ -627,6 +627,13 @@ struct ProtagonistEcologyConfig {
     // genome input_dim, so enabling it starts a fresh lineage. Default false
     // keeps existing checkpoints loadable.
     bool protagonist_environment_perception_enabled{false};
+    // Candidate-1 (decision_round_9): "sharpen perceptual encoding". Replaces
+    // the linear time/season scalars with circular sin/cos phase pairs and adds
+    // a body-temperature trend d(core_temp)/dt via ProtagonistRhythmPerception
+    // (+5 input dims). Like the environmental toggle this changes the genome
+    // input_dim, so enabling it starts a fresh lineage. Default false keeps
+    // existing checkpoints loadable.
+    bool protagonist_rhythm_perception_enabled{false};
     // L2.7 v13 (HRL sub-rewards): per-goal-type completion reward
     // weights. Index = GoalType int value (0..12). reward delta per
     // tick = goal_completion_rewards[g] * agent.goalCompletionThisTick(g).

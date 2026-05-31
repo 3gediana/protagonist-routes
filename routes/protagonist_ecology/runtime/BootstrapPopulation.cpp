@@ -45,6 +45,7 @@
 #include "perception/MemoryCognitionPerception.h"
 #include "perception/MemoryTrialPerception.h"
 #include "perception/ObjectLogisticsPerception.h"
+#include "perception/ProtagonistRhythmPerception.h"
 #include "perception/StockpilePerception.h"
 #include "perception/SurvivalStatePerception.h"
 #include "perception/TaskContextPerception.h"
@@ -180,6 +181,14 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
         if (config.day_night.enabled) sensory_dim += TimeOfDayPerception::kDim;
         if (config.season.enabled) sensory_dim += SeasonPerception::kDim;
         if (config.weather.enabled) sensory_dim += WeatherPerception::kDim;
+    }
+
+    // Candidate-1 (decision_round_9): sharpen perceptual encoding with cyclic
+    // day/year phase + body-temperature trend. Separate flag -> separate fresh
+    // lineage. The addPerception call in createProtagonist must add exactly
+    // ProtagonistRhythmPerception::kDim dims, in this same trailing position.
+    if (config.protagonist_rhythm_perception_enabled) {
+        sensory_dim += ProtagonistRhythmPerception::kDim;
     }
 
     return sensory_dim;
@@ -337,6 +346,13 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         if (config.day_night.enabled) agent->addPerception(std::make_unique<TimeOfDayPerception>());
         if (config.season.enabled) agent->addPerception(std::make_unique<SeasonPerception>());
         if (config.weather.enabled) agent->addPerception(std::make_unique<WeatherPerception>());
+    }
+
+    // Candidate-1 (decision_round_9): rhythm perception (cyclic day/year phase
+    // + body-temp trend). Must match the dim summation in protagonistSensoryDim
+    // (added last, after environmental perception).
+    if (config.protagonist_rhythm_perception_enabled) {
+        agent->addPerception(std::make_unique<ProtagonistRhythmPerception>());
     }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));

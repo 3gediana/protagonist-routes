@@ -32,6 +32,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     perception/MemoryTrialPerception.cpp
     perception/ObjectLogisticsPerception.cpp
     perception/GoalContextPerception.cpp
+    perception/ProtagonistRhythmPerception.cpp
     perception/StockpilePerception.cpp
     perception/SurvivalStatePerception.cpp
     perception/TaskContextPerception.cpp
@@ -102,6 +103,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     perception/MemoryCognitionPerception.h
     perception/MemoryTrialPerception.h
     perception/ObjectLogisticsPerception.h
+    perception/ProtagonistRhythmPerception.h
     perception/StockpilePerception.h
     perception/SurvivalStatePerception.h
     perception/TreePerception.h
@@ -188,5 +190,17 @@ add_executable(neural-eco-protagonist-batched main.cpp)
 target_link_libraries(neural-eco-protagonist-batched PRIVATE neural_eco::route_protagonist)
 
 set_target_properties(neural-eco-protagonist-batched PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Candidate-1 (decision_round_9) experiment executable. Identical code to
+# neural-eco-protagonist (the new ProtagonistRhythmPerception is runtime
+# flag-gated, protagonist_rhythm_perception_enabled default OFF), but built
+# under a distinct name so the locked production binary is never clobbered while
+# the new "sharpen perceptual encoding" bloodline is validated.
+add_executable(neural-eco-protagonist-rhythm main.cpp)
+target_link_libraries(neural-eco-protagonist-rhythm PRIVATE neural_eco::route_protagonist)
+
+set_target_properties(neural-eco-protagonist-rhythm PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
