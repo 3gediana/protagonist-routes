@@ -939,3 +939,11 @@ set PATH=%CUDA_PATH%\bin;%PATH%
 - run ���� = Ĭ�Ϻ�̨�����ܣ�WMI �ѹ�������Ự�������������������ػ��� adt=1 �ȳ����ܸ��֡�����ʧ��
 - �Ѹ������� note v6���������涨�� / �׸����� +11~12s ����Ԥ�� / ���ݶ��������� / gen��160 ��� / plateau �ſ���Ѫ�� / ȫ�׺��ߣ���round_7 д inbox �Թ鵵��
 - δ�ջ����´ε�һ����= gen159 ȡ gen140-159 trace �� ���� R2 ���� gen79��~150 �� rise / plateau��
+
+
+[巡检 2026-05-31 UTC 15:33 — Round 9 detP2c gen→160 终判 = PLATEAU]
+- 收尾 round_7 候选3 诊断：6-run 矩阵跑到 gen159（5/6 完成；50002_off 用户中断@gen141，adt=1 可复现），取 gen140-159 趋火谐波。
+- ON：gen79 R²0.065/+12s → 末段 R²0.082/+7s（dR²+0.017，lead 反缩）；OFF 对照：gen79 R²0.056/+6s → 末段 R²0.091/+10s（dR²+0.035，反超 ON）。
+- 判定 = PLATEAU：gen79"ON 专属趋火预判"未巩固、与阴性对照混同 → 10 维环境感知编码到顶。
+- 下一步 = 开新血脉（candidate1 锐化感知编码+体温趋势 / candidate2 趋暖 goal 通道；改输入维=新血脉 smoke 先行）。
+- round_9 写 inbox（未 poll outbox，决策者待统一启动）；commit 本地不 push；知识 note 已在 round_7 更新到 v6。

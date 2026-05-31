@@ -6,6 +6,19 @@
 
 ---
 
+## 2026-05-31 detP2c gen→160 rise/plateau 终判（round_9）= PLATEAU
+
+把 round_6/7 的 6-run 确定性矩阵（`realism_detP2c_th22_{3seed}_{on,off}`, th22/dmg0.3, adt=1, gen→160）跑到 gen159，取 gen140-159 趋火"昼夜锁定"谐波判 RISE vs PLATEAU。5/6 run 到 gen159；50002_off 被用户中断在 gen141（adt=1 可日后等长复现）。
+
+- **ON**：gen79 R²0.065/lead+12s → 末段(140-159) R²0.082/amp0.0053/lead+7s（dR²+0.017，lead 反缩）。
+- **OFF（阴性对照）**：gen79 R²0.056/lead+6s → 末段 R²0.091/amp0.0050/lead+10s（dR²+0.035，末段**反超 ON**）。
+- 逐 seed ON dR²：+0.037 / +0.018 / -0.005，**无一致上升**；原始 mean_fire 涨~8× 但昼夜谐波振幅仍≈0.005 不变。
+- **判定 = PLATEAU**：gen79 的"ON 专属趋火预判"没巩固、与阴性对照混同 → 10 维环境感知编码到顶，加代数不再涨。
+- 下一步 = **开新血脉**（candidate1 锐化感知编码 + d(core_temp)/dt 体温趋势；candidate2 加趋暖/趋火 goal 通道；改输入维=新血脉，smoke 先行）。
+- 产物：`tmp/trace_export/agg_c_*.csv`（25 个）、判定脚本 `summarize_rhythm.py`（分析机）、round_9 写 inbox。**未 poll outbox**（决策者待统一启动）；commit 仅本地。
+
+---
+
 ## 2026-05-31 ���ٵ��飨���ۣ���ȫ�ܸ�ȫ��Ч������ = ���̴߳��У�
 
 ���񣺱���ѵ������/������/������䣬ֻ����������ȥ���û��۲� GPU 40-50%��CPU ~60% û��������Ԥ������� smoke��δ���ܡ�
