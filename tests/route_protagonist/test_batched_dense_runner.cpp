@@ -22,7 +22,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
+#include <iostream>
 #include <random>
 #include <vector>
 
@@ -120,6 +122,7 @@ TEST(ProtagonistBatchedDenseRunnerTest, CpuBatchedMatchesPerAgentForward) {
         const std::size_t iface_dim = brains_b[0]->denseSlot().interface_dim;
         std::vector<float> w_hi(kBatchSize * kHiddenDim * iface_dim, 0.0f);
         std::vector<float> b_i(kBatchSize * iface_dim, 0.0f);
+        std::vector<float> h_addend(kBatchSize * kHiddenDim, 0.0f);
         std::vector<float> hidden_alphas(kBatchSize, 0.0f);
         std::vector<float> action_alphas(kBatchSize, 0.0f);
         std::vector<float> hidden_io(kBatchSize * kHiddenDim, 0.0f);
@@ -146,6 +149,10 @@ TEST(ProtagonistBatchedDenseRunnerTest, CpuBatchedMatchesPerAgentForward) {
                       w_hi.begin() + a * kHiddenDim * iface_dim);
             std::copy(slot.interface_bias.begin(), slot.interface_bias.end(),
                       b_i.begin() + a * iface_dim);
+            if (!slot.hidden_target_addend.empty()) {
+                std::copy(slot.hidden_target_addend.begin(), slot.hidden_target_addend.end(),
+                          h_addend.begin() + a * kHiddenDim);
+            }
             hidden_alphas[a] = slot.hidden_alpha;
             action_alphas[a] = slot.action_alpha;
             std::copy(slot.hidden_io.begin(), slot.hidden_io.end(),
@@ -157,6 +164,7 @@ TEST(ProtagonistBatchedDenseRunnerTest, CpuBatchedMatchesPerAgentForward) {
         neuro::routes::protagonist::BatchedDenseGpu::forwardCpu(
             kBatchSize, total_in_dim, kHiddenDim, kActionDim, iface_dim,
             in, w_ih, b_h, w_ha, b_a, w_hi, b_i,
+            h_addend,
             hidden_alphas, action_alphas,
             hidden_io, action_io, iface_out);
 
@@ -185,4 +193,127 @@ TEST(ProtagonistBatchedDenseRunnerTest, CpuBatchedMatchesPerAgentForward) {
                 << "agent " << i << " action[" << k << "]";
         }
     }
+}
+
+// Multi-tick determinism: run K ticks so working-memory accumulates and the
+// 0.15 addend becomes non-zero (tick 1 has wm.summary()==0, so the single-tick
+// test above never exercises the addend). For batched to be safe to enable in
+// the deterministic A/B eval, the batched path must stay BIT-EXACT to the
+// per-agent forward() across many ticks -- not merely within 1e-5, because the
+// 600-tick chaotic sim amplifies any ULP drift into divergent fitness.
+TEST(ProtagonistBatchedDenseRunnerTest, MultiTickBitExactVsPerAgentForward) {
+    std::vector<std::unique_ptr<ProtagonistBrain>> brains_a;
+    std::vector<std::unique_ptr<ProtagonistBrain>> brains_b;
+    brains_a.reserve(kBatchSize);
+    brains_b.reserve(kBatchSize);
+    for (std::size_t i = 0; i < kBatchSize; ++i) {
+        const auto seed = static_cast<std::uint32_t>(101 + i * 7);
+        brains_a.push_back(makeBrain(seed, /*batchable=*/false));
+        brains_b.push_back(makeBrain(seed, /*batchable=*/true));
+    }
+
+    const std::size_t total_in_dim = kInputDim + kMemoryCells * kReadHeads;
+    const std::size_t iface_dim = brains_b[0]->denseSlot().interface_dim;
+
+    constexpr std::size_t kTicks = 30;
+    double worst = 0.0;
+    std::size_t worst_tick = 0;
+    std::size_t first_div_tick = 0;
+    bool diverged = false;
+
+    for (std::size_t t = 0; t < kTicks; ++t) {
+        // Same input for both sets this tick; vary across ticks so working
+        // memory (and hence the 0.15 addend) evolves.
+        const auto inputs = randomInputs(/*seed=*/2026 + static_cast<std::uint32_t>(t), kBatchSize);
+
+        // Path A: per-agent forward()
+        std::vector<std::vector<float>> outputs_a(kBatchSize);
+        for (std::size_t i = 0; i < kBatchSize; ++i) {
+            const std::span<const float> in_view(inputs.data() + i * kInputDim, kInputDim);
+            const auto out = brains_a[i]->forward(in_view, kDt);
+            outputs_a[i].assign(out.begin(), out.end());
+        }
+
+        // Path B: prepareInputs -> batched forwardCpu -> finalizeOutputs
+        for (std::size_t i = 0; i < kBatchSize; ++i) {
+            const std::span<const float> in_view(inputs.data() + i * kInputDim, kInputDim);
+            brains_b[i]->prepareInputs(in_view, kDt);
+        }
+        {
+            std::vector<float> in(kBatchSize * total_in_dim, 0.0f);
+            std::vector<float> w_ih(kBatchSize * total_in_dim * kHiddenDim, 0.0f);
+            std::vector<float> b_h(kBatchSize * kHiddenDim, 0.0f);
+            std::vector<float> w_ha(kBatchSize * kHiddenDim * kActionDim, 0.0f);
+            std::vector<float> b_a(kBatchSize * kActionDim, 0.0f);
+            std::vector<float> w_hi(kBatchSize * kHiddenDim * iface_dim, 0.0f);
+            std::vector<float> b_i(kBatchSize * iface_dim, 0.0f);
+            std::vector<float> h_addend(kBatchSize * kHiddenDim, 0.0f);
+            std::vector<float> hidden_alphas(kBatchSize, 0.0f);
+            std::vector<float> action_alphas(kBatchSize, 0.0f);
+            std::vector<float> hidden_io(kBatchSize * kHiddenDim, 0.0f);
+            std::vector<float> action_io(kBatchSize * kActionDim, 0.0f);
+            std::vector<float> iface_out(kBatchSize * iface_dim, 0.0f);
+
+            for (std::size_t a = 0; a < kBatchSize; ++a) {
+                const auto slot = brains_b[a]->denseSlot();
+                std::copy(slot.full_input.begin(), slot.full_input.end(), in.begin() + a * total_in_dim);
+                std::copy(slot.input_hidden_weights.begin(), slot.input_hidden_weights.end(),
+                          w_ih.begin() + a * total_in_dim * kHiddenDim);
+                std::copy(slot.hidden_bias.begin(), slot.hidden_bias.end(), b_h.begin() + a * kHiddenDim);
+                std::copy(slot.hidden_action_weights.begin(), slot.hidden_action_weights.end(),
+                          w_ha.begin() + a * kHiddenDim * kActionDim);
+                std::copy(slot.action_bias.begin(), slot.action_bias.end(), b_a.begin() + a * kActionDim);
+                std::copy(slot.hidden_interface_weights.begin(), slot.hidden_interface_weights.end(),
+                          w_hi.begin() + a * kHiddenDim * iface_dim);
+                std::copy(slot.interface_bias.begin(), slot.interface_bias.end(), b_i.begin() + a * iface_dim);
+                if (!slot.hidden_target_addend.empty()) {
+                    std::copy(slot.hidden_target_addend.begin(), slot.hidden_target_addend.end(),
+                              h_addend.begin() + a * kHiddenDim);
+                }
+                hidden_alphas[a] = slot.hidden_alpha;
+                action_alphas[a] = slot.action_alpha;
+                // Seed batched IO with the brain's current (pre-step) dense state,
+                // exactly as the real runner does via the mutable spans.
+                std::copy(slot.hidden_io.begin(), slot.hidden_io.end(), hidden_io.begin() + a * kHiddenDim);
+                std::copy(slot.action_io.begin(), slot.action_io.end(), action_io.begin() + a * kActionDim);
+            }
+
+            neuro::routes::protagonist::BatchedDenseGpu::forwardCpu(
+                kBatchSize, total_in_dim, kHiddenDim, kActionDim, iface_dim,
+                in, w_ih, b_h, w_ha, b_a, w_hi, b_i,
+                h_addend, hidden_alphas, action_alphas,
+                hidden_io, action_io, iface_out);
+
+            for (std::size_t a = 0; a < kBatchSize; ++a) {
+                const auto slot = brains_b[a]->denseSlot();
+                std::copy(hidden_io.begin() + a * kHiddenDim, hidden_io.begin() + (a + 1) * kHiddenDim,
+                          slot.hidden_io.begin());
+                std::copy(action_io.begin() + a * kActionDim, action_io.begin() + (a + 1) * kActionDim,
+                          slot.action_io.begin());
+                std::copy(iface_out.begin() + a * iface_dim, iface_out.begin() + (a + 1) * iface_dim,
+                          slot.interface_out.begin());
+            }
+        }
+
+        for (std::size_t i = 0; i < kBatchSize; ++i) {
+            const auto out_span = brains_b[i]->finalizeOutputs(kDt);
+            ASSERT_EQ(out_span.size(), outputs_a[i].size());
+            for (std::size_t k = 0; k < out_span.size(); ++k) {
+                const double d = std::fabs(static_cast<double>(out_span[k]) -
+                                           static_cast<double>(outputs_a[i][k]));
+                if (d > worst) { worst = d; worst_tick = t; }
+                if (d != 0.0 && !diverged) { diverged = true; first_div_tick = t; }
+            }
+        }
+    }
+
+    std::cerr << "[MultiTick] worst abs diff = " << worst
+              << " at tick " << worst_tick
+              << "; first non-zero diff at tick "
+              << (diverged ? static_cast<long long>(first_div_tick) : -1LL)
+              << " over " << kTicks << " ticks\n";
+
+    // Hard gate: batched must be bit-exact to per-agent forward over many ticks.
+    EXPECT_EQ(worst, 0.0) << "batched path is NOT bit-exact to per-agent forward; "
+                          << "worst abs diff " << worst << " at tick " << worst_tick;
 }

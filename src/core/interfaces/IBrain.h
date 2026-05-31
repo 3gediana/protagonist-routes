@@ -52,6 +52,14 @@ struct BatchedDenseSlot {
     std::span<const float> hidden_interface_weights;
     std::span<const float> interface_bias;
 
+    // Optional post-activation addend applied to each hidden unit's target
+    // BEFORE the leaky integration step, i.e. target = tanh(z_h) + addend[h].
+    // This mirrors the CPU full-path forward(), which injects
+    // 0.15 * working_memory.summary()[h % 8] into motor_target. The batched
+    // dense math must apply the same term so it is bit-identical to the
+    // per-agent CPU forward(). If empty, no addend is applied (zero term).
+    std::span<const float> hidden_target_addend;
+
     std::span<float> hidden_io;
     std::span<float> action_io;
     std::span<float> interface_out;

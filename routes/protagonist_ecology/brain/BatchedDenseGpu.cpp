@@ -28,6 +28,7 @@ bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
                                 const float* action_bias,
                                 const float* weights_hidden_interface,
                                 const float* interface_bias,
+                                const float* hidden_addend,
                                 const float* hidden_alphas,
                                 const float* action_alphas,
                                 float* hidden_io,
@@ -98,6 +99,7 @@ bool BatchedDenseGpu::forward(std::size_t batch_size,
                               std::span<const float> action_bias,
                               std::span<const float> weights_hidden_interface,
                               std::span<const float> interface_bias,
+                              std::span<const float> hidden_addend,
                               std::span<const float> hidden_alphas,
                               std::span<const float> action_alphas,
                               std::span<float> hidden_io,
@@ -118,6 +120,7 @@ bool BatchedDenseGpu::forward(std::size_t batch_size,
                                       action_bias.data(),
                                       weights_hidden_interface.data(),
                                       interface_bias.data(),
+                                      hidden_addend.empty() ? nullptr : hidden_addend.data(),
                                       hidden_alphas.data(),
                                       action_alphas.data(),
                                       hidden_io.data(),
@@ -128,6 +131,7 @@ bool BatchedDenseGpu::forward(std::size_t batch_size,
     (void)inputs; (void)weights_in_hidden; (void)hidden_bias;
     (void)weights_hidden_action; (void)action_bias;
     (void)weights_hidden_interface; (void)interface_bias;
+    (void)hidden_addend;
     (void)hidden_alphas; (void)action_alphas;
     (void)hidden_io; (void)outputs_io; (void)interface_out;
     return false;
@@ -146,11 +150,13 @@ void BatchedDenseGpu::forwardCpu(std::size_t batch_size,
                                  std::span<const float> action_bias,
                                  std::span<const float> weights_hidden_interface,
                                  std::span<const float> interface_bias,
+                                 std::span<const float> hidden_addend,
                                  std::span<const float> hidden_alphas,
                                  std::span<const float> action_alphas,
                                  std::span<float> hidden_io,
                                  std::span<float> outputs_io,
                                  std::span<float> interface_out) {
+    const bool has_addend = !hidden_addend.empty();
     for (std::size_t a = 0; a < batch_size; ++a) {
         const float* inp = inputs.data() + a * input_dim;
         const float* w_ih = weights_in_hidden.data() + a * input_dim * hidden_dim;
@@ -162,6 +168,7 @@ void BatchedDenseGpu::forwardCpu(std::size_t batch_size,
         float* hid = hidden_io.data() + a * hidden_dim;
         float* out = outputs_io.data() + a * action_dim;
         float* iface = interface_out.data() + a * interface_dim;
+        const float* addend = has_addend ? hidden_addend.data() + a * hidden_dim : nullptr;
         const float h_alpha = hidden_alphas[a];
         const float a_alpha = action_alphas[a];
 
@@ -170,7 +177,10 @@ void BatchedDenseGpu::forwardCpu(std::size_t batch_size,
             for (std::size_t i = 0; i < input_dim; ++i) {
                 sum += inp[i] * w_ih[i * hidden_dim + h];
             }
-            const float target = activate(sum);
+            float target = activate(sum);
+            if (addend != nullptr) {
+                target += addend[h];
+            }
             hid[h] += h_alpha * (target - hid[h]);
         }
 

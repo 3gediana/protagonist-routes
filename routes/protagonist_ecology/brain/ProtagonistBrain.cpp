@@ -399,6 +399,16 @@ void ProtagonistBrain::prepareInputs(std::span<const float> external_inputs, flo
     addWrapped(std::span<float>(pending_full_input_).subspan(external_input_dim_),
                working_memory_.summary(),
                0.20f);
+
+    // Match the CPU full-path forward(): the working-memory summary is injected
+    // into motor_target (post-trunk, pre-integration) with scale 0.15. The
+    // batched dense runner applies this as a per-hidden addend. Read the summary
+    // here (pre-observe, exactly as forward() does) so the addend is computed
+    // from the same state the serial path uses.
+    pending_hidden_addend_.assign(hidden_dim_, 0.0f);
+    addWrapped(std::span<float>(pending_hidden_addend_),
+               working_memory_.summary(),
+               0.15f);
 }
 
 // Phase 2 hand-off: runner reads inputs / weights / biases, writes hidden /
@@ -414,6 +424,7 @@ BatchedDenseSlot ProtagonistBrain::denseSlot() {
     slot.action_alpha = pending_action_alpha_;
 
     slot.full_input = std::span<const float>(pending_full_input_);
+    slot.hidden_target_addend = std::span<const float>(pending_hidden_addend_);
 
     slot.input_hidden_weights = std::span<const float>(in_hidden_weights_);
     slot.hidden_bias = std::span<const float>(hidden_bias_);

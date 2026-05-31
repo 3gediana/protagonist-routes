@@ -61,6 +61,7 @@ private:
     std::vector<float> buf_bias_a_;
     std::vector<float> buf_weights_hi_;
     std::vector<float> buf_bias_i_;
+    std::vector<float> buf_hidden_addend_;
     std::vector<float> buf_hidden_alphas_;
     std::vector<float> buf_action_alphas_;
     std::vector<float> buf_hidden_io_;

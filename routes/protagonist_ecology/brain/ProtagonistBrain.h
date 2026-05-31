@@ -115,6 +115,7 @@ private:
 
     // Batched-forward state (set by prepareInputs(), consumed by finalizeOutputs())
     std::vector<float> pending_full_input_;
+    std::vector<float> pending_hidden_addend_;
     float pending_hidden_alpha_{0.0f};
     float pending_action_alpha_{0.0f};
     bool batchable_enabled_{false};

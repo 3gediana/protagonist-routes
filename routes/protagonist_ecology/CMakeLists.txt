@@ -179,3 +179,14 @@ target_link_libraries(neural-eco-protagonist PRIVATE neural_eco::route_protagoni
 set_target_properties(neural-eco-protagonist PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+
+# Separate executable for batched-dense determinism validation. Identical code
+# to neural-eco-protagonist (the batched path is runtime flag-gated and default
+# OFF), but built under a distinct name so the locked production binary is never
+# clobbered while validating bit-identity of the batched forward.
+add_executable(neural-eco-protagonist-batched main.cpp)
+target_link_libraries(neural-eco-protagonist-batched PRIVATE neural_eco::route_protagonist)
+
+set_target_properties(neural-eco-protagonist-batched PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)

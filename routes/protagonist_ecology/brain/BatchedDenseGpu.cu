@@ -14,6 +14,7 @@ __device__ float activateValue(float x) {
 __global__ void batchedHiddenKernel(const float* __restrict__ inputs,
                                     const float* __restrict__ weights,
                                     const float* __restrict__ biases,
+                                    const float* __restrict__ addend,
                                     float* __restrict__ hidden_io,
                                     const float* __restrict__ alphas,
                                     int input_dim,
@@ -31,7 +32,10 @@ __global__ void batchedHiddenKernel(const float* __restrict__ inputs,
     for (int i = 0; i < input_dim; ++i) {
         sum += inputs[input_off + i] * weights[weight_off + i * hidden_dim + h];
     }
-    const float target = activateValue(sum);
+    float target = activateValue(sum);
+    if (addend != nullptr) {
+        target += addend[hidden_off + h];
+    }
     const float alpha = alphas[a];
     const int idx = hidden_off + h;
     hidden_io[idx] += alpha * (target - hidden_io[idx]);
@@ -122,6 +126,7 @@ struct BatchedDenseGpuCudaHandle {
     float* d_bias_a{nullptr};                 std::size_t cap_bias_a{0};
     float* d_weights_hi{nullptr};             std::size_t cap_weights_hi{0};
     float* d_bias_i{nullptr};                 std::size_t cap_bias_i{0};
+    float* d_hidden_addend{nullptr};          std::size_t cap_hidden_addend{0};
     float* d_hidden{nullptr};                 std::size_t cap_hidden{0};
     float* d_outputs{nullptr};                std::size_t cap_outputs{0};
     float* d_interface{nullptr};              std::size_t cap_interface{0};
@@ -158,6 +163,7 @@ extern "C" void batchedDenseGpuCudaDestroy(BatchedDenseGpuCudaHandle* handle) {
     freeBuffer(handle->d_bias_a, handle->cap_bias_a);
     freeBuffer(handle->d_weights_hi, handle->cap_weights_hi);
     freeBuffer(handle->d_bias_i, handle->cap_bias_i);
+    freeBuffer(handle->d_hidden_addend, handle->cap_hidden_addend);
     freeBuffer(handle->d_hidden, handle->cap_hidden);
     freeBuffer(handle->d_outputs, handle->cap_outputs);
     freeBuffer(handle->d_interface, handle->cap_interface);
@@ -179,6 +185,7 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
                                            const float* action_bias,
                                            const float* weights_hidden_interface,
                                            const float* interface_bias,
+                                           const float* hidden_addend,
                                            const float* hidden_alphas,
                                            const float* action_alphas,
                                            float* hidden_io,
@@ -205,6 +212,7 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
         || !ensureBuffer(handle->d_weights_hi, handle->cap_weights_hi, n_weights_hi)
         || !ensureBuffer(handle->d_bias_i, handle->cap_bias_i, n_bias_i)
         || !ensureBuffer(handle->d_hidden, handle->cap_hidden, n_hidden)
+        || (hidden_addend != nullptr && !ensureBuffer(handle->d_hidden_addend, handle->cap_hidden_addend, n_bias_h))
         || !ensureBuffer(handle->d_outputs, handle->cap_outputs, n_outputs)
         || !ensureBuffer(handle->d_interface, handle->cap_interface, n_interface)
         || !ensureBuffer(handle->d_hidden_alphas, handle->cap_hidden_alphas, batch_size)
@@ -229,6 +237,7 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
         || !upload(handle->d_weights_hi, weights_hidden_interface, n_weights_hi)
         || !upload(handle->d_bias_i, interface_bias, n_bias_i)
         || !upload(handle->d_hidden, hidden_io, n_hidden)
+        || (hidden_addend != nullptr && !upload(handle->d_hidden_addend, hidden_addend, n_bias_h))
         || !upload(handle->d_outputs, outputs_io, n_outputs)
         || !upload(handle->d_hidden_alphas, hidden_alphas, batch_size)
         || !upload(handle->d_action_alphas, action_alphas, batch_size)) {
@@ -247,6 +256,7 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
     batchedHiddenKernel<<<hidden_grid, block_size, 0, handle->stream>>>(handle->d_inputs,
                                                                          handle->d_weights_ih,
                                                                          handle->d_bias_h,
+                                                                         (hidden_addend != nullptr ? handle->d_hidden_addend : nullptr),
                                                                          handle->d_hidden,
                                                                          handle->d_hidden_alphas,
                                                                          static_cast<int>(input_dim),

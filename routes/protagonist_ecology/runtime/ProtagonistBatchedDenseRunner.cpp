@@ -91,6 +91,7 @@ void ProtagonistBatchedDenseRunner::operator()(IWorld& world,
     buf_bias_a_.assign(batch * a_dim, 0.0f);
     buf_weights_hi_.assign(batch * h_dim * i_dim, 0.0f);
     buf_bias_i_.assign(batch * i_dim, 0.0f);
+    buf_hidden_addend_.assign(batch * h_dim, 0.0f);
     buf_hidden_alphas_.assign(batch, 0.0f);
     buf_action_alphas_.assign(batch, 0.0f);
     buf_hidden_io_.assign(batch * h_dim, 0.0f);
@@ -115,6 +116,12 @@ void ProtagonistBatchedDenseRunner::operator()(IWorld& world,
                   buf_weights_hi_.begin() + a * h_dim * i_dim);
         std::copy(slot.interface_bias.begin(), slot.interface_bias.end(),
                   buf_bias_i_.begin() + a * i_dim);
+        // Working-memory injection addend (size h_dim per agent). Empty span
+        // means the brain wants no addend; we leave the zero-filled buffer.
+        if (!slot.hidden_target_addend.empty()) {
+            std::copy(slot.hidden_target_addend.begin(), slot.hidden_target_addend.end(),
+                      buf_hidden_addend_.begin() + a * h_dim);
+        }
         buf_hidden_alphas_[a] = slot.hidden_alpha;
         buf_action_alphas_[a] = slot.action_alpha;
         // hidden_io / action_io are IO; load current state.
@@ -132,6 +139,7 @@ void ProtagonistBatchedDenseRunner::operator()(IWorld& world,
                               buf_inputs_, buf_weights_ih_, buf_bias_h_,
                               buf_weights_ha_, buf_bias_a_,
                               buf_weights_hi_, buf_bias_i_,
+                              buf_hidden_addend_,
                               buf_hidden_alphas_, buf_action_alphas_,
                               buf_hidden_io_, buf_action_io_, buf_interface_out_);
     }
@@ -140,6 +148,7 @@ void ProtagonistBatchedDenseRunner::operator()(IWorld& world,
                                     buf_inputs_, buf_weights_ih_, buf_bias_h_,
                                     buf_weights_ha_, buf_bias_a_,
                                     buf_weights_hi_, buf_bias_i_,
+                                    buf_hidden_addend_,
                                     buf_hidden_alphas_, buf_action_alphas_,
                                     buf_hidden_io_, buf_action_io_, buf_interface_out_);
     }
