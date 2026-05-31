@@ -1,4 +1,4 @@
-# D-102 状态与计划（DAgger + 精致 oracle 攻克"定居/过夜"）
+﻿# D-102 状态与计划（DAgger + 精致 oracle 攻克"定居/过夜"）
 
 > 更新：2026-05-30 ~23:00 UTC (D-108 C′ 夜宿诊断 + r7 夜宿纠错 + bc_v9 — Stage2 验收门达成)
 > 主线：用"机器人带原始人"（DAgger 纠错 + 精致机器人决策树）解决 D-101 留下的墙——
@@ -97,3 +97,18 @@
 - 模型：`runs/bc_v2.pt … bc_v5.pt`（+ *_backup.pt）
 - eval 指标 jsonl：`runs/dagger_d102/bc_v*_sto_*.jsonl`
 - 训练/eval 二进制：`build/bin/deep_protagonist_train.exe`（用 `cmd /c build_d100.bat` 重编）
+
+
+## D-112 — Stage3 Level-2a 火（取暖/营地）BC 验收 = NO-GO；火"用法"交 S4 PPO
+- ①做啥：实现火世界机制（FireSystem：取火/搭火/续柴/半径取暖挂进 VitalSystem::tick()，动作 index17 不破坏旧 demo 血脉）+ 草裙配方 3 草→1 草 bugfix；加只读死因埋点；oracle 火层；冷 seed 聚焦增量 DAgger（2200110–2200139，30 seed，绝不碰评测 bank）→ 训 bc_v11（火-营地）。
+- ②参数：fire warm_radius=6/merge_radius=3/max=8；bc_v11=bc_v9 349 + 15 火文件，8ep/b16/bptt64/lr3e-4，loss 单调 0.96→0.37。
+- ③学到：死因埋点推翻"冻死"前提——bc_v9 死亡 **93% 饿/渴死、仅 7% 冻死**；瓶颈 2100000 = 整夜不进屋(nShel0.0) 被"夜间无遮蔽 3× 饿渴惩罚"饿死。火只暖体温、不算遮蔽，治不了这 93%。
+- ④坑（关键）：把"夜里搭火留守"教给 BC 会与已赢的"夜里进屋"**在同一决策点互斥**，BC 无法像 oracle 脚本紧条件化 → bc_v11 全线塌方：nShel 0.95→0.15、训练 bank 90%→10%、冷死爆炸 0→20~52/seed（火取暖 45/min 远不如房子，agent 赖火边冻死）。同口径 A/B 排除假退步（bc_v9 复测仍 90%/0冻死）。
+- ⑤裁定：decision_round_13 采 **Path A**——火世界机制保留（14/14 单测、sim/机械层无悔、可复用 S4），**火"用法行为"BC 不可行 → defer S4 PPO**（oracle-only 退出判据）；BC 主线回夜宿进屋残差。bc_v11.pt 仅留诊断，冠军仍 bc_v9。
+
+## D-113 (EOD 收尾) — 夜宿主线 bc_v12 验收 = NO-GO（火标签污染），冠军保持 bc_v9
+- ①做啥：Path A 夜宿聚焦增量——60 全新 seed(2300100–2300159) 用 bc_v9 跑夜宿 DAgger、选 5 残差文件、基 bc_v9 训 bc_v12(349+5)，过多轴门。
+- ②参数：选择器 nShel<0.6 & builds & attack==0 → 命中 5/60（8% 命中证明 bc_v9 夜宿已 ~90% 泛化）；bc_v12 8ep/b16/bptt64/lr3e-4，loss 单调 1.07→0.41。
+- ③学到：**夜宿残差杠杆是真的**——瓶颈 seed 2100000 **40→100**、2200102 50→60，证明针对性夜宿纠错能修残差，方向对。
+- ④坑（坐实根因）：bc_v12 多轴 eval 中位 **60%** vs bc_v9 90% → NO-GO。退步因 5 个 night demo 是在 oracle 火层开启的 build 下采的，夜困态吐了 **107 个 action17(tend_fire) 标签**（解析 bin 实测 83+6+6+6+6），选择器没筛 fire==0 → bc_v12 又学了火-营地 → 冷死在已赢 seed 复现(700000 cold0→25、1100000 0→36、fire-token14~35)。同病 bc_v11。**教训：Path A 的 night DAgger 必须 fire-free（关 oracle 火层 或 选择器加 fire==0）**。
+- ⑤EOD：bc_v12 不采用、不覆盖 bc_v9。清理 runs 22.16→10.61GB(-11.54)。写 inbox/round_14（自归档）。本地 commit 未 push，未开新轮。下次=纠正版 fire-free 夜宿 DAgger 重做（预期复现 2100000 40→100 而无冷死副作用）。
