@@ -34,9 +34,14 @@ namespace dp::policy {
 struct ActorCriticImpl : torch::nn::Module {
     static constexpr int OBS_DIM   = dp::agent::ObservationBuilder::SIZE;
     static constexpr int CONT_DIM  = dp::agent::ACTION_CONTINUOUS_DIM;
-    static constexpr int DISC_DIM  = dp::agent::ACTION_DISCRETE_DIM;   // 16 trigger ids
-    static constexpr int DISC_CATS = DISC_DIM + 1;                     // 17 = 16 + NOOP
-    static constexpr int NOOP_IDX  = DISC_DIM;                         // 16
+    static constexpr int DISC_DIM  = dp::agent::ACTION_DISCRETE_DIM;   // 16 legacy trigger ids (0..15)
+    static constexpr int NOOP_IDX  = DISC_DIM;                         // 16 (unchanged; recorded demos store this)
+    // D-112 fire (decision_round_10): tend_fire is a NEW categorical class
+    // appended AFTER NOOP, so ids 0..16 keep their meaning (incl. old demos'
+    // NOOP=16) and previously recorded .bin demos stay valid without remap.
+    // NOOP is therefore no longer the last index.
+    static constexpr int TEND_FIRE_IDX = NOOP_IDX + 1;                 // 17
+    static constexpr int DISC_CATS     = TEND_FIRE_IDX + 1;            // 18 = 16 triggers + NOOP + tend_fire
     static constexpr int HIDDEN    = 256;   // D-086 revert: D-085 6.9M capacity expansion proved 0 houses + worse score. Back to shadow baseline (~545K). Real bottleneck is build-chain credit assignment, not capacity.
 
     torch::nn::Linear   encoder{nullptr};

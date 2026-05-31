@@ -53,8 +53,15 @@ bool Inventory::craft_spear() {
 }
 
 bool Inventory::craft_grass_dress() {
-    if (num_of(ItemKind::Grass) < 3) return false;
-    for (int i = 0; i < 3; ++i) remove_one(ItemKind::Grass);
+    // D-112 bugfix (decision_round_10): a grass dress costs 1 grass, not 3.
+    // CAPACITY==3 and Environment.cpp:253 pre-places 1 grass at spawn "so first
+    // craft_grass_dress works step 0" -- a 3-grass cost made that intent
+    // logically impossible (the agent can never free all 3 slots for grass
+    // while it also carries wood/stone), so clothing was never craftable. The
+    // dress resist is only 0.10, so this cannot game the survival metric; it
+    // restores the documented step-0 craftability.
+    if (num_of(ItemKind::Grass) < 1) return false;
+    remove_one(ItemKind::Grass);
     add(ItemKind::GrassDress);
     return true;
 }

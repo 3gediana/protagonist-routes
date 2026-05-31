@@ -174,7 +174,8 @@ dp::agent::AgentAction PPO::sample_action(
         case 13: a.plant_seed           = true; break;
         case 14: a.water_plot           = true; break;
         case 15: a.feed_tame            = true; break;
-        default: /* NOOP */ break;
+        case 17: a.tend_fire            = true; break;  // D-112 fire (TEND_FIRE_IDX)
+        default: /* NOOP (16) */ break;
     }
     return a;
 }
@@ -270,7 +271,8 @@ void PPO::sample_actions_batch(
             case 13: a.plant_seed           = true; break;
             case 14: a.water_plot           = true; break;
             case 15: a.feed_tame            = true; break;
-            default: /* NOOP */ break;
+            case 17: a.tend_fire            = true; break;  // D-112 fire (TEND_FIRE_IDX)
+            default: /* NOOP (16) */ break;
         }
     }
 }

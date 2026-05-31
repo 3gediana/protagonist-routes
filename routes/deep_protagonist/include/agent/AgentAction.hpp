@@ -58,10 +58,21 @@ struct AgentAction {
     bool plant_seed = false;  // N: plant seed at feet (Late only)
     bool water_plot = false;  // J: water nearest plot (Late only)
     bool feed_tame  = false;  // K: feed nearest animal to build trust (Late only)
+
+    // ---- D-112 Stage3 Level-2 fire (1) -----------------------------------
+    // Campfire: build a new fire at feet OR refuel the nearest one. Costs
+    // 1 Wood; a lit fire warms the agent within radius and burns down over
+    // time (see world/FireSystem). Mapped to categorical index 17 (AFTER
+    // NOOP=16) so existing recorded demos keep their meaning.
+    bool tend_fire  = false;  // G: build/refuel a campfire at feet
 };
 
 // Total channel count for sizing PPO action heads.
-//   3 continuous + 16 discrete triggers = 19 channels.
+//   3 continuous + 16 legacy discrete triggers (ids 0..15) + NOOP (16).
+// D-112: tend_fire is appended as categorical id 17, AFTER NOOP, so it is
+// NOT part of ACTION_DISCRETE_DIM (which stays 16 to keep NOOP_IDX==16 and
+// all previously recorded demo indices valid). The categorical class count
+// (DISC_CATS) is widened to 18 in policy/PPO.hpp.
 constexpr int ACTION_CONTINUOUS_DIM = 3;
 constexpr int ACTION_DISCRETE_DIM   = 16;
 

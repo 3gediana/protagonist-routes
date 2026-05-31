@@ -16,6 +16,8 @@ struct VitalState {
     float temperature = 50.0f;   // 50 = comfortable; <30 cold; >70 overheating
     bool  alive       = true;
     int   deaths      = 0;
+    int   deaths_cold = 0;   // D-112 diag (read-only): deaths via temperature extreme
+    int   deaths_food = 0;   // D-112 diag (read-only): deaths via hunger/thirst == 0
 };
 
 struct VitalConfig {
@@ -73,13 +75,21 @@ public:
     // `cold_resist` (default 0.0) scales cold drain: 0 = full drain,
     // 1 = no drain at all. Hooks Wardrobe's clothing effect into the
     // existing temperature model.
+    // `warmth` (default 0.0, D-112) is an ACTIVE heat-source rate in
+    // temperature-points-per-MINUTE supplied by a nearby lit campfire
+    // (world::FireSystem::warm_rate_at). When >0 the body temperature is
+    // pulled up toward a warm target inside this same tick, BEFORE the death
+    // check, so standing by a fire genuinely prevents freezing rather than
+    // being a post-hoc correction. Parallel to cold_resist, but additive
+    // (a source) rather than multiplicative (a damper).
     void tick(VitalState& s,
               const dp::world::World& world,
               float wx, float wy,
               float agent_speed,
               const dp::world::Daylight& day,
               float dt,
-              float cold_resist = 0.0f) const;
+              float cold_resist = 0.0f,
+              float warmth      = 0.0f) const;
 
     // Consumption events. Both return the *actual* amount of vital
     // restored (0 when the meter was already full); callers pass that

@@ -24,7 +24,8 @@ void VitalSystem::tick(VitalState& s,
                        float agent_speed,
                        const dp::world::Daylight& day,
                        float dt,
-                       float cold_resist) const {
+                       float cold_resist,
+                       float warmth) const {
     if (!s.alive) return;
 
     const float dt_min = dt / 60.0f;
@@ -74,6 +75,18 @@ void VitalSystem::tick(VitalState& s,
                                     cfg_.temp_neutral_recover * dt_min);
     }
 
+    // D-112: active heat source (a nearby lit campfire) pulls body
+    // temperature up toward a warm target, regardless of biome / night, and
+    // is applied in THIS tick before the death check so a fuelled fire keeps
+    // the agent alive instead of correcting one tick too late. Causal: the
+    // Environment only passes warmth>0 while the agent is within a lit
+    // fire's radius (fuel burns down -> warmth disappears). Capped below 100
+    // so a fire can never cause an overheating death.
+    if (warmth > 0.0f) {
+        constexpr float kWarmTarget = 60.0f;  // cozy, well clear of 100 burn
+        s.temperature = move_toward(s.temperature, kWarmTarget, warmth * dt_min);
+    }
+
     s.hunger      = clamp01_100(s.hunger);
     s.thirst      = clamp01_100(s.thirst);
     s.stamina     = clamp01_100(s.stamina);
@@ -85,6 +98,8 @@ void VitalSystem::tick(VitalState& s,
     if (starve_or_thirst || freeze_or_burn) {
         s.alive = false;
         s.deaths += 1;
+        if (freeze_or_burn) s.deaths_cold += 1;   // D-112 diag (read-only)
+        else                s.deaths_food += 1;
     }
 }
 

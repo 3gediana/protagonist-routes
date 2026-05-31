@@ -206,6 +206,7 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
                         reward_, animals_, inventory_, shelter_,
                         buildings_);
         wardrobe_.clear();
+        fires_.clear();     // D-112: campfires are per-life, like buildings.
         farming_.clear();
         tame_.clear();
     }
@@ -384,7 +385,8 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
      || action.craft_grass_dress || action.craft_fur_cloak
      || action.wear_clothes || action.place_blueprint
      || action.cycle_building_type || action.deposit_to_site
-     || action.plant_seed || action.water_plot || action.feed_tame) {
+     || action.plant_seed || action.water_plot || action.feed_tame
+     || action.tend_fire) {
         reward_.event_action_cost(cfg_.trigger_cost);
     }
 
@@ -459,10 +461,15 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     plants_.tick(dt);
     resources_.tick(dt);
     farming_.tick(dt, &buildings_);  // D-091: pass buildings so plots near home grow faster.
+    fires_.tick(dt);                 // D-112: burn campfire fuel down, extinguish at 0.
+
+    // D-112: a lit campfire within radius warms the agent (heat-source term),
+    // passed into VitalSystem::tick alongside the Wardrobe cold-resist damper.
+    float fire_warmth = fires_.warm_rate_at(as.pos_x, as.pos_y);
 
     float speed = std::sqrt(as.vel_x * as.vel_x + as.vel_y * as.vel_y);
     vitals_.tick(vital_state_, world_, as.pos_x, as.pos_y, speed, day_,
-                 dt, wardrobe_.cold_resist());
+                 dt, wardrobe_.cold_resist(), fire_warmth);
     if (sheltered) {
         vital_state_.temperature += (50.0f - vital_state_.temperature)
                                   * 0.3f * dt;
@@ -504,6 +511,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 if (vital_state_.alive) {
                     vital_state_.alive = false;
                     vital_state_.deaths += 1;
+                    vital_state_.deaths_food += 1;  // D-112 diag: night-unsheltered hunger/thirst
                 }
             }
         } else if (in_building && vital_state_.alive && !cfg_.demo_no_regen) {
@@ -701,6 +709,22 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         int t = static_cast<int>(selected_building_);
         t = (t + 1) % 4;
         selected_building_ = static_cast<dp::world::BuildingType>(t);
+    }
+
+    // G -> tend_fire (D-112 Stage3 Level-2): build a campfire at the agent's
+    // feet, or refuel the nearest existing one. Costs exactly 1 Wood, and
+    // ONLY when the fire system actually accepted it (new fire, or a fire
+    // that still had fuel headroom) so a full / capped fire wastes nothing.
+    // Deliberately NO reward event (decision_round_10 Goodhart redline): the
+    // only payoff is the temperature recovery the agent banks by staying near
+    // a fire it chose to build. The behaviour is taught via oracle demo +
+    // DAgger, not a carrot.
+    if (action.tend_fire) {
+        if (inventory_.num_of(dp::agent::ItemKind::Wood) >= 1) {
+            if (fires_.tend(as.pos_x, as.pos_y)) {
+                inventory_.remove_one(dp::agent::ItemKind::Wood);
+            }
+        }
     }
 
     // Promote any sites that just got their last material this tick.

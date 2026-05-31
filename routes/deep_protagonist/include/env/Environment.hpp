@@ -17,6 +17,7 @@
 #include "world/Daylight.hpp"
 #include "world/Decorations.hpp"
 #include "world/FarmingSystem.hpp"
+#include "world/FireSystem.hpp"
 #include "world/Physics.hpp"
 #include "world/PlantSystem.hpp"
 #include "world/ResourceSystem.hpp"
@@ -218,6 +219,7 @@ private:
     dp::agent::Shelter              shelter_;
     dp::agent::Wardrobe             wardrobe_;
     dp::world::BuildingSystem       buildings_;
+    dp::world::FireSystem           fires_;        // D-112 Stage3 L2 campfires
     dp::world::FarmingSystem        farming_;
     dp::agent::TameSystem           tame_;
     dp::agent::ProgressTracker      progress_;

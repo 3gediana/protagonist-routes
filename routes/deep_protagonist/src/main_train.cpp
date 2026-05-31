@@ -60,6 +60,7 @@ inline int action_to_disc_idx(const dp::agent::AgentAction& a) {
     if (a.plant_seed)           return 13;
     if (a.water_plot)           return 14;
     if (a.feed_tame)            return 15;
+    if (a.tend_fire)            return dp::policy::ActorCriticImpl::TEND_FIRE_IDX;  // 17 (D-112 fire)
     return dp::policy::ActorCriticImpl::NOOP_IDX;  // 16
 }
 
@@ -117,8 +118,10 @@ dp::world::World::Config load_world_config(const std::string& path) {
 //   7:craft_grass_dress 8:craft_fur_cloak 9:wear_clothes
 //   10:place_blueprint 11:cycle_building_type 12:deposit_to_site
 //   13:plant_seed 14:water_plot 15:feed_tame
+//   16:NOOP (not tracked here)  17:tend_fire (D-112 fire token)
 struct ActionStats {
-    int disc_count[16] = {0};
+    static constexpr int N = 18;   // 16 triggers + NOOP slot (16) + tend_fire (17)
+    int disc_count[N] = {0};
     double move_mag_sum = 0.0;
     double yaw_abs_sum  = 0.0;
     int    ticks        = 0;
@@ -140,13 +143,14 @@ struct ActionStats {
         disc_count[13] += a.plant_seed          ? 1 : 0;
         disc_count[14] += a.water_plot          ? 1 : 0;
         disc_count[15] += a.feed_tame           ? 1 : 0;
+        disc_count[17] += a.tend_fire           ? 1 : 0;  // D-112 fire token
         move_mag_sum += std::sqrt(a.move_x * a.move_x + a.move_y * a.move_y);
         yaw_abs_sum  += std::fabs(a.yaw_rate);
         ++ticks;
     }
 
     void reset() {
-        for (int i = 0; i < 16; ++i) disc_count[i] = 0;
+        for (int i = 0; i < N; ++i) disc_count[i] = 0;
         move_mag_sum = 0.0;
         yaw_abs_sum  = 0.0;
         ticks        = 0;
@@ -428,6 +432,13 @@ struct ScriptedSettler {
     int   deposit_cooldown = 0;
     int   craft_cooldown   = 0;
     int   wear_cooldown    = 0;
+    // D-112 fire: the oracle has no fire channel in obs, so it tracks its own
+    // estimate of remaining campfire fuel (in ticks) to decide when to
+    // (re)light. Approximates FireSystem fuel_per_wood (90s) at the 30Hz
+    // headless dt. fire_cooldown debounces the tend_fire trigger.
+    static constexpr int FIRE_FUEL_TICKS = 2700;   // ~90s at 30Hz
+    int   fire_timer       = 0;
+    int   fire_cooldown    = 0;
 
     // ---- obs indices (match include/agent/Observation.hpp layout) ----
     static constexpr int OBS_HUNGER       = 0;
@@ -534,6 +545,8 @@ struct ScriptedSettler {
         if (deposit_cooldown > 0) --deposit_cooldown;
         if (craft_cooldown   > 0) --craft_cooldown;
         if (wear_cooldown    > 0) --wear_cooldown;
+        if (fire_cooldown    > 0) --fire_cooldown;
+        if (fire_timer       > 0) --fire_timer;   // D-112: burn down fuel estimate
         dp::agent::AgentAction a;
 
         // ---------- Layer 0: context ----------
@@ -626,10 +639,31 @@ struct ScriptedSettler {
                 return a;
             }
         }
-        // 1c) freezing AND home in reach -> sprint home (drop water/food goals)
-        if (temp_v < TEMP_CRIT && have_home_anchor && home_d_m < 40.0f) {
-            steer_(a, home_dx, home_dy);
-            return a;
+        // 1c) FREEZING (D-112 fire rescue). A campfire is instant warmth THIS
+        // tick -- VitalSystem applies the heat source before the death check --
+        // whereas a sprint home keeps draining temperature for every metre en
+        // route, which is exactly how the residual freeze deaths happen (agent
+        // caught out at night, walks home, dies on the way). So when truly
+        // cold: if we have wood and home is not already at our feet, build a
+        // fire and hug it; survival beats construction, so this ignores the
+        // build-protection gate. Only sprint home when it is essentially
+        // adjacent. With no wood, fall back to the old best-effort sprint home.
+        if (temp_v < TEMP_CRIT) {
+            const bool home_adjacent = have_home_anchor && home_d_m < 8.0f;
+            if (have_wood && !home_adjacent) {
+                if (fire_cooldown == 0) {
+                    a.tend_fire   = true;
+                    fire_cooldown = 6;
+                    fire_timer    = FIRE_FUEL_TICKS;
+                    return a;
+                }
+                a.move_x = 0.0f; a.move_y = 0.0f;  // stand in radius, absorb warmth
+                return a;
+            }
+            if (have_home_anchor && home_d_m < 40.0f) {
+                steer_(a, home_dx, home_dy);
+                return a;
+            }
         }
         // 1d) very thirsty + night + water far -> stay/return home, hold the loss
         if (thirst < TH_CRIT_LOW && is_night && have_home_anchor && !at_home) {
@@ -662,6 +696,43 @@ struct ScriptedSettler {
             steer_(a, -wolf_dx, -wolf_dy);
             return a;
         }
+        // 2a') NIGHT FIRE CAMP (D-112). If night is here or imminent and home
+        // is too far to reach before freezing (or we have none), don't make a
+        // doomed dash home -- make camp by a fire instead. This is the
+        // dominant residual freeze-death mode: the agent strays far foraging
+        // and gets caught out in the dark with home out of reach. With wood we
+        // keep a fire lit and hug it through the night; without wood at dusk we
+        // grab the nearest wood now so we can light one. Home, when reachable,
+        // is still preferred and handled by 2b/2c below for the near-home case,
+        // so this only fires when home is genuinely too far (or absent).
+        {
+            const bool night_or_dusk = is_night || approaching_night;
+            const bool home_far = !have_home_anchor || home_d_m > 28.0f;
+            if (night_or_dusk && home_far) {
+                if (have_wood) {
+                    if (fire_cooldown == 0 && fire_timer <= (FIRE_FUEL_TICKS / 2)) {
+                        a.tend_fire   = true;
+                        fire_cooldown = 6;
+                        fire_timer    = FIRE_FUEL_TICKS;
+                        return a;
+                    }
+                    if (is_night) {          // fire burning -> stay in its radius
+                        a.move_x = 0.0f; a.move_y = 0.0f;
+                        return a;
+                    }
+                } else if (!is_night
+                           && hunger > TH_CRIT_LOW && thirst > TH_CRIT_LOW) {
+                    // Dusk, no wood -> fetch the nearest wood to light a fire.
+                    float wx, wy;
+                    if (find_resource_(obs, 0, wx, wy)) {
+                        steer_(a, wx, wy);
+                        if (std::sqrt(wx*wx + wy*wy) < COLLECT_RANGE) a.collect = true;
+                        return a;
+                    }
+                }
+            }
+        }
+
         // 2b) night + far from home + home complete (we built it, USE it)
         if (is_night && have_home_anchor && !near_home) {
             steer_(a, home_dx, home_dy);
@@ -727,38 +798,34 @@ struct ScriptedSettler {
         // BEFORE the cold night, not only at home. Grass-dress only (Level-1);
         // never sets attack; adds no reward. Self-limiting: once worn,
         // worn_none is false so this layer stops firing.
-        // NOTE on CAPACITY: Inventory::CAPACITY == 3. obs inventory counts are
-        // normalised by /3, and a grass dress costs 3 grass -> the agent must
-        // hold a FULL grass load (all 3 slots) to craft one. The old Layer 6
-        // used `inv_g > 3/20` (= 0.15), which is >=1 grass under /3 norm, so it
-        // requested craft with too little grass; craft_grass_dress() returned
-        // false, grass was never consumed and the request looped forever
-        // (smoke: dress=1101, wear=0). We require a full grass load here.
+        // D-112 (decision_round_10): clothing is a cheap COMPLEMENT to fire,
+        // not the freeze fix (dress resist=0.10 only). To keep it from
+        // competing with the core build (the r8 dilution lesson) and to keep
+        // fire's bc_v11 attribution clean, WARMTH-PREP only dresses once the
+        // home is already up. The dress now costs 1 grass (Inventory bugfix),
+        // so >=1 grass (obs >0.005 under /CAPACITY norm) is enough to craft.
         {
-            const float TEMP_PREP  = 0.55f;  // body temp cooling below neutral
-            const float GRASS_FULL = 0.95f;  // 3/3 grass under /CAPACITY norm
+            const float TEMP_PREP = 0.55f;  // body temp cooling below neutral
             const bool cold_risk = approaching_night || is_night
                                    || temp_v < TEMP_PREP;
-            if (worn_none && cold_risk) {
-                // 3.5a) have a garment -> wear it (instant, anywhere). Best ROI.
+            if (worn_none && cold_risk && home_complete) {
+                // 3.5a) have a garment -> wear it (instant). Best ROI.
                 if ((inv_dress > 0.005f || inv_cloak > 0.005f)
                     && wear_cooldown == 0) {
                     a.wear_clothes = true;
                     wear_cooldown = 8;
                     return a;
                 }
-                // 3.5b) hold a full grass load -> craft the dress now (instant).
-                if (inv_g > GRASS_FULL && inv_dress < 0.005f
+                // 3.5b) have >=1 grass -> craft the dress now (instant).
+                if (inv_g > 0.005f && inv_dress < 0.005f
                     && craft_cooldown == 0) {
                     a.craft_grass_dress = true;
                     craft_cooldown = 8;
                     return a;
                 }
-                // 3.5c) build a dress proactively, but ONLY where it won't
-                // compete with the core build/survival: home complete, daytime,
-                // vitals ok, no active site. Fill the (now-free) inventory with
-                // grass within short reach; once 3 grass -> 3.5b crafts -> wear.
-                if (home_complete && !is_night && !site_active
+                // 3.5c) need grass -> grab nearest within reach, daytime, vitals
+                // ok, no active site. One grass is enough -> 3.5b crafts -> wear.
+                if (!is_night && !site_active
                     && hunger > TH_LOW && thirst > TH_LOW && inv_dress < 0.005f) {
                     float gx, gy;
                     if (find_resource_(obs, 2, gx, gy)) {
@@ -767,6 +834,59 @@ struct ScriptedSettler {
                         if (gd_m < 12.0f) {
                             steer_(a, gx, gy);
                             if (std::sqrt(gd2) < COLLECT_RANGE) a.collect = true;
+                            return a;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------- Layer 3.6: FIRE (D-112 Stage3 Level-2) ----------
+        // The campfire is the PRIMARY freeze fix (decision_round_10): unlike
+        // the grass dress (resist 0.10, ~18s of survival) a lit fire actively
+        // pulls body temperature back up within radius, directly offsetting
+        // the 18/min night drain that kills agents who build a house but
+        // still freeze outside it. It is a placed world entity, so it
+        // sidesteps the CAPACITY==3 inventory block clothing ran into. Costs
+        // 1 Wood per build/refuel; NO reward is attached (Goodhart redline).
+        //
+        // Unlike clothing this layer is deliberately NOT gated on
+        // home_complete: the answer to "when/where do I light a fire" is
+        // "whenever cold, wherever I am", so the oracle lights one the moment
+        // it is cold and holds wood. fire_timer is the oracle's private fuel
+        // estimate (no fire channel in obs); we (re)light a bit before it runs
+        // out so warmth never lapses at night. A genuinely cold body
+        // (temp_v < 0.35) forces a relight regardless of the estimate, which
+        // also makes DAgger relabel freeze-death states with tend_fire.
+        {
+            const float TEMP_FIRE = 0.55f;
+            const bool  cold_risk = approaching_night || is_night
+                                    || temp_v < TEMP_FIRE;
+            const bool  fuel_low  = fire_timer <= (FIRE_FUEL_TICKS / 4);
+            const bool  body_cold = temp_v < 0.35f;
+            // Protect the core build: never burn wood needed by an in-progress
+            // home site (the r8 dilution lesson). Once the home is up (or none
+            // is pending) fire is unrestricted, everywhere cold.
+            if (cold_risk && (fuel_low || body_cold) && fire_cooldown == 0
+                && !site_active) {
+                // Have wood -> build a fire at my feet / refuel the nearby one.
+                if (have_wood) {
+                    a.tend_fire   = true;
+                    fire_cooldown = 6;
+                    fire_timer    = FIRE_FUEL_TICKS;   // assume a fresh load
+                    return a;
+                }
+                // No wood but cold -> grab the nearest wood (daytime, vitals
+                // ok, no active build competing) so the next pass can light it.
+                if (!is_night && !site_active
+                    && hunger > TH_LOW && thirst > TH_LOW) {
+                    float wx, wy;
+                    if (find_resource_(obs, 0, wx, wy)) {
+                        float wd2  = wx*wx + wy*wy;
+                        float wd_m = std::sqrt(wd2) * VISION_RANGE;
+                        if (wd_m < 14.0f) {
+                            steer_(a, wx, wy);
+                            if (std::sqrt(wd2) < COLLECT_RANGE) a.collect = true;
                             return a;
                         }
                     }
@@ -851,10 +971,8 @@ struct ScriptedSettler {
 
         // ---------- Layer 6: CRAFTING (only at home) ----------
         if (at_home && craft_cooldown == 0) {
-            // 6a) no clothing + FULL grass load (3 = CAPACITY) -> craft dress.
-            // (was 3/20 = 0.15, i.e. >=1 grass under /CAPACITY norm -> craft
-            //  failed and looped; need a full grass load to actually craft.)
-            if (worn_none && inv_g > 0.95f && inv_dress < 0.005f) {
+            // 6a) no clothing + >=1 grass -> craft dress (1-grass recipe).
+            if (worn_none && inv_g > 0.005f && inv_dress < 0.005f) {
                 a.craft_grass_dress = true;
                 craft_cooldown = 8;
                 return a;
@@ -1221,21 +1339,23 @@ int main(int argc, char** argv) {
                 "\"r_kills\":%.3f,\"r_bites\":%.3f,\"r_death\":%.3f,"
                 "\"r_vital\":%.3f,\"r_collect\":%.3f,\"r_shelter\":%.3f,"
                 "\"r_craft\":%.3f,\"r_milestone\":%.3f,\"r_potential\":%.3f,"
-                "\"deaths\":%d,\"policy\":\"%s\",\"seed\":%llu,"
+                "\"deaths\":%d,\"deaths_cold\":%d,\"deaths_food\":%d,"
+                "\"policy\":\"%s\",\"seed\":%llu,"
                 "\"mv\":%.3f,\"yw\":%.3f,\"score\":%.4f,\"unlocks\":[",
                 episode_id, s.steps, s.total_reward,
                 s.r_alive, s.r_food, s.r_water, s.r_kills,
                 s.r_bites, s.r_death, s.r_vital,
                 s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
                 s.r_potential,
-                env.vitals().deaths, policy.c_str(),
+                env.vitals().deaths, env.vitals().deaths_cold,
+                env.vitals().deaths_food, policy.c_str(),
                 static_cast<unsigned long long>(seed),
                 mv, yw, score);
             for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
                 std::fprintf(mf, "%s%d", i == 0 ? "" : ",", ms.get(i) ? 1 : 0);
             }
             std::fprintf(mf, "],\"act\":[");
-            for (int i = 0; i < 16; ++i) {
+            for (int i = 0; i < ActionStats::N; ++i) {  // D-112: 18 slots, act[17]=fire token
                 std::fprintf(mf, "%s%d", i == 0 ? "" : ",", astats.disc_count[i]);
             }
             // D-055: blueprint progression diagnostics. The episode reset
