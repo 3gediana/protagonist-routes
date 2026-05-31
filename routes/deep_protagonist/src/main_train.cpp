@@ -1079,6 +1079,8 @@ int main(int argc, char** argv) {
     // --policy ppo --load clone.pt --record-demos out.bin --dagger.
     bool        dagger = false;
     std::string bc_demos;                  // comma-separated demo files for --policy bc
+    std::string bc_low_os_demos;           // subset of bc_demos using bc_low_os (night downweight)
+    int         bc_low_os    = -1;         // <0 = unused
     std::string bc_out       = "bc.pt";    // BC output checkpoint
     int         bc_epochs    = 8;
     int         bc_batch     = 16;
@@ -1140,6 +1142,8 @@ int main(int argc, char** argv) {
         else if (a == "--bc-build-oversample") bc_build_os = std::stoi(next());
         else if (a == "--bc-build-len") bc_build_len = std::stoi(next());
         else if (a == "--bc-trigger-oversample") bc_trig_os = std::stoi(next());
+        else if (a == "--bc-low-os")    bc_low_os    = std::stoi(next());
+        else if (a == "--bc-low-os-demos") bc_low_os_demos = next();
         else if (a == "--bc-trig-pre")  bc_trig_pre  = std::stoi(next());
         else if (a == "--bc-trig-post") bc_trig_post = std::stoi(next());
         else if (a == "--deterministic") deterministic = true;
@@ -1186,6 +1190,8 @@ int main(int argc, char** argv) {
         bc.build_oversample = bc_build_os;
         bc.build_len      = bc_build_len;
         bc.trigger_oversample = bc_trig_os;
+        bc.low_os_demos       = split_csv(bc_low_os_demos);
+        bc.low_trigger_oversample = bc_low_os;
         bc.trig_pre       = bc_trig_pre;
         bc.trig_post      = bc_trig_post;
         bc.seed           = static_cast<int>(seed & 0x7FFFFFFFULL);

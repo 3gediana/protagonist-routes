@@ -185,3 +185,17 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - ⑤学到（关键）：与 v11/v12 根本不同——`--oracle-no-fire`+训前 action17==0 断言这条工程链**彻底根治火污染病**（全 9 seed fire=0/cold=0），且残差杠杆**干净复现**（2100000 30→80 无任何火/冷副作用）。新暴露的是 BC 全局聚焦增量的**专化/泛化权衡**（夜宿偏置→全新 bank 觅食代价），非 Goodhart、非污染。
 - ⑥下一步候选（写入 inbox/round_15）：A=缩小/锐化增量（只留 ≤2~3 个最硬 nShel≈0.30 bin + 下调 night oversample）重训 bc_v14（推荐，留胜去损）；B=补少量白天觅食 demo 反向平衡；C=夜宿残差也收编 S4 PPO。工程链已现成可复用。
 - ⑦收尾：冠军 bc_v9 完好未覆盖（已校验 .pt + 06:46 时戳）。清理：压缩 bc_v13_train.log 290.9MB→366行摘要、删 night_ff_smoke/eval 日志。D 盘 free 200.0→200.35GB（红线 ≥200 已守）。本地 commit（`deep_protagonist:` 前缀、不 push）。写 inbox/round_15，盯 outbox 下一条决策。
+
+
+## D-116 / round_16 — Path A（缩小+夜宿降权）bc_v14 NO-GO，触发 §4 硬止损线 → 转 S4 PPO
+- **Path A 实现**：新增 night 专属降权通道 CLI `--bc-low-os N` + `--bc-low-os-demos path,...`（BCTrainer 按文件设 eff_trig_os_，base 权重不动只降夜宿；smoke 验证 night groups 1254 == 全局 os8 vs os20 的 3134）。
+- **bc_v14** = bc_v9 的 349 @os20 + 2 最硬 fire-free 夜宿 bin（2300148 nShel0.296 / 2300105 nShel0.300）@low-os8；8ep/b16/bptt64/lr3e-4/trig_w15；训前 action17==0 硬断言通过；loss 0.908→0.320；EXIT0。
+- **多轴门 vs bc_v9（同一新编译 exe，9 seed×10ep + 1700/1900 ~16-17ep 复核）**：
+  - 训练 bank 中位 v14 70 < bc_v9 80（900000 nShel0.90→0.58）→ 退。
+  - 全新 bank 中位 v14 80 < bc_v9 90；**1700000 崩盘**：复核 pass 80→6、nShel0.86→0.43、food-death 33→60（≈2×）；1900000 food 7→22（≈3×）、cold 0→9。
+  - 残差正向但弱：2100000 30→50（+20，< v13 +50）、2200102 50→60（+10）。
+  - fire=0 / atk=0 全 9 seed 两模型 → ✅ 火链稳。
+- **判 NO-GO**；满足 decision_round_15 §4 触发条件（全新 bank food-death 仍软退/崩盘）→ **§4 硬止损线触发**：BC 无法无代价外科式修夜宿残差，停止再造 bc_v15 系列 BC 变体 → 转候选 C（夜宿残差交 S4 PPO，from bc_v9 暖启动 + potential-based shaping）。冠军保持 **bc_v9（未覆盖）**；bc_v10–v14 全 NO-GO。
+- **阶段切换**：Stage2 BC 主线（夜宿进屋残差）→ S4 PPO；按 decision_round_15 §6 例外已 ping 用户。
+- **磁盘红线告警**：本路线已清全部过期数据（旧火污染 night_dagger、过期 demos_d101 1.9GB、bc_v10/11/12、训练/eval 日志），D free 仍跌至 196.2GB（<200），持续下跌源自共享 D 盘其它 route/决策者，非本路线可独自解决。
+- commit 本地（前缀 deep_protagonist:，不 push）。

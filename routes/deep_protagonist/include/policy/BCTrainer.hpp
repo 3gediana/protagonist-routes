@@ -80,6 +80,8 @@ struct BCConfig {
     int   trig_post             = 12;     // steps after
     bool  use_cuda              = true;
     int   seed                  = 1234;
+    std::vector<std::string> low_os_demos;     // subset of demo_paths using low_trigger_oversample
+    int   low_trigger_oversample = -1;         // <0 = unused; else trigger_oversample for low_os_demos (night downweight)
 };
 
 class BCTrainer {
@@ -306,6 +308,8 @@ private:
 
     bool load_demos(int expect_obs, int expect_cont) {
         for (const auto& path : cfg_.demo_paths) {
+            eff_trig_os_ = (cfg_.low_trigger_oversample >= 0 && is_low_os_(path))
+                           ? cfg_.low_trigger_oversample : cfg_.trigger_oversample;
             std::FILE* f = std::fopen(path.c_str(), "rb");
             if (!f) {
                 spdlog::error("BC: cannot open demo file '{}'", path);
@@ -380,25 +384,31 @@ private:
         return true;
     }
 
+    bool is_low_os_(const std::string& p) const {
+        for (const auto& q : cfg_.low_os_demos) if (q == p) return true;
+        return false;
+    }
+
     // Scan [ep_start, ep_end) for non-NOOP (trigger) events and replicate a
     // short [t-trig_pre, t+trig_post) window around each, cfg_.trigger_oversample
     // times. The window starts mid-episode (Episode.start is a global index, so
     // this is supported directly); the GRU just starts that window from h=0,
     // the same as any truncated-BPTT boundary.
     void add_trigger_windows(int ep_start, int ep_end) {
-        if (cfg_.trigger_oversample <= 0) return;
+        if (eff_trig_os_ <= 0) return;
         for (int g = ep_start; g < ep_end; ++g) {
             if (disc_[g] == ActorCriticImpl::NOOP_IDX) continue;
             int w0 = std::max(ep_start, g - cfg_.trig_pre);
             int w1 = std::min(ep_end,   g + cfg_.trig_post);
             int wlen = w1 - w0;
             if (wlen <= 0) continue;
-            for (int r = 0; r < cfg_.trigger_oversample; ++r)
+            for (int r = 0; r < eff_trig_os_; ++r)
                 episodes_.push_back({w0, wlen});
         }
     }
 
     BCConfig cfg_;
+    int                  eff_trig_os_ = 0;   // effective trigger_oversample for the file being loaded
     std::vector<float>   obs_;
     std::vector<float>   cont_;
     std::vector<int64_t> disc_;
