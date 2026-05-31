@@ -497,7 +497,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     {
         bool is_night = day_.sun_height_normalized() < -0.1f;
         const float dt_min = dt / 60.0f;
-        if (is_night && !sheltered && vital_state_.alive) {
+        // D-112 fire-as-camp: a lit campfire within radius (fire_warmth>0)
+        // also shields from the 3x night starvation penalty. Guardrails:
+        //   (1) fire does NOT grant the in-building +15/min regen (below)
+        //   (2) fire is NOT counted as `sheltered` → never inflates nShel
+        //       or 達標 (night_in_house≥80%): building remains the only
+        //       way to pass; fire is an emergency night-survival floor.
+        const bool near_fire = fire_warmth > 0.0f;
+        if (is_night && !sheltered && !near_fire && vital_state_.alive) {
             const float extra_mult = 2.0f;  // total = base + 2*base = 3x
             float h_extra = vitals_.config().hunger_decay_per_min
                           * dt_min * extra_mult;
