@@ -759,12 +759,18 @@ int run_self_tests() {
 
         check(dp::agent::ObservationBuilder::SIZE >= 140,
               "Observation: total dimension is at least 140 (S3.10 expanded)");
-        // D-048 blueprint回归: 564 → 567 by adding nearest_wolf (3 dims)
-        // so PPO sees its biggest threat even when 4 rabbits are closer.
-        check(dp::agent::ObservationBuilder::SIZE == 567,
-              "Observation: SIZE == 567 after D-048 nearest_wolf 3 dims");
+        // D-048 blueprint回归: 564 → 567 by adding nearest_wolf (3 dims).
+        // decision_blueprint_nutrition §3a: 567 → 569 by appending the two
+        // nutrition bars (protein, vitamin) at the very end.
+        check(dp::agent::ObservationBuilder::SIZE == 569,
+              "Observation: SIZE == 569 after nutrition bars (567+2)");
         check(obs[0] == 1.0f && obs[1] == 1.0f && obs[2] == 1.0f,
               "Observation: vital slots [0..2] are 1.0 at full state");
+        // nutrition bars live at the END (567, 568); full bars => 1.0/1.0,
+        // i.e. constant when nutrition is OFF so the surgery's zero columns
+        // make a warm-started bc_v9 blind to them.
+        check(obs[567] == 1.0f && obs[568] == 1.0f,
+              "Observation: nutrition slots [567,568] are 1.0 at full bars");
 
         // Every entry should fit within [-1, 1] thanks to clamping
         bool all_in_range = true;
@@ -786,9 +792,11 @@ int run_self_tests() {
             dp::world::BuildingType::Shed, sm_test, obs2);
         // Sanity check: the shelter "placed" slot sits 3 slots before the
         // S3.10 progress block, then 38 dims of P0+D-048 obs (35 → 38 with
-        // the nearest_wolf addition), then 384 dims of SpatialMemory window.
-        // So index = SIZE - 384 - 38 - 21 - 3.
+        // the nearest_wolf addition), then 384 dims of SpatialMemory window,
+        // then the 2 nutrition bars appended at the very end (§3a).
+        // So index = SIZE - 2 - 384 - 38 - 21 - 3 (= 121, unchanged layout).
         int placed_idx = dp::agent::ObservationBuilder::SIZE
+                       - 2  // nutrition bars (protein, vitamin) at the tail
                        - dp::agent::SpatialMemory::WINDOW_DIM - 38 - 21 - 3;
         check(obs2[placed_idx] > 0.5f,
               "Observation: shelter-placed flag flips after build");

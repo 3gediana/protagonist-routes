@@ -469,6 +469,14 @@ void ObservationBuilder::compose(const dp::world::World&         world,
     // Advance p past the SpatialMemory window we already wrote above.
     p += SpatialMemory::WINDOW_DIM;
 
+    // ---- nutrition bars (2) — decision_blueprint_nutrition §3a -----------
+    // protein/vitamin normalised /100, appended last (indices 567, 568).
+    // When nutrition is OFF the bars stay at 100 so these read 1.0/1.0 (a
+    // constant), and a warm-started bc_v9 (zero-padded encoder columns) is
+    // mathematically blind to them — behaviour identical to the old world.
+    out[p++] = clamp01(vital_state.protein / 100.0f);
+    out[p++] = clamp01(vital_state.vitamin / 100.0f);
+
     // p should equal SIZE here.
 }
 

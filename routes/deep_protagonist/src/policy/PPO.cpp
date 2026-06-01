@@ -10,6 +10,51 @@
 
 namespace dp::policy {
 
+namespace {
+// decision_blueprint_nutrition §3a — warm-start architecture surgery.
+// Loads a checkpoint whose encoder.weight may have FEWER input columns than
+// the current net (e.g. a 567-dim bc_v9 into a 569-dim nutrition net). Every
+// tensor is matched by name: equal-shape tensors are copied verbatim; the
+// encoder first-layer weight is zero-padded (old columns copied into the
+// leading slots, the new nutrition columns left at zero) so the loaded policy
+// is mathematically identical to the original until PPO learns to use the new
+// inputs. Hidden/output layers and the GRU copy unchanged. Any genuine
+// mismatch is left at init and logged. Returns true if a pad was applied.
+bool surgery_load_into(ActorCritic& module,
+                       const std::string& path,
+                       torch::Device device) {
+    torch::NoGradGuard ng;
+    torch::serialize::InputArchive archive;
+    archive.load_from(path);
+    int copied = 0, padded = 0, missing = 0, mism = 0;
+    auto handle = [&](const std::string& name, torch::Tensor dst, bool is_buf) {
+        torch::Tensor src;
+        if (!archive.try_read(name, src, is_buf)) { ++missing; return; }
+        src = src.to(dst.device());
+        if (src.sizes() == dst.sizes()) { dst.copy_(src); ++copied; return; }
+        if (name == "encoder.weight" && src.dim() == 2 && dst.dim() == 2 &&
+            src.size(0) == dst.size(0) && src.size(1) < dst.size(1)) {
+            dst.zero_();
+            dst.narrow(1, 0, src.size(1)).copy_(src);
+            ++padded;
+            spdlog::info("warmstart surgery: encoder.weight [{}x{}] -> [{}x{}], "
+                         "cols {}..{} zero-init (nutrition)",
+                         src.size(0), src.size(1), dst.size(0), dst.size(1),
+                         src.size(1), dst.size(1) - 1);
+            return;
+        }
+        ++mism;
+        spdlog::warn("warmstart surgery: '{}' shape mismatch, left at init", name);
+    };
+    for (auto& p : module->named_parameters()) handle(p.key(), p.value(), false);
+    for (auto& b : module->named_buffers())    handle(b.key(), b.value(), true);
+    module->to(device);
+    spdlog::info("warmstart surgery done: copied={} padded={} missing={} mismatch={}",
+                 copied, padded, missing, mism);
+    return padded > 0;
+}
+}  // namespace
+
 // ============================================================================
 // Network
 // ============================================================================
@@ -498,12 +543,24 @@ void PPO::save(const std::string& path) const {
 }
 
 void PPO::load(const std::string& path) {
-    torch::load(net_, path);
+    bool did_surgery = false;
+    try {
+        torch::load(net_, path);
+    } catch (const std::exception& e) {
+        // decision_blueprint_nutrition §3a: a 567-dim bc_v9 won't load into a
+        // 569-dim nutrition net by shape; fall back to first-layer surgery.
+        spdlog::warn("plain load failed ({}); attempting warm-start surgery "
+                     "(obs-dim expansion)", e.what());
+        did_surgery = surgery_load_into(net_, path, device_);
+    }
     net_->to(device_);
     // Optimizer file is optional - if missing we keep a fresh one (this
-    // is fine for evaluation-only loads).
+    // is fine for evaluation-only loads). After surgery the param shapes no
+    // longer match the saved Adam state, so we MUST keep a fresh optimizer.
     std::string opt_path = path + ".opt";
-    if (std::filesystem::exists(opt_path)) {
+    if (did_surgery) {
+        spdlog::info("PPO warm-started via surgery from {} (fresh optimizer)", path);
+    } else if (std::filesystem::exists(opt_path)) {
         torch::load(*opt_, opt_path);
         spdlog::info("PPO checkpoint + optimizer loaded: {}", path);
     } else {
@@ -513,7 +570,14 @@ void PPO::load(const std::string& path) {
 
 void PPO::load_reference(const std::string& path) {
     ref_net_ = ActorCritic();
-    torch::load(ref_net_, path);
+    try {
+        torch::load(ref_net_, path);
+    } catch (const std::exception& e) {
+        // §3a: KL anchor must be the SAME bc_v9 surgically expanded to 569 so
+        // its outputs match the warm-started policy exactly at step 0.
+        spdlog::warn("KL-ref plain load failed ({}); warm-start surgery", e.what());
+        surgery_load_into(ref_net_, path, device_);
+    }
     ref_net_->to(device_);
     ref_net_->eval();
     for (auto& p : ref_net_->parameters()) p.set_requires_grad(false);

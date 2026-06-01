@@ -63,6 +63,8 @@ namespace dp::agent {
 //   164..182 last_action: 3 continuous + 16 discrete (matches AgentAction)
 //   --- S4.0 cognitive map (384 slots) ---
 //   183..566 SpatialMemory 8x8 window x 6 features (row-major gy,gx,feat)
+//   --- decision_blueprint_nutrition §3a (567->569) ---
+//   567..568 nutrition  protein/100, vitamin/100 (=1.0/1.0 when nutrition OFF)
 //
 // All distances are normalised by VISION_RANGE (60m) so |dx|,|dy|,|dz| <= 1.
 class ObservationBuilder {
@@ -105,7 +107,12 @@ public:
         + ACTION_CONTINUOUS_DIM           // last_action continuous (3)
         + ACTION_DISCRETE_DIM             // last_action discrete   (16)
         // S4.0 cognitive map (read-out of SpatialMemory window):
-        + SpatialMemory::WINDOW_DIM;      // 8 * 8 * 6 = 384
+        + SpatialMemory::WINDOW_DIM       // 8 * 8 * 6 = 384
+        // --- decision_blueprint_nutrition §3a: nutrition bars (567->569) ---
+        // protein/vitamin each /100, appended at the VERY END so old indices
+        // 0..566 are byte-stable and a 567-dim bc_v9 first-layer can be
+        // warm-started by zero-padding the 2 new encoder columns (surgery).
+        + 2;                              // protein, vitamin
 
     using Vector = std::array<float, SIZE>;
 
