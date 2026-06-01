@@ -95,6 +95,10 @@ struct PPOConfig {
     bool   use_cuda        = true;
     int    seed            = 1234;
     int    n_envs          = 1;     // D-078: VecEnv parallel envs in single PPO
+    // decision_round_17 (S4 PPO C): warmstart-stability controls.
+    bool   mask_atk_fire = false;  // mask discrete idx2(attack)+idx17(fire) to -inf
+    float  kl_ref_coef   = 0.0f;   // beta for KL(pi||pi_ref=bc_v9) anchor (0=off)
+    float  target_kl     = 0.0f;   // CleanRL-style early-stop threshold (0=off)
 };
 
 class PPO {
@@ -171,6 +175,11 @@ public:
     void save(const std::string& path) const;
     void load(const std::string& path);
 
+    // decision_round_17 (S4 PPO C): load a FROZEN reference policy (bc_v9)
+    // for the KL-to-reference anchor. Call AFTER the ctor and any --load
+    // warmstart. Enables the beta*KL(pi||pi_ref) penalty in update().
+    void load_reference(const std::string& path);
+
     // Convenience for logging.
     torch::Device device() const { return device_; }
 
@@ -187,6 +196,24 @@ private:
     // Persistent recurrent state. Shape [1, HIDDEN] on `device_`.
     torch::Tensor                            hidden_;
     bool                                     deterministic_ = false;
+    // decision_round_17 (S4 PPO C):
+    ActorCritic                              ref_net_{nullptr}; // frozen KL-ref
+    bool                                     has_ref_      = false;
+    torch::Tensor                            disc_mask_;        // [1,DISC_CATS]
+    bool                                     mask_enabled_ = false;
+    torch::Tensor apply_disc_mask(const torch::Tensor& dl) const {
+        if (!mask_enabled_) return dl;
+        // In-place writes (index_put_/fill_) and from_blob tensors abort in
+        // this libtorch+CUDA build; use ONLY functional ops + a same-shape
+        // final add (the proven-safe path). Columns 2(attack) and 17(fire)
+        // get -50 added -> prob ~2e-22 (multinomial-safe) / hard under argmax.
+        auto col  = torch::arange(dl.size(1), dl.options()).unsqueeze(0); // [1,C]
+        auto cond = (col == 2) | (col == (double)ActorCriticImpl::TEND_FIRE_IDX);
+        cond      = cond.expand({dl.size(0), dl.size(1)});                // [B,C]
+        auto m    = torch::where(cond, torch::full_like(dl, -50.0f),
+                                       torch::zeros_like(dl));            // [B,C]
+        return dl + m;                                                    // same-shape add
+    }
 };
 
 }  // namespace dp::policy

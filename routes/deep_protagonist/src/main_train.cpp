@@ -1130,6 +1130,10 @@ int main(int argc, char** argv) {
     float       ppo_ent_coef = -1.0f;
     float       ppo_lr       = -1.0f;
     int         ppo_critic_warmup = 0;   // D-101: value-only updates before policy training (BC->PPO)
+    bool        ppo_mask_atk_fire = false;  // decision_round_17: mask attack(2)+fire(17)
+    float       ppo_kl_coef       = 0.0f;   // decision_round_17: beta KL(pi||bc_v9)
+    std::string ppo_kl_ref;                 // decision_round_17: reference ckpt (bc_v9.pt)
+    float       ppo_target_kl     = 0.0f;   // decision_round_17: KL early-stop (0=off)
     float       ppo_night_shaping = 0.0f; // decision_round_16 Step2: coef for night-shelter PBRS (0=off)
 
     for (int i = 1; i < argc; ++i) {
@@ -1177,6 +1181,10 @@ int main(int argc, char** argv) {
         else if (a == "--ent-coef")   ppo_ent_coef = std::stof(next());
         else if (a == "--lr")         ppo_lr       = std::stof(next());
         else if (a == "--critic-warmup") ppo_critic_warmup = std::stoi(next());
+        else if (a == "--ppo-mask-atk-fire") ppo_mask_atk_fire = true;
+        else if (a == "--ppo-kl-coef")   ppo_kl_coef   = std::stof(next());
+        else if (a == "--ppo-kl-ref")    ppo_kl_ref    = next();
+        else if (a == "--ppo-target-kl") ppo_target_kl = std::stof(next());
         else if (a == "--ppo-night-shaping") ppo_night_shaping = std::stof(next());
         else if (a == "-h" || a == "--help") {
             std::printf(
@@ -1320,12 +1328,20 @@ int main(int argc, char** argv) {
             pcfg.lr = ppo_lr;
             spdlog::info("D-101: lr override {} (finetune; D-099 default 3e-4)", ppo_lr);
         }
+        pcfg.mask_atk_fire = ppo_mask_atk_fire;
+        pcfg.kl_ref_coef   = ppo_kl_coef;
+        pcfg.target_kl     = ppo_target_kl;
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
         ppo->set_deterministic(deterministic);
         if (deterministic) spdlog::info("D-101: deterministic eval (mode action, no sampling noise)");
         rollout.reserve(pcfg.rollout_steps);
         if (!load_path.empty()) {
             ppo->load(load_path);
+        }
+        if (!ppo_kl_ref.empty() && ppo_kl_coef > 0.0f) {
+            ppo->load_reference(ppo_kl_ref);
+            spdlog::info("decision_round_17: KL anchor beta={} target_kl={}",
+                         ppo_kl_coef, ppo_target_kl);
         }
     }
     int updates_since_save = 0;

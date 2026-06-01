@@ -78,6 +78,16 @@ PPO::PPO(const PPOConfig& cfg)
                            torch::TensorOptions().dtype(torch::kFloat32)
                                                  .device(device_));
 
+    if (cfg_.mask_atk_fire) {
+        disc_mask_ = torch::zeros(
+            {1, ActorCriticImpl::DISC_CATS},
+            torch::TensorOptions().dtype(torch::kFloat32).device(device_));
+        disc_mask_.index_put_({0, 2}, -50.0f); // finite mask: prob ~2e-22 (multinomial-safe), hard under argmax                              // attack
+        disc_mask_.index_put_({0, ActorCriticImpl::TEND_FIRE_IDX}, -50.0f); // finite mask: prob ~2e-22 (multinomial-safe), hard under argmax // fire(17)
+        mask_enabled_ = true;
+        spdlog::info("decision_round_17: action mask ON (idx2 attack, idx17 fire -> -inf)");
+    }
+
     spdlog::info("PPO init on device={}, params={}, obs_dim={}",
                  (device_.is_cuda() ? "CUDA" : "CPU"),
                  [&]() {
@@ -133,7 +143,8 @@ dp::agent::AgentAction PPO::sample_action(
     // Discrete: 17-way categorical (16 triggers + NOOP). Multinomial
     // sample one index, log_prob = log p(a). Replaces independent
     // Bernoulli heads to break the "press every button" collapse.
-    auto log_probs_d = torch::log_softmax(dl, /*dim=*/1);   // [1, 17]
+    auto dlm         = apply_disc_mask(dl);
+    auto log_probs_d = torch::log_softmax(dlm, /*dim=*/1);   // [1, DISC_CATS]
     auto probs_d     = log_probs_d.exp();                    // [1, 17]
     auto idx         = deterministic_
                          ? probs_d.argmax(1, /*keepdim=*/true)
@@ -228,7 +239,8 @@ void PPO::sample_actions_batch(
          - cs
          - 0.5f * std::log(2.0f * static_cast<float>(M_PI)))
             .sum(1);  // [N]
-    auto log_probs_d = torch::log_softmax(dl, /*dim=*/1);  // [N, 17]
+    auto dlm         = apply_disc_mask(dl);
+    auto log_probs_d = torch::log_softmax(dlm, /*dim=*/1);  // [N, DISC_CATS]
     auto probs_d     = log_probs_d.exp();
     auto idx         = probs_d.multinomial(1, /*replacement=*/true);  // [N, 1]
     auto disc_log_prob = log_probs_d.gather(1, idx).squeeze(1);       // [N]
@@ -358,6 +370,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     std::mt19937 rng(static_cast<uint32_t>(cfg_.seed) + N);
 
     net_->train();
+    bool kl_stop = false;
     for (int e = 0; e < cfg_.epochs; ++e) {
         std::shuffle(idx.begin(), idx.end(), rng);
         for (int mb = 0; mb < N; mb += cfg_.minibatch_size) {
@@ -375,7 +388,8 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             auto b_adv   = t_adv.index_select(0,   t_idx);
             auto b_ret   = t_ret.index_select(0,   t_idx);
 
-            auto [cm, cs, dl, v, h_out] = net_->forward_step(b_obs, b_hin);
+            auto [cm, cs, dl0, v, h_out] = net_->forward_step(b_obs, b_hin);
+            auto dl   = apply_disc_mask(dl0);
             auto std_ = cs.exp();
             auto cont_lp =
                 (-0.5f * ((b_cont - cm) / std_).pow(2)
@@ -399,6 +413,32 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             auto clipped   = ratio.clamp(1.0f - cfg_.clip_eps, 1.0f + cfg_.clip_eps) * b_adv;
             auto policy_loss = -torch::min(unclipped, clipped).mean();
             auto value_loss  = (v - b_ret).pow(2).mean();
+
+            // decision_round_17 (S4 PPO C): KL-to-reference (pi || pi_ref=bc_v9)
+            // anchor keeps the finetuned policy inside the BC basin so the
+            // night PBRS can refine behaviour without the cloned policy drift
+            // (round_17: attack 0->spam, nShel collapse). Analytic KL =
+            // Gaussian(cont)+Categorical(disc); ref outputs are grad-free
+            // constants so the gradient pulls CURRENT toward the reference.
+            torch::Tensor kl_ref;
+            if (has_ref_ && !critic_only && cfg_.kl_ref_coef > 0.0f) {
+                torch::Tensor r_cm, r_cs, r_dl;
+                {
+                    torch::NoGradGuard g;
+                    auto rt = ref_net_->forward_step(b_obs, b_hin);
+                    r_cm = std::get<0>(rt);
+                    r_cs = std::get<1>(rt);
+                    r_dl = apply_disc_mask(std::get<2>(rt));
+                }
+                auto kl_cont = ((r_cs - cs)
+                    + (torch::exp(2.0f * cs) + (cm - r_cm).pow(2))
+                        / (2.0f * torch::exp(2.0f * r_cs))
+                    - 0.5f).sum(1);
+                auto r_log_p_d = torch::log_softmax(r_dl, /*dim=*/1);
+                auto kl_disc = (p_d * (log_p_d - r_log_p_d)).sum(1);
+                kl_ref = (kl_cont + kl_disc).mean();
+            }
+
             // D-101 critic warmup: value-only loss. value_loss does not flow
             // through the policy heads, so the BC policy is frozen exactly
             // while the critic learns V(s) for it.
@@ -406,6 +446,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                 ? (cfg_.vf_coef * value_loss)
                 : (policy_loss + cfg_.vf_coef * value_loss
                    - cfg_.ent_coef * entropy);
+            if (kl_ref.defined()) loss = loss + cfg_.kl_ref_coef * kl_ref;
 
             opt_->zero_grad();
             loss.backward();
@@ -422,7 +463,15 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                                    .mean()
                                    .item<float>();
             ++total_minibatches;
+            // decision_round_17: target-KL early stop (CleanRL k3 estimator,
+            // always >=0). Second guardrail vs cumulative drift out of basin.
+            if (cfg_.target_kl > 0.0f) {
+                float kl_mb = ((ratio - 1.0f) - (lp_new - b_lpold))
+                                  .mean().item<float>();
+                if (kl_mb > cfg_.target_kl) { kl_stop = true; break; }
+            }
         }
+        if (kl_stop) break;
     }
     if (total_minibatches > 0) {
         stats.policy_loss /= total_minibatches;
@@ -456,6 +505,16 @@ void PPO::load(const std::string& path) {
     } else {
         spdlog::info("PPO checkpoint loaded (no optimizer file): {}", path);
     }
+}
+
+void PPO::load_reference(const std::string& path) {
+    ref_net_ = ActorCritic();
+    torch::load(ref_net_, path);
+    ref_net_->to(device_);
+    ref_net_->eval();
+    for (auto& p : ref_net_->parameters()) p.set_requires_grad(false);
+    has_ref_ = true;
+    spdlog::info("decision_round_17: KL-reference policy loaded from {}", path);
 }
 
 }  // namespace dp::policy
