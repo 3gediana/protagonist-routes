@@ -63,53 +63,10 @@ Status:
 
 ---
 
-## STATUS CORRECTION (2026-06-01, wind-down code pass)
-
-Two updates from a careful re-audit of this isolated copy:
-
-1. **Legacy `forward()` now shares `launchDenseKernels()`.** Previously the legacy
-   full-upload path carried its OWN inline copy of the three kernel launches
-   (block_size/grid math/kernel args) 鈥?byte-identical to `launchDenseKernels()`
-   but duplicated, so the two paths *could* silently drift. `forward()` now calls
-   `launchDenseKernels(handle, ..., hidden_addend != nullptr)` exactly like
-   `forwardResident()` does, so resident-vs-legacy are now provably the same launch.
-   Pure dedup, no numeric change.
-
-2. **The real blocker for GPU parity is a MISSING CUDA TOOLCHAIN, not "GPU busy".**
-   Re-audited the box: `nvcc` is not on PATH and not present under
-   `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\{v11.8,v12.4}` (only an
-   `extras` stub dir, no `bin`, no `cudart`). The main `build_ninja_cuda` cache
-   confirms it: `CMAKE_CUDA_COMPILER:FILEPATH=NOTFOUND` 鈥?i.e. CUDA was never
-   actually compiled on this machine; PE/DP run the CPU path. Also no g++/clang/cl
-   on PATH outside a VS dev shell. The Linux side (Devin box) has g++ but NO GPU.
-   So neither machine I can reach has *both* a CUDA compiler and the GPU.
-   - GPU = RTX 5060 Laptop (Blackwell, **sm_120**) 鈫?needs **CUDA >= 12.8** to compile
-     `CUDA_ARCHITECTURES native`; the stub v12.4/v11.8 would not support sm_120 even
-     if a compiler were present.
-   - **To finish true on-GPU numeric parity**: install CUDA Toolkit >= 12.8 (with
-     nvcc) on the Windows box, then configure a separate build dir for this copy with
-     `-DCMAKE_CUDA_COMPILER=<...>/bin/nvcc.exe -DNEURAL_ECO_ENABLE_PROTAGONIST_CUDA=ON`
-     (Ninja + the same MSVC 14.44 toolset as `build_ninja_cuda`) and run target
-     `neural-eco-resident-parity` 鈫?it auto-detects the device via
-     `BatchedDenseGpu::supported()` and runs the resident-vs-legacy-vs-CPU asserts.
-
-CPU-path parity **RE-CONFIRMED PASS** this pass (g++ 11.4, -std=c++20): max|螖| within
-tol; traffic legacy 399.4 MB vs resident 12.8 MB / 200 ticks = **96.8% (31.3x)**.
-
-Revised checklist:
-- [x] Implementation (4 file pairs + test + CMake target).
-- [x] Legacy forward de-duplicated onto shared `launchDenseKernels()`.
-- [x] CPU-path compile + run PASS (re-confirmed 2026-06-01).
-- [ ] Full CUDA build + GPU numeric parity 鈥?**blocked: no nvcc on box; needs CUDA>=12.8 for sm_120** (was mis-attributed to "GPU busy").
-- [ ] Merge back into `protagonist_ecology` 鈥?only after GPU parity PASS + sign-off.
-
-
----
-
-## GPU PARITY RESOLVED (2026-06-01, same day) 鈥?runs PASS on real RTX 5060
+## GPU PARITY RESOLVED (2026-06-01, same day) — runs PASS on real RTX 5060
 
 The "blocked: no nvcc" note above is now SUPERSEDED. A full CUDA toolkit was
-located on the box at **`D:\NVIDIA\CUDA\v12.8`** (nvcc V12.8.61 鈥?the earlier
+located on the box at **`D:\NVIDIA\CUDA\v12.8`** (nvcc V12.8.61 — the earlier
 `C:\Program Files\...\CUDA\v11.8/v12.4` were stubs and `CUDA_PATH=G:\ai\nvidia`
 was a dead link, which misled the first audit). CUDA 12.8 supports the RTX 5060
 Laptop's Blackwell **sm_120**, so the kernels were compiled and run on the
@@ -128,15 +85,15 @@ nvcc -std=c++20 -O2 -DNEURAL_ECO_HAS_PROTAGONIST_CUDA=1 -arch=sm_120 \
 **On-GPU result (RTX 5060, CUDA 12.8, 48 agents x 200 ticks):**
 ```
 [parity] CUDA device present: yes
-[parity] max|螖| resident-vs-legacy = 0.000e+00   <- cohort-resident is BIT-IDENTICAL to legacy
-[parity] max|螖| resident-vs-cpu    = 7.153e-07   <- within float rounding (<< 1e-4 tol)
-[parity] max|螖| legacy-vs-cpu      = 7.153e-07
+[parity] max|Δ| resident-vs-legacy = 0.000e+00   <- cohort-resident is BIT-IDENTICAL to legacy
+[parity] max|Δ| resident-vs-cpu    = 7.153e-07   <- within float rounding (<< 1e-4 tol)
+[parity] max|Δ| legacy-vs-cpu      = 7.153e-07
 [traffic] H2D reduction = 96.8% (31.3x)
 [parity] RESULT: PASS
 ```
 
 ### Test-harness bug found and fixed during this validation
-The first GPU run reported a spurious `max|螖| = 1.748` vs CPU (while
+The first GPU run reported a spurious `max|Δ| = 1.748` vs CPU (while
 resident-vs-legacy was exactly 0). Root cause was in the TEST, not the kernels:
 `test_resident_parity.cpp` pre-ran the **entire** CPU trajectory to completion
 (so `hC/aC/iC` held the tick-(T-1) state), then in the GPU loop compared the
@@ -149,7 +106,7 @@ for its finite-output sanity check).
 
 Note this also means the earlier "CPU-path parity PASS" was effectively a
 no-op comparison: with CUDA undefined, `supported()` is false, so the GPU/compare
-block never executed 鈥?only the traffic model + a CPU finite-check ran. The real
+block never executed — only the traffic model + a CPU finite-check ran. The real
 numeric parity is the GPU run above.
 
 ### Revised checklist (final)
@@ -158,6 +115,15 @@ numeric parity is the GPU run above.
 - [x] Test-harness lockstep-comparison bug fixed.
 - [x] **Full CUDA build (nvcc 12.8, sm_120) + on-GPU numeric parity = PASS**
       (resident==legacy exactly; both vs CPU = 7.15e-7; H2D -96.8%/31.3x).
-- [ ] Merge back into `protagonist_ecology` 鈥?pending user sign-off (still an
+- [ ] Merge back into `protagonist_ecology` — pending user sign-off (still an
       isolated copy; mainline untouched).
 
+### Measured wall-clock speedup (RTX 5060, CUDA 12.8, forward hot path, T=1000 ticks)
+Beyond the -96.8% H2D byte reduction, actual end-to-end forward timing:
+```
+parity-dims    (weights 1.9MB):  legacy 1.0565 ms/tick -> resident 0.3359 ms/tick = 3.15x
+production-ish (weights 21.3MB): legacy 3.6828 ms/tick -> resident 0.7304 ms/tick = 5.04x
+```
+Speedup scales with genome size: the larger the per-cohort weights, the more the
+legacy per-tick re-upload dominates and the more cohort-residency wins. (Micro-bench
+of the inference path only; whole-sim speedup depends on inference vs CPU-sim share.)
