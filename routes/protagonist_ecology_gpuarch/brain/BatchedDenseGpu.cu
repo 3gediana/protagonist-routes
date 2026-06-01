@@ -297,37 +297,12 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
         return false;
     }
 
-    constexpr int block_size = 128;
-    auto grid = [block_size](std::size_t n) {
-        return dim3(static_cast<unsigned int>((n + block_size - 1) / block_size));
-    };
-
-    const dim3 hidden_grid(grid(hidden_dim).x, static_cast<unsigned int>(batch_size));
-    const dim3 output_grid(grid(action_dim).x, static_cast<unsigned int>(batch_size));
-    const dim3 interface_grid(grid(interface_dim).x, static_cast<unsigned int>(batch_size));
-
-    batchedHiddenKernel<<<hidden_grid, block_size, 0, handle->stream>>>(handle->d_inputs,
-                                                                         handle->d_weights_ih,
-                                                                         handle->d_bias_h,
-                                                                         (hidden_addend != nullptr ? handle->d_hidden_addend : nullptr),
-                                                                         handle->d_hidden,
-                                                                         handle->d_hidden_alphas,
-                                                                         static_cast<int>(input_dim),
-                                                                         static_cast<int>(hidden_dim));
-    batchedOutputKernel<<<output_grid, block_size, 0, handle->stream>>>(handle->d_hidden,
-                                                                         handle->d_weights_ha,
-                                                                         handle->d_bias_a,
-                                                                         handle->d_outputs,
-                                                                         handle->d_action_alphas,
-                                                                         static_cast<int>(hidden_dim),
-                                                                         static_cast<int>(action_dim));
-    batchedInterfaceKernel<<<interface_grid, block_size, 0, handle->stream>>>(handle->d_hidden,
-                                                                               handle->d_weights_hi,
-                                                                               handle->d_bias_i,
-                                                                               handle->d_interface,
-                                                                               static_cast<int>(hidden_dim),
-                                                                               static_cast<int>(interface_dim));
-    if (cudaGetLastError() != cudaSuccess) return false;
+    // Shared kernel launch (identical to the resident path) so the two forwards
+    // can never numerically drift.
+    if (!launchDenseKernels(handle, batch_size, input_dim, hidden_dim,
+                            action_dim, interface_dim, hidden_addend != nullptr)) {
+        return false;
+    }
 
     if (!download(hidden_io, handle->d_hidden, n_hidden)
         || !download(outputs_io, handle->d_outputs, n_outputs)

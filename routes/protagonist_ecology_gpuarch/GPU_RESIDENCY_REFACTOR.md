@@ -60,3 +60,46 @@ Status:
 - [ ] Full CUDA build + GPU numeric parity — **pending GPU free** (deferred until the
       PE long-run / DP v3 finish, per the no-source-change-while-training constraint).
 - [ ] Merge back into `protagonist_ecology` — only after GPU parity PASS + sign-off.
+
+---
+
+## STATUS CORRECTION (2026-06-01, wind-down code pass)
+
+Two updates from a careful re-audit of this isolated copy:
+
+1. **Legacy `forward()` now shares `launchDenseKernels()`.** Previously the legacy
+   full-upload path carried its OWN inline copy of the three kernel launches
+   (block_size/grid math/kernel args) 鈥?byte-identical to `launchDenseKernels()`
+   but duplicated, so the two paths *could* silently drift. `forward()` now calls
+   `launchDenseKernels(handle, ..., hidden_addend != nullptr)` exactly like
+   `forwardResident()` does, so resident-vs-legacy are now provably the same launch.
+   Pure dedup, no numeric change.
+
+2. **The real blocker for GPU parity is a MISSING CUDA TOOLCHAIN, not "GPU busy".**
+   Re-audited the box: `nvcc` is not on PATH and not present under
+   `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\{v11.8,v12.4}` (only an
+   `extras` stub dir, no `bin`, no `cudart`). The main `build_ninja_cuda` cache
+   confirms it: `CMAKE_CUDA_COMPILER:FILEPATH=NOTFOUND` 鈥?i.e. CUDA was never
+   actually compiled on this machine; PE/DP run the CPU path. Also no g++/clang/cl
+   on PATH outside a VS dev shell. The Linux side (Devin box) has g++ but NO GPU.
+   So neither machine I can reach has *both* a CUDA compiler and the GPU.
+   - GPU = RTX 5060 Laptop (Blackwell, **sm_120**) 鈫?needs **CUDA >= 12.8** to compile
+     `CUDA_ARCHITECTURES native`; the stub v12.4/v11.8 would not support sm_120 even
+     if a compiler were present.
+   - **To finish true on-GPU numeric parity**: install CUDA Toolkit >= 12.8 (with
+     nvcc) on the Windows box, then configure a separate build dir for this copy with
+     `-DCMAKE_CUDA_COMPILER=<...>/bin/nvcc.exe -DNEURAL_ECO_ENABLE_PROTAGONIST_CUDA=ON`
+     (Ninja + the same MSVC 14.44 toolset as `build_ninja_cuda`) and run target
+     `neural-eco-resident-parity` 鈫?it auto-detects the device via
+     `BatchedDenseGpu::supported()` and runs the resident-vs-legacy-vs-CPU asserts.
+
+CPU-path parity **RE-CONFIRMED PASS** this pass (g++ 11.4, -std=c++20): max|螖| within
+tol; traffic legacy 399.4 MB vs resident 12.8 MB / 200 ticks = **96.8% (31.3x)**.
+
+Revised checklist:
+- [x] Implementation (4 file pairs + test + CMake target).
+- [x] Legacy forward de-duplicated onto shared `launchDenseKernels()`.
+- [x] CPU-path compile + run PASS (re-confirmed 2026-06-01).
+- [ ] Full CUDA build + GPU numeric parity 鈥?**blocked: no nvcc on box; needs CUDA>=12.8 for sm_120** (was mis-attributed to "GPU busy").
+- [ ] Merge back into `protagonist_ecology` 鈥?only after GPU parity PASS + sign-off.
+
