@@ -82,13 +82,13 @@ int main() {
     for (auto& x : h0) x = w(rng);
     for (auto& x : a0) x = w(rng);
 
-    // ---- Run C: CPU reference ----
+    // ---- CPU reference state ----
+    // IMPORTANT: do NOT pre-run the CPU trajectory to completion here. The CPU
+    // reference must be advanced IN LOCKSTEP with the GPU paths inside the tick
+    // loop below, so every comparison is between the same tick t. (Pre-running
+    // it would compare the GPU's per-tick state against the CPU's *final*
+    // tick-(T-1) state, which spuriously reports a huge max|Δ|.)
     std::vector<float> hC = h0, aC = a0, iC(n_b_i, 0.0f);
-    for (std::size_t t = 0; t < kTicks; ++t) {
-        BatchedDenseGpu::forwardCpu(kBatch, kIn, kHid, kAct, kIface,
-                                    inputs[t], w_ih, b_h, w_ha, b_a, w_hi, b_i,
-                                    addend, h_alpha, a_alpha, hC, aC, iC);
-    }
 
     bool gpu = BatchedDenseGpu::supported();
     std::printf("[parity] CUDA device present: %s\n", gpu ? "yes" : "no");
@@ -111,6 +111,11 @@ int main() {
             }
             float worst_AB = 0.0f, worst_BC = 0.0f, worst_AC = 0.0f;
             for (std::size_t t = 0; t < kTicks && uploaded; ++t) {
+                // Advance the CPU reference one tick so all three paths are at
+                // tick t when compared.
+                BatchedDenseGpu::forwardCpu(kBatch, kIn, kHid, kAct, kIface,
+                                            inputs[t], w_ih, b_h, w_ha, b_a, w_hi, b_i,
+                                            addend, h_alpha, a_alpha, hC, aC, iC);
                 bool okA = legacy.forward(kBatch, kIn, kHid, kAct, kIface,
                                           inputs[t], w_ih, b_h, w_ha, b_a, w_hi, b_i,
                                           addend, h_alpha, a_alpha, hA, aA, iA);
@@ -134,7 +139,12 @@ int main() {
         }
     } else {
         std::printf("[parity] GPU absent: numeric parity exercised on GPU box only.\n");
-        // Sanity: CPU run produced finite output.
+        // Sanity: CPU run produced finite output (advance the full trajectory).
+        for (std::size_t t = 0; t < kTicks; ++t) {
+            BatchedDenseGpu::forwardCpu(kBatch, kIn, kHid, kAct, kIface,
+                                        inputs[t], w_ih, b_h, w_ha, b_a, w_hi, b_i,
+                                        addend, h_alpha, a_alpha, hC, aC, iC);
+        }
         float s = 0.0f;
         for (float x : hC) s += x;
         if (!std::isfinite(s)) { std::printf("[parity] FAIL: CPU output non-finite\n"); ++failures; }
