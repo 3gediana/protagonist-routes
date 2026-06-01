@@ -27,3 +27,13 @@
 - VERDICT: R2 0.103<0.13 & amp ~0.005<0.009 -> strength gate FAIL. Amplitude scenario-capped on cold axis; cold organizes PHASE (anticipatory lead robust 2-3/3 every level, cold25 cleanest 3/3) not STRENGTH.
 - NEXT (decision_round_12 ?3, HANDED OFF not run): ONE orthogonal thermal_damage_per_second test (0.3->0.45) from cold25 baseline, smoke-first C7; if also can't lift amp -> ?4 stage-switch ping (phase-lead MET at cold25 3/3 = Phase B anticipation success on lead axis).
 - session wrap-up (user low balance); decision-maker stopped by user. commit local (protagonist_ecology:), not pushed; traces pruned D>=200GB; production exe + deep_protagonist untouched.
+
+## [round_14 | 2026-06-01 UTC] ORTHOGONAL ENV axis: thermal_damage_per_second 0.30 -> 0.45 (cold27 held)
+- Rationale: round_13 found amplitude scenario-capped on the COLD-THRESHOLD axis (cold25->27: R2 0.103<0.13, amp ~0.005<0.009) while phase-lead is robust (3/3 LEAD). Handoff = test an ORTHOGONAL pressure knob (how hard cold *damages*, not when it triggers) to see if amplitude plateau lifts where the threshold axis couldn't.
+- Config: harshcold27 baseline + thermal_damage_per_second 0.3->0.45 only (3 long tomls thermal045_long_5000X_off, generations=80). OFF baseline arm (candidates c1/c2 already NEGATIVE; env-axis tests whether harsher env alone lifts baseline anticipation).
+- SMOKE (gen0-11, seed50001, OFF) = GREEN:
+  - clean completion (sim_time 120s, no crash), NO extinction: all 8 bg species + protagonist positive every gen (protag avg 1137-2376 best up to 6870; only gen0 standard extinction-rescue fired = normal early-gen).
+  - harmony chain fires every gen: builds 0->2, chops 43-91, hunts 1-17, signals 48 (+ diag craft/throw_hits active).
+  - knob bites: must_build_to_survive penalised 18-24 protags/episode (0 worksite completions) in later gens, apex_predator dips gen10 avg=6.4 -> recovers gen11 43.3 -> selection pressure present without collapse.
+- LONG: 80gen x 3seed (50001/50002/50003) OFF launched on GPU (build_ninja_cuda exe), 3 parallel, GPU ~2.4GB/8GB used (world sim 82% CPU -> no deep_protagonist GPU contention). ETA ~90min.
+- NEXT: at gen79 compute fire-anticipation-vs-cold-trough harmonic (R2 / amplitude / phase-lead x3 seeds); compare to cold27 baseline. If amp/R2 clears plateau (R2>=0.13, amp>=0.009) -> orthogonal axis breaks it, advance; else two axes capped -> §4 stage-switch ping to user (blueprint-direction decision). Local commit only, no push.
