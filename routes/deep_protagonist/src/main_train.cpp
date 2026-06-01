@@ -1048,6 +1048,32 @@ struct ScriptedSettler {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// S4 PPO (decision_round_16 Step2): night-shelter potential for STRICT
+// potential-based reward shaping F(s,s') = gamma*Phi(s') - Phi(s)
+// (Ng/Harada/Russell 1999). Policy-invariant: only accelerates credit
+// assignment for "be sheltered at night", never changes the optimal policy.
+// This is NOT a direct nShel/enter-house reward (that would be Goodhart).
+// Phi in [0,1]: at night, 1 when sheltered (in cave or within home core 8m),
+// graded down to 0 by 20m; 0 by day. Reuses the obs indices the
+// ScriptedSettler oracle uses (OBS_INSIDE_CAVE=9, OBS_DAY_COS=13,
+// OBS_BLDG_DX/DY=130/131, VISION_RANGE=60).
+static float phi_night_shelter(const dp::agent::ObservationBuilder::Vector& obs) {
+    constexpr int   IDX_INSIDE_CAVE = 9;
+    constexpr int   IDX_DAY_COS     = 13;
+    constexpr int   IDX_BLDG_DX     = 130;
+    constexpr int   IDX_BLDG_DY     = 131;
+    constexpr float VISION_RANGE    = 60.0f;
+    const float sun_h = -obs[IDX_DAY_COS];          // sun_height_normalized()
+    if (sun_h >= -0.1f) return 0.0f;                // daytime -> no potential
+    if (obs[IDX_INSIDE_CAVE] > 0.5f) return 1.0f;   // in a cave = sheltered
+    const float dx = obs[IDX_BLDG_DX], dy = obs[IDX_BLDG_DY];
+    const float d_norm = std::sqrt(dx * dx + dy * dy);
+    if (d_norm <= 1e-4f) return 0.0f;               // no home anchor placed
+    const float d_m = d_norm * VISION_RANGE;
+    return std::clamp((20.0f - d_m) / 12.0f, 0.0f, 1.0f);  // 1 @<=8m -> 0 @20m
+}
+
 int main(int argc, char** argv) {
     auto console = spdlog::stdout_color_mt("deep_protagonist_train");
     spdlog::set_default_logger(console);
@@ -1104,6 +1130,7 @@ int main(int argc, char** argv) {
     float       ppo_ent_coef = -1.0f;
     float       ppo_lr       = -1.0f;
     int         ppo_critic_warmup = 0;   // D-101: value-only updates before policy training (BC->PPO)
+    float       ppo_night_shaping = 0.0f; // decision_round_16 Step2: coef for night-shelter PBRS (0=off)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -1150,6 +1177,7 @@ int main(int argc, char** argv) {
         else if (a == "--ent-coef")   ppo_ent_coef = std::stof(next());
         else if (a == "--lr")         ppo_lr       = std::stof(next());
         else if (a == "--critic-warmup") ppo_critic_warmup = std::stoi(next());
+        else if (a == "--ppo-night-shaping") ppo_night_shaping = std::stof(next());
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
@@ -1445,7 +1473,15 @@ int main(int argc, char** argv) {
                     tr.cont_act = std::move(v_conts[i]);
                     tr.disc_act = v_disc[i];
                     tr.h_in     = std::move(v_hin[i]);
-                    tr.reward   = v_sr[i].reward;
+                    float shaped_r = v_sr[i].reward;
+                    if (ppo_night_shaping > 0.0f) {
+                        float phi_s  = phi_night_shelter(obs_batch[i]);
+                        float phi_sp = v_sr[i].done ? 0.0f
+                                       : phi_night_shelter(v_sr[i].obs);
+                        shaped_r += ppo_night_shaping
+                                  * (pcfg.gamma * phi_sp - phi_s);
+                    }
+                    tr.reward   = shaped_r;
                     tr.value    = v_val[i];
                     tr.log_prob = v_lp[i];
                     tr.done     = v_sr[i].done;
@@ -1579,7 +1615,13 @@ int main(int argc, char** argv) {
             tr.cont_act = std::move(cont_act);
             tr.disc_act = disc_idx;
             tr.h_in     = std::move(ppo_h_in_snapshot);
-            tr.reward   = sr.reward;
+            float shaped_r = sr.reward;
+            if (ppo_night_shaping > 0.0f) {
+                float phi_s  = phi_night_shelter(obs);
+                float phi_sp = sr.done ? 0.0f : phi_night_shelter(sr.obs);
+                shaped_r += ppo_night_shaping * (pcfg.gamma * phi_sp - phi_s);
+            }
+            tr.reward   = shaped_r;
             tr.value    = vv;
             tr.log_prob = lp;
             tr.done     = sr.done;
