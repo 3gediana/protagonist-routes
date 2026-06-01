@@ -230,3 +230,11 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - **多 seed 复核（40/40）**：营养非杀手（surviving 局 deaths_protein=0，少至 4 次叉鱼即维持 protein≈43）；少量非营养死（出生早狼/夜宿地形，满 bar 死，预存非新增）。
 - **裁定**：§4 PASS —— 世界**凭技能可活**(settler) + **营养成真实约束**(noop 死) + **冠军身份保全**(bcv9-OFF 不变) + **bcv9-ON gap 已记账**(待重训)。下一步=在此营养世界用 settler demo + §3a(567→569) 暖启动训 **s4ppo_nutrition_v1**（attack 已解屏蔽 mask_fire_only；承 decision_round_20/21 知识：稳态驱动、不叠竞争势函数、KL 只守基本功）。
 - **红线核对**：营养只回条不发奖（稳态）✓；bc_v9/c1 未动 ✓；鱼不入 obs 保 PPO 身份 ✓；本地 commit 不 push ✓。
+
+## D-120 / round_23 prep — settler 64-seed 鲁棒性扫 + s4ppo_nutrition_v1 的 BC demo 语料
+- **64-seed 复核（settler, decay40, 9000步, ep0）**：clean 存活 **28/64 = 44%**；失败死因拆分 = **bite(早狼) 16 / cold(夜宿暴露) 16 / protein 4 / vitamin 0**。
+  - 量化坐实 D-119 定性结论：**营养已基本不再是杀手**（protein 仅 4、vitamin 0；§4 修复有效）；残余死亡=**正交的捕食者+寒冷**（预存 oracle 鲁棒性缺口，与 §4 无关，正是 PPO 重训该补的）。
+  - 注：train.exe 单次跑多 episode（死则重生续跑），上表按 ep0；--record-demos 按 --steps 固定写满记录，故文件等大≠存活，须用 metrics 的 steps/r_death 辨真伪。
+- **BC demo 语料就绪**：从 28 个 clean-survivor seed（ep0 满 9000 步、death=0）录 settler demos → demos_s4/（28 files, 551.8MB）。**仅取存活局**避免 BC 模仿「觅食→中途饿死/被咬死」的坏轨迹。
+- **下一步（GPU 待 eco 长跑腾出后）**：从 bc_v9(567→569 暖启动) 在这 28 条 demo 上 BC 预训 → PPO 微调（mask_fire_only，attack 已解屏）。目标=用 alive-reward 学会**捕食者规避 + 寒冷时进屋时机**，把跨 seed 存活从 oracle 的 44% 抬上去。
+- 红线核对：仅录存活 demo 不改 env/不发奖 ✓；bc_v9/c1 未动 ✓；本地不 push ✓；D free 201.6GB ✓。
