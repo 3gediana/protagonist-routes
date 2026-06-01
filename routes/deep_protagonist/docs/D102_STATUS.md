@@ -1,6 +1,7 @@
 ﻿# D-102 状态与计划（DAgger + 精致 oracle 攻克"定居/过夜"）
 
-> 更新：2026-05-30 ~23:00 UTC (D-108 C′ 夜宿诊断 + r7 夜宿纠错 + bc_v9 — Stage2 验收门达成)
+> 更新：2026-06-01 (D-119 / round_22 §4 营养可生存性闸 = **PASS** — settler 觅食+岸边叉鱼存活 9000 步 / noop 4740 步饿死 / bcv9-OFF 身份不变 / bcv9-ON 饿死=known-gap；下一步=训 s4ppo_nutrition_v1。详见 docs/决策记录.md D-119 + PROGRESS.md)
+> 历史：2026-05-30 ~23:00 UTC (D-108 C′ 夜宿诊断 + r7 夜宿纠错 + bc_v9 — Stage2 验收门达成)
 > 主线：用"机器人带原始人"（DAgger 纠错 + 精致机器人决策树）解决 D-101 留下的墙——
 > 原始人能稳定盖房，但学不会"整夜待在屋里"（camp）。
 > 目标（settlement）：盖房 + 整夜在屋，**bldg_ticks ≥ 5000 且 night_shelter ≥ 0.8**，

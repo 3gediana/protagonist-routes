@@ -1,6 +1,7 @@
 # deep_protagonist · PROGRESS
 
-> 最后更新: 2026-05-31 (D-110 C＋ 第二全新 bank 复核 + 脆性死亡诊断 — 1900k/2000k/2100k=90/90/40, 双 bank 合并中位 **85%** 无 0% 世界; 残余 13/60 = 7 夜宿地形+5 出生早狼, 均现有能力内 → 轻量 r8)
+> 最后更新: 2026-06-01 (D-119 / round_22 §4 营养可生存性闸 = **PASS**: settler 觅食+岸边叉鱼 存活 9000 步 / noop 4740 步 protein 饿死 / bcv9-OFF 身份不变存活 / bcv9-ON 4740 步饿死=known-gap 待重训补; 见 §D-119 + 决策记录)
+> 历史更新: 2026-05-31 (D-110 C＋ 第二全新 bank 复核 + 脆性死亡诊断 — 1900k/2000k/2100k=90/90/40, 双 bank 合并中位 **85%** 无 0% 世界; 残余 13/60 = 7 夜宿地形+5 出生早狼, 均现有能力内 → 轻量 r8)
 > 当前主线: **阶段2 双 bank 确认完成; Stage3 oracle 扩展严格挂起等用户定范围(S3-BC 延伸 vs S4-PPO)**。本轮地基加固: 脆性死亡主因=夜宿地形覆盖深度(7/13, 2100000 同 1000000 型)+出生区早狼(5/13), 均在现有 oracle 能力内 → 轻量 r8(不扩 oracle, 零范围扩散)。全新未训 bank 1600k/1700k/1800k = 80/80/90, nShel 全 1.00, attack 全 0; 诊断: clone 仅做纯定居(r_craft=0/r_kills=0/多屋未展), Stage3 造衣/狩猎/中期建造 需 oracle Layer 扩展(结构性, 待授权)。bc_v9 6-seed bank 跨 seed 中位 90% (700k100/800k100/900k80/1000k60/1100k90/1200k90)；**6/6 seed ≥6/10 且无 0% 世界**; 1000000 脱 0(nShel 0.04→0.92, 死29→8, bldg258→8159); attack 全 seed=0 无跷跷板; 555k sanity 17%→67%
 > 当前蓝图阶段: S3 settlement 基本闭环(建房+整夜过夜 跨世界一致 6/6); 三层 DAgger(r5狼/r6建造/r7夜宿)均衡; 残留=1000000 仍 3/10 顶固地形子集; PPO 自训练救 camp 已否决
 > KPI (D-104 永久, D-105 扩): 留出 seed bank = 700000/800000/900000/**1000000/1100000/1200000** 各 10 局; 看逐 seed + 跨 seed 中位(不看 pooled 均值, 防易世界拉偏); 555000 = 记忆 sanity。DAgger 永不在留出 bank 上采。
@@ -210,3 +211,22 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - **Step2（待用户发令后展开）**：S4 PPO smoke，from bc_v9 暖启动（critic 重初始化）+ 夜宿走 **potential-based reward shaping**（F=γΦ(s')−Φ(s)，Φ=夜间在屋内/近庇护势函数，policy-invariant，Ng+1999）；**严禁**对 nShel/进屋/食物直接加奖（Goodhart）。smoke 验：不退已赢 bank / 残差方向正确 / fire=atk=0 cold 不回升 / 全新 bank food-death ≤ bc_v9（v13·v14 双栽的轴）。
   - 决策者已 ping 用户给 C（现在投 S4 PPO 修夜宿）vs B（先冻结夜宿为 known-gap、S4 PPO 待整体就绪统一修）的取舍；执行者 Step1 已固化完成，**S4 PPO 具体投入按用户对 C/B 的发令再启**（遵用户"模型运行需统一发号施令"红线）。
 - 磁盘：DP 侧已清全部过期数据，D free 196GB；决策者核实持续下跌主因为另一 route（protagonist_ecology）在途 event_trace 累积，距 30GB 硬停线极远，非紧急，DP 照常推进。
+
+
+## D-119 / round_22 §4 — 营养可生存性闸 = PASS（觅食+岸边叉鱼；冠军身份保全；bcv9-ON gap 记账）
+- **根因坐实（用户诊断成立）**：bc_v9 用 **collect** 觅食/采建材，营养回填却挂在 eat(植物→vitamin)/attack(肉→protein)/drink-fish(鱼→protein) —— 取食动作与回填动作未对齐 → 营养ON 必饿死。这是**预期的"未重训缺口"**（待 §3a 暖启动 + settler-demo 重训补），非接线 bug（动作枚举 encode/decode 一一对应已核）。
+- **§4 结构性修复（不做奖励 shaping，承稳态驱动）**：
+  1. settler oracle Layer 3N 重写：`try_forage`（觅食→vitamin）+ `try_protein`（早期 craft 长矛 → 岸边叉鱼 → 持矛追近陆猎兜底）。
+  2. Environment：drink/near_water 判定 2→6m（地形岸坡把 CapsuleAgent 卡在水心 ~5.7m，2m 物理够不着）；fish 叉击 reach 2→6m（岸边叉鱼，鱼仅 1.5m/s 且困在水中→可靠 protein 源，对照陆猎 6-7m/s 逃逸）。
+  3. 出生水域旁重定位 10 条鱼（70m 内扫 River/Swamp 格、按距排序、铺最近 6 格）。**鱼不入 agent 观测**（k_nearest 明确 fish/eagle out-of-scope）→ 不扰 PPO obs（避开 D-067 prey 密度回归灾难）；陆猎 rabbit/deer 不动。
+  4. AnimalSystem 加 `animals_mut()` 可变访问器（建图期重定位鱼用）。
+- **§4 四臂闸结果（decay 40/40, seed 2100000, 9000 步）**：
+  | 臂 | 步数 | 死亡 | protein/vit | 行为 |
+  |---|---|---|---|---|
+  | settler ON | 9000 | 0 ✓ | 5/20 存活 | eat=524 drink=568（觅食+叉鱼维持 protein ~0.35–0.44）|
+  | noop ON | 4740 | protein | 0/0 | 惰性→饿死（营养成约束 ✓）|
+  | bcv9 OFF | 9000 | 0 ✓ | 100/100 | collect=96 建房夜宿 attack=0（身份不变；鱼重定位/6m drink 未扰动 ✓）|
+  | bcv9 ON | 4740 | protein | 0/0 | 行为同 OFF(collect=96)→饿死（**known-gap 记账** ✓）|
+- **多 seed 复核（40/40）**：营养非杀手（surviving 局 deaths_protein=0，少至 4 次叉鱼即维持 protein≈43）；少量非营养死（出生早狼/夜宿地形，满 bar 死，预存非新增）。
+- **裁定**：§4 PASS —— 世界**凭技能可活**(settler) + **营养成真实约束**(noop 死) + **冠军身份保全**(bcv9-OFF 不变) + **bcv9-ON gap 已记账**(待重训)。下一步=在此营养世界用 settler demo + §3a(567→569) 暖启动训 **s4ppo_nutrition_v1**（attack 已解屏蔽 mask_fire_only；承 decision_round_20/21 知识：稳态驱动、不叠竞争势函数、KL 只守基本功）。
+- **红线核对**：营养只回条不发奖（稳态）✓；bc_v9/c1 未动 ✓；鱼不入 obs 保 PPO 身份 ✓；本地 commit 不 push ✓。

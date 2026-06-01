@@ -476,6 +476,14 @@ struct ScriptedSettler {
     static constexpr int OBS_SITE_W_LEFT  = 161;
     static constexpr int OBS_SITE_S_LEFT  = 162;
     static constexpr int OBS_SITE_G_LEFT  = 163;
+    // 4 nearest animals: base 67 (= plants 39 + 4*7), stride 8
+    // (dx,dy,dz + 5 kind one-hots: Rabbit0 Deer1 Wolf2 Fish3 unused4).
+    static constexpr int OBS_ANIM_BASE    = 67;
+    static constexpr int OBS_ANIM_STRIDE  = 8;
+    // decision_blueprint_nutrition §3a: dual nutrition bars appended at the
+    // tail (normalised /100). OFF -> read 1.0 so nutrition branches stay dark.
+    static constexpr int OBS_PROTEIN      = 567;
+    static constexpr int OBS_VITAMIN      = 568;
     static constexpr float VISION_RANGE   = 60.0f;
 
     explicit ScriptedSettler(uint64_t seed) : rng(seed ? seed : 1) {}
@@ -505,6 +513,27 @@ struct ScriptedSettler {
         bool  found = false;
         for (int i = 0; i < 4; ++i) {
             int b = OBS_PLANT_BASE + i * OBS_PLANT_STRIDE;
+            float dx = obs[b + 0], dy = obs[b + 1];
+            if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f) continue;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < best) { best = d2; out_dx = dx; out_dy = dy; found = true; }
+        }
+        return found;
+    }
+
+    // Nearest huntable prey (Rabbit=0 / Deer=1 / Fish=3; Wolf=2 excluded — a
+    // wolf is a predator, not a meal the oracle should chase) across the 4
+    // animal slots. Used by the nutrition layer to refill the PROTEIN bar.
+    bool find_prey_(const dp::agent::ObservationBuilder::Vector& obs,
+                    float& out_dx, float& out_dy) const {
+        float best = 1e9f;
+        bool  found = false;
+        for (int i = 0; i < 4; ++i) {
+            int b = OBS_ANIM_BASE + i * OBS_ANIM_STRIDE;
+            bool is_prey = obs[b + 3] > 0.5f      // Rabbit
+                        || obs[b + 4] > 0.5f      // Deer
+                        || obs[b + 6] > 0.5f;     // Fish
+            if (!is_prey) continue;
             float dx = obs[b + 0], dy = obs[b + 1];
             if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f) continue;
             float d2 = dx*dx + dy*dy;
@@ -744,6 +773,105 @@ struct ScriptedSettler {
             && thirst > 0.40f && hunger > 0.40f) {
             steer_(a, home_dx, home_dy);
             return a;
+        }
+
+        // ---------- Layer 3N: NUTRITION MAINTENANCE ----------
+        // decision_blueprint_world_coherence §4/§5a: protein (obs 567) and
+        // vitamin (obs 568) decay independently of hunger/thirst. The caveman
+        // must seek the RIGHT food for the RIGHT deficiency: forage ripe plants
+        // -> vitamin, hunt prey (rabbit/deer/fish) -> protein. This is the demo
+        // behaviour the new BC base learns; it also makes the §4 survivability
+        // gate real (a forager/hunter lives, a neglecter starves). When
+        // nutrition is OFF both bars read 1.0 so neither branch fires and the
+        // old-world oracle is byte-for-byte unchanged. Day/night risk gated
+        // exactly like 3a/3b so chasing food never causes a freeze death.
+        {
+            const float protein = obs[OBS_PROTEIN];
+            const float vitamin = obs[OBS_VITAMIN];
+            const float NUTRI_LOW = 0.45f;   // act before the 0.30 debuff bites
+            const bool  have_spear_n = obs[OBS_INV_SPEAR] > 0.005f;
+            const bool  have_wood_n  = obs[OBS_INV_WOOD]  > 0.005f;
+            const bool  have_stone_n = obs[OBS_INV_STONE] > 0.005f;
+            const float ATTACK_RANGE = (have_spear_n ? 2.3f : 1.4f) / VISION_RANGE;
+            const bool  need_vit = vitamin < NUTRI_LOW;
+            const bool  need_pro = protein < NUTRI_LOW;
+
+            // Vitamin: forage the nearest ripe plant (action.eat).
+            auto try_forage = [&]() -> bool {
+                float px, py;
+                if (!find_plant_(obs, px, py)) return false;
+                float pd2  = px*px + py*py;
+                float pd_m = std::sqrt(pd2) * VISION_RANGE;
+                if (is_night && pd_m > 10.0f) return false;
+                steer_(a, px, py);
+                if (std::sqrt(pd2) < EAT_RANGE) a.eat = true;
+                return true;
+            };
+            // Protein: meat. Three sources, ordered by reliability:
+            //   1. Arm in-place: craft_spear is inventory-only (Environment.cpp)
+            //      so we forge a spear the moment protein bites, not just at
+            //      home (Layer 6 only crafts when at_home, which never fires if
+            //      the auto-Shed sits on spawn). 50 dmg/2.5 m one-/two-shots.
+            //   2. FISH at water: the drink action auto-attacks a fish within
+            //      2 m and "fish is meat too" -> eat_protein. Water sits near
+            //      the settlement and fish don't flee like rabbits/deer, so this
+            //      is the DEPENDABLE protein source (historical land-hunt
+            //      success ~8%). Drinking also tops thirst -- pure upside.
+            //   3. Opportunistic land hunt if a prey is already close.
+            auto try_protein = [&]() -> bool {
+                if (!have_spear_n && have_wood_n && have_stone_n
+                    && craft_cooldown == 0) {
+                    a.craft_spear = true;
+                    craft_cooldown = 8;
+                    return true;
+                }
+                if (water_visible && !(is_night && water_d_m > 10.0f)) {
+                    steer_(a, water_dx, water_dy);
+                    // Bank-fishing: the env now registers near_water within 6 m
+                    // (terrain pins the capsule ~5-6 m from the water centre),
+                    // so press drink as soon as we're at the bank rather than
+                    // demanding the unreachable 2 m DRINK_RANGE.
+                    if (water_d_m < 6.5f) a.drink = true;
+                    return true;
+                }
+                float qx, qy;
+                if (!find_prey_(obs, qx, qy)) return false;
+                float qd2  = qx*qx + qy*qy;
+                float qd_m = std::sqrt(qd2) * VISION_RANGE;
+                if (is_night && qd_m > 12.0f) return false;
+                steer_(a, qx, qy);
+                if (std::sqrt(qd2) < ATTACK_RANGE) a.attack = true;
+                return true;
+            };
+
+            if (need_vit || need_pro) {
+                // Fix the worse deficiency first.
+                const bool vit_first =
+                    need_vit && (!need_pro || vitamin <= protein);
+                if (vit_first) {
+                    if (try_forage())             return a;
+                    if (need_pro && try_protein()) return a;
+                } else {
+                    if (need_pro && try_protein()) return a;
+                    if (need_vit && try_forage())  return a;
+                }
+                // Nothing edible in vision: daytime bounded scout so the agent
+                // goes LOOKING for food/prey instead of idling at home while a
+                // bar bleeds to 0. Mirrors the Layer-7 final wander (random
+                // heading refreshed every 32 ticks). Night -> defer to the
+                // shelter-biased layers below (don't roam in the dark).
+                if (!is_night) {
+                    if ((tick & 31) == 0) {
+                        float ang = std::uniform_real_distribution<float>(
+                            0.0f, 6.2831853f)(rng);
+                        dirx = std::cos(ang);
+                        diry = std::sin(ang);
+                    }
+                    a.move_x = dirx;
+                    a.move_y = diry;
+                    return a;
+                }
+            }
         }
 
         // ---------- Layer 3: VITAL MAINTENANCE ----------

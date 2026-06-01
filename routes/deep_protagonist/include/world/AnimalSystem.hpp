@@ -74,6 +74,10 @@ public:
               float agent_speed_scale = 1.0f);
 
     const std::vector<AnimalInstance>& animals() const { return animals_; }
+    // Mutable access: used at world-build to cluster a few fish into the
+    // water nearest spawn (decision_blueprint_world_coherence §4). Fish are
+    // out of the agent observation, so this does not churn the PPO obs.
+    std::vector<AnimalInstance>& animals_mut() { return animals_; }
 
     // Index of the closest animal of given kind, or -1
     int closest_to(float x, float y, AnimalKind kind, float max_dist = 1e6f) const;

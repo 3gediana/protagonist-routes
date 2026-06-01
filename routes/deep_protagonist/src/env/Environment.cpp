@@ -169,6 +169,58 @@ Environment::Environment(const EnvConfig& cfg)
                  has_water_in_vision(spawn_x_, spawn_y_) ? "yes" : "no",
                  food_in_vision(spawn_x_, spawn_y_) ? "yes" : "no");
 
+    // decision_blueprint_world_coherence §4: cluster a few fish into the
+    // River/Swamp water nearest spawn so spearfishing (drink->catch->protein)
+    // is a DEPENDABLE protein source, mirroring how foraging dependably feeds
+    // vitamin. Without this the 30 world fish scatter across a ~1 km river
+    // network and the bank the agent settles at usually has none, so protein
+    // can never be refilled. Fish are excluded from the agent observation
+    // (see k_nearest "fish/eagle out of scope"), so unlike a prey-density bump
+    // (cf. D-067) this does NOT perturb the PPO obs near the agent. Land prey
+    // (rabbit/deer, 6-7 m/s, flee) stay untouched.
+    {
+        // Scan out to the vision range (the spawn is only guaranteed water
+        // *in vision*, typically ~40-60 m away, not adjacent) and keep the
+        // River/Swamp cells closest to spawn -- that bank is where the agent
+        // will walk to drink/fish.
+        std::vector<std::pair<float,std::pair<float,float>>> water_cells;
+        const float R = 70.0f;
+        for (float dy = -R; dy <= R; dy += 4.0f) {
+            for (float dx = -R; dx <= R; dx += 4.0f) {
+                float wx = spawn_x_ + dx, wy = spawn_y_ + dy;
+                auto b = world_.biome_at(wx, wy);
+                if (b == dp::world::Biome::River
+                 || b == dp::world::Biome::Swamp) {
+                    water_cells.emplace_back(dx*dx + dy*dy,
+                                             std::make_pair(wx, wy));
+                }
+            }
+        }
+        std::sort(water_cells.begin(), water_cells.end(),
+                  [](const auto& a, const auto& b){ return a.first < b.first; });
+        int placed = 0;
+        if (!water_cells.empty()) {
+            auto& al = animals_.animals_mut();
+            // spread the fish over the nearest few bank cells
+            const size_t span = std::min<size_t>(water_cells.size(), 6);
+            for (auto& a : al) {
+                if (a.kind != dp::world::AnimalKind::Fish) continue;
+                const auto& wc = water_cells[placed % span].second;
+                a.pos_x  = wc.first;
+                a.pos_y  = wc.second;
+                a.pos_z  = world_.surface_height(wc.first, wc.second);
+                a.health = 100.0f;
+                a.state  = dp::world::AnimalState::Wander;
+                if (++placed >= 10) break;
+            }
+        }
+        float nearest_m = water_cells.empty()
+            ? -1.0f : std::sqrt(water_cells.front().first);
+        spdlog::info("Environment S4: relocated {} fish near spawn "
+                     "({} water cells within {:.0f}m, nearest {:.1f}m)",
+                     placed, water_cells.size(), R, nearest_m);
+    }
+
     // Debug: closest plant by kind
     for (auto kind : {dp::world::PlantKind::Berry,
                       dp::world::PlantKind::Fruit}) {
@@ -629,7 +681,12 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                       || biome_here == dp::world::Biome::Swamp);
         bool near_water = on_water;
         if (!on_water) {
-            const float r = 2.0f;
+            // decision_blueprint_world_coherence §4: terrain (steep banks /
+            // elevation drop at the water's edge) keeps the CapsuleAgent ~5-6 m
+            // from the nearest water-cell centre, so a 2 m gate made drinking --
+            // and therefore spearfishing, the only dependable protein source --
+            // physically unreachable. 6 m lets the agent drink from the bank.
+            const float r = 6.0f;
             for (float dy = -r; dy <= r && !near_water; dy += 1.0f) {
                 for (float dx = -r; dx <= r && !near_water; dx += 1.0f) {
                     auto nb = world_.biome_at(as.pos_x + dx,
@@ -644,8 +701,12 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         if (near_water) {
             const float drunk = drink_drive(35.0f);
             if (drunk > 0.5f) fire_once_critical(first_drink_fired_);
+            // §4: spearfish the shallows from the bank. Fish flee at only
+            // 1.5 m/s and are confined to water, so (unlike 6-7 m/s land prey)
+            // they are reliably catchable -- this is the protein analogue of
+            // foraging for vitamin. kind==Fish below gates the protein refill.
             auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
-                                              agent_.yaw(), 2.0f, 100.0f);
+                                              agent_.yaw(), 6.0f, 100.0f);
             if (fish.killed
                 && animals_.animals()[fish.index].kind
                     == dp::world::AnimalKind::Fish) {
