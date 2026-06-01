@@ -19,3 +19,11 @@
 - VERDICT B: env pressure PARTIAL POSITIVE on baseline: anticipation became UNIVERSAL (2/3->3/3 LEAD, mean lead +7.3->+9.7s) BUT R2/amplitude still at plateau ceiling (no strength break).
 - next (decision-maker): push env knob harder (cold 25->27/28 OR add thermal-damage knob), one at a time, smoke-first, C7 head gate; drop warmth-drive.
 - commit local (protagonist_ecology:), not pushed; production exe + deep_protagonist untouched; traces pruned, D free >=200GB.
+
+## [round_13 | 2026-06-01 UTC] ENV step2: cold_temp_threshold 25->27 (OFF-only) -> plateau NOT broken; amplitude scenario-capped on cold axis
+- decision_round_12: dropped candidate_2 (warmth-drive); OFF-only; step same cold knob to test if steeper cold lifts AMPLITUDE not just phase.
+- smoke C7 PASS (8 species +, protag +1244); long 80gen x3seed OFF cold27: all gen80, C7 intact (protag avg +2132/+2768/+3949).
+- gen79 fire harmonic across cold axis (OFF): cold22 R2 0.133 (2/3 LEAD) | cold25 R2 0.073 (3/3 LEAD) | cold27 R2 0.103 (2/3 LEAD); amp flat ~0.005 all, no monotonic gain.
+- VERDICT: R2 0.103<0.13 & amp ~0.005<0.009 -> strength gate FAIL. Amplitude scenario-capped on cold axis; cold organizes PHASE (anticipatory lead robust 2-3/3 every level, cold25 cleanest 3/3) not STRENGTH.
+- NEXT (decision_round_12 ?3, HANDED OFF not run): ONE orthogonal thermal_damage_per_second test (0.3->0.45) from cold25 baseline, smoke-first C7; if also can't lift amp -> ?4 stage-switch ping (phase-lead MET at cold25 3/3 = Phase B anticipation success on lead axis).
+- session wrap-up (user low balance); decision-maker stopped by user. commit local (protagonist_ecology:), not pushed; traces pruned D>=200GB; production exe + deep_protagonist untouched.
