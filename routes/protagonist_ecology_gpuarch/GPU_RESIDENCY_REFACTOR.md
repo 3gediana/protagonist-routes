@@ -152,3 +152,18 @@ got 8-15x faster; per-gen benefit is bounded by inference's share. NOTE the
 bench excludes DNC memory ops, per-agent marshalling, and background-species
 inference -- if those are significant the share (and savings) could be larger.
 An exact per-gen number requires profiling the live sim (% time in forward).
+
+### Takeover TODO (for the agent picking this up)
+1. PROFILE (was the next planned step): instrument the dense-forward call in
+   `runtime/ProtagonistBatchedDenseRunner.cpp` + the evolution tick loop with
+   std::chrono, CPU-build the eco (exe neural-eco-protagonist-rhythm), run a 2-gen
+   smoke (copy onepot_sC_long_50001.toml, set generations=2), print forward_ms/total_ms
+   to get the real forward share; then per-gen saving = share*(1-1/14.76)*per_gen.
+   `git restore` the instrumentation afterward. CPU build suffices (no GPU needed).
+2. MERGE (needs user sign-off): port file-by-file (NOT whole-dir copy, mainline has
+   one-pot/FOV/Phase C changes the gpuarch copy lacks): brain/BatchedDenseGpu.{cpp,cu,h},
+   runtime/ProtagonistBatchedDenseRunner.{cpp,h}, CMakeLists.txt (GPU-arch deltas only),
+   runtime/test_resident_parity.cpp. Re-run test_resident_parity (CUDA build) to confirm PASS.
+   Confirmed safe for DP: deep_protagonist does NOT reference BatchedDenseGpu.
+3. OPTIONAL 3-seed PE re-check (onepot 50002/50003) to confirm the +5..+17s phase lead
+   is not a single-seed artifact.
