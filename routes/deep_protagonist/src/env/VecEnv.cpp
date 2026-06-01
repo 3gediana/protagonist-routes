@@ -19,7 +19,8 @@
 
 namespace dp::env {
 
-VecEnv::VecEnv(const EnvConfig& base_cfg, int n_envs, uint64_t seed_xor) {
+VecEnv::VecEnv(const EnvConfig& base_cfg, int n_envs, uint64_t seed_xor)
+    : base_cfg_(base_cfg), seed_xor_(seed_xor) {
     if (n_envs < 1) n_envs = 1;
     envs_.reserve(n_envs);
     for (int i = 0; i < n_envs; ++i) {
@@ -44,6 +45,21 @@ void VecEnv::reset_all(std::vector<dp::agent::ObservationBuilder::Vector>& obs_b
 
 void VecEnv::reset(int idx, dp::agent::ObservationBuilder::Vector& obs_out) {
     envs_.at(idx)->reset(obs_out);
+}
+
+void VecEnv::reseed(int idx, uint64_t new_world_seed,
+                    dp::agent::ObservationBuilder::Vector& obs_out) {
+    // Rebuild this slot's Environment from scratch with a fresh world seed so
+    // terrain + resource/plant scatter are re-rolled (animals already reseed
+    // per episode inside EpisodeManager::reset, but terrain/resources are
+    // fixed at construction -> without this the policy only ever sees n_envs
+    // distinct maps and memorizes their food layout = overfit).
+    EnvConfig cfg = base_cfg_;
+    cfg.world.seed = new_world_seed;
+    cfg.instance_seed_xor = base_cfg_.instance_seed_xor
+                          ^ (new_world_seed * 0xBF58476D1CE4E5B9ULL);
+    envs_.at(idx) = std::make_unique<Environment>(cfg);
+    envs_[idx]->reset(obs_out);
 }
 
 void VecEnv::step_all(const std::vector<dp::agent::AgentAction>& actions,

@@ -1244,6 +1244,7 @@ int main(int argc, char** argv) {
     float       thirst_decay = 12.0f;      // D-053: blueprint line 60. D-041 used 8 as middle ground; with D-052 stack in place we need the full 12/min so drink stays a survival need across an episode.
     float       trigger_cost = 0.001f;     // EnvConfig.trigger_cost
     int         n_envs       = 1;          // D-078: VecEnv parallel envs (1 = legacy single env)
+    bool        domain_rand  = false;      // 2026-06-01: re-roll world seed per episode (anti-overfit)
     // D-101 BC pipeline
     std::string record_demos;              // path to write (obs,action) demos (settler/scripted only)
     bool        demo_no_regen = false;     // disable in-building regen during demo recording
@@ -1317,6 +1318,7 @@ int main(int argc, char** argv) {
         else if (a == "--thirst-decay") thirst_decay = std::stof(next());
         else if (a == "--trigger-cost") trigger_cost = std::stof(next());
         else if (a == "--n-envs")       n_envs       = std::stoi(next());
+        else if (a == "--domain-rand")  domain_rand  = true;
         else if (a == "--record-demos") record_demos = next();
         else if (a == "--demo-no-regen") demo_no_regen = true;
         else if (a == "--oracle-no-fire") oracle_no_fire = true;
@@ -1638,6 +1640,10 @@ int main(int argc, char** argv) {
         dp::env::VecEnv venv(ecfg, n_envs, seed ^ 0xFEEDULL);
         std::vector<dp::agent::ObservationBuilder::Vector> obs_batch;
         venv.reset_all(obs_batch);
+        // Anti-overfit: per-episode world re-seeding stream (used iff --domain-rand).
+        std::mt19937_64 dr_rng(seed ^ 0xDA7A5EEDULL);
+        if (domain_rand)
+            spdlog::info("2026-06-01: domain randomization ON (fresh world seed per episode)");
 
         // Per-env rollouts. Each fills to pcfg.rollout_steps before a
         // batched PPO update. Updates run sequentially across envs.
@@ -1699,7 +1705,14 @@ int main(int argc, char** argv) {
                     log_episode(v_sr[i].episode_id,
                                 venv.env(i).last_episode_stats(), ms);
                     ++episodes_done;
-                    venv.reset(i, obs_batch[i]);
+                    if (domain_rand) {
+                        // Fresh world (terrain + resource layout) every
+                        // episode so the policy cannot memorize a fixed set
+                        // of maps -> forces generalizable foraging/survival.
+                        venv.reseed(i, dr_rng(), obs_batch[i]);
+                    } else {
+                        venv.reset(i, obs_batch[i]);
+                    }
                     ppo->reset_hidden_at(i);
                 } else {
                     obs_batch[i] = v_sr[i].obs;

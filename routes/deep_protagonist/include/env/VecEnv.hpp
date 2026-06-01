@@ -41,6 +41,12 @@ public:
     // Reset a single env after done. Writes into obs_out.
     void reset(int idx, dp::agent::ObservationBuilder::Vector& obs_out);
 
+    // Domain randomization: rebuild env idx with a brand-new world seed
+    // (fresh terrain + resource/plant layout), then reset. Used to stop the
+    // policy memorizing a fixed handful of maps (overfit fix, 2026-06-01).
+    void reseed(int idx, uint64_t new_world_seed,
+                dp::agent::ObservationBuilder::Vector& obs_out);
+
     // Step all envs in parallel. actions.size() must == n_envs(). Resizes
     // results to n_envs and fills it.
     void step_all(const std::vector<dp::agent::AgentAction>& actions,
@@ -48,6 +54,8 @@ public:
 
 private:
     std::vector<std::unique_ptr<Environment>> envs_;
+    EnvConfig base_cfg_;     // template config for domain-rand rebuilds
+    uint64_t  seed_xor_{0};  // per-index decorrelation offset
 };
 
 } // namespace dp::env
