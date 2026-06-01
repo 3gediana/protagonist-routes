@@ -46,6 +46,7 @@
 #include "perception/MemoryTrialPerception.h"
 #include "perception/ObjectLogisticsPerception.h"
 #include "perception/ProtagonistRhythmPerception.h"
+#include "perception/ProtagonistWarmthDrivePerception.h"
 #include "perception/StockpilePerception.h"
 #include "perception/SurvivalStatePerception.h"
 #include "perception/TaskContextPerception.h"
@@ -189,6 +190,14 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
     // ProtagonistRhythmPerception::kDim dims, in this same trailing position.
     if (config.protagonist_rhythm_perception_enabled) {
         sensory_dim += ProtagonistRhythmPerception::kDim;
+    }
+
+    // Candidate-2 (decision_round_10): homeostatic warmth-drive. Independent
+    // flag -> separate fresh lineage; NOT stacked with candidate-1. The
+    // addPerception call in createProtagonist must add exactly
+    // ProtagonistWarmthDrivePerception::kDim dims in this same trailing position.
+    if (config.protagonist_warmth_drive_enabled) {
+        sensory_dim += ProtagonistWarmthDrivePerception::kDim;
     }
 
     return sensory_dim;
@@ -353,6 +362,13 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // (added last, after environmental perception).
     if (config.protagonist_rhythm_perception_enabled) {
         agent->addPerception(std::make_unique<ProtagonistRhythmPerception>());
+    }
+
+    // Candidate-2 (decision_round_10): homeostatic warmth-drive (proactive
+    // warmth need + body-temp trend). Must match the dim summation in
+    // protagonistSensoryDim (added last, after candidate-1).
+    if (config.protagonist_warmth_drive_enabled) {
+        agent->addPerception(std::make_unique<ProtagonistWarmthDrivePerception>());
     }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));

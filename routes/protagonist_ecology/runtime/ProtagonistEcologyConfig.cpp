@@ -543,6 +543,10 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist_rhythm_perception_enabled = config.getOr<bool>(
         "evolution.protagonist_rhythm_perception_enabled",
         out.protagonist_rhythm_perception_enabled);
+    // Candidate-2 (decision_round_10): true -> fresh lineage with +2 warmth-drive dims.
+    out.protagonist_warmth_drive_enabled = config.getOr<bool>(
+        "evolution.protagonist_warmth_drive_enabled",
+        out.protagonist_warmth_drive_enabled);
     // L2.7 v13: per-goal-type sub-reward weights. Defaults reflect the
     // relative difficulty of each goal: ChopTree/GatherStick/Stone are
     // common and easy (small reward); BuildWorksite is the long

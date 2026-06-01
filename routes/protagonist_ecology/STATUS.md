@@ -1,2 +1,4 @@
 
 [2026-06-01] STATUS: candidate_1 done = NEGATIVE. smoke/short/long all ran; gen79 ON fire-anticipation R2~0.06 lead~0 (in-phase), not > OFF baseline -> PLATEAU not broken. round_10 written to inbox. Awaiting decision_round_10. Next likely candidate_2 (goal channel). No push; production exe + deep_protagonist untouched.
+
+[2026-06-01] STATUS: candidate_2 done = NEGATIVE, HARD STOP-LOSS TRIGGERED. smoke/short/long all ran; gen79 ON(warmth-drive) fire-anticipation R2 0.060 / 0-of-3 LEAD, NOT > OFF baseline (R2 0.133 / 2-of-3 LEAD). Two bloodlines now fail to lift plateau -> per decision_round_10, env selection pressure insufficient -> pivot to ENV pressure (harsher night cold / narrower survival window) or accept plateau = blueprint change -> user pinged, awaiting decision_round_11. round_11 in inbox. No push; production exe + deep_protagonist untouched.

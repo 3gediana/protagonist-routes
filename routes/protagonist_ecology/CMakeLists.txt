@@ -33,6 +33,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     perception/ObjectLogisticsPerception.cpp
     perception/GoalContextPerception.cpp
     perception/ProtagonistRhythmPerception.cpp
+    perception/ProtagonistWarmthDrivePerception.cpp
     perception/StockpilePerception.cpp
     perception/SurvivalStatePerception.cpp
     perception/TaskContextPerception.cpp
@@ -104,6 +105,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
     perception/MemoryTrialPerception.h
     perception/ObjectLogisticsPerception.h
     perception/ProtagonistRhythmPerception.h
+    perception/ProtagonistWarmthDrivePerception.h
     perception/StockpilePerception.h
     perception/SurvivalStatePerception.h
     perception/TreePerception.h

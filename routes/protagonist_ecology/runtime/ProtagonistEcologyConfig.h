@@ -634,6 +634,10 @@ struct ProtagonistEcologyConfig {
     // input_dim, so enabling it starts a fresh lineage. Default false keeps
     // existing checkpoints loadable.
     bool protagonist_rhythm_perception_enabled{false};
+    // Candidate-2 (decision_round_10): homeostatic warmth-drive goal channel.
+    // Adds +2 input dims -> fresh lineage. Independent of candidate-1; NOT
+    // stacked. Default false keeps existing checkpoints loadable.
+    bool protagonist_warmth_drive_enabled{false};
     // L2.7 v13 (HRL sub-rewards): per-goal-type completion reward
     // weights. Index = GoalType int value (0..12). reward delta per
     // tick = goal_completion_rewards[g] * agent.goalCompletionThisTick(g).
