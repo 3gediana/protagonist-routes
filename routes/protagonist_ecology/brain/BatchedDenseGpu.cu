@@ -132,7 +132,56 @@ struct BatchedDenseGpuCudaHandle {
     float* d_interface{nullptr};              std::size_t cap_interface{0};
     float* d_hidden_alphas{nullptr};          std::size_t cap_hidden_alphas{0};
     float* d_action_alphas{nullptr};          std::size_t cap_action_alphas{0};
+
+    // --- cohort-resident weights (2026-06-01 GPU-arch refactor) ---
+    // The genome weights/biases are constant over an individual's lifetime, so
+    // uploadCohort() loads them once into d_weights_*/d_bias_* and forwardResident()
+    // reuses them every tick (only inputs + plastic state change). These remember
+    // which cohort dims are currently resident so a mismatched forwardResident()
+    // call safely refuses instead of reading stale weights.
+    bool        weights_resident{false};
+    std::size_t res_batch{0};
+    std::size_t res_input_dim{0};
+    std::size_t res_hidden_dim{0};
+    std::size_t res_action_dim{0};
+    std::size_t res_interface_dim{0};
 };
+
+namespace {
+// Launch the 3 dense kernels (hidden -> action + interface) on the handle's
+// stream using whatever is currently in d_weights_*/d_bias_*/d_inputs/d_hidden.
+// Shared by both the legacy full-upload forward and the resident-weights path.
+bool launchDenseKernels(BatchedDenseGpuCudaHandle* handle,
+                        std::size_t batch_size,
+                        std::size_t input_dim,
+                        std::size_t hidden_dim,
+                        std::size_t action_dim,
+                        std::size_t interface_dim,
+                        bool has_addend) {
+    constexpr int block_size = 128;
+    auto grid = [](std::size_t n) {
+        return dim3(static_cast<unsigned int>((n + block_size - 1) / block_size));
+    };
+    const dim3 hidden_grid(grid(hidden_dim).x, static_cast<unsigned int>(batch_size));
+    const dim3 output_grid(grid(action_dim).x, static_cast<unsigned int>(batch_size));
+    const dim3 interface_grid(grid(interface_dim).x, static_cast<unsigned int>(batch_size));
+
+    batchedHiddenKernel<<<hidden_grid, block_size, 0, handle->stream>>>(
+        handle->d_inputs, handle->d_weights_ih, handle->d_bias_h,
+        (has_addend ? handle->d_hidden_addend : nullptr),
+        handle->d_hidden, handle->d_hidden_alphas,
+        static_cast<int>(input_dim), static_cast<int>(hidden_dim));
+    batchedOutputKernel<<<output_grid, block_size, 0, handle->stream>>>(
+        handle->d_hidden, handle->d_weights_ha, handle->d_bias_a,
+        handle->d_outputs, handle->d_action_alphas,
+        static_cast<int>(hidden_dim), static_cast<int>(action_dim));
+    batchedInterfaceKernel<<<interface_grid, block_size, 0, handle->stream>>>(
+        handle->d_hidden, handle->d_weights_hi, handle->d_bias_i,
+        handle->d_interface,
+        static_cast<int>(hidden_dim), static_cast<int>(interface_dim));
+    return cudaGetLastError() == cudaSuccess;
+}
+}  // namespace
 
 extern "C" bool batchedDenseGpuCudaSupported() {
     int device_count = 0;
@@ -193,6 +242,10 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
                                            float* interface_out) {
     if (handle == nullptr || batch_size == 0) return false;
 
+    // The legacy path re-uploads weights itself; whatever was cohort-resident is
+    // now potentially stale (dims/contents may differ), so invalidate residency.
+    handle->weights_resident = false;
+
     const std::size_t n_inputs = batch_size * input_dim;
     const std::size_t n_weights_ih = batch_size * input_dim * hidden_dim;
     const std::size_t n_bias_h = batch_size * hidden_dim;
@@ -244,37 +297,12 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
         return false;
     }
 
-    constexpr int block_size = 128;
-    auto grid = [block_size](std::size_t n) {
-        return dim3(static_cast<unsigned int>((n + block_size - 1) / block_size));
-    };
-
-    const dim3 hidden_grid(grid(hidden_dim).x, static_cast<unsigned int>(batch_size));
-    const dim3 output_grid(grid(action_dim).x, static_cast<unsigned int>(batch_size));
-    const dim3 interface_grid(grid(interface_dim).x, static_cast<unsigned int>(batch_size));
-
-    batchedHiddenKernel<<<hidden_grid, block_size, 0, handle->stream>>>(handle->d_inputs,
-                                                                         handle->d_weights_ih,
-                                                                         handle->d_bias_h,
-                                                                         (hidden_addend != nullptr ? handle->d_hidden_addend : nullptr),
-                                                                         handle->d_hidden,
-                                                                         handle->d_hidden_alphas,
-                                                                         static_cast<int>(input_dim),
-                                                                         static_cast<int>(hidden_dim));
-    batchedOutputKernel<<<output_grid, block_size, 0, handle->stream>>>(handle->d_hidden,
-                                                                         handle->d_weights_ha,
-                                                                         handle->d_bias_a,
-                                                                         handle->d_outputs,
-                                                                         handle->d_action_alphas,
-                                                                         static_cast<int>(hidden_dim),
-                                                                         static_cast<int>(action_dim));
-    batchedInterfaceKernel<<<interface_grid, block_size, 0, handle->stream>>>(handle->d_hidden,
-                                                                               handle->d_weights_hi,
-                                                                               handle->d_bias_i,
-                                                                               handle->d_interface,
-                                                                               static_cast<int>(hidden_dim),
-                                                                               static_cast<int>(interface_dim));
-    if (cudaGetLastError() != cudaSuccess) return false;
+    // Shared kernel launch (identical to the resident path) so the two forwards
+    // can never numerically drift.
+    if (!launchDenseKernels(handle, batch_size, input_dim, hidden_dim,
+                            action_dim, interface_dim, hidden_addend != nullptr)) {
+        return false;
+    }
 
     if (!download(hidden_io, handle->d_hidden, n_hidden)
         || !download(outputs_io, handle->d_outputs, n_outputs)
@@ -282,5 +310,141 @@ extern "C" bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
         return false;
     }
 
+    return cudaStreamSynchronize(handle->stream) == cudaSuccess;
+}
+
+// === cohort-resident path (2026-06-01 GPU-arch refactor) ===================
+// Upload the lifetime-constant genome tensors (weights ih/ha/hi + biases) ONCE.
+// forwardResident() then reuses them every tick without re-uploading ~14 MB.
+extern "C" bool batchedDenseGpuCudaUploadCohort(BatchedDenseGpuCudaHandle* handle,
+                                                std::size_t batch_size,
+                                                std::size_t input_dim,
+                                                std::size_t hidden_dim,
+                                                std::size_t action_dim,
+                                                std::size_t interface_dim,
+                                                const float* weights_in_hidden,
+                                                const float* hidden_bias,
+                                                const float* weights_hidden_action,
+                                                const float* action_bias,
+                                                const float* weights_hidden_interface,
+                                                const float* interface_bias) {
+    if (handle == nullptr || batch_size == 0) return false;
+    handle->weights_resident = false;
+
+    const std::size_t n_weights_ih = batch_size * input_dim * hidden_dim;
+    const std::size_t n_bias_h     = batch_size * hidden_dim;
+    const std::size_t n_weights_ha = batch_size * hidden_dim * action_dim;
+    const std::size_t n_bias_a     = batch_size * action_dim;
+    const std::size_t n_weights_hi = batch_size * hidden_dim * interface_dim;
+    const std::size_t n_bias_i     = batch_size * interface_dim;
+
+    if (!ensureBuffer(handle->d_weights_ih, handle->cap_weights_ih, n_weights_ih)
+        || !ensureBuffer(handle->d_bias_h, handle->cap_bias_h, n_bias_h)
+        || !ensureBuffer(handle->d_weights_ha, handle->cap_weights_ha, n_weights_ha)
+        || !ensureBuffer(handle->d_bias_a, handle->cap_bias_a, n_bias_a)
+        || !ensureBuffer(handle->d_weights_hi, handle->cap_weights_hi, n_weights_hi)
+        || !ensureBuffer(handle->d_bias_i, handle->cap_bias_i, n_bias_i)) {
+        return false;
+    }
+
+    auto up = [&](float* dst, const float* src, std::size_t count) -> bool {
+        if (count == 0) return true;
+        return cudaMemcpyAsync(dst, src, count * sizeof(float),
+                               cudaMemcpyHostToDevice, handle->stream) == cudaSuccess;
+    };
+    if (!up(handle->d_weights_ih, weights_in_hidden, n_weights_ih)
+        || !up(handle->d_bias_h, hidden_bias, n_bias_h)
+        || !up(handle->d_weights_ha, weights_hidden_action, n_weights_ha)
+        || !up(handle->d_bias_a, action_bias, n_bias_a)
+        || !up(handle->d_weights_hi, weights_hidden_interface, n_weights_hi)
+        || !up(handle->d_bias_i, interface_bias, n_bias_i)) {
+        return false;
+    }
+    if (cudaStreamSynchronize(handle->stream) != cudaSuccess) return false;
+
+    handle->weights_resident   = true;
+    handle->res_batch          = batch_size;
+    handle->res_input_dim      = input_dim;
+    handle->res_hidden_dim     = hidden_dim;
+    handle->res_action_dim     = action_dim;
+    handle->res_interface_dim  = interface_dim;
+    return true;
+}
+
+// Per-tick forward reusing cohort-resident weights. Uploads only the small
+// changing tensors (inputs / addend / alphas / plastic state), launches the
+// kernels against the resident d_weights_*, and downloads state back.
+extern "C" bool batchedDenseGpuCudaForwardResident(BatchedDenseGpuCudaHandle* handle,
+                                                   std::size_t batch_size,
+                                                   std::size_t input_dim,
+                                                   std::size_t hidden_dim,
+                                                   std::size_t action_dim,
+                                                   std::size_t interface_dim,
+                                                   const float* inputs,
+                                                   const float* hidden_addend,
+                                                   const float* hidden_alphas,
+                                                   const float* action_alphas,
+                                                   float* hidden_io,
+                                                   float* outputs_io,
+                                                   float* interface_out) {
+    if (handle == nullptr || batch_size == 0) return false;
+    // Refuse if the resident cohort does not match this call's dims/size, so we
+    // never silently multiply against stale weights.
+    if (!handle->weights_resident
+        || handle->res_batch != batch_size
+        || handle->res_input_dim != input_dim
+        || handle->res_hidden_dim != hidden_dim
+        || handle->res_action_dim != action_dim
+        || handle->res_interface_dim != interface_dim) {
+        return false;
+    }
+
+    const std::size_t n_inputs    = batch_size * input_dim;
+    const std::size_t n_bias_h    = batch_size * hidden_dim;
+    const std::size_t n_hidden    = batch_size * hidden_dim;
+    const std::size_t n_outputs   = batch_size * action_dim;
+    const std::size_t n_interface = batch_size * interface_dim;
+
+    if (!ensureBuffer(handle->d_inputs, handle->cap_inputs, n_inputs)
+        || !ensureBuffer(handle->d_hidden, handle->cap_hidden, n_hidden)
+        || !ensureBuffer(handle->d_outputs, handle->cap_outputs, n_outputs)
+        || !ensureBuffer(handle->d_interface, handle->cap_interface, n_interface)
+        || (hidden_addend != nullptr && !ensureBuffer(handle->d_hidden_addend, handle->cap_hidden_addend, n_bias_h))
+        || !ensureBuffer(handle->d_hidden_alphas, handle->cap_hidden_alphas, batch_size)
+        || !ensureBuffer(handle->d_action_alphas, handle->cap_action_alphas, batch_size)) {
+        return false;
+    }
+
+    auto up = [&](float* dst, const float* src, std::size_t count) -> bool {
+        if (count == 0) return true;
+        return cudaMemcpyAsync(dst, src, count * sizeof(float),
+                               cudaMemcpyHostToDevice, handle->stream) == cudaSuccess;
+    };
+    auto down = [&](float* dst, const float* src, std::size_t count) -> bool {
+        if (count == 0) return true;
+        return cudaMemcpyAsync(dst, src, count * sizeof(float),
+                               cudaMemcpyDeviceToHost, handle->stream) == cudaSuccess;
+    };
+
+    // Only the changing tensors move across PCIe each tick (weights stay resident).
+    if (!up(handle->d_inputs, inputs, n_inputs)
+        || !up(handle->d_hidden, hidden_io, n_hidden)
+        || !up(handle->d_outputs, outputs_io, n_outputs)
+        || (hidden_addend != nullptr && !up(handle->d_hidden_addend, hidden_addend, n_bias_h))
+        || !up(handle->d_hidden_alphas, hidden_alphas, batch_size)
+        || !up(handle->d_action_alphas, action_alphas, batch_size)) {
+        return false;
+    }
+
+    if (!launchDenseKernels(handle, batch_size, input_dim, hidden_dim,
+                            action_dim, interface_dim, hidden_addend != nullptr)) {
+        return false;
+    }
+
+    if (!down(hidden_io, handle->d_hidden, n_hidden)
+        || !down(outputs_io, handle->d_outputs, n_outputs)
+        || !down(interface_out, handle->d_interface, n_interface)) {
+        return false;
+    }
     return cudaStreamSynchronize(handle->stream) == cudaSuccess;
 }

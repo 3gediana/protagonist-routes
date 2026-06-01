@@ -45,6 +45,8 @@ public:
     // For tests/diagnostics: number of agents in the last batch.
     std::size_t lastBatchSize() const { return last_batch_size_; }
     bool lastBatchUsedGpu() const { return last_batch_used_gpu_; }
+    // True iff the last tick reused cohort-resident weights (no weight re-upload).
+    bool lastBatchReusedWeights() const { return last_batch_reused_weights_; }
 
 private:
     Backend backend_choice_;
@@ -52,6 +54,17 @@ private:
     BatchedDenseGpu gpu_;
     std::size_t last_batch_size_{0};
     bool last_batch_used_gpu_{false};
+    bool last_batch_reused_weights_{false};
+
+    // Cohort identity for resident-weights reuse. Genome weights are constant
+    // over a lifetime, so we only re-marshal + re-upload the weight matrices
+    // when the cohort changes (new generation, or membership changes mid-gen
+    // when an agent dies/spawns). last_cohort_ptrs_ + last_fingerprint_ detect
+    // that cheaply (O(batch), samples a few weights per agent) without hashing
+    // the full weight set every tick.
+    std::vector<const void*> last_cohort_ptrs_;
+    unsigned long long last_fingerprint_{0};
+    bool cohort_resident_{false};
 
     // Marshalling buffers (reused across calls to avoid reallocation).
     std::vector<float> buf_inputs_;

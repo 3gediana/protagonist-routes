@@ -31,6 +31,38 @@ public:
     static bool supported();
     bool ready() const;
 
+    // --- cohort-resident weights (2026-06-01 GPU-arch refactor) ----------------
+    // Genome weights/biases are constant over an individual's lifetime. Upload
+    // them once per cohort with uploadCohort(), then call forwardResident() each
+    // tick: only the small changing tensors (inputs / addend / alphas / plastic
+    // state) cross PCIe, instead of re-uploading the full ~14 MB weight set every
+    // tick as forward() does. forwardResident() returns false if no matching
+    // cohort is resident (caller should fall back to forward()/forwardCpu()).
+    bool uploadCohort(std::size_t batch_size,
+                      std::size_t input_dim,
+                      std::size_t hidden_dim,
+                      std::size_t action_dim,
+                      std::size_t interface_dim,
+                      std::span<const float> weights_in_hidden,
+                      std::span<const float> hidden_bias,
+                      std::span<const float> weights_hidden_action,
+                      std::span<const float> action_bias,
+                      std::span<const float> weights_hidden_interface,
+                      std::span<const float> interface_bias);
+
+    bool forwardResident(std::size_t batch_size,
+                         std::size_t input_dim,
+                         std::size_t hidden_dim,
+                         std::size_t action_dim,
+                         std::size_t interface_dim,
+                         std::span<const float> inputs,
+                         std::span<const float> hidden_addend,
+                         std::span<const float> hidden_alphas,
+                         std::span<const float> action_alphas,
+                         std::span<float> hidden_io,
+                         std::span<float> outputs_io,
+                         std::span<float> interface_out);
+
     bool forward(std::size_t batch_size,
                  std::size_t input_dim,
                  std::size_t hidden_dim,

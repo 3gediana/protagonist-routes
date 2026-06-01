@@ -215,3 +215,14 @@ target_link_libraries(neural-eco-protagonist-rhythm PRIVATE neural_eco::route_pr
 set_target_properties(neural-eco-protagonist-rhythm PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+
+# Cohort-resident GPU inference parity + traffic test (2026-06-01 GPU-arch
+# refactor). Validates uploadCohort()/forwardResident() numerics == legacy
+# forward() == forwardCpu(), and reports H2D byte savings. Builds without a GPU
+# (CPU reference + analytical traffic only); full parity runs on the CUDA box.
+add_executable(neural-eco-resident-parity runtime/test_resident_parity.cpp)
+target_link_libraries(neural-eco-resident-parity PRIVATE neural_eco::route_protagonist)
+set_target_properties(neural-eco-resident-parity PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+

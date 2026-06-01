@@ -34,6 +34,31 @@ bool batchedDenseGpuCudaForward(BatchedDenseGpuCudaHandle* handle,
                                 float* hidden_io,
                                 float* outputs_io,
                                 float* interface_out);
+bool batchedDenseGpuCudaUploadCohort(BatchedDenseGpuCudaHandle* handle,
+                                     std::size_t batch_size,
+                                     std::size_t input_dim,
+                                     std::size_t hidden_dim,
+                                     std::size_t action_dim,
+                                     std::size_t interface_dim,
+                                     const float* weights_in_hidden,
+                                     const float* hidden_bias,
+                                     const float* weights_hidden_action,
+                                     const float* action_bias,
+                                     const float* weights_hidden_interface,
+                                     const float* interface_bias);
+bool batchedDenseGpuCudaForwardResident(BatchedDenseGpuCudaHandle* handle,
+                                        std::size_t batch_size,
+                                        std::size_t input_dim,
+                                        std::size_t hidden_dim,
+                                        std::size_t action_dim,
+                                        std::size_t interface_dim,
+                                        const float* inputs,
+                                        const float* hidden_addend,
+                                        const float* hidden_alphas,
+                                        const float* action_alphas,
+                                        float* hidden_io,
+                                        float* outputs_io,
+                                        float* interface_out);
 }
 
 struct BatchedDenseGpu::Impl {
@@ -133,6 +158,68 @@ bool BatchedDenseGpu::forward(std::size_t batch_size,
     (void)weights_hidden_interface; (void)interface_bias;
     (void)hidden_addend;
     (void)hidden_alphas; (void)action_alphas;
+    (void)hidden_io; (void)outputs_io; (void)interface_out;
+    return false;
+#endif
+}
+
+bool BatchedDenseGpu::uploadCohort(std::size_t batch_size,
+                                   std::size_t input_dim,
+                                   std::size_t hidden_dim,
+                                   std::size_t action_dim,
+                                   std::size_t interface_dim,
+                                   std::span<const float> weights_in_hidden,
+                                   std::span<const float> hidden_bias,
+                                   std::span<const float> weights_hidden_action,
+                                   std::span<const float> action_bias,
+                                   std::span<const float> weights_hidden_interface,
+                                   std::span<const float> interface_bias) {
+#if defined(NEURAL_ECO_HAS_PROTAGONIST_CUDA)
+    if (!ready()) return false;
+    return batchedDenseGpuCudaUploadCohort(impl_->handle,
+                                           batch_size, input_dim, hidden_dim,
+                                           action_dim, interface_dim,
+                                           weights_in_hidden.data(),
+                                           hidden_bias.data(),
+                                           weights_hidden_action.data(),
+                                           action_bias.data(),
+                                           weights_hidden_interface.data(),
+                                           interface_bias.data());
+#else
+    (void)batch_size; (void)input_dim; (void)hidden_dim; (void)action_dim; (void)interface_dim;
+    (void)weights_in_hidden; (void)hidden_bias; (void)weights_hidden_action;
+    (void)action_bias; (void)weights_hidden_interface; (void)interface_bias;
+    return false;
+#endif
+}
+
+bool BatchedDenseGpu::forwardResident(std::size_t batch_size,
+                                      std::size_t input_dim,
+                                      std::size_t hidden_dim,
+                                      std::size_t action_dim,
+                                      std::size_t interface_dim,
+                                      std::span<const float> inputs,
+                                      std::span<const float> hidden_addend,
+                                      std::span<const float> hidden_alphas,
+                                      std::span<const float> action_alphas,
+                                      std::span<float> hidden_io,
+                                      std::span<float> outputs_io,
+                                      std::span<float> interface_out) {
+#if defined(NEURAL_ECO_HAS_PROTAGONIST_CUDA)
+    if (!ready()) return false;
+    return batchedDenseGpuCudaForwardResident(impl_->handle,
+                                              batch_size, input_dim, hidden_dim,
+                                              action_dim, interface_dim,
+                                              inputs.data(),
+                                              hidden_addend.empty() ? nullptr : hidden_addend.data(),
+                                              hidden_alphas.data(),
+                                              action_alphas.data(),
+                                              hidden_io.data(),
+                                              outputs_io.data(),
+                                              interface_out.data());
+#else
+    (void)batch_size; (void)input_dim; (void)hidden_dim; (void)action_dim; (void)interface_dim;
+    (void)inputs; (void)hidden_addend; (void)hidden_alphas; (void)action_alphas;
     (void)hidden_io; (void)outputs_io; (void)interface_out;
     return false;
 #endif
