@@ -547,6 +547,24 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist_warmth_drive_enabled = config.getOr<bool>(
         "evolution.protagonist_warmth_drive_enabled",
         out.protagonist_warmth_drive_enabled);
+    // One-pot unified bloodline (2026-06-01): master switch reserves all A–F
+    // dims (+11) so input_dim is locked once; Phase C FOV gating + anneal
+    // schedule. current_generation is stamped by the runtime, not parsed.
+    out.protagonist_unified_encoding_enabled = config.getOr<bool>(
+        "evolution.protagonist_unified_encoding_enabled",
+        out.protagonist_unified_encoding_enabled);
+    out.protagonist_fov_enabled = config.getOr<bool>(
+        "evolution.protagonist_fov_enabled", out.protagonist_fov_enabled);
+    out.fov_anneal_start_gen = config.getOr<double>(
+        "evolution.fov_anneal_start_gen", out.fov_anneal_start_gen);
+    out.fov_anneal_end_gen = config.getOr<double>(
+        "evolution.fov_anneal_end_gen", out.fov_anneal_end_gen);
+    out.fov_start_half_angle_deg = config.getOr<double>(
+        "evolution.fov_start_half_angle_deg", out.fov_start_half_angle_deg);
+    out.fov_end_half_angle_deg = config.getOr<double>(
+        "evolution.fov_end_half_angle_deg", out.fov_end_half_angle_deg);
+    out.fov_occlusion_enabled = config.getOr<bool>(
+        "evolution.fov_occlusion_enabled", out.fov_occlusion_enabled);
     // L2.7 v13: per-goal-type sub-reward weights. Defaults reflect the
     // relative difficulty of each goal: ChopTree/GatherStick/Stone are
     // common and easy (small reward); BuildWorksite is the long

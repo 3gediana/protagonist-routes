@@ -41,18 +41,23 @@
 #include "perception/BasePerception.h"
 #include "perception/CarriedObjectPerception.h"
 #include "perception/DangerPerception.h"
+#include "perception/FovGate.h"
 #include "perception/GoalContextPerception.h"
+#include "perception/KinPerception.h"
 #include "perception/MemoryCognitionPerception.h"
 #include "perception/MemoryTrialPerception.h"
 #include "perception/ObjectLogisticsPerception.h"
 #include "perception/ProtagonistRhythmPerception.h"
 #include "perception/ProtagonistWarmthDrivePerception.h"
+#include "perception/SelfHeadingPerception.h"
 #include "perception/StockpilePerception.h"
 #include "perception/SurvivalStatePerception.h"
 #include "perception/TaskContextPerception.h"
+#include "perception/TerritorySocialPerception.h"
 #include "perception/TreePerception.h"
 #include "perception/WaterPerception.h"
 #include "perception/WeaponPerception.h"
+#include "perception/WorldHistoryPerception.h"
 #include "perception/WorksitePerception.h"
 #include "core/interfaces/IGenome.h"
 #include "core/world/World2D.h"
@@ -200,10 +205,50 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
         sensory_dim += ProtagonistWarmthDrivePerception::kDim;
     }
 
+    // One-pot unified bloodline (2026-06-01): when enabled, UNCONDITIONALLY
+    // reserve all forward-compatible A–F perception dims so input_dim is locked
+    // ONCE and phases C→F can be switched on later without a lineage reset. The
+    // addPerception calls in createProtagonist MUST add exactly these dims in
+    // this same trailing order.
+    if (config.protagonist_unified_encoding_enabled) {
+        sensory_dim += SelfHeadingPerception::kDim;      // Phase C  (+2)
+        sensory_dim += KinPerception::kDim;              // Phase D  (+3, zero stub)
+        sensory_dim += TerritorySocialPerception::kDim;  // Phase E  (+4, zero stub)
+        sensory_dim += WorldHistoryPerception::kDim;     // Phase F  (+2, zero stub)
+    }
+
     return sensory_dim;
 }
 
 namespace {
+
+// One-pot Phase C annealer: difficulty = f(generation). Computes the view-cone
+// half-angle for the current generation by linearly interpolating from
+// fov_start_half_angle_deg down to fov_end_half_angle_deg over
+// [fov_anneal_start_gen, fov_anneal_end_gen], then holding. Returns the FovParams
+// (cos of the half-angle + occlusion flag) consumed by the gated perceptions.
+// Set start_gen == end_gen (or start_deg == end_deg) for a fixed cone.
+FovParams computeFovParams(const ProtagonistEcologyConfig& config) {
+    FovParams p;
+    p.enabled = config.protagonist_fov_enabled;
+    p.occlusion = config.fov_occlusion_enabled;
+    double half_deg = config.fov_end_half_angle_deg;
+    const double span = config.fov_anneal_end_gen - config.fov_anneal_start_gen;
+    if (span <= 0.0) {
+        // Degenerate schedule: fixed cone at the end angle.
+        half_deg = config.fov_end_half_angle_deg;
+    } else {
+        const double g = static_cast<double>(config.current_generation);
+        double t = (g - config.fov_anneal_start_gen) / span;
+        t = std::clamp(t, 0.0, 1.0);
+        half_deg = config.fov_start_half_angle_deg
+                   + t * (config.fov_end_half_angle_deg - config.fov_start_half_angle_deg);
+    }
+    half_deg = std::clamp(half_deg, 0.0, 180.0);
+    constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+    p.cos_half_angle = static_cast<float>(std::cos(half_deg * kDegToRad));
+    return p;
+}
 
 std::unique_ptr<IBrain> makeProtagonistBrain(const IGenome& genome,
                                              const ProtagonistEcologyConfig& config,
@@ -314,7 +359,9 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         agent->addPerception(std::make_unique<ObjectLogisticsPerception>(kObjectSenseRadius));
     }
     if (config.campfire.enabled) {
-        agent->addPerception(std::make_unique<DangerPerception>(kDangerSenseRadius));
+        // Phase C: gate fire perception by the annealed view-cone/occlusion
+        // (no-op when protagonist_fov_enabled is false).
+        agent->addPerception(std::make_unique<DangerPerception>(kDangerSenseRadius, computeFovParams(config)));
     }
     if (config.worksite.enabled) {
         agent->addPerception(std::make_unique<WorksitePerception>(
@@ -369,6 +416,17 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // protagonistSensoryDim (added last, after candidate-1).
     if (config.protagonist_warmth_drive_enabled) {
         agent->addPerception(std::make_unique<ProtagonistWarmthDrivePerception>());
+    }
+
+    // One-pot unified bloodline (2026-06-01): reserve all A–F perception
+    // channels. SelfHeading carries real signal (Phase C proprioception);
+    // kin/territory/world-history are zero stubs until their phase logic lands.
+    // Order MUST match the dim summation in protagonistSensoryDim.
+    if (config.protagonist_unified_encoding_enabled) {
+        agent->addPerception(std::make_unique<SelfHeadingPerception>());
+        agent->addPerception(std::make_unique<KinPerception>());
+        agent->addPerception(std::make_unique<TerritorySocialPerception>());
+        agent->addPerception(std::make_unique<WorldHistoryPerception>());
     }
 
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));

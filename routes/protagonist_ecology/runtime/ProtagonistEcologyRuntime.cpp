@@ -4254,6 +4254,10 @@ int ProtagonistEcologyRuntime::runTraining() {
                 if (stop_requested_.load()) return;
 
                 auto generation_route = route;
+                // One-pot Phase C annealer: stamp the current evolution
+                // generation onto the per-episode config so createProtagonist can
+                // compute the annealed view-cone (difficulty = f(generation)).
+                generation_route.current_generation = generation;
                 generation_route.random_seed = route.random_seed
                     + static_cast<std::uint32_t>(generation * 9973 + 17)
                     + static_cast<std::uint32_t>(episode * 131);

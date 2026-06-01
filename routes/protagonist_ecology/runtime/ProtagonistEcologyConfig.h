@@ -638,6 +638,35 @@ struct ProtagonistEcologyConfig {
     // Adds +2 input dims -> fresh lineage. Independent of candidate-1; NOT
     // stacked. Default false keeps existing checkpoints loadable.
     bool protagonist_warmth_drive_enabled{false};
+    // ── One-pot unified bloodline (2026-06-01) ─────────────────────────────
+    // Master switch for the unified A–F bloodline. When true, the protagonist
+    // input encoding UNCONDITIONALLY reserves all forward-compatible perception
+    // dims (self-heading +2, kin +3, territory +4, world-history +2 = +11),
+    // zero-filled while their feature logic is disabled. This locks input_dim
+    // ONCE so phases C→F can be switched on later WITHOUT changing the genome
+    // dimension (no lineage reset). Default false keeps existing checkpoints
+    // loadable; enabling it starts the single unified lineage.
+    bool protagonist_unified_encoding_enabled{false};
+    // Phase C: limited field-of-view + terrain occlusion gating of the
+    // exteroceptive senses (currently DangerPerception/fire). When enabled, a
+    // world target outside the view cone or behind terrain is written as
+    // not-sensed (zeros), forcing reliance on memory + the internal clock.
+    bool protagonist_fov_enabled{false};
+    // FOV view-cone half-angle annealing schedule (degrees) as a function of the
+    // evolution generation: difficulty = f(generation). Start wide (easy,
+    // near-omniscient) and narrow to the target over [start_gen, end_gen], then
+    // hold. Set start == end for a fixed (non-annealed) cone.
+    double fov_anneal_start_gen{0.0};
+    double fov_anneal_end_gen{45.0};
+    double fov_start_half_angle_deg{180.0};
+    double fov_end_half_angle_deg{70.0};
+    // When true, terrain line-of-sight occlusion is applied in addition to the
+    // view cone (TerrainLayer::isVisible).
+    bool fov_occlusion_enabled{true};
+    // Runtime-stamped current generation, set per-generation by the evolution
+    // loop before world build (NOT read from toml). Used by createProtagonist to
+    // compute the annealed view-cone for this generation. Deterministic.
+    std::size_t current_generation{0};
     // L2.7 v13 (HRL sub-rewards): per-goal-type completion reward
     // weights. Index = GoalType int value (0..12). reward delta per
     // tick = goal_completion_rewards[g] * agent.goalCompletionThisTick(g).
