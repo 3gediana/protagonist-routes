@@ -127,3 +127,28 @@ production-ish (weights 21.3MB): legacy 3.6828 ms/tick -> resident 0.7304 ms/tic
 Speedup scales with genome size: the larger the per-cohort weights, the more the
 legacy per-tick re-upload dominates and the more cohort-residency wins. (Micro-bench
 of the inference path only; whole-sim speedup depends on inference vs CPU-sim share.)
+
+### CPU-vs-resident at REAL protagonist dims + per-generation caveat
+The running PE long-run used the CPU forward path (CUDA was never compiled into
+that exe), so the production "before" baseline is CPU, not GPU-legacy. Bench at
+real protagonist dims (count=24, hidden=512, action=13, interface~360, in~272;
+weights 31.8MB, T=2000 ticks):
+```
+CPU       = 9.0985 ms/tick   <- production baseline
+GPU legacy= 5.0562 ms/tick
+GPU resid = 0.6163 ms/tick
+CPU->resident = 14.76x ;  legacy->resident = 8.20x
+```
+(At tiny parity dims the GPU loses to CPU 0.77x -- kernel launch overhead beats
+trivial work; the win only appears at the real hidden_dim=512 scale.)
+
+PER-GENERATION CAVEAT (important, not yet profiled): this is the dense-forward
+hot path ONLY. With episode_ticks=600 x episodes_per_generation=2 = ~1200
+ticks/gen, protagonist dense inference is ~1200*9.1ms ~= 10.9 s/gen on CPU vs
+~0.74 s/gen resident (saves ~10 s/gen). Observed per-gen wall time is ~2.5-4 min
+(150-240 s), so dense inference is only ~5-7% of a generation -> this refactor
+alone trims per-gen by ~10 s (a few %), NOT a 14x per-gen speedup. The forward
+got 8-15x faster; per-gen benefit is bounded by inference's share. NOTE the
+bench excludes DNC memory ops, per-agent marshalling, and background-species
+inference -- if those are significant the share (and savings) could be larger.
+An exact per-gen number requires profiling the live sim (% time in forward).
