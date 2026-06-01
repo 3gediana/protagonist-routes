@@ -311,6 +311,111 @@ int run_self_tests() {
         check(!v.alive && v.deaths == 1, "VitalSystem: zero hunger kills agent");
     }
 
+    // --- decision_blueprint_nutrition (round_21): dual nutrition bars ---
+    // Verifies the four required behaviours (掉/回/debuff/死) plus the
+    // "disabled by default" guarantee that keeps the old world identical.
+    {
+        dp::world::World::Config cfg;
+        cfg.heightmap_cells_x = 16;
+        cfg.heightmap_cells_y = 16;
+        cfg.cave_count  = 0;
+        cfg.river_count = 0;
+        dp::world::World w(cfg);
+        dp::world::Daylight day(60.0f, 0.5f);  // noon -> no night penalty
+
+        // (0) Disabled by default: bars stay full, decay/eat are no-ops.
+        {
+            dp::agent::VitalSystem vs;          // default cfg: nutrition OFF
+            dp::agent::VitalState  v{};
+            check(v.protein == 100.0f && v.vitamin == 100.0f,
+                  "nutrition: VitalState defaults protein/vitamin = 100");
+            for (int i = 0; i < 120; ++i)
+                vs.tick(v, w, 30.0f, 30.0f, 0.0f, day, 1.0f);
+            check(v.protein == 100.0f && v.vitamin == 100.0f,
+                  "nutrition OFF: bars never decay (old world unaffected)");
+            check(vs.eat_protein(v, 50.0f) == 0.0f
+                  && vs.nutrition_speed_mult(v) == 1.0f,
+                  "nutrition OFF: eat_protein no-op & speed_mult = 1.0");
+        }
+
+        dp::agent::VitalConfig nc;
+        nc.nutrition_enabled     = true;
+        nc.protein_decay_per_min = 60.0f;   // 1 bar/min full->empty
+        nc.vitamin_decay_per_min = 60.0f;
+        nc.nutri_debuff_thresh   = 0.30f;
+        nc.nutri_debuff_floor    = 0.5f;
+        nc.nutri_death_grace_s   = 2.0f;
+
+        // (1) 掉: bars decay over time.
+        {
+            dp::agent::VitalSystem vs(nc);
+            dp::agent::VitalState  v{};
+            for (int i = 0; i < 30; ++i)        // 30s @60/min -> ~-30
+                vs.tick(v, w, 30.0f, 30.0f, 0.0f, day, 1.0f);
+            check(v.protein < 75.0f && v.protein > 65.0f
+               && v.vitamin < 75.0f && v.vitamin > 65.0f,
+                  "nutrition: protein/vitamin decay ~30 over 30s @60/min");
+        }
+
+        // (2) 回: eating meat/forage refills the matching bar (clamped).
+        {
+            dp::agent::VitalSystem vs(nc);
+            dp::agent::VitalState  v{};
+            v.protein = 40.0f; v.vitamin = 40.0f;
+            float gotp = vs.eat_protein(v, 35.0f);
+            float gotv = vs.eat_vitamin(v, 30.0f);
+            check(gotp > 34.0f && v.protein > 74.0f && v.protein < 76.0f
+               && v.vitamin == 40.0f + 30.0f,
+                  "nutrition: eat_protein refills protein only");
+            check(gotv > 29.0f && v.vitamin == 70.0f,
+                  "nutrition: eat_vitamin refills vitamin only");
+            v.protein = 90.0f;
+            vs.eat_protein(v, 50.0f);
+            check(v.protein == 100.0f, "nutrition: protein clamps at 100");
+        }
+
+        // (3) debuff: a bar below threshold weakens movement.
+        {
+            dp::agent::VitalSystem vs(nc);
+            dp::agent::VitalState  v{};
+            check(vs.nutrition_speed_mult(v) == 1.0f,
+                  "nutrition: full bars -> speed_mult 1.0 (no debuff)");
+            v.protein = 15.0f;                  // below 30% threshold
+            float mult_low = vs.nutrition_speed_mult(v);
+            check(mult_low < 1.0f && mult_low >= 0.5f,
+                  "nutrition: protein<30% -> movement debuff in [floor,1)");
+            v.protein = 0.0f; v.vitamin = 0.0f;
+            check(std::abs(vs.nutrition_speed_mult(v) - 0.25f) < 1e-4f,
+                  "nutrition: both bars empty -> floor*floor = 0.25");
+        }
+
+        // (4) 死: a bar held at zero past the grace window kills with the
+        //     correct cause counter, distinct from food/cold.
+        {
+            dp::agent::VitalSystem vs(nc);
+            dp::agent::VitalState  v{};
+            v.protein = 0.0f;
+            int ticks = 0;
+            while (v.alive && ticks < 10) {     // grace 2s -> dies by tick 3
+                vs.tick(v, w, 30.0f, 30.0f, 0.0f, day, 1.0f);
+                ++ticks;
+            }
+            check(!v.alive && v.deaths_protein == 1 && v.deaths_vitamin == 0
+               && v.deaths_food == 0,
+                  "nutrition: empty protein past grace -> death_protein");
+
+            dp::agent::VitalState v2{};
+            v2.vitamin = 0.0f;
+            ticks = 0;
+            while (v2.alive && ticks < 10) {
+                vs.tick(v2, w, 30.0f, 30.0f, 0.0f, day, 1.0f);
+                ++ticks;
+            }
+            check(!v2.alive && v2.deaths_vitamin == 1 && v2.deaths_protein == 0,
+                  "nutrition: empty vitamin past grace -> death_vitamin");
+        }
+    }
+
     // --- PlantSystem + Decorations ---
     {
         dp::world::World::Config cfg;

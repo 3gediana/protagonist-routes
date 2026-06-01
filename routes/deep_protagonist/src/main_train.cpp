@@ -1160,6 +1160,13 @@ int main(int argc, char** argv) {
     float       ppo_target_kl     = 0.0f;   // decision_round_17: KL early-stop (0=off)
     float       ppo_night_shaping = 0.0f; // decision_round_16 Step2: coef for night-shelter PBRS (0=off)
     float       ppo_day_shaping   = 0.0f; // round_19 Path B: coef for daytime-forage PBRS (0=off)
+    // decision_blueprint_nutrition (round_21): dual nutrition bars + hunting.
+    bool        nutrition_enabled = false; // master switch (default off = old world)
+    float       nutri_protein_decay = 20.0f;
+    float       nutri_vitamin_decay = 20.0f;
+    float       nutri_debuff_thresh = 0.30f;
+    float       nutri_death_grace   = 8.0f;
+    bool        ppo_mask_fire_only  = false; // mask fire only, leave attack open
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -1212,6 +1219,12 @@ int main(int argc, char** argv) {
         else if (a == "--ppo-target-kl") ppo_target_kl = std::stof(next());
         else if (a == "--ppo-night-shaping") ppo_night_shaping = std::stof(next());
         else if (a == "--ppo-day-shaping")   ppo_day_shaping   = std::stof(next());
+        else if (a == "--nutrition")            nutrition_enabled  = true;
+        else if (a == "--nutri-protein-decay") nutri_protein_decay = std::stof(next());
+        else if (a == "--nutri-vitamin-decay") nutri_vitamin_decay = std::stof(next());
+        else if (a == "--nutri-debuff-thresh") nutri_debuff_thresh = std::stof(next());
+        else if (a == "--nutri-death-grace")   nutri_death_grace   = std::stof(next());
+        else if (a == "--ppo-mask-fire-only")  ppo_mask_fire_only  = true;
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
@@ -1276,6 +1289,17 @@ int main(int argc, char** argv) {
     ecfg.thirst_decay_per_min = thirst_decay;
     ecfg.trigger_cost         = trigger_cost;
     ecfg.demo_no_regen        = demo_no_regen;
+    // decision_blueprint_nutrition (round_21): plumb nutrition CLI into env.
+    ecfg.nutrition_enabled     = nutrition_enabled;
+    ecfg.protein_decay_per_min = nutri_protein_decay;
+    ecfg.vitamin_decay_per_min = nutri_vitamin_decay;
+    ecfg.nutri_debuff_thresh   = nutri_debuff_thresh;
+    ecfg.nutri_death_grace_s   = nutri_death_grace;
+    if (nutrition_enabled)
+        spdlog::info("nutrition ON: protein_decay={}/min vitamin_decay={}/min "
+                     "debuff<{:.0f}% death_grace={}s",
+                     nutri_protein_decay, nutri_vitamin_decay,
+                     nutri_debuff_thresh * 100.0f, nutri_death_grace);
     if (demo_no_regen) spdlog::info("D-101: demo_no_regen ON (in-building regen + r_alive bonus disabled)");
     spdlog::info("Env tunables: thirst_decay={}/min, trigger_cost={}/step",
                  thirst_decay, trigger_cost);
@@ -1354,9 +1378,10 @@ int main(int argc, char** argv) {
             pcfg.lr = ppo_lr;
             spdlog::info("D-101: lr override {} (finetune; D-099 default 3e-4)", ppo_lr);
         }
-        pcfg.mask_atk_fire = ppo_mask_atk_fire;
-        pcfg.kl_ref_coef   = ppo_kl_coef;
-        pcfg.target_kl     = ppo_target_kl;
+        pcfg.mask_atk_fire  = ppo_mask_atk_fire;
+        pcfg.mask_fire_only = ppo_mask_fire_only;
+        pcfg.kl_ref_coef    = ppo_kl_coef;
+        pcfg.target_kl      = ppo_target_kl;
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
         ppo->set_deterministic(deterministic);
         if (deterministic) spdlog::info("D-101: deterministic eval (mode action, no sampling noise)");
@@ -1421,6 +1446,8 @@ int main(int argc, char** argv) {
                 "\"r_vital\":%.3f,\"r_collect\":%.3f,\"r_shelter\":%.3f,"
                 "\"r_craft\":%.3f,\"r_milestone\":%.3f,\"r_potential\":%.3f,"
                 "\"deaths\":%d,\"deaths_cold\":%d,\"deaths_food\":%d,"
+                "\"deaths_protein\":%d,\"deaths_vitamin\":%d,"
+                "\"protein\":%.1f,\"vitamin\":%.1f,"
                 "\"policy\":\"%s\",\"seed\":%llu,"
                 "\"mv\":%.3f,\"yw\":%.3f,\"score\":%.4f,\"unlocks\":[",
                 episode_id, s.steps, s.total_reward,
@@ -1429,7 +1456,9 @@ int main(int argc, char** argv) {
                 s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
                 s.r_potential,
                 env.vitals().deaths, env.vitals().deaths_cold,
-                env.vitals().deaths_food, policy.c_str(),
+                env.vitals().deaths_food,
+                env.vitals().deaths_protein, env.vitals().deaths_vitamin,
+                env.vitals().protein, env.vitals().vitamin, policy.c_str(),
                 static_cast<unsigned long long>(seed),
                 mv, yw, score);
             for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {

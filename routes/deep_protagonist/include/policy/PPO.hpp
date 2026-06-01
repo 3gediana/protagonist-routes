@@ -97,6 +97,11 @@ struct PPOConfig {
     int    n_envs          = 1;     // D-078: VecEnv parallel envs in single PPO
     // decision_round_17 (S4 PPO C): warmstart-stability controls.
     bool   mask_atk_fire = false;  // mask discrete idx2(attack)+idx17(fire) to -inf
+    // decision_blueprint_nutrition (round_21): unmask attack for hunting while
+    // KEEPING fire masked. When true, only idx17(fire) is masked; idx2(attack)
+    // is left open so the policy can hunt prey for the protein bar. Mutually
+    // exclusive with mask_atk_fire (if both set, atk_fire wins / masks both).
+    bool   mask_fire_only = false;
     float  kl_ref_coef   = 0.0f;   // beta for KL(pi||pi_ref=bc_v9) anchor (0=off)
     float  target_kl     = 0.0f;   // CleanRL-style early-stop threshold (0=off)
 };
@@ -201,14 +206,18 @@ private:
     bool                                     has_ref_      = false;
     torch::Tensor                            disc_mask_;        // [1,DISC_CATS]
     bool                                     mask_enabled_ = false;
+    bool                                     mask_attack_  = true;  // false => fire-only (hunting world)
     torch::Tensor apply_disc_mask(const torch::Tensor& dl) const {
         if (!mask_enabled_) return dl;
         // In-place writes (index_put_/fill_) and from_blob tensors abort in
         // this libtorch+CUDA build; use ONLY functional ops + a same-shape
-        // final add (the proven-safe path). Columns 2(attack) and 17(fire)
-        // get -50 added -> prob ~2e-22 (multinomial-safe) / hard under argmax.
+        // final add (the proven-safe path). Masked columns get -50 added ->
+        // prob ~2e-22 (multinomial-safe) / hard under argmax. fire(17) is
+        // always masked when enabled; attack(2) only when mask_attack_ (the
+        // nutrition world unmasks attack so the agent can hunt).
         auto col  = torch::arange(dl.size(1), dl.options()).unsqueeze(0); // [1,C]
-        auto cond = (col == 2) | (col == (double)ActorCriticImpl::TEND_FIRE_IDX);
+        auto cond = (col == (double)ActorCriticImpl::TEND_FIRE_IDX);
+        if (mask_attack_) cond = cond | (col == 2);
         cond      = cond.expand({dl.size(0), dl.size(1)});                // [B,C]
         auto m    = torch::where(cond, torch::full_like(dl, -50.0f),
                                        torch::zeros_like(dl));            // [B,C]

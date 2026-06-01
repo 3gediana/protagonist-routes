@@ -74,7 +74,14 @@ void RewardSystem::event_vital_pressure(const VitalState& v, float dt) {
     float pressure = (100.0f - v.hunger)
                    + (100.0f - v.thirst)
                    + (100.0f - v.stamina)
-                   + std::abs(v.temperature - 50.0f) * 2.0f;
+                   + std::abs(v.temperature - 50.0f) * 2.0f
+                   // decision_blueprint_nutrition (round_21): the two nutrition
+                   // bars carry the SAME survival-pressure shape as hunger/thirst
+                   // (a penalty for being depleted, never a reward for eating).
+                   // When nutrition is disabled the bars stay at 100, so both
+                   // terms are exactly 0 and the old reward landscape is intact.
+                   + (100.0f - v.protein)
+                   + (100.0f - v.vitamin);
     step_.vital += w_.vital_decay_coef * pressure * dt * -1.0f;  // negative
 }
 

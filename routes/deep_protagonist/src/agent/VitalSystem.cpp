@@ -101,6 +101,29 @@ void VitalSystem::tick(VitalState& s,
         if (freeze_or_burn) s.deaths_cold += 1;   // D-112 diag (read-only)
         else                s.deaths_food += 1;
     }
+
+    // decision_blueprint_nutrition (round_21): dual nutrition bars. Entirely
+    // gated by nutrition_enabled; when off this block never runs and the bars
+    // stay at their 100/100 default, so old-world checkpoints are unaffected.
+    // Decay -> clamp -> grace-timed death (separate cause bookkeeping). No
+    // reward is touched here; malnutrition only weakens (nutrition_speed_mult)
+    // and eventually kills, never pays out (anti-Goodhart per blueprint).
+    if (cfg_.nutrition_enabled && s.alive) {
+        s.protein -= cfg_.protein_decay_per_min * dt_min;
+        s.vitamin -= cfg_.vitamin_decay_per_min * dt_min;
+        s.protein  = clamp01_100(s.protein);
+        s.vitamin  = clamp01_100(s.vitamin);
+        s.protein_zero_s = (s.protein <= 0.0f) ? s.protein_zero_s + dt : 0.0f;
+        s.vitamin_zero_s = (s.vitamin <= 0.0f) ? s.vitamin_zero_s + dt : 0.0f;
+        bool die_protein = s.protein_zero_s > cfg_.nutri_death_grace_s;
+        bool die_vitamin = s.vitamin_zero_s > cfg_.nutri_death_grace_s;
+        if (die_protein || die_vitamin) {
+            s.alive = false;
+            s.deaths += 1;
+            if (die_protein) s.deaths_protein += 1;
+            else             s.deaths_vitamin += 1;
+        }
+    }
 }
 
 float VitalSystem::eat(VitalState& s, float nutrition) const {
@@ -119,12 +142,45 @@ void VitalSystem::rest(VitalState& s, float dt) const {
     s.stamina = clamp01_100(s.stamina + cfg_.stamina_recover * dt);
 }
 
+float VitalSystem::eat_protein(VitalState& s, float amount) const {
+    if (!cfg_.nutrition_enabled || amount <= 0.0f) return 0.0f;
+    float old = s.protein;
+    s.protein = clamp01_100(s.protein + amount);
+    if (s.protein > 0.0f) s.protein_zero_s = 0.0f;
+    return s.protein - old;
+}
+
+float VitalSystem::eat_vitamin(VitalState& s, float amount) const {
+    if (!cfg_.nutrition_enabled || amount <= 0.0f) return 0.0f;
+    float old = s.vitamin;
+    s.vitamin = clamp01_100(s.vitamin + amount);
+    if (s.vitamin > 0.0f) s.vitamin_zero_s = 0.0f;
+    return s.vitamin - old;
+}
+
+float VitalSystem::nutrition_speed_mult(const VitalState& s) const {
+    if (!cfg_.nutrition_enabled) return 1.0f;
+    const float thresh = cfg_.nutri_debuff_thresh * 100.0f;
+    auto barmul = [&](float v) -> float {
+        if (v >= thresh) return 1.0f;
+        float frac = (thresh > 0.0f) ? (v / thresh) : 0.0f; // 1 at thresh -> 0 at empty
+        if (frac < 0.0f) frac = 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+        return cfg_.nutri_debuff_floor + (1.0f - cfg_.nutri_debuff_floor) * frac;
+    };
+    return barmul(s.protein) * barmul(s.vitamin);
+}
+
 void VitalSystem::respawn(VitalState& s) const {
     s.hunger = 100.0f;
     s.thirst = 100.0f;
     s.stamina = 100.0f;
     s.temperature = 50.0f;
     s.alive = true;
+    s.protein = 100.0f;
+    s.vitamin = 100.0f;
+    s.protein_zero_s = 0.0f;
+    s.vitamin_zero_s = 0.0f;
 }
 
 }  // namespace dp::agent

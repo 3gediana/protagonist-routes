@@ -28,6 +28,12 @@ Environment::Environment(const EnvConfig& cfg)
       vitals_([&]() {
           dp::agent::VitalConfig vc;
           vc.thirst_decay_per_min = cfg.thirst_decay_per_min;
+          // decision_blueprint_nutrition (round_21): plumb CLI nutrition knobs.
+          vc.nutrition_enabled     = cfg.nutrition_enabled;
+          vc.protein_decay_per_min = cfg.protein_decay_per_min;
+          vc.vitamin_decay_per_min = cfg.vitamin_decay_per_min;
+          vc.nutri_debuff_thresh   = cfg.nutri_debuff_thresh;
+          vc.nutri_death_grace_s   = cfg.nutri_death_grace_s;
           return vc;
       }())
 {
@@ -589,6 +595,11 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 const float drunk = drink_drive(ml);
                 if (drunk > 0.5f) fire_once_critical(first_drink_fired_);
+                // decision_blueprint_nutrition (round_21): foraged plants/crops
+                // refill the VITAMIN bar (no-op when nutrition disabled). No
+                // reward attached - the bar only restores a vital.
+                vitals_.eat_vitamin(vital_state_,
+                                    vitals_.config().vitamin_per_forage);
             }
             // 30% chance Fruit/Berry drops a Seed for late-stage farming.
             if (k == dp::world::PlantKind::Fruit
@@ -643,6 +654,9 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 // D-043: first_hunt removed (Crafter: no reward for attacking
                 // neutral animals). Fish-while-drinking still gives food via
                 // first_eat, which is the legitimate signal.
+                // decision_blueprint_nutrition (round_21): fish is meat too.
+                vitals_.eat_protein(vital_state_,
+                                    vitals_.config().protein_per_meat);
             }
         }
     }
@@ -834,6 +848,12 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             // D-043: first_hunt removed. D-062: re-introduced but ONLY for
             // prey (rabbit/deer/fish). Wolves still grant no kill bonus so
             // the 鎾╃嫾 pathology cannot re-emerge.
+            // decision_blueprint_nutrition (round_21): any meat kill refills
+            // the PROTEIN bar (no-op when nutrition disabled). No reward is
+            // attached to the kill itself - the bar only restores a vital, so
+            // hunting is driven by survival, not a kill bounty (anti-Goodhart).
+            vitals_.eat_protein(vital_state_,
+                                vitals_.config().protein_per_meat);
         }
     }
 
@@ -947,6 +967,10 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     {
         float speed_mul = Environment::stamina_speed_multiplier(
             vital_state_.stamina);
+        // decision_blueprint_nutrition (round_21): malnutrition weakens the
+        // agent (multiplies with the stamina curve). Returns 1.0 when
+        // nutrition is disabled, so the old world is unaffected.
+        speed_mul *= vitals_.nutrition_speed_mult(vital_state_);
         scaled.move_x *= speed_mul;
         scaled.move_y *= speed_mul;
     }

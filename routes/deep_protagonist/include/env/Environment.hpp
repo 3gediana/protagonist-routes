@@ -63,6 +63,16 @@ struct EnvConfig {
     // regen off makes the oracle leave home to feed, yielding demos that
     // cover the full survival loop. Never set during PPO training/eval.
     bool     demo_no_regen        = false;
+
+    // --- decision_blueprint_nutrition (round_21) ---------------------------
+    // Mirror of VitalConfig's nutrition knobs so the headless trainer can
+    // sweep them from CLI. All default to the "off" / VitalConfig defaults so
+    // that omitting --nutrition leaves the old world byte-for-byte unchanged.
+    bool     nutrition_enabled     = false;
+    float    protein_decay_per_min = 20.0f;
+    float    vitamin_decay_per_min = 20.0f;
+    float    nutri_debuff_thresh   = 0.30f;
+    float    nutri_death_grace_s   = 8.0f;
 };
 
 // One step worth of "what happened" for a learner to consume.

@@ -78,14 +78,18 @@ PPO::PPO(const PPOConfig& cfg)
                            torch::TensorOptions().dtype(torch::kFloat32)
                                                  .device(device_));
 
-    if (cfg_.mask_atk_fire) {
-        disc_mask_ = torch::zeros(
-            {1, ActorCriticImpl::DISC_CATS},
-            torch::TensorOptions().dtype(torch::kFloat32).device(device_));
-        disc_mask_.index_put_({0, 2}, -50.0f); // finite mask: prob ~2e-22 (multinomial-safe), hard under argmax                              // attack
-        disc_mask_.index_put_({0, ActorCriticImpl::TEND_FIRE_IDX}, -50.0f); // finite mask: prob ~2e-22 (multinomial-safe), hard under argmax // fire(17)
+    // decision_round_17 / decision_blueprint_nutrition: action masking.
+    //   mask_atk_fire  -> mask BOTH idx2(attack) and idx17(fire)  (old world)
+    //   mask_fire_only -> mask ONLY idx17(fire); attack stays open (hunting)
+    // mask_atk_fire takes precedence if both are set. apply_disc_mask() builds
+    // the actual additive mask each call via functional ops (the round_17
+    // CUDA-safe path); disc_mask_ is kept only as a static reference tensor.
+    if (cfg_.mask_atk_fire || cfg_.mask_fire_only) {
         mask_enabled_ = true;
-        spdlog::info("decision_round_17: action mask ON (idx2 attack, idx17 fire -> -inf)");
+        mask_attack_  = cfg_.mask_atk_fire;  // fire-only => don't mask attack
+        spdlog::info("action mask ON ({})",
+                     mask_attack_ ? "idx2 attack + idx17 fire -> -inf"
+                                  : "idx17 fire only (attack UNMASKED for hunting)");
     }
 
     spdlog::info("PPO init on device={}, params={}, obs_dim={}",

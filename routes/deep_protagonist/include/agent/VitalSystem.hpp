@@ -18,6 +18,22 @@ struct VitalState {
     int   deaths      = 0;
     int   deaths_cold = 0;   // D-112 diag (read-only): deaths via temperature extreme
     int   deaths_food = 0;   // D-112 diag (read-only): deaths via hunger/thirst == 0
+    // --- decision_blueprint_nutrition (round_21): dual nutrition bars ---
+    // Independent of hunger/thirst. protein refilled ONLY by eating meat
+    // (hunt kills); vitamin refilled ONLY by foraging plants/crops. Both
+    // decay continuously when VitalConfig.nutrition_enabled. Below
+    // nutri_debuff_thresh the agent is weakened (slower, see
+    // nutrition_speed_mult). At 0 (for nutri_death_grace seconds) the agent
+    // dies of a malnutrition cause, tracked separately from food/cold so the
+    // gate can read why a death happened. When nutrition is OFF the bars stay
+    // at 100 and contribute nothing (no decay, no pressure, no debuff, no
+    // death) so old-world checkpoints (bc_v9, c1) behave identically.
+    float protein     = 100.0f;
+    float vitamin     = 100.0f;
+    int   deaths_protein = 0; // deaths via protein bar == 0 (no meat)
+    int   deaths_vitamin = 0; // deaths via vitamin bar == 0 (no foraging)
+    float protein_zero_s = 0.0f; // accumulated seconds protein has sat at 0
+    float vitamin_zero_s = 0.0f; // accumulated seconds vitamin has sat at 0
 };
 
 struct VitalConfig {
@@ -63,6 +79,28 @@ struct VitalConfig {
     float temp_cold_decay_per_min = 18.0f;  // night drift toward 0
     float temp_hot_decay_per_min  = 4.0f;   // desert daytime drift toward 100
     float temp_neutral_recover    = 3.0f;   // recover toward 50 in mild conditions
+
+    // --- decision_blueprint_nutrition (round_21) ---------------------------
+    // Master switch. Default OFF: bars never decay, so VitalState's 100/100
+    // is permanent and the new world is invisible to old-world runs.
+    bool  nutrition_enabled        = false;
+    // Per-minute base decay for each bar (independent of hunger/thirst).
+    float protein_decay_per_min    = 20.0f;
+    float vitamin_decay_per_min    = 20.0f;
+    // Below this fraction of full (0..1) the bar's deficiency weakens the
+    // agent (movement debuff, see nutrition_speed_mult). 0.30 = "<30%".
+    float nutri_debuff_thresh      = 0.30f;
+    // Lowest speed multiplier a fully-empty bar can impose (linear from 1.0
+    // at the debuff threshold down to this floor at 0). Two empty bars
+    // multiply, so the combined floor is floor*floor.
+    float nutri_debuff_floor       = 0.5f;
+    // Seconds a bar may sit at exactly 0 before it kills the agent. A small
+    // grace prevents single-tick thrash-deaths and gives the policy a window
+    // to eat. 0 = die the instant the bar empties.
+    float nutri_death_grace_s      = 8.0f;
+    // Amount each meat eat / forage restores to the respective bar.
+    float protein_per_meat         = 35.0f;
+    float vitamin_per_forage       = 30.0f;
 };
 
 class VitalSystem {
@@ -100,6 +138,20 @@ public:
     float eat(VitalState& s, float nutrition) const;       // food refills hunger
     float drink(VitalState& s, float amount) const;        // water refills thirst
     void  rest(VitalState& s, float dt) const;             // sit still, regen stamina
+
+    // decision_blueprint_nutrition (round_21): meat refills protein, forage
+    // refills vitamin. Both clamp to [0,100] and return the actual amount
+    // restored. No-op (returns 0) when nutrition is disabled. Eating also
+    // clears the at-zero grace timer for that bar.
+    float eat_protein(VitalState& s, float amount) const;
+    float eat_vitamin(VitalState& s, float amount) const;
+
+    // Combined movement-speed multiplier from nutrition deficiency, in
+    // [floor*floor, 1]. 1.0 when both bars are above the debuff threshold (or
+    // nutrition is disabled). Multiplies with the stamina speed multiplier in
+    // Environment so a malnourished agent moves slower. This is a physiological
+    // consequence, NOT a reward.
+    float nutrition_speed_mult(const VitalState& s) const;
 
     // Damage / kill / respawn helpers
     void respawn(VitalState& s) const;
