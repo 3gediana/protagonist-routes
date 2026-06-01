@@ -1074,6 +1074,30 @@ static float phi_night_shelter(const dp::agent::ObservationBuilder::Vector& obs)
     return std::clamp((20.0f - d_m) / 12.0f, 0.0f, 1.0f);  // 1 @<=8m -> 0 @20m
 }
 
+// round_19 Path B: daytime foraging potential to offset the new-bank
+// food-death side-effect. Policy-invariant when summed with phi_night
+// (Ng 1999 / Wiewiora 2003): Phi_total = Phi_night + Phi_day. This is
+// NOT a direct food/collect reward (that would be Goodhart). Phi in
+// [0,1]: by day (sun_h>+0.1), graded by proximity to the nearest ripe
+// plant (obs 39..40 dx/dy, kind one-hot 42..45); 0 at night and when
+// no ripe plant is in vision.
+static float phi_day_forage(const dp::agent::ObservationBuilder::Vector& obs) {
+    constexpr int   IDX_DAY_COS   = 13;
+    constexpr int   IDX_PLANT0_DX = 39;
+    constexpr int   IDX_PLANT0_DY = 40;
+    constexpr int   IDX_PLANT0_K0 = 42;   // one-hot kind occupies 42..45
+    constexpr float VISION_RANGE  = 60.0f;
+    const float sun_h = -obs[IDX_DAY_COS];          // sun_height_normalized()
+    if (sun_h <= 0.1f) return 0.0f;                 // not clearly daytime
+    const float kindsum = obs[IDX_PLANT0_K0] + obs[IDX_PLANT0_K0 + 1]
+                        + obs[IDX_PLANT0_K0 + 2] + obs[IDX_PLANT0_K0 + 3];
+    if (kindsum < 0.5f) return 0.0f;                // no ripe plant in vision
+    const float dx = obs[IDX_PLANT0_DX], dy = obs[IDX_PLANT0_DY];
+    const float d_m = std::sqrt(dx * dx + dy * dy) * VISION_RANGE;
+    return std::clamp((VISION_RANGE - d_m) / VISION_RANGE, 0.0f, 1.0f); // 1 @0m -> 0 @60m
+}
+
+
 int main(int argc, char** argv) {
     auto console = spdlog::stdout_color_mt("deep_protagonist_train");
     spdlog::set_default_logger(console);
@@ -1135,6 +1159,7 @@ int main(int argc, char** argv) {
     std::string ppo_kl_ref;                 // decision_round_17: reference ckpt (bc_v9.pt)
     float       ppo_target_kl     = 0.0f;   // decision_round_17: KL early-stop (0=off)
     float       ppo_night_shaping = 0.0f; // decision_round_16 Step2: coef for night-shelter PBRS (0=off)
+    float       ppo_day_shaping   = 0.0f; // round_19 Path B: coef for daytime-forage PBRS (0=off)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -1186,6 +1211,7 @@ int main(int argc, char** argv) {
         else if (a == "--ppo-kl-ref")    ppo_kl_ref    = next();
         else if (a == "--ppo-target-kl") ppo_target_kl = std::stof(next());
         else if (a == "--ppo-night-shaping") ppo_night_shaping = std::stof(next());
+        else if (a == "--ppo-day-shaping")   ppo_day_shaping   = std::stof(next());
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
@@ -1497,6 +1523,13 @@ int main(int argc, char** argv) {
                         shaped_r += ppo_night_shaping
                                   * (pcfg.gamma * phi_sp - phi_s);
                     }
+                    if (ppo_day_shaping > 0.0f) {
+                        float dphi_s  = phi_day_forage(obs_batch[i]);
+                        float dphi_sp = v_sr[i].done ? 0.0f
+                                       : phi_day_forage(v_sr[i].obs);
+                        shaped_r += ppo_day_shaping
+                                  * (pcfg.gamma * dphi_sp - dphi_s);
+                    }
                     tr.reward   = shaped_r;
                     tr.value    = v_val[i];
                     tr.log_prob = v_lp[i];
@@ -1636,6 +1669,11 @@ int main(int argc, char** argv) {
                 float phi_s  = phi_night_shelter(obs);
                 float phi_sp = sr.done ? 0.0f : phi_night_shelter(sr.obs);
                 shaped_r += ppo_night_shaping * (pcfg.gamma * phi_sp - phi_s);
+            }
+            if (ppo_day_shaping > 0.0f) {
+                float dphi_s  = phi_day_forage(obs);
+                float dphi_sp = sr.done ? 0.0f : phi_day_forage(sr.obs);
+                shaped_r += ppo_day_shaping * (pcfg.gamma * dphi_sp - dphi_s);
             }
             tr.reward   = shaped_r;
             tr.value    = vv;
