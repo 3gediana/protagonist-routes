@@ -68,6 +68,12 @@ struct VitalConfig {
     float stamina_walk_decay  = 0.5f;   // when moving normally
     float stamina_recover     = 4.0f;   // when nearly still
     float run_speed_threshold = 4.0f;   // m/s
+    // S5 world realism: climbing steep terrain costs extra stamina. slope01
+    // in [0,1] (= |grad h| rise/run, capped at 1.0 ~= 45 deg). At slope01=1
+    // the per-step stamina drain WHILE MOVING is multiplied by
+    // (1 + stamina_slope_mult). Flat ground (slope01=0) is unchanged, so
+    // old-world checkpoints behave identically until they meet real relief.
+    float stamina_slope_mult  = 3.0f;
     // Temperature: cold at night, hot in desert daytime, neutral elsewhere
     // D-094: reverted to 18/min after D-093's 50/min experiment confirmed
     // that lethality alone isn't enough - the agent just dies faster while
@@ -127,7 +133,8 @@ public:
               const dp::world::Daylight& day,
               float dt,
               float cold_resist = 0.0f,
-              float warmth      = 0.0f) const;
+              float warmth      = 0.0f,
+              float slope01     = 0.0f) const;
 
     // Consumption events. Both return the *actual* amount of vital
     // restored (0 when the meter was already full); callers pass that

@@ -211,7 +211,12 @@ Environment::Environment(const EnvConfig& cfg)
                 a.pos_z  = world_.surface_height(wc.first, wc.second);
                 a.health = 100.0f;
                 a.state  = dp::world::AnimalState::Wander;
-                if (++placed >= 10) break;
+                // S6 forced-hunting: relocate only a FEW fish to the spawn bank
+                // (was 10). Combined with the spear-gate + P_CATCH + wolf-alert
+                // frictions in the fishing branch, this makes camp-fishing a
+                // finite, noisy, risky protein source -- enough to bootstrap,
+                // not enough to live on forever without hunting.
+                if (++placed >= 4) break;
             }
         }
         float nearest_m = water_cells.empty()
@@ -296,6 +301,7 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     first_house_built_fired_    = false;
     first_crop_harvested_fired_ = false;
     first_follower_fired_       = false;
+    predator_alert_timer_       = 0.0f;   // S6 forced-hunting
 
     // D-063: starter kit. D-062 proved +5 critical alone can't make
     // PPO explore the craft_spear -> hunt path in 2M steps (0% first_spear,
@@ -482,6 +488,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         perc_scale = 0.3f;
         spd_scale  = 0.7f;
     }
+    // S6 forced-hunting: while a fishing spot has recently betrayed the agent
+    // (predator_alert_timer_ set in the fishing branch), wolves perceive the
+    // agent from much farther regardless of cover -- camping a bank to fish is
+    // no longer safe. Overrides the sheltered damper for its short window.
+    if (predator_alert_timer_ > 0.0f) {
+        perc_scale = std::max(perc_scale, 2.5f);
+        predator_alert_timer_ = std::max(0.0f, predator_alert_timer_ - dt);
+    }
     // D-099: per-tick alive bonus DOUBLES when inside a BUILDING (not just
     // any shelter - caves don't count). The 5 prior settlement attempts
     // (D-094..D-098) all failed because PPO's optimal policy is to wander
@@ -526,8 +540,15 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     float fire_warmth = fires_.warm_rate_at(as.pos_x, as.pos_y);
 
     float speed = std::sqrt(as.vel_x * as.vel_x + as.vel_y * as.vel_y);
+    // S5 world realism: terrain slope under the feet (|grad h|, rise/run)
+    // drives extra stamina spend when moving (uphill is tiring). Capped at
+    // 1.0 (~45 deg) before being handed to VitalSystem as slope01.
+    float dh_dx = 0.0f, dh_dy = 0.0f;
+    world_.heightmap().sample_gradient(as.pos_x, as.pos_y, dh_dx, dh_dy);
+    float slope_mag = std::sqrt(dh_dx * dh_dx + dh_dy * dh_dy);
+    float slope01 = slope_mag > 1.0f ? 1.0f : slope_mag;
     vitals_.tick(vital_state_, world_, as.pos_x, as.pos_y, speed, day_,
-                 dt, wardrobe_.cold_resist(), fire_warmth);
+                 dt, wardrobe_.cold_resist(), fire_warmth, slope01);
     if (sheltered) {
         vital_state_.temperature += (50.0f - vital_state_.temperature)
                                   * 0.3f * dt;
@@ -701,23 +722,38 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         if (near_water) {
             const float drunk = drink_drive(35.0f);
             if (drunk > 0.5f) fire_once_critical(first_drink_fired_);
-            // §4: spearfish the shallows from the bank. Fish flee at only
-            // 1.5 m/s and are confined to water, so (unlike 6-7 m/s land prey)
-            // they are reliably catchable -- this is the protein analogue of
-            // foraging for vitamin. kind==Fish below gates the protein refill.
-            auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
-                                              agent_.yaw(), 6.0f, 100.0f);
-            if (fish.killed
-                && animals_.animals()[fish.index].kind
-                    == dp::world::AnimalKind::Fish) {
-                const float ate = eat_drive(20.0f);
-                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
-                // D-043: first_hunt removed (Crafter: no reward for attacking
-                // neutral animals). Fish-while-drinking still gives food via
-                // first_eat, which is the legitimate signal.
-                // decision_blueprint_nutrition (round_21): fish is meat too.
-                vitals_.eat_protein(vital_state_,
-                                    vitals_.config().protein_per_meat);
+            // S6 forced-hunting: spearfishing is no longer a free, guaranteed
+            // protein faucet. Three frictions, per owner spec:
+            //  (1) the spear (crafted from wood+stone, the line-4 milestone)
+            //      doubles as the fishing tool -- no spear, no catch. This
+            //      gates ALL protein behind collect->spear, pushing the agent
+            //      up the main line instead of camping a bank from t=0.
+            //  (2) a cast only lands a fish with probability P_CATCH; a miss
+            //      still spends the turn, so protein supply is noisy and the
+            //      agent must keep land-hunting / stored meat as a backstop.
+            //  (3) the splashing has a per-tick chance to betray the agent's
+            //      position to nearby wolves (predator_alert), so sitting at
+            //      the water to fish carries real predation risk.
+            // Land prey (rabbit/deer) refill protein with no such cap, so the
+            // world now structurally rewards hunting over camp-fishing.
+            const bool  has_rod      = inventory_.num_of(dp::agent::ItemKind::Spear) > 0;
+            constexpr float P_CATCH       = 0.55f;  // chance a cast lands a fish
+            constexpr float P_WOLF_ALERT  = 0.08f;  // per fishing tick
+            if (has_rod) {
+                if (frand01() < P_WOLF_ALERT) predator_alert_timer_ = 4.0f;
+                if (frand01() < P_CATCH) {
+                    auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
+                                                      agent_.yaw(), 6.0f, 100.0f);
+                    if (fish.killed
+                        && animals_.animals()[fish.index].kind
+                            == dp::world::AnimalKind::Fish) {
+                        const float ate = eat_drive(20.0f);
+                        if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                        // decision_blueprint_nutrition (round_21): fish is meat.
+                        vitals_.eat_protein(vital_state_,
+                                            vitals_.config().protein_per_meat);
+                    }
+                }
             }
         }
     }
@@ -1032,6 +1068,16 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
         // agent (multiplies with the stamina curve). Returns 1.0 when
         // nutrition is disabled, so the old world is unaffected.
         speed_mul *= vitals_.nutrition_speed_mult(vital_state_);
+        // S5 world realism: rough terrain (steep slope + swamp/mountain
+        // footing) physically slows the body. Computed from the heightmap
+        // gradient and biome under the agent's current position; returns 1.0
+        // on flat plains so flat-world behaviour is unchanged.
+        const auto& as0 = agent_.state();
+        float mgx = 0.0f, mgy = 0.0f;
+        world_.heightmap().sample_gradient(as0.pos_x, as0.pos_y, mgx, mgy);
+        float mslope = std::sqrt(mgx * mgx + mgy * mgy);
+        speed_mul *= Environment::terrain_speed_multiplier(
+            mslope, world_.biome_at(as0.pos_x, as0.pos_y));
         scaled.move_x *= speed_mul;
         scaled.move_y *= speed_mul;
     }
@@ -1174,6 +1220,21 @@ float Environment::stamina_speed_multiplier(float stamina) {
     float clamped = stamina < 0.0f ? 0.0f
                   : (stamina > 50.0f ? 50.0f : stamina);
     return 0.5f + clamped * 0.01f;   // 50 -> 1.0, 0 -> 0.5
+}
+
+// S5 world realism: terrain footing speed multiplier (see Environment.hpp).
+float Environment::terrain_speed_multiplier(float slope_mag,
+                                            dp::world::Biome biome) {
+    if (slope_mag < 0.0f) slope_mag = 0.0f;
+    // 1/(1+k*slope): flat=1.0, ~26deg(0.5)=0.53, 45deg(1.0)=0.36.
+    float slope_mul = 1.0f / (1.0f + 1.8f * slope_mag);
+    float biome_mul = 1.0f;
+    switch (biome) {
+        case dp::world::Biome::Swamp:    biome_mul = 0.6f; break; // wading mud
+        case dp::world::Biome::Mountain: biome_mul = 0.8f; break; // rocky footing
+        default: break;
+    }
+    return slope_mul * biome_mul;
 }
 
 // D-043: snapshot the 10 first_X flags as a Crafter-style milestone vector.

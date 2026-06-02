@@ -21,6 +21,18 @@ Vec2 clampToWorld(Vec2 p, Vec2 world_size) {
     return p;
 }
 
+// A fire is now a resource that must be maintained: lighting one grants a
+// finite burn time, the fire consumes that fuel every tick, and it goes
+// dormant when the fuel runs dry. Storms (rain/wind) eat fuel faster.
+constexpr float kFuelPerIgnite = 150.0f;     // seconds of burn granted per ignition
+constexpr float kFuelMax = 300.0f;           // cap so refuelling can't hoard infinitely
+constexpr float kStormBurnMultiplier = 3.0f; // rain/wind burns fuel ~3x faster
+// Realism (2026-06): fire should come from the protagonists' ignite skill,
+// not appear on its own. Lightning can still occasionally start a fire (rare,
+// realistic bootstrap when no one has learned to light one yet) but at a
+// heavily reduced rate so agent-lit/refuelled fire is the dominant source.
+constexpr float kLightningIgniteScale = 0.15f;
+
 }  // namespace
 
 CampfireLayer::CampfireLayer(std::size_t fire_count,
@@ -66,9 +78,31 @@ void CampfireLayer::tick(IWorld& world, float dt) {
             for (const auto& fire : fires_) {
                 if (!fire.active) ++dormant_count;
             }
-            const float total_p = p_per_sec * static_cast<float>(dormant_count) * dt;
+            const float total_p =
+                p_per_sec * static_cast<float>(dormant_count) * dt * kLightningIgniteScale;
             if (total_p > 0.0f && u(rng_) < total_p) {
                 igniteNextDormant();  // existing helper
+            }
+        }
+    }
+
+    // Fuel burn-down: every active fire consumes its fuel over time and goes
+    // dormant when it runs dry. Storms (rain/wind) accelerate the burn. This
+    // turns a campfire from a permanent fixture into a resource that has to
+    // be lit and continually refuelled to keep its warmth zone alive.
+    {
+        float burn_mult = 1.0f;
+        if (const auto* weather = world.getLayer<WeatherLayer>(); weather != nullptr) {
+            if (weather->lightningPerTreePerSecond() > 0.0f) {
+                burn_mult = kStormBurnMultiplier;
+            }
+        }
+        for (auto& fire : fires_) {
+            if (!fire.active) continue;
+            fire.fuel -= dt * burn_mult;
+            if (fire.fuel <= 0.0f) {
+                fire.fuel = 0.0f;
+                fire.active = false;
             }
         }
     }
@@ -161,10 +195,33 @@ bool CampfireLayer::igniteNextDormant() {
     for (auto& fire : fires_) {
         if (!fire.active) {
             fire.active = true;
+            fire.fuel = std::min(fire.fuel + kFuelPerIgnite, kFuelMax);
             return true;
         }
     }
     return false;
+}
+
+bool CampfireLayer::igniteOrRefuelNear(Vec2 position, float radius, float fuel_add) {
+    // Pick the nearest fire site within radius (active or dormant) and pour
+    // fuel into it, lighting it if it was out. This is how an agent "makes
+    // fire": the IgniteFireCapability calls this when the agent spends a
+    // stick at a fire site.
+    CampfireSite* best = nullptr;
+    float best_dist_sq = radius * radius;
+    for (auto& fire : fires_) {
+        const float dist_sq = Vec2::distanceSquared(fire.position, position);
+        if (dist_sq <= best_dist_sq) {
+            best = &fire;
+            best_dist_sq = dist_sq;
+        }
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    best->active = true;
+    best->fuel = std::min(best->fuel + fuel_add, kFuelMax);
+    return true;
 }
 
 std::size_t CampfireLayer::activeFireCount() const {

@@ -638,6 +638,11 @@ struct ProtagonistEcologyConfig {
     // Adds +2 input dims -> fresh lineage. Independent of candidate-1; NOT
     // stacked. Default false keeps existing checkpoints loadable.
     bool protagonist_warmth_drive_enabled{false};
+    // Realism (2026-06): cave perception. Adds +4 input dims (in-cave flag,
+    // unit direction to nearest cave, normalized distance) so cave-seeking /
+    // sheltering is learnable. Changes input_dim -> fresh lineage. Default
+    // false keeps existing checkpoints loadable.
+    bool protagonist_cave_perception_enabled{false};
     // ── One-pot unified bloodline (2026-06-01) ─────────────────────────────
     // Master switch for the unified A–F bloodline. When true, the protagonist
     // input encoding UNCONDITIONALLY reserves all forward-compatible perception

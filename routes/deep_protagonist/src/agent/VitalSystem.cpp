@@ -25,7 +25,8 @@ void VitalSystem::tick(VitalState& s,
                        const dp::world::Daylight& day,
                        float dt,
                        float cold_resist,
-                       float warmth) const {
+                       float warmth,
+                       float slope01) const {
     if (!s.alive) return;
 
     const float dt_min = dt / 60.0f;
@@ -41,11 +42,16 @@ void VitalSystem::tick(VitalState& s,
     s.hunger -= cfg_.hunger_decay_per_min * dt_min;
     s.thirst -= cfg_.thirst_decay_per_min * dt_min * thirst_mult;
 
-    // Stamina depends on movement speed
+    // Stamina depends on movement speed; climbing steep terrain (slope01,
+    // S5 world realism) multiplies the drain while moving so that scaling a
+    // mountain genuinely tires the agent. slope01=0 (flat) leaves the old
+    // behaviour exactly intact.
+    float sc = slope01 < 0.0f ? 0.0f : (slope01 > 1.0f ? 1.0f : slope01);
+    float slope_cost = 1.0f + cfg_.stamina_slope_mult * sc;
     if (agent_speed > cfg_.run_speed_threshold) {
-        s.stamina -= cfg_.stamina_run_decay * dt;
+        s.stamina -= cfg_.stamina_run_decay * dt * slope_cost;
     } else if (agent_speed > 0.5f) {
-        s.stamina -= cfg_.stamina_walk_decay * dt;
+        s.stamina -= cfg_.stamina_walk_decay * dt * slope_cost;
     } else {
         s.stamina += cfg_.stamina_recover * dt;
     }

@@ -62,7 +62,7 @@ heightmap_cells_x    = 256
 heightmap_cells_y    = 256
 cell_scale           = 4.0     # world meters per heightmap cell
 # Terrain shape (fractal noise)
-max_height           = 60.0    # meters - taller mountains for a 1km world
+max_height           = 120.0   # meters - real relief: ~90m summits over a 1km world (S5 world overhaul)
 terrain_frequency    = 0.0015  # smaller = bigger features
 terrain_octaves      = 6
 terrain_persistence  = 0.5

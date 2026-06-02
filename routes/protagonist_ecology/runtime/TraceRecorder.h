@@ -77,6 +77,10 @@ private:
     void writeWorldSnapshot(World2D& world);
     // L7 R1: viewer-friendly frame JSON
     void writeViewerFrame(World2D& world);
+    // L7 R4 (3D web viewer): one-time static world header (terrain
+    // heightmap + water sources + resource cells) written alongside
+    // viewer_frames.jsonl so the renderer can build the 3D map once.
+    void writeViewerWorld(World2D& world, const ProtagonistEcologyConfig& route);
 
     World2D& world_;
     TraceRecorderConfig config_;

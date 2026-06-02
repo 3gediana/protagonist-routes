@@ -9,6 +9,7 @@
 #include "capability/DrinkWaterCapability.h"
 #include "capability/BackgroundMemoryWriteCapability.h"
 #include "capability/ChooseBuildingTypeCapability.h"
+#include "capability/IgniteFireCapability.h"
 #include "capability/GoalActionAssistCapability.h"
 #include "capability/GoalAwareDropCapability.h"
 #include "capability/NurseryPickUpCapability.h"
@@ -40,6 +41,7 @@
 #include "perception/BackgroundMemoryReadPerception.h"
 #include "perception/BasePerception.h"
 #include "perception/CarriedObjectPerception.h"
+#include "perception/CavePerception.h"
 #include "perception/DangerPerception.h"
 #include "perception/FovGate.h"
 #include "perception/GoalContextPerception.h"
@@ -217,6 +219,14 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
         sensory_dim += WorldHistoryPerception::kDim;     // Phase F  (+2, zero stub)
     }
 
+    // Realism (2026-06): cave perception (in-cave + nearest-cave dir + dist).
+    // Changes input_dim -> fresh lineage. The addPerception call in
+    // createProtagonist must add exactly CavePerception::kDim dims in this
+    // same trailing position.
+    if (config.protagonist_cave_perception_enabled) {
+        sensory_dim += CavePerception::kDim;
+    }
+
     return sensory_dim;
 }
 
@@ -308,7 +318,8 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         + (has_tree_curriculum ? 1 : 0)
         + (has_tool_curriculum ? 3 : 0)
         + (config.objects.enabled ? 2 : 0)
-        + (config.protagonist.building_type_choice_enabled ? 4 : 0);  // L5 #6
+        + (config.protagonist.building_type_choice_enabled ? 4 : 0)  // L5 #6
+        + (config.campfire.enabled ? 1 : 0);  // ignite-fire skill (1 output)
     if (config.protagonist.action_dim != required_action_dim) {
         throw std::runtime_error("protagonist action_dim does not match configured move/signal capability outputs");
     }
@@ -429,7 +440,18 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         agent->addPerception(std::make_unique<WorldHistoryPerception>());
     }
 
+    // Realism (2026-06): cave perception. Added last so it matches the
+    // trailing CavePerception::kDim term in protagonistSensoryDim.
+    if (config.protagonist_cave_perception_enabled) {
+        agent->addPerception(std::make_unique<CavePerception>());
+    }
+
     agent->addCapability(std::make_unique<MoveCapability>(2.2f, kMoveCost, kMovementFactor, 20));
+    // Realism (2026-06): a protagonist that enters a cave becomes invisible to
+    // out-of-cave observers (same hide_in_terrain mechanic SmallForager uses),
+    // so caves are a real predator-safe refuge. Passive (consumedOutputs()==0),
+    // so this does NOT change the action dimension.
+    agent->addCapability(std::make_unique<CaveHideCapability>());
     if (config.protagonist.goal_action_assist_enabled) {
         agent->addCapability(std::make_unique<GoalActionAssistCapability>(5.0f, kPickRadius));
     }
@@ -467,6 +489,14 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // the required_action_dim summation above (last, after objects).
     if (config.protagonist.building_type_choice_enabled) {
         agent->addCapability(std::make_unique<ChooseBuildingTypeCapability>());
+    }
+    // Realism (2026-06): agent-driven fire making. Claims the LAST action
+    // output (1), so it appends after the building-type vote -- order MUST
+    // match the final term in required_action_dim above. Lets a protagonist
+    // spend firewood to light/refuel a nearby campfire on demand instead of
+    // the world handing out lightning-lit fires.
+    if (config.campfire.enabled) {
+        agent->addCapability(std::make_unique<IgniteFireCapability>());
     }
 
     // L2.2 v2: drive tick (last so it sees foodEatenThisTick from

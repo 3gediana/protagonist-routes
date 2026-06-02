@@ -4,6 +4,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     capability/ChooseBuildingTypeCapability.cpp
     capability/ChopTreeCapability.cpp
     capability/CraftSpearCapability.cpp
+    capability/IgniteFireCapability.cpp
     capability/DrinkWaterCapability.cpp
     capability/GoalActionAssistCapability.cpp
     capability/GoalAwareDropCapability.cpp
@@ -27,6 +28,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     perception/BackgroundMemoryReadPerception.cpp
     perception/BasePerception.cpp
     perception/CarriedObjectPerception.cpp
+    perception/CavePerception.cpp
     perception/DangerPerception.cpp
     perception/MemoryCognitionPerception.cpp
     perception/MemoryTrialPerception.cpp

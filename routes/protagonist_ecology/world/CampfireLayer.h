@@ -23,6 +23,8 @@ struct CampfireSite {
     Vec2 position;
     float intensity;
     bool active;
+    float fuel = 0.0f;   // remaining burn time in seconds; active fire burns
+                         // this down and goes dormant when it hits 0.
 };
 
 class CampfireLayer final : public IWorldLayer {
@@ -47,6 +49,10 @@ public:
     bool inWarmthZone(Vec2 position) const;
     bool inDangerZone(Vec2 position) const;
     bool igniteNextDormant();
+    // Agent-driven ignition: light (or refuel) the nearest fire site within
+    // `radius` of `position`, adding `fuel_add` seconds of burn (capped at
+    // fuel_max). Returns true if a fire was lit or refuelled.
+    bool igniteOrRefuelNear(Vec2 position, float radius, float fuel_add);
     std::size_t activeFireCount() const;
     float warmthRadius() const { return warmth_radius_; }
     float dangerRadius() const { return danger_radius_; }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace dp::world {
 
@@ -102,42 +103,73 @@ void BiomeMap::build(const Heightmap& hm, uint64_t seed,
                      float mountain_threshold,
                      float wet_threshold,
                      float dry_threshold) {
-    // Find the heightmap's max so we can normalize height into [0,1].
+    // The legacy fixed thresholds barely produced any desert/swamp because the
+    // moisture noise rarely crossed them, and ~half the (flat) map fell over a
+    // single height threshold so it read as "mostly mountain". Instead we build
+    // a Whittaker-style climate map from three fields - elevation, temperature
+    // (warm equator + altitude cooling + noise) and moisture - and slice them
+    // by PERCENTILE so the biome MIX is stable and diverse on every seed, while
+    // the smooth low-frequency noise keeps each biome in contiguous regions
+    // scattered across the whole map (not one pocket, not all desert).
+    (void)sea_level; (void)mountain_threshold; (void)wet_threshold; (void)dry_threshold;
+
+    const int N = size_x_ * size_y_;
     float h_max = 1e-6f;
-    for (float h : hm.raw()) {
-        if (h > h_max) h_max = h;
-    }
-    (void)sea_level;
+    for (float h : hm.raw()) if (h > h_max) h_max = h;
 
-    const float moisture_freq = 0.0015f;  // larger features than terrain
-    const int   moisture_octaves = 4;
-    const float moisture_persistence = 0.55f;
+    const float scale      = hm.cell_scale();
+    const float moist_freq = 0.004f;  // ~250 m moisture provinces
+    const float temp_freq  = 0.003f;  // ~330 m thermal provinces
 
+    std::vector<float> hN(N), moi(N), tmp(N);
     for (int j = 0; j < size_y_; ++j) {
         for (int i = 0; i < size_x_; ++i) {
-            // Same world coords as the heightmap: cell (i,j) -> wx=i*scale
-            // The cell scale is the heightmap's, so we just use grid idx.
-            float h_norm = hm.at(i, j) / h_max;  // [0, 1]
-            float moisture = fbm(static_cast<float>(i) * moisture_freq,
-                                 static_cast<float>(j) * moisture_freq,
-                                 seed ^ 0xBEEFULL,
-                                 moisture_octaves,
-                                 moisture_persistence);
-
-            Biome b;
-            if (h_norm > mountain_threshold) {
-                b = Biome::Mountain;
-            } else if (moisture < dry_threshold && h_norm < 0.55f) {
-                b = Biome::Desert;
-            } else if (moisture > wet_threshold && h_norm < 0.45f) {
-                b = Biome::Swamp;
-            } else if (moisture > 0.45f && h_norm < 0.6f) {
-                b = Biome::Forest;
-            } else {
-                b = Biome::Plain;
-            }
-            data_[idx(i, j)] = static_cast<uint8_t>(b);
+            int id = idx(i, j);
+            float h_norm = hm.at(i, j) / h_max;             // [0,1]
+            float wx = static_cast<float>(i) * scale;
+            float wy = static_cast<float>(j) * scale;
+            float m = fbm(wx * moist_freq, wy * moist_freq,
+                          seed ^ 0xBEEFULL, 4, 0.55f);        // [0,1]
+            // Latitude: south (small j) warm, north (large j) cold.
+            float lat = static_cast<float>(j) / static_cast<float>(size_y_ - 1);
+            float t_noise = fbm(wx * temp_freq, wy * temp_freq,
+                                seed ^ 0x7A1EULL, 3, 0.5f);   // [0,1]
+            // Warmer near the equator and at low altitude; jittered by noise.
+            float t = (1.0f - lat) * 0.6f + t_noise * 0.4f - h_norm * 0.5f;
+            hN[id] = h_norm;
+            moi[id] = m;
+            tmp[id] = t;
         }
+    }
+
+    // Percentile cutoff over a copy (N small enough that 6 partial sorts are cheap).
+    auto pct = [](std::vector<float> v, float p) {
+        size_t k = static_cast<size_t>(p * static_cast<float>(v.size() - 1));
+        std::nth_element(v.begin(), v.begin() + k, v.end());
+        return v[k];
+    };
+    const float h_mtn = pct(hN, 0.82f);  // top ~18% elevation -> mountains
+    const float h_low = pct(hN, 0.35f);  // lowest ~35% -> basins (swamp candidates)
+    const float m_wet = pct(moi, 0.72f); // wettest ~28%
+    const float m_mid = pct(moi, 0.45f);
+    const float m_dry = pct(moi, 0.28f); // driest ~28%
+    const float t_hot = pct(tmp, 0.55f); // warmer ~45%
+
+    for (int id = 0; id < N; ++id) {
+        float h_norm = hN[id], m = moi[id], t = tmp[id];
+        Biome b;
+        if (h_norm >= h_mtn) {
+            b = Biome::Mountain;                       // high ridges & peaks
+        } else if (m >= m_wet && h_norm <= h_low) {
+            b = Biome::Swamp;                          // wet lowland basins
+        } else if (m <= m_dry && t >= t_hot) {
+            b = Biome::Desert;                         // hot & dry
+        } else if (m >= m_mid) {
+            b = Biome::Forest;                         // moister mid-elevation
+        } else {
+            b = Biome::Plain;                          // grassland fills the rest
+        }
+        data_[id] = static_cast<uint8_t>(b);
     }
 }
 

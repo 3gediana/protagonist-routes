@@ -477,6 +477,34 @@ void ObservationBuilder::compose(const dp::world::World&         world,
     out[p++] = clamp01(vital_state.protein / 100.0f);
     out[p++] = clamp01(vital_state.vitamin / 100.0f);
 
+    // ---- S5 world realism: environment direct-sense (2) ------------------
+    // Appended at the VERY END (indices 569, 570) so 0..568 stay byte-stable
+    // and a 569-dim v6/BC first layer warm-starts by zero-padding these 2 new
+    // encoder columns (surgery). These let the protagonist FEEL the new world:
+    //   [569] ambient climate target /100 — the temperature its body is being
+    //         pulled toward right now (0=cold: night/mountain, 1=hot: desert
+    //         daytime, 0.5=mild). Lets the policy pre-empt freezing/overheating
+    //         (build fire / wear clothes) BEFORE temperature actually drops,
+    //         matching the VitalSystem drift target exactly.
+    //   [570] terrain slope under the feet = |grad h| (rise/run, capped 1.0),
+    //         the same quantity that now costs extra stamina + slows movement.
+    {
+        float sun_h = day.sun_height_normalized();
+        auto  bm    = world.biome_at(s.pos_x, s.pos_y);
+        bool is_night   = sun_h < -0.1f;
+        bool mountain   = (bm == dp::world::Biome::Mountain);
+        bool desert_day = (bm == dp::world::Biome::Desert) && (sun_h > 0.4f);
+        float ambient = 0.5f;               // mild → drift toward 50/100
+        if (is_night || mountain) ambient = 0.0f;   // cold drift toward 0
+        else if (desert_day)      ambient = 1.0f;   // hot  drift toward 100
+        out[p++] = ambient;
+
+        float gdx = 0.0f, gdy = 0.0f;
+        world.heightmap().sample_gradient(s.pos_x, s.pos_y, gdx, gdy);
+        float sl = std::sqrt(gdx * gdx + gdy * gdy);
+        out[p++] = sl > 1.0f ? 1.0f : sl;
+    }
+
     // p should equal SIZE here.
 }
 

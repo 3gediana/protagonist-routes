@@ -65,6 +65,9 @@ namespace dp::agent {
 //   183..566 SpatialMemory 8x8 window x 6 features (row-major gy,gx,feat)
 //   --- decision_blueprint_nutrition §3a (567->569) ---
 //   567..568 nutrition  protein/100, vitamin/100 (=1.0/1.0 when nutrition OFF)
+//   --- S5 world realism: environment direct-sense (569->571) ---
+//   569      ambient_temp  climate target /100 (0 cold / 0.5 mild / 1 hot)
+//   570      slope         terrain |grad h| under feet (rise/run, capped 1.0)
 //
 // All distances are normalised by VISION_RANGE (60m) so |dx|,|dy|,|dz| <= 1.
 class ObservationBuilder {
@@ -112,7 +115,12 @@ public:
         // protein/vitamin each /100, appended at the VERY END so old indices
         // 0..566 are byte-stable and a 567-dim bc_v9 first-layer can be
         // warm-started by zero-padding the 2 new encoder columns (surgery).
-        + 2;                              // protein, vitamin
+        + 2                               // protein, vitamin (567,568)
+        // --- S5 world realism: environment direct-sense (569->571) ---
+        // ambient climate target (/100) + terrain slope under feet. Appended
+        // at the VERY END so indices 0..568 stay byte-stable; a 569-dim v6/BC
+        // first layer warm-starts by zero-padding these 2 new encoder columns.
+        + 2;                              // ambient_temp (569), slope (570)
 
     using Vector = std::array<float, SIZE>;
 

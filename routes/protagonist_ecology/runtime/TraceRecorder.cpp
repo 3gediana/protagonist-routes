@@ -13,7 +13,9 @@
 #include "core/world/layers/TimeOfDayLayer.h"
 #include "core/world/layers/WeatherLayer.h"
 #include "core/world/layers/object/ObjectLayer.h"
+#include "core/world/layers/terrain/TerrainLayer.h"
 #include "world/CampfireLayer.h"
+#include "world/WaterLayer.h"
 #include "world/NurseryLogisticsLayer.h"
 #include "world/SurvivalStatusLayer.h"
 #include "world/TreeLayer.h"
@@ -224,6 +226,7 @@ TraceRecorder::TraceRecorder(World2D& world,
     }
     if (config_.viewer_frames_enabled) {
         viewer_frames_.open(trace_dir_ / "viewer_frames.jsonl", std::ios::out | std::ios::trunc);
+        writeViewerWorld(world_, route);
     }
 
     writeManifest(route, generation, episode);
@@ -806,6 +809,9 @@ void TraceRecorder::writeViewerFrame(World2D& world) {
     auto* trees = world.getLayer<TreeLayer>();
     auto* weather = world.getLayer<WeatherLayer>();
     auto* season = world.getLayer<SeasonLayer>();
+    auto* fires = world.getLayer<CampfireLayer>();
+    auto* objects = world.getLayer<ObjectLayer>();
+    auto* tod = world.getLayer<TimeOfDayLayer>();
 
     viewer_frames_ << "{\"tick\":" << world.currentTick()
                    << ",\"t\":" << world.currentTimeSeconds();
@@ -865,6 +871,42 @@ void TraceRecorder::writeViewerFrame(World2D& world) {
     }
     viewer_frames_ << "]";
 
+    // L7 R4: campfires (fire sources) so the 3D viewer can render flame/glow.
+    viewer_frames_ << ",\"fires\":[";
+    first = true;
+    if (fires != nullptr) {
+        for (const auto& fsite : fires->fires()) {
+            if (!first) viewer_frames_ << ',';
+            first = false;
+            viewer_frames_ << "{\"x\":" << fsite.position.x
+                           << ",\"y\":" << fsite.position.y
+                           << ",\"i\":" << fsite.intensity
+                           << ",\"a\":" << (fsite.active ? 1 : 0)
+                           << "}";
+        }
+    }
+    viewer_frames_ << "]";
+
+    // L7 R4: movable objects (stones/sticks/spears). Thrown projectiles have
+    // non-zero velocity; carried ones ride along an agent. Rendered as small
+    // points. t=type, c=carried, vx/vy=velocity (for in-flight trails).
+    viewer_frames_ << ",\"objects\":[";
+    first = true;
+    if (objects != nullptr) {
+        for (const auto& o : objects->objects()) {
+            if (!first) viewer_frames_ << ',';
+            first = false;
+            viewer_frames_ << "{\"x\":" << o.pos.x
+                           << ",\"y\":" << o.pos.y
+                           << ",\"t\":" << static_cast<int>(o.type)
+                           << ",\"c\":" << (o.carried ? 1 : 0)
+                           << ",\"vx\":" << o.velocity.x
+                           << ",\"vy\":" << o.velocity.y
+                           << "}";
+        }
+    }
+    viewer_frames_ << "]";
+
     // L7 R3: weather/season progress (0..1) so viewer can crossfade transitions.
     float wp = 0.0f;
     if (weather != nullptr) {
@@ -877,12 +919,120 @@ void TraceRecorder::writeViewerFrame(World2D& world) {
     }
     const float sp = season != nullptr ? season->seasonProgress() : 0.0f;
 
+    // L7 R4: day-night phase (0..1, 0.25=sunrise 0.75=sunset) + light level
+    // (0..1) so the viewer can drive sun position and ambient lighting.
+    const float tod_phase = tod != nullptr ? tod->timeOfDay() : 0.5f;
+    const float light = tod != nullptr ? tod->lightLevel() : 1.0f;
+
     viewer_frames_ << ",\"w\":" << (weather != nullptr ? static_cast<int>(weather->currentWeather()) : 0)
                    << ",\"wp\":" << wp
                    << ",\"s\":" << (season != nullptr ? static_cast<int>(season->currentSeason()) : 0)
                    << ",\"sp\":" << sp
+                   << ",\"tod\":" << tod_phase
+                   << ",\"light\":" << light
                    << "}\n";
     viewer_frames_.flush();
+}
+
+// L7 R4: static world header for the 3D web viewer. Written once when the
+// recorder opens (terrain height is constant for an episode; water sources
+// and resource cells are seeded at world setup). The renderer builds the
+// terrain mesh + scatters ground cover from this, then animates per-frame
+// entities from viewer_frames.jsonl on top.
+void TraceRecorder::writeViewerWorld(World2D& world, const ProtagonistEcologyConfig& route) {
+    std::ofstream vw(trace_dir_ / "viewer_world.json", std::ios::out | std::ios::trunc);
+    if (!vw.is_open()) {
+        return;
+    }
+    const float world_w = route.world_size.x;
+    const float world_h = route.world_size.y;
+    auto* terrain = world.getLayer<TerrainLayer>();
+    auto* water = world.getLayer<WaterLayer>();
+    auto* resources = world.getLayer<ResourceLayer>();
+
+    // Heightmap sampling grid. 128x128 = 16k samples (one-off), enough for a
+    // smooth terrain mesh without bloating the JSON.
+    constexpr int kGX = 128;
+    constexpr int kGY = 128;
+
+    vw << "{\"world_size\":[" << world_w << "," << world_h << "]"
+       << ",\"grid\":[" << kGX << "," << kGY << "]"
+       << ",\"height_scale\":" << (terrain != nullptr ? terrain->heightScale() : 0.0f);
+
+    vw << ",\"height\":[";
+    if (terrain != nullptr) {
+        bool first = true;
+        for (int j = 0; j < kGY; ++j) {
+            const float y = (static_cast<float>(j) + 0.5f) / kGY * world_h;
+            for (int i = 0; i < kGX; ++i) {
+                const float x = (static_cast<float>(i) + 0.5f) / kGX * world_w;
+                if (!first) vw << ',';
+                first = false;
+                vw << terrain->heightAt(x, y);
+            }
+        }
+    }
+    vw << "]";
+
+    vw << ",\"water\":[";
+    if (water != nullptr) {
+        bool first = true;
+        for (const auto& s : water->sources()) {
+            if (!first) vw << ',';
+            first = false;
+            vw << "{\"x\":" << s.position.x
+               << ",\"y\":" << s.position.y
+               << ",\"r\":" << s.radius << "}";
+        }
+    }
+    vw << "]";
+
+    // Resource cells: static positions tinted by kind (0=grass 1=browse
+    // 2=fruit 3=meat). Drawn as ground scatter so the map reads as a
+    // living ecosystem rather than bare terrain.
+    vw << ",\"resources\":[";
+    if (resources != nullptr) {
+        bool first = true;
+        for (const auto& r : resources->resources()) {
+            if (!first) vw << ',';
+            first = false;
+            vw << "{\"x\":" << r.position.x
+               << ",\"y\":" << r.position.y
+               << ",\"k\":" << static_cast<int>(r.kind) << "}";
+        }
+    }
+    vw << "]";
+
+    // Realism (2026-06): cave footprint. Caves are a thermal + predator refuge
+    // in the sim (TerrainLayer cave mask) but were never exported, so the world
+    // looked cave-less. Sampled once here on a coarse grid; "e":1 marks a cave
+    // cell that borders open ground (a mouth) so the viewer can place an arch /
+    // entrance there, while interior cells render as dark sheltered hollows.
+    vw << ",\"caves\":[";
+    if (terrain != nullptr) {
+        constexpr int kCX = 110;
+        constexpr int kCY = 110;
+        const float dx = world_w / static_cast<float>(kCX);
+        const float dy = world_h / static_cast<float>(kCY);
+        bool first = true;
+        for (int j = 0; j < kCY; ++j) {
+            const float y = (static_cast<float>(j) + 0.5f) * dy;
+            for (int i = 0; i < kCX; ++i) {
+                const float x = (static_cast<float>(i) + 0.5f) * dx;
+                if (!terrain->inCave(x, y)) continue;
+                const bool edge =
+                    !terrain->inCave(x - dx, y) || !terrain->inCave(x + dx, y) ||
+                    !terrain->inCave(x, y - dy) || !terrain->inCave(x, y + dy);
+                if (!first) vw << ',';
+                first = false;
+                vw << "{\"x\":" << x << ",\"y\":" << y
+                   << ",\"e\":" << (edge ? 1 : 0) << "}";
+            }
+        }
+    }
+    vw << "]";
+
+    vw << "}\n";
 }
 
 }  // namespace neuro::routes::protagonist

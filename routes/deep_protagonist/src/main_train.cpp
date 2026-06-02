@@ -1226,6 +1226,46 @@ static float phi_day_forage(const dp::agent::ObservationBuilder::Vector& obs) {
 }
 
 
+// "grain-trail" hunting curriculum: strict potential-based reward shaping
+// (Ng/Harada/Russell 1999) toward the land-hunt chain. Policy-invariant ->
+// cannot create an exploitable plateau, only accelerates credit assignment.
+// NOT a kill bounty (D-064 proved per-hit rewards collapse hunting to 0).
+// Phi in [0,1], a strictly monotonic ladder so every rung dominates the
+// camp-fishing fallback (Phi=0):
+//   carry a spear & approach a rabbit/deer .. 0 -> 0.45 (continuous pull)
+//   own a fur pelt (requires a land kill) ... 0.50
+//   crafted a fur cloak ..................... 0.75
+//   wearing the fur cloak ................... 1.00
+// Obs indices counted from ObservationBuilder::compose, cross-checked vs the
+// existing phi anchors (inside_cave=9, day_cos=13, plant0=39, bldg=130):
+// spear_owned=120; 4 animal slots base 67 stride 8 with {dx,dy,dz, kind
+// one-hot Rabbit..Eagle = +3..+7}; fur_owned=133; furcloak_owned=135;
+// worn_furcloak=139.
+static float phi_hunt_progress(const dp::agent::ObservationBuilder::Vector& obs) {
+    constexpr int   IDX_SPEAR_OWNED = 120;
+    constexpr int   ANIM_BASE       = 67;
+    constexpr int   ANIM_STRIDE     = 8;
+    constexpr int   ANIM_K          = 4;
+    constexpr int   IDX_FUR_OWNED   = 133;
+    constexpr int   IDX_CLOAK_OWNED = 135;
+    constexpr int   IDX_WORN_CLOAK  = 139;
+    constexpr float VISION_RANGE    = 60.0f;
+    if (obs[IDX_WORN_CLOAK]  > 0.5f) return 1.00f;   // wearing the cloak
+    if (obs[IDX_CLOAK_OWNED] > 0.0f) return 0.75f;   // crafted the cloak
+    if (obs[IDX_FUR_OWNED]   > 0.0f) return 0.50f;   // owns a pelt (hunted)
+    if (obs[IDX_SPEAR_OWNED] <= 0.0f) return 0.0f;   // no spear yet -> no pull
+    float best = 0.0f;                               // pull toward nearest prey
+    for (int k = 0; k < ANIM_K; ++k) {
+        const int   b       = ANIM_BASE + ANIM_STRIDE * k;
+        const float is_prey = obs[b + 3] + obs[b + 4];   // Rabbit + Deer one-hot
+        if (is_prey < 0.5f) continue;
+        const float dx = obs[b], dy = obs[b + 1];
+        const float d_m = std::sqrt(dx * dx + dy * dy) * VISION_RANGE;
+        const float prox = std::clamp((VISION_RANGE - d_m) / VISION_RANGE, 0.0f, 1.0f);
+        if (prox > best) best = prox;
+    }
+    return 0.45f * best;   // 0 (far / no prey) -> 0.45, strictly below 0.50 pelt rung
+}
 int main(int argc, char** argv) {
     auto console = spdlog::stdout_color_mt("deep_protagonist_train");
     spdlog::set_default_logger(console);
@@ -1289,6 +1329,7 @@ int main(int argc, char** argv) {
     float       ppo_target_kl     = 0.0f;   // decision_round_17: KL early-stop (0=off)
     float       ppo_night_shaping = 0.0f; // decision_round_16 Step2: coef for night-shelter PBRS (0=off)
     float       ppo_day_shaping   = 0.0f; // round_19 Path B: coef for daytime-forage PBRS (0=off)
+    float       ppo_hunt_shaping  = 0.0f; // grain-trail: coef for land-hunt-chain PBRS (0=off)
     // decision_blueprint_nutrition (round_21): dual nutrition bars + hunting.
     bool        nutrition_enabled = false; // master switch (default off = old world)
     float       nutri_protein_decay = 20.0f;
@@ -1349,6 +1390,7 @@ int main(int argc, char** argv) {
         else if (a == "--ppo-target-kl") ppo_target_kl = std::stof(next());
         else if (a == "--ppo-night-shaping") ppo_night_shaping = std::stof(next());
         else if (a == "--ppo-day-shaping")   ppo_day_shaping   = std::stof(next());
+        else if (a == "--ppo-hunt-shaping")  ppo_hunt_shaping  = std::stof(next());
         else if (a == "--nutrition")            nutrition_enabled  = true;
         else if (a == "--nutri-protein-decay") nutri_protein_decay = std::stof(next());
         else if (a == "--nutri-vitamin-decay") nutri_vitamin_decay = std::stof(next());
@@ -1693,6 +1735,13 @@ int main(int argc, char** argv) {
                         shaped_r += ppo_day_shaping
                                   * (pcfg.gamma * dphi_sp - dphi_s);
                     }
+                    if (ppo_hunt_shaping > 0.0f) {
+                        float hphi_s  = phi_hunt_progress(obs_batch[i]);
+                        float hphi_sp = v_sr[i].done ? 0.0f
+                                       : phi_hunt_progress(v_sr[i].obs);
+                        shaped_r += ppo_hunt_shaping
+                                  * (pcfg.gamma * hphi_sp - hphi_s);
+                    }
                     tr.reward   = shaped_r;
                     tr.value    = v_val[i];
                     tr.log_prob = v_lp[i];
@@ -1844,6 +1893,11 @@ int main(int argc, char** argv) {
                 float dphi_s  = phi_day_forage(obs);
                 float dphi_sp = sr.done ? 0.0f : phi_day_forage(sr.obs);
                 shaped_r += ppo_day_shaping * (pcfg.gamma * dphi_sp - dphi_s);
+            }
+            if (ppo_hunt_shaping > 0.0f) {
+                float hphi_s  = phi_hunt_progress(obs);
+                float hphi_sp = sr.done ? 0.0f : phi_hunt_progress(sr.obs);
+                shaped_r += ppo_hunt_shaping * (pcfg.gamma * hphi_sp - hphi_s);
             }
             tr.reward   = shaped_r;
             tr.value    = vv;

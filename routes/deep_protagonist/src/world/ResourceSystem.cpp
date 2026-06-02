@@ -1,5 +1,6 @@
 #include "world/ResourceSystem.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace dp::world {
@@ -31,15 +32,23 @@ float ResourceSystem::regrow_for(ResourceKind k) const {
 }
 
 namespace {
+// Region-exclusive resources: each biome holds a distinct main-line necessity
+// so no single region is self-sufficient. The agent must traverse the whole map
+// (wood->forest, stone->mountain, fibre/grass->plains+swamp) to climb the
+// milestone line (collect -> spear -> shelter -> clothing -> house). Water (river)
+// and herbivores (plains/forest) supply drink and protein, both elsewhere again.
+// This keeps every region valuable without touching the frozen obs/action contract.
 bool wood_biome(Biome b) {
-    // Sticks are common in forests, sparse in plains, occasional in swamps.
-    return b == Biome::Forest || b == Biome::Plain || b == Biome::Swamp;
+    // Building/spear-shaft timber: forests only.
+    return b == Biome::Forest;
 }
 bool stone_biome(Biome b) {
-    return b == Biome::Mountain || b == Biome::Plain || b == Biome::Desert;
+    // Spear-tip / tools / house foundation: mountains only.
+    return b == Biome::Mountain;
 }
 bool grass_biome(Biome b) {
-    return b == Biome::Plain || b == Biome::Forest || b == Biome::Swamp;
+    // Clothing fibre (grass weave): open plains and wet swamps.
+    return b == Biome::Plain || b == Biome::Swamp;
 }
 }  // namespace
 
@@ -48,28 +57,74 @@ void ResourceSystem::scatter(const World& w, ResourceKind kind,
                              bool (*biome_filter)(Biome)) {
     float wx_max = w.heightmap().world_size_x();
     float wy_max = w.heightmap().world_size_y();
-    int placed = 0;
-    int attempts = 0;
-    int max_attempts = target_count * 10;
-    while (placed < target_count && attempts < max_attempts) {
-        ++attempts;
-        float x = frand() * wx_max;
-        float y = frand() * wy_max;
+    if (target_count <= 0) return;
+
+    auto place_at = [&](float x, float y) -> bool {
         Biome b = w.biome_at(x, y);
-        if (!biome_filter(b)) continue;
-        // Skip rivers explicitly even if other filters match.
-        if (b == Biome::River) continue;
-        // Drop on top of the surface; resources don't go underwater.
-        float z = w.surface_height(x, y);
+        if (!biome_filter(b)) return false;
+        if (b == Biome::River) return false;  // resources don't go in water
         ResourceInstance r;
         r.x = x;
         r.y = y;
-        r.z = z;
+        r.z = w.surface_height(x, y);  // sit on the surface
         r.kind = kind;
         r.available = true;
         r.regrow_timer = 0.0f;
         resources_.push_back(r);
-        ++placed;
+        return true;
+    };
+
+    // Clustered ("patchy") layout instead of a uniform sprinkle: real worlds
+    // have groves of sticks, veins/scree of stone, meadows of grass - dense
+    // pockets separated by empty ground - rather than evenly-spread dots. We
+    // seed a handful of patch centres in valid biomes and grow each into a
+    // blob, which gives the map geographic character without changing the
+    // total node budget. Stone clumps tightest (veins), grass spreads widest
+    // (meadows).
+    float patch_radius;
+    int   nodes_per_patch;
+    switch (kind) {
+        case ResourceKind::Stone: patch_radius = 0.018f; nodes_per_patch = 10; break;
+        case ResourceKind::Wood:  patch_radius = 0.030f; nodes_per_patch = 14; break;
+        case ResourceKind::Grass: patch_radius = 0.050f; nodes_per_patch = 18; break;
+        default:                  patch_radius = 0.030f; nodes_per_patch = 14; break;
+    }
+    float world_span = 0.5f * (wx_max + wy_max);
+    float spread = patch_radius * world_span;
+
+    int placed = 0;
+    int patch_guard = 0;
+    int max_patches = (target_count / std::max(1, nodes_per_patch)) * 4 + 8;
+    while (placed < target_count && patch_guard < max_patches) {
+        ++patch_guard;
+        // Find a patch centre that lands in a valid biome (best-effort).
+        float cx = 0.0f, cy = 0.0f;
+        bool centre_ok = false;
+        for (int t = 0; t < 48; ++t) {
+            cx = frand() * wx_max;
+            cy = frand() * wy_max;
+            Biome b = w.biome_at(cx, cy);
+            if (biome_filter(b) && b != Biome::River) { centre_ok = true; break; }
+        }
+        if (!centre_ok) continue;
+        // Grow this patch: jittered blob around the centre. Members that fall
+        // on an invalid cell (e.g. patch straddles a biome edge) are skipped,
+        // which naturally feathers the patch along terrain boundaries.
+        int want = nodes_per_patch + static_cast<int>(frand() * nodes_per_patch);
+        for (int k = 0; k < want && placed < target_count; ++k) {
+            float ang = frand() * 6.2831853f;
+            float rad = spread * std::sqrt(frand());  // uniform-in-disc
+            float x = std::min(std::max(cx + std::cos(ang) * rad, 0.0f), wx_max);
+            float y = std::min(std::max(cy + std::sin(ang) * rad, 0.0f), wy_max);
+            if (place_at(x, y)) ++placed;
+        }
+    }
+    // Top up uniformly if the patches couldn't satisfy the budget (e.g. a
+    // biome is rare on this seed), so counts stay deterministic per seed.
+    int fill_guard = 0;
+    while (placed < target_count && fill_guard < target_count * 20) {
+        ++fill_guard;
+        if (place_at(frand() * wx_max, frand() * wy_max)) ++placed;
     }
 }
 

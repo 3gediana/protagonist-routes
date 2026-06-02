@@ -172,6 +172,30 @@ if(MSVC)
 endif()
 
 # ============================================================================
+# Replay scene dumper (VIEWER SUPPORT - headless, emits world.json + frames.json)
+# ============================================================================
+add_executable(deep_protagonist_dump
+    tools/scene_dump.cpp
+    ${DP_CORE_SOURCES}
+)
+target_include_directories(deep_protagonist_dump PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_link_libraries(deep_protagonist_dump PRIVATE
+    ${TORCH_LIBRARIES}
+    tomlplusplus::tomlplusplus
+    spdlog::spdlog
+    raylib
+)
+target_compile_features(deep_protagonist_dump PRIVATE cxx_std_20)
+if(MSVC)
+    add_custom_command(TARGET deep_protagonist_dump POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${TORCH_DLLS}
+        $<TARGET_FILE_DIR:deep_protagonist_dump>)
+endif()
+
+# ============================================================================
 # Summary
 # ============================================================================
 message(STATUS "")

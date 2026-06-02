@@ -52,6 +52,16 @@ public:
         // enough that minor speed changes don't immediately matter.
         float radiative_loss_per_sec = 0.05f;
 
+        // Cave thermal buffer: a cave tracks a stable geothermal temperature
+        // and insulates whoever is inside. Standing in a cave (a) blends the
+        // effective ambient toward cave_stable_temperature (warmest on cold
+        // nights, coolest in summer heat) and (b) scales radiative loss down
+        // by cave_loss_factor (the rock shell traps body heat). This makes a
+        // cave the single strongest natural shelter against thermal death.
+        float cave_stable_temperature = 15.0f;  // °C the cave interior holds
+        float cave_ambient_blend = 0.75f;       // 0..1 pull of ambient -> cave temp
+        float cave_loss_factor = 0.35f;         // multiply radiative loss inside cave
+
         // Optional clamp range. Should be wider than healthy band so
         // that severe debuffs can play out in SurvivalStatusLayer.
         float min_core_temperature = 20.0f;

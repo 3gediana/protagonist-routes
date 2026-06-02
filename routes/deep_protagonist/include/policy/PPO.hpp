@@ -42,7 +42,19 @@ struct ActorCriticImpl : torch::nn::Module {
     // NOOP is therefore no longer the last index.
     static constexpr int TEND_FIRE_IDX = NOOP_IDX + 1;                 // 17
     static constexpr int DISC_CATS     = TEND_FIRE_IDX + 1;            // 18 = 16 triggers + NOOP + tend_fire
-    static constexpr int HIDDEN    = 256;   // D-086 revert: D-085 6.9M capacity expansion proved 0 houses + worse score. Back to shadow baseline (~545K). Real bottleneck is build-chain credit assignment, not capacity.
+    // S5 FROZEN ARCHITECTURE (locked permanently, append-only obs):
+    //   OBS_DIM=571, HIDDEN=1408, action=3 continuous + 18 categorical.
+    //   Params = 6*H^2 (GRU) + (OBS+CONT+DISC_CATS+...+1)*H + biases
+    //          ~= 12.74M  ->  .pt (weights only) ~= 51MB  ~= user's "50兆".
+    // The recurrent GRU core dominates capacity (6*H^2), so width (not a
+    // 2048 feed-forward stack) is how we hit the 12.5M/50MB target without a
+    // 100MB GRU. From S5 onward EVERY checkpoint shares this shape so they
+    // accumulate/transfer forever (zero-pad only for any future obs append).
+    // NOTE: D-085's 6.9M expansion regressed on the OLD flat single-biome
+    // world; S5 pairs this larger brain with the realistic world (relief +
+    // diverse biomes + slope/temp coupling) it actually needs the capacity
+    // for, and trades sample-efficiency for ceiling per the owner's decision.
+    static constexpr int HIDDEN    = 1408;
 
     torch::nn::Linear   encoder{nullptr};
     torch::nn::GRUCell  gru{nullptr};

@@ -547,6 +547,10 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist_warmth_drive_enabled = config.getOr<bool>(
         "evolution.protagonist_warmth_drive_enabled",
         out.protagonist_warmth_drive_enabled);
+    // Realism (2026-06): true -> fresh lineage with +4 cave-perception dims.
+    out.protagonist_cave_perception_enabled = config.getOr<bool>(
+        "evolution.protagonist_cave_perception_enabled",
+        out.protagonist_cave_perception_enabled);
     // One-pot unified bloodline (2026-06-01): master switch reserves all A–F
     // dims (+11) so input_dim is locked once; Phase C FOV gating + anneal
     // schedule. current_generation is stamped by the runtime, not parsed.

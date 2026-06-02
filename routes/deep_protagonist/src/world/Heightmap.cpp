@@ -33,6 +33,13 @@ inline float lerp(float a, float b, float t) {
     return a + (b - a) * t;
 }
 
+// Hermite smoothstep: 0 below edge0, 1 above edge1, smooth in between.
+inline float smoothstep(float edge0, float edge1, float x) {
+    float t = (x - edge0) / (edge1 - edge0);
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 // Value-noise sample at floating-point (x,y) given seed.
 // (Faster than Perlin gradient noise; good enough for terrain.)
 float value_noise(float x, float y, uint64_t seed) {
@@ -99,37 +106,76 @@ void Heightmap::sample_gradient(float wx, float wy, float& dh_dx, float& dh_dy) 
     dh_dy = (h_yp - h_ym) / (2.0f * cell_scale_);
 }
 
+namespace {
+
+// Fractional Brownian motion (rolling hills): octaves of value noise summed
+// with shrinking amplitude. Returns ~[0,1].
+float fbm(float x, float y, uint64_t seed, int octaves, float freq, float pers) {
+    float total = 0.0f, amp = 1.0f, maxamp = 0.0f, f = freq;
+    for (int o = 0; o < octaves; ++o) {
+        total += value_noise(x * f, y * f, seed + o * 73856093ULL) * amp;
+        maxamp += amp;
+        amp *= pers;
+        f *= 2.0f;
+    }
+    return maxamp > 0.0f ? total / maxamp : 0.0f;
+}
+
+// Ridged multifractal (sharp mountain ridges): folds noise around its midline
+// so the *creases* become peaks, then squares to sharpen them. Returns ~[0,1].
+float ridged(float x, float y, uint64_t seed, int octaves, float freq, float pers) {
+    float total = 0.0f, amp = 1.0f, maxamp = 0.0f, f = freq;
+    for (int o = 0; o < octaves; ++o) {
+        float n = value_noise(x * f, y * f, seed + o * 19349663ULL);  // [0,1]
+        n = 1.0f - std::fabs(2.0f * n - 1.0f);  // ridge: peak at n==0.5
+        n = n * n;                              // sharpen the crest
+        total += n * amp;
+        maxamp += amp;
+        amp *= pers;
+        f *= 2.0f;
+    }
+    return maxamp > 0.0f ? total / maxamp : 0.0f;
+}
+
+}  // namespace
+
 void Heightmap::fill_fractal_noise(uint64_t seed,
                                    float max_height,
                                    float frequency,
                                    int octaves,
                                    float persistence) {
-    // Build a fractal terrain by stacking octaves of value noise with
-    // increasing frequency and decreasing amplitude (a.k.a. fBm).
-    float max_amp = 0.0f;
-    {
-        float amp = 1.0f;
-        for (int o = 0; o < octaves; ++o) {
-            max_amp += amp;
-            amp *= persistence;
-        }
-    }
-
+    // Real-relief terrain: combine three layers so the world reads as
+    // "plains + foothills + mountain RANGES + valleys/basins" instead of a
+    // uniform field of gentle bumps.
+    //   1) base fBm        - continent-scale rolling ground everywhere
+    //   2) mountain mask    - smooth low-freq field that decides WHERE ranges
+    //                         are allowed to rise (so mountains form bands /
+    //                         massifs, not an even sprinkle of peaks)
+    //   3) ridged layer     - sharp ridgelines, gated by the mask
+    // A redistribution exponent then flattens the lowlands (wide walkable
+    // plains + basins) while exaggerating the highs (dramatic summits).
     for (int j = 0; j < size_y_; ++j) {
         for (int i = 0; i < size_x_; ++i) {
             float wx = i * cell_scale_;
             float wy = j * cell_scale_;
-            float total = 0.0f;
-            float amp = 1.0f;
-            float freq = frequency;
-            for (int o = 0; o < octaves; ++o) {
-                total += value_noise(wx * freq, wy * freq, seed + o * 73856093ULL) * amp;
-                amp *= persistence;
-                freq *= 2.0f;
-            }
-            // Normalize to [0,1] then scale to [0, max_height]
-            float h = (total / max_amp) * max_height;
-            data_[idx(i, j)] = h;
+
+            float base = fbm(wx, wy, seed, octaves, frequency, persistence);
+            // Low-freq mask: where ranges occur. Half the base frequency so
+            // mountain belts are several hundred metres wide.
+            float mask = fbm(wx, wy, seed ^ 0x51EDC0DEULL, 3,
+                             frequency * 0.5f, 0.5f);
+            float gate = smoothstep(0.50f, 0.78f, mask);  // 0 plains -> 1 range core
+            float mtn  = ridged(wx, wy, seed ^ 0xA17E57EDULL, octaves,
+                                frequency * 1.6f, 0.5f);
+
+            // Plains follow the gentle base; ranges add tall sharp ridges.
+            float e = base * 0.55f + gate * mtn * 0.75f;
+            if (e < 0.0f) e = 0.0f;
+            if (e > 1.0f) e = 1.0f;
+            // Redistribution: carve flat lowlands, steepen the peaks.
+            e = std::pow(e, 1.7f);
+
+            data_[idx(i, j)] = e * max_height;
         }
     }
 }

@@ -160,6 +160,14 @@ public:
     // Linear from 50 -> 0; clamped outside the range.
     static float stamina_speed_multiplier(float stamina);
 
+    // S5 world realism: terrain footing speed multiplier. Steep slopes
+    // (slope_mag = |grad h|, rise/run) and soft/rough biomes (swamp, mountain)
+    // slow the body; flat plains/forest/desert leave it at 1.0. Multiplies
+    // with the stamina + nutrition speed curves before the move command
+    // reaches the body. Returns ~[0.3, 1.0].
+    static float terrain_speed_multiplier(float slope_mag,
+                                          dp::world::Biome biome);
+
     // -- Read-only views for loggers / debug HUDs ---------------------------
     int                                       observation_size() const {
         return dp::agent::ObservationBuilder::SIZE;
@@ -189,6 +197,16 @@ public:
     int                                       building_ticks()        const { return building_ticks_; }
     int                                       night_ticks_total()     const { return night_ticks_total_; }
     int                                       night_ticks_sheltered() const { return night_ticks_sheltered_; }
+    // ---- VIEWER SUPPORT (additive const views for the offline replay
+    // dumper tools/scene_dump.cpp). Read-only; never affects training. ----
+    const dp::world::World&          world()       const { return world_; }
+    const dp::world::Decorations&    decorations() const { return decorations_; }
+    const dp::world::PlantSystem&    plants()      const { return plants_; }
+    const dp::world::ResourceSystem& resources()   const { return resources_; }
+    const dp::world::AnimalSystem&   animals()     const { return animals_; }
+    const dp::world::FireSystem&     fires()       const { return fires_; }
+    const dp::agent::Shelter&        shelter()     const { return shelter_; }
+    const dp::world::Daylight&       daylight()    const { return day_; }
     // D-043: read the current episode's milestone snapshot (10 bools).
     // Call BEFORE reset() at episode-done; flags clear on reset.
     EpisodeMilestones                         milestones() const;
@@ -273,6 +291,20 @@ private:
     int                                          building_ticks_         = 0;
     int                                          night_ticks_total_      = 0;
     int                                          night_ticks_sheltered_  = 0;
+
+    // S6 forced-hunting: lightweight xorshift RNG, local to the env so the
+    // fishing catch roll / wolf-alert roll don't perturb any world RNG stream.
+    uint64_t                                     fish_rng_ = 0x9e3779b97f4a7c15ull;
+    float frand01() {
+        fish_rng_ ^= fish_rng_ << 13;
+        fish_rng_ ^= fish_rng_ >> 7;
+        fish_rng_ ^= fish_rng_ << 17;
+        return float(fish_rng_ >> 11) * (1.0f / 9007199254740992.0f); // [0,1)
+    }
+    // Seconds remaining where the splashing of an active fishing spot has
+    // betrayed the agent's position to nearby wolves (raises their perception
+    // of the agent regardless of cover). Decremented by dt each tick.
+    float                                        predator_alert_timer_   = 0.0f;
 };
 
 }  // namespace dp::env

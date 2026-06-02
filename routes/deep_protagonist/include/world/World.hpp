@@ -20,7 +20,7 @@ public:
         int   heightmap_cells_x = 256;
         int   heightmap_cells_y = 256;
         float cell_scale        = 4.0f;     // world meters per cell
-        float terrain_max_height = 60.0f;   // big mountains in a 1km world
+        float terrain_max_height = 120.0f;  // real relief: ~100m+ summits in a 1km world
         float terrain_frequency  = 0.0015f; // smaller -> bigger features
         int   terrain_octaves    = 6;
         float terrain_persistence = 0.5f;

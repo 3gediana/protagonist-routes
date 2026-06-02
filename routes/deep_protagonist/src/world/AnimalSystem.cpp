@@ -86,18 +86,51 @@ void AnimalSystem::initialize(uint64_t seed, const World& world,
     rng_state_ = seed ? seed : 1;
     animals_.clear();
     animals_.reserve(rabbits + deer + wolves + fish + eagles);
-    auto add = [&](AnimalKind k, int n) {
-        for (int i = 0; i < n; ++i) {
-            AnimalInstance a;
-            spawn(a, k, world);
-            animals_.push_back(a);
+
+    float wx_max = world.heightmap().world_size_x();
+    float wy_max = world.heightmap().world_size_y();
+    float span   = 0.5f * (wx_max + wy_max);
+
+    // Spawn wildlife in social groups - rabbit warrens, deer herds, wolf
+    // packs, fish schools - clustered around a biome-matched centre, instead
+    // of scattering every individual independently across the whole map. Real
+    // ecosystems clump (you find several deer together, then none for a long
+    // stretch); clustering also means that when the agent stumbles onto prey
+    // there are usually a few in reach, so a hunt attempt has more than one
+    // shot at landing - the encounter rate that flat scatter starved.
+    auto add = [&](AnimalKind k, int n, int herd_lo, int herd_hi,
+                   float radius_frac) {
+        if (n <= 0) return;
+        float radius = radius_frac * span;
+        int placed = 0;
+        while (placed < n) {
+            // A throwaway spawn finds a centre cell in this kind's preferred
+            // biome (best-effort, falls back to anywhere).
+            AnimalInstance centre;
+            spawn(centre, k, world);
+            float cx = centre.pos_x, cy = centre.pos_y;
+            int size = herd_lo + static_cast<int>(frand() * (herd_hi - herd_lo + 1));
+            if (size < 1) size = 1;
+            if (size > n - placed) size = n - placed;
+            for (int m = 0; m < size; ++m) {
+                AnimalInstance a;
+                spawn(a, k, world);  // sets kind/health/yaw/wander
+                float ang = frand() * 6.2831853f;
+                float rad = radius * std::sqrt(frand());
+                a.pos_x = std::clamp(cx + std::cos(ang) * rad, 0.0f, wx_max);
+                a.pos_y = std::clamp(cy + std::sin(ang) * rad, 0.0f, wy_max);
+                a.pos_z = world.surface_height(a.pos_x, a.pos_y) + 0.5f;
+                if (k == AnimalKind::Eagle) a.pos_z += 25.0f;
+                animals_.push_back(a);
+                ++placed;
+            }
         }
     };
-    add(AnimalKind::Rabbit, rabbits);
-    add(AnimalKind::Deer,   deer);
-    add(AnimalKind::Wolf,   wolves);
-    add(AnimalKind::Fish,   fish);
-    add(AnimalKind::Eagle,  eagles);
+    add(AnimalKind::Rabbit, rabbits, 4, 7, 0.020f);  // warrens
+    add(AnimalKind::Deer,   deer,    3, 6, 0.028f);  // grazing herds
+    add(AnimalKind::Wolf,   wolves,  2, 3, 0.035f);  // packs
+    add(AnimalKind::Fish,   fish,    5, 9, 0.014f);  // schools (in water)
+    add(AnimalKind::Eagle,  eagles,  1, 1, 0.000f);  // solitary raptors
 }
 
 // ---------------------------------------------------------------------------
