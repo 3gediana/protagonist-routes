@@ -287,3 +287,9 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - **诊断**：僵局=压力造出来了但探索没逼出打猎；hunt→cook 第一环(kills>0)始终没点火。结论：**单靠制造稀缺不够**，得再给打猎探索引导。不是网络坏。
 - **用户决策**：A=现在收手(省 4~6h 跑满 48M)。
 - **下一步（提前预警仪表盘）**：①打猎动作 advantage 均值+符号(单调预判趋势)；②`--forced-hunt-probe` 短诊断分清探索不够 vs 激励不够；③时钟加速/回合缩短压时间尺度。目标：后续机制改动"几分钟先看方向再决定跑不跑满"。
+
+## D-122 提前预警仪表盘落地 + D盘清理 + SF 设计稿（2026-06-03，收尾）
+- **提前预警仪表盘(已落地，commit 44c6646)**：`PPO::mean_adv_for_action` 纯函数 + `UpdateStats` 4 字段 + 两处日志打 `hunt_adv/cook_adv` + `--self-test` 加 6 条(含负例)。两 exe 重编零报错、adv-watch 6/6 PASS。真实样例：`PPO update #1 ... hunt_adv=+0.000(n=0) cook_adv=+0.000(n=0)`(n=0 印证此血脉起步没打猎)。
+- **D盘清理(释放 ~250MB)**：删 smoke 一次性临时(smoke_ew_DELETEME.pt/.opt~153MB)+294 个旧 console 日志/过期实验 jsonl(187.66MB)+跑 prune_runs.ps1 清过期 ppo_dXXX(62.7MB)。**金标全保**：r1_cook_s24/_e/_c2(+.opt) 核验 OK、本血脉 4 个 jsonl 留存、gold d061/d065/d076 留。新增维护脚本 scripts/cleanup_logs.ps1。
+- **Successor Features 设计稿(docs/Successor_Features_设计.md，未实现，留下一个号)**：φ=复用 12 个 StepReward 分项(存未乘权重值)、ψ 头=并排 value 的 Linear(1408→12，首版 detached 主干零扰动冠军)、TD 规则 ψ(s)←φ+γ(1-done)ψ(s′)、6 条自测(含 2 负例)、非线性烤进 φ、与仪表盘+探针配合做"换配方离线秒筛 hunt_adv 符号"。带 9 步实现清单。
+- **用户指示**：跑完这轮收手；本轮起不再起新训练活。
