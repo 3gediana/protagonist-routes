@@ -80,6 +80,22 @@ public:
         // dominating the alive bonus.
         float vital_decay_coef = 0.00005f;
 
+        // D-122 credit-assignment refinement ("precise root-cause" ask). The
+        // legacy vital_decay penalty above is LINEAR in each deficit, so a
+        // single vital cratering (thirst=5) is blamed no more per-unit than
+        // four vitals being mildly low (each at 75). That smears the gradient.
+        // event_vital_danger adds a CONVEX (squared) per-vital term so the one
+        // vital you are neglecting dominates the penalty -> PPO's gradient (and
+        // GAE back-propagation of the eventual death) lands precisely on the
+        // decisions that let THAT specific vital slide, instead of a flat blame.
+        // It is an EARLY WARNING (ramps up smoothly as a vital approaches 0,
+        // long before the terminal -10), so the agent is punished on the neglect
+        // window, not only at the moment of death. Only CALLED when cook_enabled
+        // (see Environment), so the v7 champion reward landscape is unchanged.
+        // Coef 0.02: one critical vital (~0.81 sq) -> ~-0.016/s = -1/min while
+        // neglected; negligible when all vitals are comfortable.
+        float vital_danger_coef = 0.02f;
+
         // Resource / construction (S3.7e/f/g)
         float collected        = 0.5f;
         // D-059: rollback to original 5. D-056 tried 15, D-057 tried 10,
@@ -190,6 +206,9 @@ public:
     // VitalSystem-aware soft pressure: pass the current state and dt; we
     // apply (sum over vitals of (max - current)) * coef * dt.
     void   event_vital_pressure(const VitalState& v, float dt);
+    // D-122: convex per-vital early-warning penalty (see vital_danger_coef).
+    // Folded into the `vital` bucket so the jsonl schema is unchanged.
+    void   event_vital_danger(const VitalState& v, float dt);
     void   event_collected_resource();
     // D-055: deposit gets its own reward path so PPO sees "deposit > collect"
     // without inflating the collect bucket (which would silently make the

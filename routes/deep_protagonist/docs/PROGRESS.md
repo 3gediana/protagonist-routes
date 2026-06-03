@@ -245,3 +245,39 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - 训练：D-121 weather ON + hunt-shaping 0.05，从 s5_v2.pt 热启动，n-envs 8，48M 步（~4.7h），WMI 独立进程（断 SSH 不停），save runs\w1_v1.pt。
 - 磁盘：D 212G，单一覆盖式 w1_v1.pt（+.opt）。
 - 已知项：自测 river/animal/yaw/wardrobe 4 条为既有 stale 失败，与 W1 无关。
+
+## D-122 一锅炖 I/O 锁死 + RUNG 1（生火→烤肉+照明）
+- **PHASE A 一锅炖（最后一次改维）**：动作口 18→23（预留 cook/mine/craft_axe/craft_pickaxe/build_monument），obs 573→582（+9 科技感知，先填 0）。新行列热启动零填充；--allow-* 课程门 + PPO -inf mask 控制解锁。
+- **RUNG 1 机制**：FireSystem::consume_fuel_near（烤肉因果代价，烧最近 lit fire 燃料）；Environment cook 处理(idx18)：lit fire + raw_meat>0 + 烧 15s → 1 生→1 熟 + 首次里程碑；eat 优先吃熟肉(45 kcal/×1.3 蛋白)；夜里 lit fire 照明可采集；obs 573-575 填实信号；raw/cooked 独立计数器封顶 5。
+- **验证**：编译过；存档手术日志确认 573→582 / 18→23 零填充；7.2万步 --allow-cook 跑 8 命零崩零错、老行为完好；`--cook-selftest` 端到端 10/10 PASS（含 2 个因果负例：无肉/无火皆 no-op）。
+- **起训**：build_d122 exe，--load w1_v7.pt --weather --allow-cook + v7 超参，n-envs8 seed24 → runs\r1_cook_s24.pt（PID 30892）。起跑 ep4-6 满9000步 R+40~60 score~0.31，无退化无 OOM。监控：盯 cook OK 出现 + 旧指标对比 v7。
+- **PARK**：山洞可视化（web3d 查看器，与训练无关）。**LATER**：按蓝图逐条审 PE 补齐被阉割部分。
+
+## D-122 RUNG 2-5 机制全部落地 + Boss 改定时（代码 ready，未起新训练阶段）
+- **RUNG 2 挖矿**：进洞 + 矿点旁 + 耗体力才挖到矿；`--mine-selftest` OVERALL PASS（含 3 个因果负例：无矿点/不在洞里/无体力皆 no-op）。
+- **RUNG 3 石器**：1木+1矿→石斧(砍树更快+1木)/石镐(挖矿-50%体力+1矿)；`--tools-selftest` 15/15 PASS。
+- **RUNG 4 建造升级**：tier-gate 谓词接进真 place_blueprint——门关=v7；门开 Shed/WoodHouse 免费、StoneHouse 需镐、BigHouse 需斧+镐；`--tier-gate-selftest` 16/16 PASS（含端到端 place 接线证明）。
+- **RUNG 5 巨炉+Boss（定时版）**：用户拍板"Boss 固定时间来，不是建好炉子才来"。Boss 每命 t=180s 必来寒潮(60s)；巨炉=护盾(搬10矿建成→8m 内 60温/分光环)，须赶在截止前建好才扛得住，否则靠火+遮蔽；obs581 改成倒计时钟。`--monument-selftest` 14/14 PASS（建好但没到点→Boss不来 / 到点没炉→Boss照来 / 光环扛过整场→终极里程碑）。
+- **整体**：build_d122_v2 独立编译 BUILD_OK；**5 关自测全 PASS**；RUNG1 训练(PID32388)全程未断、score 0.284 稳、新动作口恒 0、无退化。
+- **磁盘/红线**：网络维未动(23/582 锁死)、未重置未删旧奖励、本地不 push。
+- **下一步**：RUNG1 训练继续挂跑等 cook 冒头；冒头后按因果链解锁 RUNG2…（解锁是世界端开关，不再改网络维）。
+- **PARK**：山洞 web3d 可视化。**LATER**：按蓝图逐条审 PE 补阉割部分。
+
+## D-122 RUNG1 cook 续训 c2（2026-06-03）
+- **首轮结束**：r1_cook_s24 跑满 48M 步/9231 回合自然结束(非崩)，存终值 ckpt；cook 始终 0(agent 不打猎 kills=0→无生肉)。
+- **续训 c2**：AI 自决守"别停"——`--load runs\r1_cook_s24.pt`(已 582/23→无 surgery，加载 .opt→真续训带动量)，超参全沿用，另存 r1_cook_s24_c2.*。起跑 PID28640、update#137、ep6 score0.253(未塌)、ent~3.0、kl<0.05、stderr 空。
+- **mark(E) 同会话交付**：PE 领地标记系统真实现(TerritoryMarkLayer 衰减/合并/容量/族归属 + mark 动作能量闸门 + evict 扩到"基地或自标记领地" + 感知读自有地/外族威胁)；两 exe 重编零错，`--action-selftest` 12/12 PASS、`--kin`/`--social` 无退化；未接入训练(权重清零待激活)。
+- **下一步**：盯 c2 cook 是否冒头；若仍 0，待用户拍板是否追加"打猎得肉"小奖励(加项不删旧)。
+
+## D-122 RUNG1 cook 打猎激励（hunt-nudge run，2026-06-03）
+- **问题**：cook 跑满 48M 仍 0（agent 不打猎→无生肉）。
+- **解法（守铁律）**：扩展 D-043 P2 状态持有势能 φ——加"手里有口粮"(raw 0.05/u 封顶0.15、cooked 0.18/u 封顶0.90)，cook_enabled 闸门→cook 关时 v7 字节一致。非直奖(防 D-064/065 刷分)，封顶在 ±10 clip 内。
+- **验证**：build_d122_v2 独立编译 BUILD_OK；`--cook-selftest` 9/9 PASS；从 r1_cook_s24.pt 真续训 hunt-nudge run(PID17940)起跑 score0.253 未塌、老本事在、kills 待显效。
+- **下一步**：盯 kills>0 / cook OK 首现；若仍不动再调 φ 权重或 RUNG1 课程。
+
+## D-122 系统机制闭环审计 + 寒夜稀缺 + 精确溯源惩罚（2026-06-03）
+- **审计**：站原始人视角看 5 条链，结论"链闭经济开"——基准线吊床(摘果子+窝棚回血=永生零风险)→每级科技白加负担、cook 天生没需求(杀了当场吃饱)。账本 docs/机制闭环审计_账本.md。
+- **修复(只加不删、cook_enabled 闸门、v7 字节一致、备份 .bak_econ_20260603)**：①寒夜窝棚不再回饥饿(逼囤熟肉过冬)；②凸的按指标溯源惩罚 event_vital_danger(coef 0.02，平方亏空，精确信用分配)。
+- **验证**：build_d122_v2 编译 OK；`--self-test` 两条 vital_danger 单测 PASS(另 4 条 river/animal/wardrobe/observation FAIL=pre-existing 无关)；`--cook-selftest` 9/9 PASS。
+- **切血脉(本轮收尾)**：杀旧 hunt-nudge(PID19956)、留旧经济对照 `_c2`(PID7984)做 A/B；从 r1_cook_s24.pt 真续训起修复版 `_e`(PID32556，critic-warmup64)，起跑 score0.255~0.264 未塌、老本事在、含新溯源惩罚。
+- **下一步**：盯 `_e` kills>0 / cook OK 首现 + 跟 `_c2` 差异。用户指示跑完这轮收手。

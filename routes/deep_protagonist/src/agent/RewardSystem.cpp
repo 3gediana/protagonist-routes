@@ -85,6 +85,31 @@ void RewardSystem::event_vital_pressure(const VitalState& v, float dt) {
     step_.vital += w_.vital_decay_coef * pressure * dt * -1.0f;  // negative
 }
 
+void RewardSystem::event_vital_danger(const VitalState& v, float dt) {
+    // D-122 credit-assignment refinement. CONVEX (squared) per-vital deficit so
+    // the single vital being neglected dominates the penalty (root-cause), vs
+    // the legacy LINEAR pressure which smears blame evenly. Each term is
+    // ((100-vital)/100)^2 in [0,1]; a comfortable vital (>=75) contributes
+    // <=0.0625, a critical one (<=10) contributes >=0.81. Summed and scaled by
+    // vital_danger_coef * dt, applied as a negative. This sharpens the gradient
+    // (and the GAE back-propagation of the eventual death) onto the decisions
+    // that let THAT vital slide. Folded into the `vital` bucket (schema intact).
+    auto sq_def = [](float vital) -> float {
+        float gap = (100.0f - std::clamp(vital, 0.0f, 100.0f)) / 100.0f;
+        return gap * gap;
+    };
+    float danger = sq_def(v.hunger)
+                 + sq_def(v.thirst)
+                 + sq_def(v.stamina)
+                 // temperature: distance from the 50 neutral, normalised to the
+                 // 50-wide half-range so a full swing to 0 or 100 reads as 1.0.
+                 + [&]{ float g = std::abs(v.temperature - 50.0f) / 50.0f;
+                        return g * g; }()
+                 + sq_def(v.protein)
+                 + sq_def(v.vitamin);
+    step_.vital += w_.vital_danger_coef * danger * dt * -1.0f;  // negative
+}
+
 void RewardSystem::event_collected_resource() { step_.collect   += w_.collected; }
 void RewardSystem::event_deposited_material() { step_.collect   += w_.deposited; }
 void RewardSystem::event_built_shelter()      { step_.shelter   += w_.built_shelter; }

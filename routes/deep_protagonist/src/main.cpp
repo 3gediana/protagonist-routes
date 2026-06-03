@@ -762,8 +762,9 @@ int run_self_tests() {
         // D-048: 564 -> 567 (nearest_wolf). nutrition §3a: 567 -> 569
         // (protein, vitamin). S5 world realism: 569 -> 571 (ambient_temp,
         // slope). Stage W1 weather: 571 -> 573 (rain_intensity, wetness).
-        check(dp::agent::ObservationBuilder::SIZE == 573,
-              "Observation: SIZE == 573 after weather dims (571+2)");
+        // D-122 one-pot tech-tree: 573 -> 582 (+9 reserved tech-tree slots).
+        check(dp::agent::ObservationBuilder::SIZE == 582,
+              "Observation: SIZE == 582 after D-122 tech-tree reserve (573+9)");
         check(obs[0] == 1.0f && obs[1] == 1.0f && obs[2] == 1.0f,
               "Observation: vital slots [0..2] are 1.0 at full state");
         // nutrition bars live at 567,568; full bars => 1.0/1.0 (constant when
@@ -1147,6 +1148,43 @@ int run_self_tests() {
         // The component value still records the unclipped intent.
         check(std::abs(r.last_step().bites - (-50.0f)) < 1e-3f,
               "RewardSystem: clip preserves unclipped components for debug");
+
+        // D-122 credit-assignment: convex per-vital danger penalty. Verifies it
+        // (a) is ~0 when all vitals are comfortable, and (b) concentrates blame
+        // on a single neglected vital -> a lone critical vital yields a far
+        // larger penalty than the SAME total linear deficit spread thin.
+        auto mk_vital = [](float h, float t, float st, float temp,
+                           float pr, float vi) {
+            dp::agent::VitalState v;
+            v.hunger = h; v.thirst = t; v.stamina = st;
+            v.temperature = temp; v.protein = pr; v.vitamin = vi;
+            v.alive = true;
+            return v;
+        };
+        // (a) all comfortable (100, temp neutral 50) -> danger ~ 0.
+        r.reset_episode();
+        r.begin_step();
+        r.event_vital_danger(mk_vital(100, 100, 100, 50, 100, 100), 1.0f);
+        r.end_step();   // commit so last_step() reflects this step
+        float danger_full = r.last_step().vital;
+        check(std::abs(danger_full) < 1e-4f,
+              "RewardSystem: vital_danger ~0 when all vitals comfortable");
+        // (b1) one vital cratered (thirst=10), rest full. Linear deficit = 90.
+        r.reset_episode();
+        r.begin_step();
+        r.event_vital_danger(mk_vital(100, 10, 100, 50, 100, 100), 1.0f);
+        r.end_step();
+        float danger_crit = r.last_step().vital;   // ~ -0.02*0.81 = -0.0162
+        // (b2) same TOTAL linear deficit (90) spread across 5 vitals (each 82).
+        r.reset_episode();
+        r.begin_step();
+        r.event_vital_danger(mk_vital(82, 82, 82, 50, 82, 82), 1.0f);
+        r.end_step();
+        float danger_spread = r.last_step().vital;  // ~ -0.02*0.162 = -0.0032
+        check(danger_crit < 0.0f && danger_spread < 0.0f
+              && danger_crit < danger_spread - 0.005f,
+              "RewardSystem: vital_danger concentrates blame on the neglected "
+              "vital (one critical >> same linear deficit spread thin)");
 
         r.reset_episode();
         r.begin_step();
