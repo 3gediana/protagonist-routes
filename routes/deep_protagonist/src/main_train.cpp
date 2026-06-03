@@ -1337,6 +1337,11 @@ int main(int argc, char** argv) {
     float       nutri_debuff_thresh = 0.30f;
     float       nutri_death_grace   = 8.0f;
     bool        ppo_mask_fire_only  = false; // mask fire only, leave attack open
+    // Stage W1 world coherence (weather): rain coupling chain. Master switch
+    // default OFF so omitting --weather keeps the old world byte-identical.
+    bool        weather_enabled     = false;
+    float       weather_rain_prob   = 0.30f;  // chance/min clear->rain
+    float       weather_rain_dur    = 90.0f;  // mean shower length (s)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -1397,6 +1402,9 @@ int main(int argc, char** argv) {
         else if (a == "--nutri-debuff-thresh") nutri_debuff_thresh = std::stof(next());
         else if (a == "--nutri-death-grace")   nutri_death_grace   = std::stof(next());
         else if (a == "--ppo-mask-fire-only")  ppo_mask_fire_only  = true;
+        else if (a == "--weather")             weather_enabled    = true;
+        else if (a == "--weather-prob")        weather_rain_prob  = std::stof(next());
+        else if (a == "--weather-dur")         weather_rain_dur   = std::stof(next());
         else if (a == "-h" || a == "--help") {
             std::printf(
                 "Usage: %s [--steps N] [--episodes N] [--seed S]\n"
@@ -1472,6 +1480,15 @@ int main(int argc, char** argv) {
                      "debuff<{:.0f}% death_grace={}s",
                      nutri_protein_decay, nutri_vitamin_decay,
                      nutri_debuff_thresh * 100.0f, nutri_death_grace);
+    // Stage W1 world coherence: plumb weather CLI into env. Default off keeps
+    // the sky permanently clear so old-world runs are byte-identical.
+    ecfg.weather_enabled    = weather_enabled;
+    ecfg.weather_rain_prob  = weather_rain_prob;
+    ecfg.weather_rain_dur_s = weather_rain_dur;
+    if (weather_enabled)
+        spdlog::info("weather ON: rain_prob={}/min rain_dur={}s "
+                     "(douse fire / wet->cold / rain->water)",
+                     weather_rain_prob, weather_rain_dur);
     if (demo_no_regen) spdlog::info("D-101: demo_no_regen ON (in-building regen + r_alive bonus disabled)");
     spdlog::info("Env tunables: thirst_decay={}/min, trigger_cost={}/step",
                  thirst_decay, trigger_cost);

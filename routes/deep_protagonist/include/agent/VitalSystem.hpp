@@ -34,6 +34,12 @@ struct VitalState {
     int   deaths_vitamin = 0; // deaths via vitamin bar == 0 (no foraging)
     float protein_zero_s = 0.0f; // accumulated seconds protein has sat at 0
     float vitamin_zero_s = 0.0f; // accumulated seconds vitamin has sat at 0
+    // --- Stage W1 world coherence (weather): how wet the body is, [0,1]. ---
+    // Rises while standing in the rain unsheltered, dries off under cover /
+    // over time. Updated by Environment (it knows sky + shelter + biome); fed
+    // back into tick() as wet_cold_mult so a soaked agent loses body heat
+    // faster. 0 when weather is disabled, so the old world is unaffected.
+    float wetness        = 0.0f;
 };
 
 struct VitalConfig {
@@ -134,7 +140,8 @@ public:
               float dt,
               float cold_resist = 0.0f,
               float warmth      = 0.0f,
-              float slope01     = 0.0f) const;
+              float slope01     = 0.0f,
+              float wet_cold_mult = 1.0f) const;
 
     // Consumption events. Both return the *actual* amount of vital
     // restored (0 when the meter was already full); callers pass that

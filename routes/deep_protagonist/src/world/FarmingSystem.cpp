@@ -37,6 +37,15 @@ bool FarmingSystem::water_at(float x, float y, float reach) {
     return true;
 }
 
+void FarmingSystem::rain(float dt, float per_s) {
+    if (per_s <= 0.0f) return;
+    float add = per_s * dt;
+    for (auto& p : plots_) {
+        if (p.harvested) continue;
+        p.water_level = std::min(1.0f, p.water_level + add);
+    }
+}
+
 std::vector<PlantKind> FarmingSystem::harvest_at(float x, float y, float reach) {
     std::vector<PlantKind> out;
     float r2 = reach * reach;

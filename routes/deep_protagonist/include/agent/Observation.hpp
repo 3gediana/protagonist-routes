@@ -68,6 +68,9 @@ namespace dp::agent {
 //   --- S5 world realism: environment direct-sense (569->571) ---
 //   569      ambient_temp  climate target /100 (0 cold / 0.5 mild / 1 hot)
 //   570      slope         terrain |grad h| under feet (rise/run, capped 1.0)
+//   --- Stage W1 world coherence: weather direct-sense (571->573) ---
+//   571      rain_intensity  global sky rain strength [0,1] (0 when clear/off)
+//   572      wetness         agent's own wetness [0,1] (0 when dry/weather off)
 //
 // All distances are normalised by VISION_RANGE (60m) so |dx|,|dy|,|dz| <= 1.
 class ObservationBuilder {
@@ -120,7 +123,13 @@ public:
         // ambient climate target (/100) + terrain slope under feet. Appended
         // at the VERY END so indices 0..568 stay byte-stable; a 569-dim v6/BC
         // first layer warm-starts by zero-padding these 2 new encoder columns.
-        + 2;                              // ambient_temp (569), slope (570)
+        + 2                               // ambient_temp (569), slope (570)
+        // --- Stage W1 world coherence: weather direct-sense (571->573) ---
+        // global rain intensity + the agent's own wetness, appended at the
+        // VERY END so indices 0..570 stay byte-stable; a 571-dim first layer
+        // warm-starts by zero-padding these 2 new encoder columns (surgery).
+        // Both read 0 when weather is disabled, so the old world is invisible.
+        + 2;                              // rain_intensity (571), wetness (572)
 
     using Vector = std::array<float, SIZE>;
 
@@ -145,6 +154,8 @@ public:
                         const TameSystem&                   tame,
                         dp::world::BuildingType             selected_building_type,
                         const SpatialMemory&                spatial,
+                        float                               rain_intensity,
+                        float                               wetness,
                         Vector&                             out);
 };
 

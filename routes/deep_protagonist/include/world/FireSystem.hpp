@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <vector>
 
 namespace dp::world {
@@ -47,6 +48,20 @@ public:
 
     // Per-frame: burn lit fires' fuel down; extinguish + remove any that hit 0.
     void tick(float dt);
+
+    // Stage W1 (decision_blueprint_world_coherence, user "下雨要能浇灭火"):
+    // rain pulls a lit fire's fuel down FASTER, so an unattended fire goes out
+    // in the rain unless it is under a roof. `douse_per_s` is the EXTRA fuel
+    // (seconds of burn) consumed per real second while a fire is exposed, on
+    // top of the normal burn in tick(). `exposed(x,y)` is supplied by the
+    // caller (Environment) and returns true iff the fire at (x,y) is being
+    // rained on (sky raining AND not roofed by a building/shelter AND the
+    // local biome actually gets rain). Causal, not a button: the only effect
+    // is faster fuel loss → the agent must re-light or protect the fire. No
+    // reward is involved. Call this BEFORE tick(dt) so tick() then removes any
+    // fire this doused to 0. No-op when douse_per_s<=0.
+    void apply_rain(float dt, float douse_per_s,
+                    const std::function<bool(float, float)>& exposed);
 
     // Temperature recovery rate (points per MINUTE) at (px,py): warm_rate if a
     // LIT fire is within warm_radius, else 0. Fed into VitalSystem::tick as the

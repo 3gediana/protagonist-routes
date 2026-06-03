@@ -89,6 +89,7 @@ set(DP_CORE_SOURCES
     src/world/ResourceSystem.cpp
     src/world/BuildingSystem.cpp
     src/world/FireSystem.cpp
+    src/world/WeatherSystem.cpp
     src/world/FarmingSystem.cpp
     src/agent/CapsuleAgent.cpp
     src/agent/EpisodeManager.cpp

@@ -49,6 +49,17 @@ Environment::Environment(const EnvConfig& cfg)
     animals_.initialize(cfg_.world.seed    ^ 0xA11AULL, world_);
     resources_.initialize(cfg_.world.seed  ^ 0xC011ULL, world_);
 
+    // Stage W1 world coherence: plumb the CLI weather knobs into the global
+    // sky. Default disabled => always clear, so the old world is unchanged.
+    {
+        dp::world::WeatherSystem::Config wc;
+        wc.enabled         = cfg_.weather_enabled;
+        wc.rain_prob_per_min = cfg_.weather_rain_prob;
+        wc.rain_dur_s      = cfg_.weather_rain_dur_s;
+        weather_.configure(wc);
+        weather_.reset(cfg_.world.seed ^ 0x5A11ULL);
+    }
+
     float wx_max = world_.heightmap().world_size_x();
     float wy_max = world_.heightmap().world_size_y();
 
@@ -273,6 +284,13 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
         farming_.clear();
         tame_.clear();
     }
+
+    // Stage W1 world coherence: fresh sky each episode (deterministic per
+    // episode id), and the body starts dry. weather_ is disabled => stays
+    // clear, so old-world episodes are unchanged.
+    weather_.reset((cfg_.world.seed ^ 0x5A11ULL)
+                   + static_cast<uint64_t>(episodes_.episode_id() + 2) * 0x9E3779B9ULL);
+    vital_state_.wetness = 0.0f;
 
     was_alive_  = true;
     step_index_ = 0;
@@ -533,6 +551,57 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     plants_.tick(dt);
     resources_.tick(dt);
     farming_.tick(dt, &buildings_);  // D-091: pass buildings so plots near home grow faster.
+
+    // ---- Stage W1 world coherence: advance the sky + apply the rain
+    //      coupling chain. All no-ops when weather is disabled (intensity 0),
+    //      so the old world is byte-identical.
+    weather_.tick(dt);
+    const float rain_inten = weather_.intensity();
+    // A spot gets rain iff the sky is raining AND it isn't desert ("沙漠几乎
+    // 不雨"); swamp/river/plain/forest/mountain all receive it.
+    auto rain_reaches = [&](float bx, float by) -> bool {
+        if (rain_inten <= 0.0f) return false;
+        return world_.biome_at(bx, by) != dp::world::Biome::Desert;
+    };
+    // (1) Rain douses any LIT fire that is exposed (rained-on biome AND not
+    //     roofed by a finished building or a lean-to). Before fires_.tick so
+    //     tick() then removes anything doused to 0. "下雨要能浇灭火".
+    if (rain_inten > 0.0f && cfg_.rain_fire_douse_rate > 0.0f) {
+        fires_.apply_rain(dt, cfg_.rain_fire_douse_rate * rain_inten,
+            [&](float fx, float fy) -> bool {
+                if (!rain_reaches(fx, fy)) return false;
+                bool roofed = buildings_.covers(fx, fy)
+                           || shelter_.covers(fx, fy);
+                return !roofed;
+            });
+    }
+    // (2) Rain tops up every farm plot's water_level ("雨补水").
+    if (rain_inten > 0.0f && cfg_.rain_farm_water_per_s > 0.0f) {
+        farming_.rain(dt, cfg_.rain_farm_water_per_s * rain_inten);
+    }
+    // (3) Agent wetness: rises while standing in exposed rain, dries under
+    //     cover / over time. Shelter (building / lean-to / cave) keeps the
+    //     body dry, coupling weather <-> shelter <-> temperature.
+    const bool agent_in_rain = !sheltered && rain_reaches(as.pos_x, as.pos_y);
+    {
+        float target = agent_in_rain ? rain_inten : 0.0f;
+        float rate   = agent_in_rain ? cfg_.wet_gain_per_s : cfg_.wet_dry_per_s;
+        float w = vital_state_.wetness;
+        if (w < target)      w = std::min(target, w + rate * dt);
+        else if (w > target) w = std::max(target, w - rate * dt);
+        vital_state_.wetness = w;
+    }
+    // (4) Catch a little rainwater while exposed (modest thirst recovery) —
+    //     the wet-vs-warm tradeoff: stand in the rain to drink but get cold.
+    //     Kept small so rivers are still needed (anti-Goodhart).
+    if (agent_in_rain && cfg_.rain_thirst_per_min > 0.0f && vital_state_.alive) {
+        vital_state_.thirst = std::min(100.0f,
+            vital_state_.thirst
+          + cfg_.rain_thirst_per_min * (dt / 60.0f) * rain_inten);
+    }
+    // Soaked body sheds heat faster: cold drain *= (1 + gain*wetness).
+    float wet_cold_mult = 1.0f + cfg_.wet_cold_gain * vital_state_.wetness;
+
     fires_.tick(dt);                 // D-112: burn campfire fuel down, extinguish at 0.
 
     // D-112: a lit campfire within radius warms the agent (heat-source term),
@@ -548,7 +617,8 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     float slope_mag = std::sqrt(dh_dx * dh_dx + dh_dy * dh_dy);
     float slope01 = slope_mag > 1.0f ? 1.0f : slope_mag;
     vitals_.tick(vital_state_, world_, as.pos_x, as.pos_y, speed, day_,
-                 dt, wardrobe_.cold_resist(), fire_warmth, slope01);
+                 dt, wardrobe_.cold_resist(), fire_warmth, slope01,
+                 wet_cold_mult);
     if (sheltered) {
         vital_state_.temperature += (50.0f - vital_state_.temperature)
                                   * 0.3f * dt;
@@ -1212,7 +1282,8 @@ void Environment::rebuild_observation_(
         plants_, animals_, resources_,
         inventory_, shelter_, episodes_, progress_,
         buildings_, wardrobe_, farming_, tame_,
-        selected_building_, spatial_, out);
+        selected_building_, spatial_,
+        weather_.intensity(), vital_state_.wetness, out);
 }
 
 // D-049 #2: stamina-aware speed multiplier. See Environment.hpp.

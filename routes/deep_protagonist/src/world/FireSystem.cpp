@@ -37,6 +37,21 @@ bool FireSystem::tend(float x, float y) {
     return true;
 }
 
+void FireSystem::apply_rain(float dt, float douse_per_s,
+                            const std::function<bool(float, float)>& exposed) {
+    if (douse_per_s <= 0.0f) return;
+    for (auto& f : fires_) {
+        if (!f.lit) continue;
+        if (!exposed(f.x, f.y)) continue;   // roofed / dry biome -> safe
+        f.fuel -= douse_per_s * dt;
+        if (f.fuel <= 0.0f) {
+            f.fuel = 0.0f;
+            f.lit  = false;
+        }
+    }
+    // Leave the erase to tick(dt): callers always run tick() right after.
+}
+
 void FireSystem::tick(float dt) {
     for (auto& f : fires_) {
         if (!f.lit) continue;

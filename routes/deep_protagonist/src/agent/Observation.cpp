@@ -92,6 +92,8 @@ void ObservationBuilder::compose(const dp::world::World&         world,
                                  const TameSystem&                tame,
                                  dp::world::BuildingType          selected_building_type,
                                  const SpatialMemory&             spatial,
+                                 float                            rain_intensity,
+                                 float                            wetness,
                                  Vector&                          out) {
     std::memset(out.data(), 0, sizeof(float) * SIZE);
     const auto& s = agent.state();
@@ -504,6 +506,15 @@ void ObservationBuilder::compose(const dp::world::World&         world,
         float sl = std::sqrt(gdx * gdx + gdy * gdy);
         out[p++] = sl > 1.0f ? 1.0f : sl;
     }
+
+    // ---- Stage W1 world coherence: weather direct-sense (2) --------------
+    // [571] global rain intensity (sky), [572] the agent's own wetness. Both
+    // 0 when weather is disabled, so a warm-started (zero-padded) first layer
+    // is blind to them and the old world behaves identically. Lets the policy
+    // FEEL a shower coming and that it is getting soaked, so it can re-light a
+    // fire / take cover / wear clothes before the cold drain bites.
+    out[p++] = clamp01(rain_intensity);
+    out[p++] = clamp01(wetness);
 
     // p should equal SIZE here.
 }

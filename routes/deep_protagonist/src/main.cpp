@@ -755,22 +755,26 @@ int run_self_tests() {
         dp::agent::ObservationBuilder::compose(
             w, agent, vstate, day, plants, animals, resources,
             inv, sh, em, progress, buildings, wardrobe, farming, tame,
-            dp::world::BuildingType::Shed, sm_test, obs);
+            dp::world::BuildingType::Shed, sm_test, 0.0f, 0.0f, obs);
 
         check(dp::agent::ObservationBuilder::SIZE >= 140,
               "Observation: total dimension is at least 140 (S3.10 expanded)");
-        // D-048 blueprint回归: 564 → 567 by adding nearest_wolf (3 dims).
-        // decision_blueprint_nutrition §3a: 567 → 569 by appending the two
-        // nutrition bars (protein, vitamin) at the very end.
-        check(dp::agent::ObservationBuilder::SIZE == 569,
-              "Observation: SIZE == 569 after nutrition bars (567+2)");
+        // D-048: 564 -> 567 (nearest_wolf). nutrition §3a: 567 -> 569
+        // (protein, vitamin). S5 world realism: 569 -> 571 (ambient_temp,
+        // slope). Stage W1 weather: 571 -> 573 (rain_intensity, wetness).
+        check(dp::agent::ObservationBuilder::SIZE == 573,
+              "Observation: SIZE == 573 after weather dims (571+2)");
         check(obs[0] == 1.0f && obs[1] == 1.0f && obs[2] == 1.0f,
               "Observation: vital slots [0..2] are 1.0 at full state");
-        // nutrition bars live at the END (567, 568); full bars => 1.0/1.0,
-        // i.e. constant when nutrition is OFF so the surgery's zero columns
-        // make a warm-started bc_v9 blind to them.
+        // nutrition bars live at 567,568; full bars => 1.0/1.0 (constant when
+        // nutrition OFF so a warm-started net is blind to them via surgery).
         check(obs[567] == 1.0f && obs[568] == 1.0f,
               "Observation: nutrition slots [567,568] are 1.0 at full bars");
+        // Stage W1 weather slots live at the very tail (571 rain_intensity,
+        // 572 wetness); both 0 when weather is OFF / dry, so the surgery's
+        // zero columns leave a warm-started net blind to them.
+        check(obs[571] == 0.0f && obs[572] == 0.0f,
+              "Observation: weather slots [571,572] are 0 with weather off");
 
         // Every entry should fit within [-1, 1] thanks to clamping
         bool all_in_range = true;
@@ -789,14 +793,14 @@ int run_self_tests() {
         dp::agent::ObservationBuilder::compose(
             w, agent, vstate, day, plants, animals, resources,
             inv, sh, em, progress, buildings, wardrobe, farming, tame,
-            dp::world::BuildingType::Shed, sm_test, obs2);
+            dp::world::BuildingType::Shed, sm_test, 0.0f, 0.0f, obs2);
         // Sanity check: the shelter "placed" slot sits 3 slots before the
-        // S3.10 progress block, then 38 dims of P0+D-048 obs (35 → 38 with
-        // the nearest_wolf addition), then 384 dims of SpatialMemory window,
-        // then the 2 nutrition bars appended at the very end (§3a).
-        // So index = SIZE - 2 - 384 - 38 - 21 - 3 (= 121, unchanged layout).
+        // S3.10 progress block, then 38 dims of P0+D-048 obs, then 384 dims
+        // of SpatialMemory window, then 6 tail scalars appended at the very
+        // end: 2 nutrition (§3a) + 2 S5 ambient_temp/slope + 2 W1 weather.
+        // So index = SIZE - 6 - 384 - 38 - 21 - 3 (= 121, unchanged layout).
         int placed_idx = dp::agent::ObservationBuilder::SIZE
-                       - 2  // nutrition bars (protein, vitamin) at the tail
+                       - 6  // nutrition(2)+ambient/slope(2)+weather(2) tail
                        - dp::agent::SpatialMemory::WINDOW_DIM - 38 - 21 - 3;
         check(obs2[placed_idx] > 0.5f,
               "Observation: shelter-placed flag flips after build");
@@ -1552,7 +1556,11 @@ int main(int argc, char** argv) {
                     plants, animals, resources,
                     inventory, shelter, episodes, progress,
                     buildings, wardrobe, farming, tame,
-                    selected_building, viewer_spatial, obs);
+                    selected_building, viewer_spatial,
+                    // Stage W1: the raylib viewer doesn't yet simulate the sky,
+                    // so feed clear/dry (0,0). Matches weather-off training and
+                    // keeps obs at 573 dims. Live weather render is a later pass.
+                    0.0f, 0.0f, obs);
                 std::vector<float> cont;
                 int  disc_idx = dp::policy::ActorCriticImpl::NOOP_IDX;
                 float lp = 0.0f, vv = 0.0f;

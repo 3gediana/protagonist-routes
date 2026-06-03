@@ -238,3 +238,10 @@ PPO 端 8 次连续失败 (D-091..D-099) 验证: **不管怎么调环境压力 /
 - **BC demo 语料就绪**：从 28 个 clean-survivor seed（ep0 满 9000 步、death=0）录 settler demos → demos_s4/（28 files, 551.8MB）。**仅取存活局**避免 BC 模仿「觅食→中途饿死/被咬死」的坏轨迹。
 - **下一步（GPU 待 eco 长跑腾出后）**：从 bc_v9(567→569 暖启动) 在这 28 条 demo 上 BC 预训 → PPO 微调（mask_fire_only，attack 已解屏）。目标=用 alive-reward 学会**捕食者规避 + 寒冷时进屋时机**，把跨 seed 存活从 oracle 的 44% 抬上去。
 - 红线核对：仅录存活 demo 不改 env/不发奖 ✓；bc_v9/c1 未动 ✓；本地不 push ✓；D free 201.6GB ✓。
+
+## D-121 (2026-06-03) Stage W1 天气耦合上线 + 起训
+- 世界机制：天气系统（晴⇄雨）+ 雨浇火 / 湿增寒 / 雨补水；obs 569→571→**573**（+雨强 +湿度，append-only 零填充热启动）。
+- 验证：单测 13/13；自测 obs 断言全过；s5_v2.pt 热启动手术 571→573 OK，无 NaN；n-envs8+weather ~2900 步/秒。
+- 训练：D-121 weather ON + hunt-shaping 0.05，从 s5_v2.pt 热启动，n-envs 8，48M 步（~4.7h），WMI 独立进程（断 SSH 不停），save runs\w1_v1.pt。
+- 磁盘：D 212G，单一覆盖式 w1_v1.pt（+.opt）。
+- 已知项：自测 river/animal/yaw/wardrobe 4 条为既有 stale 失败，与 W1 无关。

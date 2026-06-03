@@ -35,6 +35,12 @@ public:
     // matching plots are marked harvested (and removed on next tick).
     std::vector<PlantKind> harvest_at(float x, float y, float reach = 2.0f);
 
+    // Stage W1 world coherence ("雨补水"): rainfall tops up every plot's
+    // water_level toward full at `per_s` per second, so a shower waters the
+    // crops for free and couples weather ↔ farming ↔ vitamin supply. Called
+    // by Environment only while the sky is raining; no-op when per_s<=0.
+    void rain(float dt, float per_s);
+
     // Advance growth + drain water + dispose of harvested plots.
     // D-091: optional BuildingSystem pointer. Plots that lie inside any
     // completed building's coverage_radius grow at building_growth_mult

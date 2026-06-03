@@ -26,7 +26,8 @@ void VitalSystem::tick(VitalState& s,
                        float dt,
                        float cold_resist,
                        float warmth,
-                       float slope01) const {
+                       float slope01,
+                       float wet_cold_mult) const {
     if (!s.alive) return;
 
     const float dt_min = dt / 60.0f;
@@ -68,6 +69,12 @@ void VitalSystem::tick(VitalState& s,
         // (cold_resist in [0,1]) damps this drain.
         float cold_rate = cfg_.temp_cold_decay_per_min;
         if (mountain && is_night) cold_rate *= 1.5f;
+        // Stage W1 world coherence: a rain-soaked body sheds heat faster.
+        // wet_cold_mult is 1.0 (dry / weather off) up to ~2.0 (drenched),
+        // computed by Environment from VitalState.wetness. Multiplicative on
+        // the cold drain so getting caught in the rain at night is a real
+        // threat the agent must answer (re-light fire / shelter / clothes).
+        if (wet_cold_mult > 1.0f) cold_rate *= wet_cold_mult;
         float resist = cold_resist;
         if (resist < 0.0f) resist = 0.0f;
         if (resist > 0.95f) resist = 0.95f;

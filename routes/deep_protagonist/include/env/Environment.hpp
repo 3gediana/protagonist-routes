@@ -21,6 +21,7 @@
 #include "world/Physics.hpp"
 #include "world/PlantSystem.hpp"
 #include "world/ResourceSystem.hpp"
+#include "world/WeatherSystem.hpp"
 #include "world/World.hpp"
 
 #include <cstdint>
@@ -73,6 +74,31 @@ struct EnvConfig {
     float    vitamin_decay_per_min = 20.0f;
     float    nutri_debuff_thresh   = 0.30f;
     float    nutri_death_grace_s   = 8.0f;
+
+    // --- Stage W1 world coherence (weather) -------------------------------
+    // Master switch + tunables for the rain coupling chain. All default OFF /
+    // to the WeatherSystem defaults so omitting --weather leaves the world
+    // byte-for-byte identical (always clear, wetness 0, obs 571/572 = 0).
+    bool     weather_enabled       = false;
+    float    weather_rain_prob     = 0.30f;  // chance/min clear->rain
+    float    weather_rain_dur_s    = 90.0f;  // mean shower length (s)
+    // Extra campfire fuel (seconds) burned per real second of exposed rain.
+    // 6.0 means a rained-on fire dies ~6x faster than its normal burn, so an
+    // unattended fire is gone in ~13s of a full shower unless roofed.
+    float    rain_fire_douse_rate  = 6.0f;
+    // Peak extra cold-drain multiplier when fully soaked (wetness=1): cold
+    // drain *= (1 + wet_cold_gain). 1.0 => a drenched agent freezes ~2x as
+    // fast at night.
+    float    wet_cold_gain         = 1.0f;
+    // How fast wetness rises in the rain / dries off under cover (per second).
+    float    wet_gain_per_s        = 0.30f;  // soaked in ~3s of full rain
+    float    wet_dry_per_s         = 0.10f;  // dries in ~10s under cover
+    // Passive thirst caught from rain while exposed (points/min at intensity
+    // 1). Modest so rivers are still needed; creates the wet-vs-warm tradeoff.
+    float    rain_thirst_per_min   = 6.0f;
+    // Plot water_level topped up per second of rain (1.0 = full in 1s; small
+    // so a shower meaningfully waters crops without being instant).
+    float    rain_farm_water_per_s = 0.10f;
 };
 
 // One step worth of "what happened" for a learner to consume.
@@ -248,6 +274,7 @@ private:
     dp::agent::Wardrobe             wardrobe_;
     dp::world::BuildingSystem       buildings_;
     dp::world::FireSystem           fires_;        // D-112 Stage3 L2 campfires
+    dp::world::WeatherSystem        weather_;      // Stage W1 rain coupling
     dp::world::FarmingSystem        farming_;
     dp::agent::TameSystem           tame_;
     dp::agent::ProgressTracker      progress_;

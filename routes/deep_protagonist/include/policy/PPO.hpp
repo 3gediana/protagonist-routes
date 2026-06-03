@@ -43,7 +43,8 @@ struct ActorCriticImpl : torch::nn::Module {
     static constexpr int TEND_FIRE_IDX = NOOP_IDX + 1;                 // 17
     static constexpr int DISC_CATS     = TEND_FIRE_IDX + 1;            // 18 = 16 triggers + NOOP + tend_fire
     // S5 FROZEN ARCHITECTURE (locked permanently, append-only obs):
-    //   OBS_DIM=571, HIDDEN=1408, action=3 continuous + 18 categorical.
+    //   OBS_DIM=573 (571 S5 + 2 Stage W1 weather, append-only), HIDDEN=1408,
+    //   action=3 continuous + 18 categorical.
     //   Params = 6*H^2 (GRU) + (OBS+CONT+DISC_CATS+...+1)*H + biases
     //          ~= 12.74M  ->  .pt (weights only) ~= 51MB  ~= user's "50兆".
     // The recurrent GRU core dominates capacity (6*H^2), so width (not a
