@@ -1360,6 +1360,38 @@ int run_self_tests() {
               "Environment: stamina>50 stays clamped at 1.0 (D-049 #2)");
     }
 
+    // --- D-122 early-warning: per-action advantage grouping ---
+    // The hunt-trend indicator is just "mean advantage of the attack action".
+    // Verify the pure helper groups by action and reports the right sign/count,
+    // because the SIGN is what we read to predict the trend early.
+    {
+        using dp::policy::PPO;
+        // disc:  attack attack cook  eat  attack cook
+        std::vector<int64_t> disc = {  2,    2,   18,   0,    2,   18 };
+        // adv:   hunting clearly GOOD (+), cooking clearly BAD (-)
+        std::vector<float>   adv  = {+1.0f,+2.0f,-3.0f,+0.5f,+0.0f,-1.0f};
+
+        auto [a_mean, a_cnt] = PPO::mean_adv_for_action(adv, disc, /*attack*/2);
+        check(a_cnt == 3, "adv-watch: counts all 3 attack transitions");
+        check(std::abs(a_mean - 1.0f) < 1e-6f,
+              "adv-watch: attack mean = (1+2+0)/3 = +1.0 (positive => hunt rises)");
+
+        auto [c_mean, c_cnt] = PPO::mean_adv_for_action(adv, disc, /*cook*/18);
+        check(c_cnt == 2, "adv-watch: counts both cook transitions");
+        check(c_mean < 0.0f && std::abs(c_mean + 2.0f) < 1e-6f,
+              "adv-watch: cook mean = (-3-1)/2 = -2.0 (negative => cook falls)");
+
+        auto [m_mean, m_cnt] = PPO::mean_adv_for_action(adv, disc, /*mine,absent*/19);
+        check(m_cnt == 0 && m_mean == 0.0f,
+              "adv-watch: absent action => {0,0} (no false signal)");
+
+        // Size-mismatch safety (shorter of the two is used, no OOB).
+        std::vector<int64_t> short_disc = { 2, 2 };
+        auto [s_mean, s_cnt] = PPO::mean_adv_for_action(adv, short_disc, 2);
+        check(s_cnt == 2 && std::abs(s_mean - 1.5f) < 1e-6f,
+              "adv-watch: tolerates size mismatch (uses min length)");
+    }
+
     spdlog::info("------------------------------------------------");
     if (failures == 0) {
         spdlog::info(" SELF-TESTS PASSED");

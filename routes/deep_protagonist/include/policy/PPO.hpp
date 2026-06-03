@@ -6,6 +6,7 @@
 #include <torch/torch.h>
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace dp::policy {
@@ -41,10 +42,22 @@ struct ActorCriticImpl : torch::nn::Module {
     // NOOP=16) and previously recorded .bin demos stay valid without remap.
     // NOOP is therefore no longer the last index.
     static constexpr int TEND_FIRE_IDX = NOOP_IDX + 1;                 // 17
-    static constexpr int DISC_CATS     = TEND_FIRE_IDX + 1;            // 18 = 16 triggers + NOOP + tend_fire
+    // D-122 one-pot tech-tree: 5 NEW categorical classes appended AFTER
+    // tend_fire (append-only, so ids 0..17 + every recorded demo stay valid).
+    // Each is zero-init by warm-start surgery AND masked to -inf until its
+    // curriculum stage flips the matching PPOConfig.allow_* gate true.
+    static constexpr int COOK_IDX           = TEND_FIRE_IDX + 1;       // 18
+    static constexpr int MINE_IDX           = COOK_IDX + 1;            // 19
+    static constexpr int CRAFT_AXE_IDX      = MINE_IDX + 1;            // 20
+    static constexpr int CRAFT_PICKAXE_IDX  = CRAFT_AXE_IDX + 1;       // 21
+    static constexpr int BUILD_MONUMENT_IDX = CRAFT_PICKAXE_IDX + 1;   // 22
+    static constexpr int DISC_CATS          = BUILD_MONUMENT_IDX + 1;  // 23 = 16 triggers + NOOP + tend_fire + 5 tech-tree
     // S5 FROZEN ARCHITECTURE (locked permanently, append-only obs):
-    //   OBS_DIM=573 (571 S5 + 2 Stage W1 weather, append-only), HIDDEN=1408,
-    //   action=3 continuous + 18 categorical.
+    //   OBS_DIM=582 (573 + 9 D-122 tech-tree reserved, append-only),
+    //   HIDDEN=1408, action=3 continuous + 23 categorical (18 + 5 D-122
+    //   tech-tree reserved). D-122 is the FINAL one-pot widening: all future
+    //   stages (cook/mine/tools/build-tier/capstone) reuse these slots, so the
+    //   net never resizes again — every checkpoint transfers forever.
     //   Params = 6*H^2 (GRU) + (OBS+CONT+DISC_CATS+...+1)*H + biases
     //          ~= 12.74M  ->  .pt (weights only) ~= 51MB  ~= user's "50兆".
     // The recurrent GRU core dominates capacity (6*H^2), so width (not a
@@ -117,6 +130,16 @@ struct PPOConfig {
     bool   mask_fire_only = false;
     float  kl_ref_coef   = 0.0f;   // beta for KL(pi||pi_ref=bc_v9) anchor (0=off)
     float  target_kl     = 0.0f;   // CleanRL-style early-stop threshold (0=off)
+    // D-122 one-pot tech-tree curriculum gates. Each reserved categorical
+    // class (idx 18..22) is masked to -inf UNLESS its gate is true, so a
+    // warm-started champion is behaviourally identical to the pre-tech-tree
+    // champion (the new logit rows are zero-init AND masked). Flip a gate
+    // true to UNLOCK that action for the curriculum stage that teaches it.
+    bool   allow_cook       = false;  // idx 18
+    bool   allow_mine       = false;  // idx 19
+    bool   allow_craft_axe  = false;  // idx 20
+    bool   allow_craft_pick = false;  // idx 21
+    bool   allow_monument   = false;  // idx 22
 };
 
 class PPO {
@@ -173,7 +196,28 @@ public:
         float entropy     = 0.0f;
         float approx_kl   = 0.0f;
         float clip_frac   = 0.0f;
+        // D-122 early-warning dashboard. Mean RAW (pre-normalization) GAE
+        // advantage of the transitions that chose a watched discrete action,
+        // plus how many such transitions there were. The SIGN is a leading
+        // indicator of where PPO will push that action's probability next:
+        //   >0 => log-prob rises (action becomes more likely)
+        //   <0 => log-prob falls (action gets extinguished)
+        // Watched: attack(idx 2, the hunt action) and cook(idx 18). Lets you
+        // read the trend from a few hundred episodes instead of running 48M
+        // steps to wait for the behavior itself to emerge.
+        float adv_attack  = 0.0f;
+        int   cnt_attack  = 0;
+        float adv_cook    = 0.0f;
+        int   cnt_cook    = 0;
     };
+
+    // D-122 early-warning helper (pure math, no network / no GPU; unit-tested
+    // in main.cpp --self-test). Mean of `adv` over every index i where
+    // `disc_act[i] == target`. Returns {mean, count}; count 0 => {0, 0}.
+    static std::pair<float, int> mean_adv_for_action(
+        const std::vector<float>&   adv,
+        const std::vector<int64_t>& disc_act,
+        int                         target);
     // D-101: critic_only restricts the loss to the value term. Because the
     // value head is a separate branch (does not feed cont_mean/disc_logits),
     // value_loss.backward() produces ZERO gradient on the policy-head params,
@@ -220,17 +264,26 @@ private:
     torch::Tensor                            disc_mask_;        // [1,DISC_CATS]
     bool                                     mask_enabled_ = false;
     bool                                     mask_attack_  = true;  // false => fire-only (hunting world)
+    // D-122 one-pot: reserved tech-tree classes (idx 18..22) whose curriculum
+    // gate is OFF. Populated once in the ctor from PPOConfig.allow_*; these
+    // columns are masked to -inf EVERY step until their stage unlocks them.
+    std::vector<int64_t>                     locked_cats_;
     torch::Tensor apply_disc_mask(const torch::Tensor& dl) const {
-        if (!mask_enabled_) return dl;
+        if (!mask_enabled_ && locked_cats_.empty()) return dl;
         // In-place writes (index_put_/fill_) and from_blob tensors abort in
         // this libtorch+CUDA build; use ONLY functional ops + a same-shape
         // final add (the proven-safe path). Masked columns get -50 added ->
         // prob ~2e-22 (multinomial-safe) / hard under argmax. fire(17) is
         // always masked when enabled; attack(2) only when mask_attack_ (the
-        // nutrition world unmasks attack so the agent can hunt).
+        // nutrition world unmasks attack so the agent can hunt). The reserved
+        // tech-tree classes (locked_cats_) are masked until their stage opens.
         auto col  = torch::arange(dl.size(1), dl.options()).unsqueeze(0); // [1,C]
-        auto cond = (col == (double)ActorCriticImpl::TEND_FIRE_IDX);
-        if (mask_attack_) cond = cond | (col == 2);
+        auto cond = (col == -1.0);                                        // all-false [1,C]
+        if (mask_enabled_) {
+            cond = cond | (col == (double)ActorCriticImpl::TEND_FIRE_IDX);
+            if (mask_attack_) cond = cond | (col == 2);
+        }
+        for (int64_t k : locked_cats_) cond = cond | (col == (double)k);
         cond      = cond.expand({dl.size(0), dl.size(1)});                // [B,C]
         auto m    = torch::where(cond, torch::full_like(dl, -50.0f),
                                        torch::zeros_like(dl));            // [B,C]

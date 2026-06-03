@@ -61,6 +61,11 @@ inline int action_to_disc_idx(const dp::agent::AgentAction& a) {
     if (a.water_plot)           return 14;
     if (a.feed_tame)            return 15;
     if (a.tend_fire)            return dp::policy::ActorCriticImpl::TEND_FIRE_IDX;  // 17 (D-112 fire)
+    if (a.cook)                 return dp::policy::ActorCriticImpl::COOK_IDX;           // 18 (D-122)
+    if (a.mine)                 return dp::policy::ActorCriticImpl::MINE_IDX;           // 19 (D-122)
+    if (a.craft_axe)            return dp::policy::ActorCriticImpl::CRAFT_AXE_IDX;      // 20 (D-122)
+    if (a.craft_pickaxe)        return dp::policy::ActorCriticImpl::CRAFT_PICKAXE_IDX;  // 21 (D-122)
+    if (a.build_monument)       return dp::policy::ActorCriticImpl::BUILD_MONUMENT_IDX; // 22 (D-122)
     return dp::policy::ActorCriticImpl::NOOP_IDX;  // 16
 }
 
@@ -120,7 +125,7 @@ dp::world::World::Config load_world_config(const std::string& path) {
 //   13:plant_seed 14:water_plot 15:feed_tame
 //   16:NOOP (not tracked here)  17:tend_fire (D-112 fire token)
 struct ActionStats {
-    static constexpr int N = 18;   // 16 triggers + NOOP slot (16) + tend_fire (17)
+    static constexpr int N = 23;   // 16 triggers + NOOP(16) + tend_fire(17) + 5 D-122 tech-tree(18..22)
     int disc_count[N] = {0};
     double move_mag_sum = 0.0;
     double yaw_abs_sum  = 0.0;
@@ -144,6 +149,11 @@ struct ActionStats {
         disc_count[14] += a.water_plot          ? 1 : 0;
         disc_count[15] += a.feed_tame           ? 1 : 0;
         disc_count[17] += a.tend_fire           ? 1 : 0;  // D-112 fire token
+        disc_count[18] += a.cook                ? 1 : 0;  // D-122 tech-tree
+        disc_count[19] += a.mine                ? 1 : 0;  // D-122 tech-tree
+        disc_count[20] += a.craft_axe           ? 1 : 0;  // D-122 tech-tree
+        disc_count[21] += a.craft_pickaxe       ? 1 : 0;  // D-122 tech-tree
+        disc_count[22] += a.build_monument      ? 1 : 0;  // D-122 tech-tree
         move_mag_sum += std::sqrt(a.move_x * a.move_x + a.move_y * a.move_y);
         yaw_abs_sum  += std::fabs(a.yaw_rate);
         ++ticks;
@@ -1337,6 +1347,19 @@ int main(int argc, char** argv) {
     float       nutri_debuff_thresh = 0.30f;
     float       nutri_death_grace   = 8.0f;
     bool        ppo_mask_fire_only  = false; // mask fire only, leave attack open
+    // D-122 one-pot tech-tree curriculum gates (default OFF = reserved class
+    // masked, byte-identical to pre-tech-tree champion). Flip on to unlock.
+    bool        ppo_allow_cook       = false; // unlock idx18 cook
+    bool        cook_selftest_mode   = false; // D-122 RUNG 1 end-to-end cook test then exit
+    bool        ppo_allow_mine       = false; // unlock idx19 mine
+    bool        mine_selftest_mode   = false; // D-122 RUNG 2 end-to-end mine test then exit
+    bool        ppo_allow_craft_axe  = false; // unlock idx20 craft_axe
+    bool        ppo_allow_craft_pick = false; // unlock idx21 craft_pickaxe
+    bool        ppo_allow_monument   = false; // unlock idx22 build_monument
+    bool        ppo_tier_gate        = false; // RUNG 4: gate advanced builds behind tools
+    bool        tools_selftest_mode  = false; // D-122 RUNG 3 end-to-end tool test then exit
+    bool        monument_selftest_mode = false; // D-122 RUNG 5 end-to-end monument/boss test then exit
+    bool        tier_gate_selftest_mode = false; // D-122 RUNG 4 building-tier-gate test then exit
     // Stage W1 world coherence (weather): rain coupling chain. Master switch
     // default OFF so omitting --weather keeps the old world byte-identical.
     bool        weather_enabled     = false;
@@ -1402,6 +1425,17 @@ int main(int argc, char** argv) {
         else if (a == "--nutri-debuff-thresh") nutri_debuff_thresh = std::stof(next());
         else if (a == "--nutri-death-grace")   nutri_death_grace   = std::stof(next());
         else if (a == "--ppo-mask-fire-only")  ppo_mask_fire_only  = true;
+        else if (a == "--allow-cook")          ppo_allow_cook       = true;
+        else if (a == "--cook-selftest")       cook_selftest_mode   = true;
+        else if (a == "--allow-mine")          ppo_allow_mine       = true;
+        else if (a == "--mine-selftest")       mine_selftest_mode   = true;
+        else if (a == "--allow-craft-axe")     ppo_allow_craft_axe  = true;
+        else if (a == "--allow-craft-pickaxe") ppo_allow_craft_pick = true;
+        else if (a == "--allow-monument")      ppo_allow_monument   = true;
+        else if (a == "--tier-gate")           ppo_tier_gate        = true;
+        else if (a == "--tools-selftest")      tools_selftest_mode  = true;
+        else if (a == "--monument-selftest")   monument_selftest_mode = true;
+        else if (a == "--tier-gate-selftest")  tier_gate_selftest_mode = true;
         else if (a == "--weather")             weather_enabled    = true;
         else if (a == "--weather-prob")        weather_rain_prob  = std::stof(next());
         else if (a == "--weather-dur")         weather_rain_dur   = std::stof(next());
@@ -1480,6 +1514,46 @@ int main(int argc, char** argv) {
                      "debuff<{:.0f}% death_grace={}s",
                      nutri_protein_decay, nutri_vitamin_decay,
                      nutri_debuff_thresh * 100.0f, nutri_death_grace);
+    // D-122 RUNG 1: --allow-cook unlocks BOTH the cook categorical class in PPO
+    // (mask, set via pcfg.allow_cook below) AND the world-side cook+light
+    // economy here. Default off => world byte-identical to v7.
+    ecfg.cook_enabled = ppo_allow_cook;
+    if (ppo_allow_cook)
+        spdlog::info("D-122 RUNG 1 cook+light ON: prey drop RawMeat, cook@fire "
+                     "-> CookedMeat (burns fuel), eat cooked = +hunger/protein, "
+                     "lit fire = night foraging. obs 573..575 live.");
+    // D-122 RUNG 2: --allow-mine unlocks BOTH the mine categorical class in PPO
+    // (pcfg.allow_mine below) AND the world-side ore/mining economy here.
+    // Default off => world byte-identical to v7.
+    ecfg.mine_enabled = ppo_allow_mine;
+    if (ppo_allow_mine)
+        spdlog::info("D-122 RUNG 2 cave mining ON: ore nodes scattered in caves, "
+                     "mine action chips ore underground (costs stamina). "
+                     "obs 576..577 live.");
+    // D-122 RUNG 3: --allow-craft-axe/--allow-craft-pickaxe unlock BOTH their
+    // PPO classes (pcfg.allow_* below) AND the world-side stone-tool economy
+    // (1 Wood + 1 ore -> axe/pickaxe; axe speeds wood gather, pickaxe speeds
+    // + enriches mining). The world side is on iff EITHER tool is allowed.
+    ecfg.tools_enabled = ppo_allow_craft_axe || ppo_allow_craft_pick;
+    if (ecfg.tools_enabled)
+        spdlog::info("D-122 RUNG 3 stone tools ON: 1 Wood + 1 ore -> axe (bonus "
+                     "log/chop) / pickaxe (cheaper+richer mine). obs 578..579 live.");
+    // D-122 RUNG 4: --tier-gate makes advanced building tiers cost tools
+    // (StoneHouse needs a pickaxe, BigHouse needs axe+pickaxe). Reuses the
+    // existing building actions; basic Shed/WoodHouse stay free.
+    ecfg.tier_gate_enabled = ppo_tier_gate;
+    if (ppo_tier_gate)
+        spdlog::info("D-122 RUNG 4 tier gate ON: StoneHouse needs pickaxe, "
+                     "BigHouse needs axe+pickaxe (Shed/WoodHouse stay free).");
+    // D-122 RUNG 5: --allow-monument unlocks the build_monument PPO class
+    // (pcfg.allow_monument below) AND the world-side capstone: a great-furnace
+    // site near spawn, ore-hauling to build it, its warmth aura, and the boss
+    // cold-snap ordeal it arms. obs 580..581 live.
+    ecfg.monument_enabled = ppo_allow_monument;
+    if (ppo_allow_monument)
+        spdlog::info("D-122 RUNG 5 capstone ON: haul ore (needs tool) to build "
+                     "the monument -> warmth aura + ARMS the boss cold-snap. "
+                     "Survive it = endgame milestone. obs 580..581 live.");
     // Stage W1 world coherence: plumb weather CLI into env. Default off keeps
     // the sky permanently clear so old-world runs are byte-identical.
     ecfg.weather_enabled    = weather_enabled;
@@ -1499,6 +1573,49 @@ int main(int argc, char** argv) {
 
     dp::env::Environment env(ecfg);
     spdlog::info("Environment built. obs_dim={}", env.observation_size());
+
+    // D-122 RUNG 1: end-to-end cook+light self-test then exit (libtorch-free of
+    // the policy; drives the REAL Environment::step cook handler). Run with
+    //   deep_protagonist_train --cook-selftest
+    if (cook_selftest_mode) {
+        const bool pass = env.cook_selftest();
+        spdlog::info("--cook-selftest result: {}", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 1;
+    }
+
+    // D-122 RUNG 2: end-to-end cave-mining self-test then exit (drives the REAL
+    // Environment::step mine handler). Run with
+    //   deep_protagonist_train --mine-selftest
+    if (mine_selftest_mode) {
+        const bool pass = env.mine_selftest();
+        spdlog::info("--mine-selftest result: {}", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 1;
+    }
+
+    // D-122 RUNG 3: end-to-end stone-tool self-test then exit (drives the REAL
+    // Environment::step craft handlers + tool effects). Run with
+    //   deep_protagonist_train --tools-selftest
+    if (tools_selftest_mode) {
+        const bool pass = env.tools_selftest();
+        spdlog::info("--tools-selftest result: {}", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 1;
+    }
+
+    // D-122 RUNG 5: end-to-end capstone monument + boss self-test then exit
+    // (drives the REAL build_monument handler + boss state machine). Run with
+    //   deep_protagonist_train --monument-selftest
+    if (monument_selftest_mode) {
+        const bool pass = env.monument_selftest();
+        spdlog::info("--monument-selftest result: {}", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 1;
+    }
+
+    //   deep_protagonist_train --tier-gate-selftest
+    if (tier_gate_selftest_mode) {
+        const bool pass = env.tier_gate_selftest();
+        spdlog::info("--tier-gate-selftest result: {}", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 1;
+    }
 
     // Optional metrics file (one JSON object per line).
     std::FILE* mf = nullptr;
@@ -1571,6 +1688,12 @@ int main(int argc, char** argv) {
         pcfg.mask_fire_only = ppo_mask_fire_only;
         pcfg.kl_ref_coef    = ppo_kl_coef;
         pcfg.target_kl      = ppo_target_kl;
+        // D-122 one-pot tech-tree curriculum gates.
+        pcfg.allow_cook       = ppo_allow_cook;
+        pcfg.allow_mine       = ppo_allow_mine;
+        pcfg.allow_craft_axe  = ppo_allow_craft_axe;
+        pcfg.allow_craft_pick = ppo_allow_craft_pick;
+        pcfg.allow_monument   = ppo_allow_monument;
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
         ppo->set_deterministic(deterministic);
         if (deterministic) spdlog::info("D-101: deterministic eval (mode action, no sampling noise)");
@@ -1607,7 +1730,8 @@ int main(int argc, char** argv) {
 
     auto log_episode = [&](int episode_id,
                            const dp::agent::RewardSystem::EpisodeStats& s,
-                           const dp::env::EpisodeMilestones& ms) {
+                           const dp::env::EpisodeMilestones& ms,
+                           const dp::env::Environment& e) {
         // Update cumulative counters BEFORE computing the score.
         for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
             if (ms.get(i)) ++unlock_total[i];
@@ -1644,10 +1768,10 @@ int main(int argc, char** argv) {
                 s.r_bites, s.r_death, s.r_vital,
                 s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
                 s.r_potential,
-                env.vitals().deaths, env.vitals().deaths_cold,
-                env.vitals().deaths_food,
-                env.vitals().deaths_protein, env.vitals().deaths_vitamin,
-                env.vitals().protein, env.vitals().vitamin, policy.c_str(),
+                e.vitals().deaths, e.vitals().deaths_cold,
+                e.vitals().deaths_food,
+                e.vitals().deaths_protein, e.vitals().deaths_vitamin,
+                e.vitals().protein, e.vitals().vitamin, policy.c_str(),
                 static_cast<unsigned long long>(seed),
                 mv, yw, score);
             for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
@@ -1667,18 +1791,18 @@ int main(int argc, char** argv) {
             // ticks during which the agent was sheltered (lean-to OR
             // building OR cave). If "agent lives in the house" then
             // night_shelter / night_total -> 1 over training.
-            int bldg_ticks = env.building_ticks();
-            int night_total_ticks = env.night_ticks_total();
-            int night_shelter_ticks = env.night_ticks_sheltered();
+            int bldg_ticks = e.building_ticks();
+            int night_total_ticks = e.night_ticks_total();
+            int night_shelter_ticks = e.night_ticks_sheltered();
             std::fprintf(mf,
                 "],\"stage\":%d,\"collect_total\":%d,\"explored_m\":%.1f,"
                 "\"houses_built\":%d,\"sites_active\":%d,"
                 "\"bldg_ticks\":%d,\"night_total\":%d,\"night_shelter\":%d}\n",
-                static_cast<int>(env.progress().stage()),
-                env.progress().resources_collected(),
-                env.progress().total_explored(),
-                env.progress().houses_built(),
-                static_cast<int>(env.buildings().sites().size()),
+                static_cast<int>(e.progress().stage()),
+                e.progress().resources_collected(),
+                e.progress().total_explored(),
+                e.progress().houses_built(),
+                static_cast<int>(e.buildings().sites().size()),
                 bldg_ticks, night_total_ticks, night_shelter_ticks);
             std::fflush(mf);
         }
@@ -1769,7 +1893,8 @@ int main(int argc, char** argv) {
                 if (v_sr[i].done) {
                     const auto ms = venv.env(i).milestones();
                     log_episode(v_sr[i].episode_id,
-                                venv.env(i).last_episode_stats(), ms);
+                                venv.env(i).last_episode_stats(), ms,
+                                venv.env(i));
                     ++episodes_done;
                     if (domain_rand) {
                         // Fresh world (terrain + resource layout) every
@@ -1810,11 +1935,14 @@ int main(int argc, char** argv) {
                     ++updates_since_save;
                     if (i == 0) {
                         spdlog::info("PPO update #{:3d} (env0): pi={:+.4f}  "
-                                     "v={:.4f}  ent={:.3f}  kl={:+.4f}  clip={:.2f}",
+                                     "v={:.4f}  ent={:.3f}  kl={:+.4f}  clip={:.2f}  "
+                                     "hunt_adv={:+.3f}(n={})  cook_adv={:+.3f}(n={})",
                                      total_updates,
                                      stats.policy_loss, stats.value_loss,
                                      stats.entropy,    stats.approx_kl,
-                                     stats.clip_frac);
+                                     stats.clip_frac,
+                                     stats.adv_attack, stats.cnt_attack,
+                                     stats.adv_cook,   stats.cnt_cook);
                     }
                     rollouts[i].clear();
                 }
@@ -1937,11 +2065,14 @@ int main(int argc, char** argv) {
                 ++total_updates;
                 ++updates_since_save;
                 spdlog::info("PPO update #{:3d}{}: pi={:+.4f}  v={:.4f}  "
-                             "ent={:.3f}  kl={:+.4f}  clip={:.2f}",
+                             "ent={:.3f}  kl={:+.4f}  clip={:.2f}  "
+                             "hunt_adv={:+.3f}(n={})  cook_adv={:+.3f}(n={})",
                              total_updates, warming ? " [warmup]" : "",
                              stats.policy_loss, stats.value_loss,
                              stats.entropy,    stats.approx_kl,
-                             stats.clip_frac);
+                             stats.clip_frac,
+                             stats.adv_attack, stats.cnt_attack,
+                             stats.adv_cook,   stats.cnt_cook);
                 rollout.clear();
 
                 if (save_every > 0 && !save_path.empty()
@@ -1957,7 +2088,7 @@ int main(int argc, char** argv) {
         if (sr.done) {
             // D-043: snapshot milestones BEFORE reset() clears the flags.
             const auto ms = env.milestones();
-            log_episode(sr.episode_id, env.last_episode_stats(), ms);
+            log_episode(sr.episode_id, env.last_episode_stats(), ms, env);
             ++episodes_done;
             if (max_episodes > 0 && episodes_done >= max_episodes) break;
             env.reset(obs);

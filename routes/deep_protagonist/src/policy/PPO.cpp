@@ -37,6 +37,37 @@ bool expand_encoder_if_needed(ActorCritic& module) {
                  keep, want_in - 1);
     return true;
 }
+
+// D-122 one-pot tech-tree — discrete-head warm-start surgery.
+//
+// torch::load adopts the checkpoint's disc_logits at its OLD class count
+// (e.g. 18). We widen the categorical head to DISC_CATS (23): copy the old
+// rows (weight) / entries (bias) into the leading slots and ZERO-init the 5
+// new tech-tree rows (18..22). Zero rows => logit 0 for the new classes; they
+// are ALSO masked to -inf by apply_disc_mask until their stage unlocks, so the
+// warm-started champion is byte-identical to the pre-tech-tree policy on day 1
+// and PPO grows the new rows from zero only after the stage opens. Returns
+// true iff an expansion was applied.
+bool expand_disc_logits_if_needed(ActorCritic& module) {
+    torch::NoGradGuard ng;
+    auto w = module->disc_logits->weight;          // [cats, HIDDEN]
+    auto b = module->disc_logits->bias;            // [cats]
+    const int64_t cur  = w.size(0);
+    const int64_t want = ActorCriticImpl::DISC_CATS;
+    if (cur == want) return false;                 // already correct height
+    auto nw = torch::zeros({want, w.size(1)}, w.options());
+    auto nb = torch::zeros({want}, b.options());
+    const int64_t keep = std::min(cur, want);
+    nw.narrow(0, 0, keep).copy_(w.narrow(0, 0, keep));
+    nb.narrow(0, 0, keep).copy_(b.narrow(0, 0, keep));
+    module->disc_logits->weight.set_data(nw);
+    module->disc_logits->bias.set_data(nb);
+    spdlog::info("warmstart surgery: disc_logits.weight [{}x{}] -> [{}x{}] "
+                 "+ bias [{}]->[{}], rows {}..{} zero-init (tech-tree)",
+                 cur, w.size(1), want, w.size(1), cur, want,
+                 keep, want - 1);
+    return true;
+}
 }  // namespace
 
 // ============================================================================
@@ -120,6 +151,19 @@ PPO::PPO(const PPOConfig& cfg)
                      mask_attack_ ? "idx2 attack + idx17 fire -> -inf"
                                   : "idx17 fire only (attack UNMASKED for hunting)");
     }
+
+    // D-122 one-pot: lock every reserved tech-tree class whose curriculum gate
+    // is OFF. These columns are masked to -inf each step (apply_disc_mask) so a
+    // warm-started champion (whose new logit rows are also zero-init) is
+    // behaviourally identical until the stage that teaches the action opens.
+    if (!cfg_.allow_cook)       locked_cats_.push_back(ActorCriticImpl::COOK_IDX);
+    if (!cfg_.allow_mine)       locked_cats_.push_back(ActorCriticImpl::MINE_IDX);
+    if (!cfg_.allow_craft_axe)  locked_cats_.push_back(ActorCriticImpl::CRAFT_AXE_IDX);
+    if (!cfg_.allow_craft_pick) locked_cats_.push_back(ActorCriticImpl::CRAFT_PICKAXE_IDX);
+    if (!cfg_.allow_monument)   locked_cats_.push_back(ActorCriticImpl::BUILD_MONUMENT_IDX);
+    if (!locked_cats_.empty())
+        spdlog::info("D-122 one-pot: {} reserved tech-tree class(es) masked "
+                     "(locked until stage unlock)", locked_cats_.size());
 
     spdlog::info("PPO init on device={}, params={}, obs_dim={}",
                  (device_.is_cuda() ? "CUDA" : "CPU"),
@@ -219,6 +263,11 @@ dp::agent::AgentAction PPO::sample_action(
         case 14: a.water_plot           = true; break;
         case 15: a.feed_tame            = true; break;
         case 17: a.tend_fire            = true; break;  // D-112 fire (TEND_FIRE_IDX)
+        case 18: a.cook                 = true; break;  // D-122 tech-tree (COOK_IDX)
+        case 19: a.mine                 = true; break;  // D-122 tech-tree (MINE_IDX)
+        case 20: a.craft_axe            = true; break;  // D-122 tech-tree (CRAFT_AXE_IDX)
+        case 21: a.craft_pickaxe        = true; break;  // D-122 tech-tree (CRAFT_PICKAXE_IDX)
+        case 22: a.build_monument       = true; break;  // D-122 tech-tree (BUILD_MONUMENT_IDX)
         default: /* NOOP (16) */ break;
     }
     return a;
@@ -317,6 +366,11 @@ void PPO::sample_actions_batch(
             case 14: a.water_plot           = true; break;
             case 15: a.feed_tame            = true; break;
             case 17: a.tend_fire            = true; break;  // D-112 fire (TEND_FIRE_IDX)
+            case 18: a.cook                 = true; break;  // D-122 tech-tree (COOK_IDX)
+            case 19: a.mine                 = true; break;  // D-122 tech-tree (MINE_IDX)
+            case 20: a.craft_axe            = true; break;  // D-122 tech-tree (CRAFT_AXE_IDX)
+            case 21: a.craft_pickaxe        = true; break;  // D-122 tech-tree (CRAFT_PICKAXE_IDX)
+            case 22: a.build_monument       = true; break;  // D-122 tech-tree (BUILD_MONUMENT_IDX)
             default: /* NOOP (16) */ break;
         }
     }
@@ -331,6 +385,30 @@ std::vector<float> PPO::current_hidden_at(int env_idx) const {
 void PPO::reset_hidden_at(int env_idx) {
     torch::NoGradGuard ng;
     hidden_.index({env_idx}).zero_();
+}
+
+// D-122 early-warning helper. Pure arithmetic so it can be unit-tested without
+// a network (see main.cpp --self-test). Mean advantage over the transitions
+// that chose action `target`. The sign is the leading "monotone trend" signal:
+// PPO's policy gradient moves a chosen action's log-prob in the direction of
+// its advantage, so adv_mean(attack)>0 predicts hunting will rise, <0 predicts
+// it gets extinguished -- readable long before the behavior itself emerges.
+std::pair<float, int> PPO::mean_adv_for_action(
+    const std::vector<float>&   adv,
+    const std::vector<int64_t>& disc_act,
+    int                         target)
+{
+    const std::size_t n = std::min(adv.size(), disc_act.size());
+    double sum = 0.0;
+    int    cnt = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (disc_act[i] == static_cast<int64_t>(target)) {
+            sum += adv[i];
+            ++cnt;
+        }
+    }
+    if (cnt == 0) return {0.0f, 0};
+    return {static_cast<float>(sum / cnt), cnt};
 }
 
 PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
@@ -378,6 +456,12 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
         adv[i] = gae;
         ret[i] = adv[i] + val[i];
     }
+    // D-122 early-warning: snapshot mean RAW advantage of the hunt(attack,idx2)
+    // and cook(idx18) actions BEFORE normalization, so the sign keeps its
+    // "is this action better/worse than the value baseline" meaning.
+    auto [ew_adv_attack, ew_cnt_attack] = mean_adv_for_action(adv, disc_idx, /*attack*/2);
+    auto [ew_adv_cook,   ew_cnt_cook]   = mean_adv_for_action(adv, disc_idx, /*cook*/18);
+
     // Normalise advantages
     {
         double mean = std::accumulate(adv.begin(), adv.end(), 0.0) / N;
@@ -397,6 +481,8 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
 
     // ---------- PPO update ----------
     UpdateStats stats;
+    stats.adv_attack = ew_adv_attack;  stats.cnt_attack = ew_cnt_attack;
+    stats.adv_cook   = ew_adv_cook;    stats.cnt_cook   = ew_cnt_cook;
     int total_minibatches = 0;
     std::vector<int> idx(N);
     std::iota(idx.begin(), idx.end(), 0);
@@ -487,6 +573,29 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                                               cfg_.max_grad_norm);
             opt_->step();
 
+            // Guardrail: the continuous log_std is a free, state-independent
+            // parameter with NO upper bound. Under a warm-start finetune the
+            // entropy bonus inflates it without limit (entropy 2.9 -> 70+),
+            // which turns continuous control (move/turn) into pure noise and
+            // erodes the cloned navigate/eat/drink behaviors -- the agent then
+            // starves (deaths_food) while the bounded discrete head still fires
+            // craft/milestone. This was the true cause of the v1/v2/v3 weather
+            // warm-start collapses. Clamp to a sane exploration band every
+            // step. The S5 champion sits at log(0.5)=-0.693.
+            //
+            // v6 update: a [-2.3, 0.5] band still let the (small) entropy bonus
+            // pin log_std at the +0.5 ceiling (std=1.65) over ~1300 episodes;
+            // that ceiling-level movement noise slowly eroded navigation
+            // (r_alive 11 -> 7, episodes 6500 -> 4300 from ep ~1318). Cap the
+            // ceiling just above the champion's own level (-0.65, std~=0.52) so
+            // movement noise can never exceed the proven-healthy band -- it may
+            // only get quieter (floor -2.3). The champion's -0.693 sits below
+            // the ceiling and is untouched.
+            {
+                torch::NoGradGuard ng;
+                net_->log_std.clamp_(-2.3f, -0.65f);
+            }
+
             stats.policy_loss += policy_loss.item<float>();
             stats.value_loss  += value_loss.item<float>();
             stats.entropy     += entropy.item<float>();
@@ -531,7 +640,9 @@ void PPO::load(const std::string& path) {
     // (encoder comes back at its 567 input width). §3a widens only that first
     // layer to the current 569 obs width, zero-padding the new nutrition cols.
     torch::load(net_, path);
-    const bool did_surgery = expand_encoder_if_needed(net_);
+    const bool enc_surgery  = expand_encoder_if_needed(net_);
+    const bool disc_surgery = expand_disc_logits_if_needed(net_);  // D-122 one-pot
+    const bool did_surgery  = enc_surgery || disc_surgery;
     net_->to(device_);
     if (did_surgery) {
         // The first-layer tensor was replaced; rebuild Adam over the new
@@ -559,6 +670,7 @@ void PPO::load_reference(const std::string& path) {
     ref_net_ = ActorCritic();
     torch::load(ref_net_, path);
     expand_encoder_if_needed(ref_net_);
+    expand_disc_logits_if_needed(ref_net_);  // D-122 one-pot: match policy head width
     ref_net_->to(device_);
     ref_net_->eval();
     for (auto& p : ref_net_->parameters()) p.set_requires_grad(false);
