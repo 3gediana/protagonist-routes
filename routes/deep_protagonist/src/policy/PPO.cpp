@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <numeric>
@@ -461,6 +462,17 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     // "is this action better/worse than the value baseline" meaning.
     auto [ew_adv_attack, ew_cnt_attack] = mean_adv_for_action(adv, disc_idx, /*attack*/2);
     auto [ew_adv_cook,   ew_cnt_cook]   = mean_adv_for_action(adv, disc_idx, /*cook*/18);
+    // D-123 FULL-behavior panel: same pre-normalization snapshot, but for every
+    // categorical class so a few hundred episodes predict which of ALL behaviors
+    // rise vs get extinguished. Pure read-out of the SAME `adv`/`disc_idx`
+    // already used above -> zero effect on the gradient/optimizer.
+    std::array<float, ActorCriticImpl::DISC_CATS> ew_adv_all{};
+    std::array<int,   ActorCriticImpl::DISC_CATS> ew_cnt_all{};
+    for (int a = 0; a < ActorCriticImpl::DISC_CATS; ++a) {
+        auto [m, c] = mean_adv_for_action(adv, disc_idx, a);
+        ew_adv_all[a] = m;
+        ew_cnt_all[a] = c;
+    }
 
     // Normalise advantages
     {
@@ -483,6 +495,9 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     UpdateStats stats;
     stats.adv_attack = ew_adv_attack;  stats.cnt_attack = ew_cnt_attack;
     stats.adv_cook   = ew_adv_cook;    stats.cnt_cook   = ew_cnt_cook;
+    stats.adv_by_action    = ew_adv_all;
+    stats.cnt_by_action    = ew_cnt_all;
+    stats.total_transitions = N;
     int total_minibatches = 0;
     std::vector<int> idx(N);
     std::iota(idx.begin(), idx.end(), 0);

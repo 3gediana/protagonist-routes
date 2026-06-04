@@ -48,6 +48,7 @@
 #include <raylib.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -1390,6 +1391,32 @@ int run_self_tests() {
         auto [s_mean, s_cnt] = PPO::mean_adv_for_action(adv, short_disc, 2);
         check(s_cnt == 2 && std::abs(s_mean - 1.5f) < 1e-6f,
               "adv-watch: tolerates size mismatch (uses min length)");
+
+        // D-123 FULL-behavior panel: PPO::update fills adv_by_action /
+        // cnt_by_action by running mean_adv_for_action over EVERY categorical
+        // id. Verify that loop groups ALL behaviors with no leakage, so a few
+        // hundred episodes predict which of every action rises/falls.
+        {
+            using dp::policy::ActorCriticImpl;
+            std::array<float, ActorCriticImpl::DISC_CATS> padv{};
+            std::array<int,   ActorCriticImpl::DISC_CATS> pcnt{};
+            int sum_cnt = 0;
+            for (int a = 0; a < ActorCriticImpl::DISC_CATS; ++a) {
+                auto [m, c] = PPO::mean_adv_for_action(adv, disc, a);
+                padv[a] = m; pcnt[a] = c; sum_cnt += c;
+            }
+            check(pcnt[2] == 3 && pcnt[18] == 2 && pcnt[0] == 1,
+                  "panel: attack=3, cook=2, eat=1 grouped correctly");
+            check(std::abs(padv[2] - 1.0f) < 1e-6f && padv[18] < 0.0f,
+                  "panel: per-action signs match watched hunt(+)/cook(-)");
+            check(pcnt[19] == 0 && padv[19] == 0.0f && pcnt[16] == 0,
+                  "panel: untaken actions stay {0,0} (no false ignition)");
+            check(sum_cnt == static_cast<int>(disc.size()),
+                  "panel: counts partition all transitions (no double-count)");
+            check(std::abs(100.0 * pcnt[2] / static_cast<double>(disc.size())
+                           - 50.0) < 1e-6,
+                  "panel: frequency = cnt/total (attack 3/6 = 50%)");
+        }
     }
 
     spdlog::info("------------------------------------------------");

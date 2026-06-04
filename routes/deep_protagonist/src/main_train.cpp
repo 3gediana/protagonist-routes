@@ -39,6 +39,58 @@
 
 namespace {
 
+// D-123 FULL-behavior early-warning panel ------------------------------------
+// Human-readable label for every categorical action id (MUST match the
+// disc->AgentAction switch in PPO.cpp). HUNT/COOK/MINE etc. upper-cased so the
+// causal tech-chain pops in the log.
+inline const char* disc_action_label(int idx) {
+    switch (idx) {
+        case  0: return "eat";        case  1: return "drink";
+        case  2: return "HUNT";       case  3: return "collect";
+        case  4: return "shelter";    case  5: return "spear";
+        case  6: return "sleep";      case  7: return "grassdress";
+        case  8: return "furcloak";   case  9: return "wear";
+        case 10: return "blueprint";  case 11: return "cyclebld";
+        case 12: return "deposit";    case 13: return "plant";
+        case 14: return "water";      case 15: return "feedtame";
+        case 16: return "NOOP";       case 17: return "tendfire";
+        case 18: return "COOK";       case 19: return "MINE";
+        case 20: return "axe";        case 21: return "pickaxe";
+        case 22: return "monument";   default: return "?";
+    }
+}
+
+// One compact string: "label+adv(n=..|freq%)" for every action sampled at
+// least once, ALWAYS including the gated tech-tree behaviors (ids>=18) even at
+// n=0 so we see the exact update they ignite. Pure read-out of the read-only
+// UpdateStats panel fields -> no effect on training.
+inline std::string format_behavior_panel(const dp::policy::PPO::UpdateStats& s) {
+    const double total = s.total_transitions > 0 ? s.total_transitions : 1.0;
+    std::string out;
+    char buf[96];
+    for (int a = 0; a < dp::policy::ActorCriticImpl::DISC_CATS; ++a) {
+        const int  n          = s.cnt_by_action[a];
+        const bool gated_tech = (a >= 18);
+        if (n == 0 && !gated_tech) continue;
+        std::snprintf(buf, sizeof(buf), "%s%+.3f(n=%d|%.1f%%) ",
+                      disc_action_label(a), s.adv_by_action[a], n,
+                      100.0 * n / total);
+        out += buf;
+    }
+    return out;
+}
+
+// Throttle: full panel every 10 updates, but ALSO the moment hunt or any
+// tech-tree behavior first fires (n>0) so ignition is never missed.
+inline bool behavior_panel_due(const dp::policy::PPO::UpdateStats& s,
+                               int update_num) {
+    if (update_num % 10 == 0) return true;
+    if (s.cnt_attack > 0)     return true;
+    for (int a = 18; a < dp::policy::ActorCriticImpl::DISC_CATS; ++a)
+        if (s.cnt_by_action[a] > 0) return true;
+    return false;
+}
+
 // D-101: map a discrete AgentAction back to the categorical index PPO uses
 // (see PPO.cpp sample_action). At most one trigger should be set by the
 // ScriptedSettler; if several are, the first in canonical order wins. No
@@ -1943,6 +1995,9 @@ int main(int argc, char** argv) {
                                      stats.clip_frac,
                                      stats.adv_attack, stats.cnt_attack,
                                      stats.adv_cook,   stats.cnt_cook);
+                        if (behavior_panel_due(stats, total_updates))
+                            spdlog::info("  behaviors: {}",
+                                         format_behavior_panel(stats));
                     }
                     rollouts[i].clear();
                 }
@@ -2073,6 +2128,8 @@ int main(int argc, char** argv) {
                              stats.clip_frac,
                              stats.adv_attack, stats.cnt_attack,
                              stats.adv_cook,   stats.cnt_cook);
+                if (behavior_panel_due(stats, total_updates))
+                    spdlog::info("  behaviors: {}", format_behavior_panel(stats));
                 rollout.clear();
 
                 if (save_every > 0 && !save_path.empty()

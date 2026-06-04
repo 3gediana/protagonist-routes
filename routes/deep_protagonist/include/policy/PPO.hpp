@@ -5,6 +5,7 @@
 
 #include <torch/torch.h>
 
+#include <array>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -209,6 +210,20 @@ public:
         int   cnt_attack  = 0;
         float adv_cook    = 0.0f;
         int   cnt_cook    = 0;
+        // D-123 FULL-behavior panel: same read-only leading-indicator semantics
+        // as adv_attack/adv_cook, but for EVERY discrete categorical class
+        // (0..DISC_CATS-1) at once. Index = categorical id (see PPO.cpp
+        // disc->AgentAction switch). adv_by_action[i] = mean RAW (pre-norm) GAE
+        // advantage of transitions that chose action i (sign => that behavior
+        // rises/falls next); cnt_by_action[i] = how many such transitions;
+        // cnt_by_action[i]/total_transitions = how often the policy is even
+        // trying behavior i. A few hundred episodes thus predict which of ALL
+        // behaviors will emerge vs get extinguished -- not just hunt/cook.
+        // adv_attack==adv_by_action[2], adv_cook==adv_by_action[18] (kept for
+        // back-compat with the existing one-line log).
+        std::array<float, ActorCriticImpl::DISC_CATS> adv_by_action{};
+        std::array<int,   ActorCriticImpl::DISC_CATS> cnt_by_action{};
+        int total_transitions = 0;
     };
 
     // D-122 early-warning helper (pure math, no network / no GPU; unit-tested
