@@ -1595,6 +1595,10 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
     out.done         = done;
     out.episode_id   = episodes_.episode_id();
     out.episode_step = episodes_.step_count();
+    // D-123 SF: snapshot the un-weighted reward feature vector φ for this step
+    // (parallel to the clipped scalar above). reward_.end_step() was called by
+    // apply_action_effects_ this tick, so last_features() is current.
+    out.phi          = reward_.last_features();
 
     if (done) {
         last_ep_stats_ = reward_.episode();

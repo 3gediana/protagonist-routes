@@ -108,6 +108,12 @@ struct StepResult {
     bool                                   done   = false;
     int                                    episode_id   = 0;
     int                                    episode_step = 0;
+    // D-123 Successor-Features: the UN-weighted reward feature vector φ for
+    // this step (RewardSystem::last_features()). Carried per-step so the PPO
+    // rollout can store it race-free even under the async VecEnv. dot(φ, the
+    // RewardSystem weight vector) reproduces the unclipped reward total; ψ is
+    // trained to predict the discounted future accumulation of each φ channel.
+    std::array<float, dp::agent::RewardSystem::F> phi{};
 };
 
 // D-043: per-episode milestone unlocks for Crafter-style geometric-mean

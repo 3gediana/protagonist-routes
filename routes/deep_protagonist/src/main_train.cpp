@@ -1939,6 +1939,10 @@ int main(int argc, char** argv) {
                     tr.value    = v_val[i];
                     tr.log_prob = v_lp[i];
                     tr.done     = v_sr[i].done;
+                    // D-123 SF: carry the un-weighted reward feature vector φ
+                    // (env reward only; PBRS shaping above is excluded by design
+                    // -- it is a separate potential-based knob, not a φ channel).
+                    tr.phi.assign(v_sr[i].phi.begin(), v_sr[i].phi.end());
                     rollouts[i].push_back(std::move(tr));
                 }
 
@@ -2103,6 +2107,9 @@ int main(int argc, char** argv) {
             tr.value    = vv;
             tr.log_prob = lp;
             tr.done     = sr.done;
+            // D-123 SF: carry the un-weighted reward feature vector φ (env
+            // reward only; PBRS shaping above is a separate knob, not a φ channel).
+            tr.phi.assign(sr.phi.begin(), sr.phi.end());
             rollout.push_back(std::move(tr));
 
             if (static_cast<int>(rollout.size()) >= pcfg.rollout_steps) {

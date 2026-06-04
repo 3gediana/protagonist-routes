@@ -69,6 +69,35 @@ bool expand_disc_logits_if_needed(ActorCritic& module) {
                  keep, want - 1);
     return true;
 }
+
+// D-123 SF: tolerant module loader. A pre-SF checkpoint has no `successor.*`
+// parameters; plain torch::load reads every module param by name and THROWS on
+// the first missing key, which would abort warm-starting an old champion (and
+// the bc_v9 KL reference). Try the proven happy path first; on failure fall
+// back to a selective archive read that adopts every key PRESENT (same set_data
+// shape-adoption torch::load uses, so encoder/disc surgery still applies) and
+// leaves missing ones (the ψ head) at their fresh init -- ψ is then converged
+// by an sf_warmup phase (mirrors the D-101 critic-only warmup).
+void load_module_tolerant(ActorCritic& module, const std::string& path) {
+    try {
+        torch::load(module, path);
+        return;
+    } catch (const std::exception& e) {
+        spdlog::warn("torch::load('{}') failed ({}); selective load "
+                     "(missing keys kept at fresh init)", path, e.what());
+    }
+    torch::serialize::InputArchive ar;
+    ar.load_from(path);
+    torch::NoGradGuard ng;
+    for (auto& p : module->named_parameters()) {
+        torch::Tensor t;
+        if (ar.try_read(p.key(), t, /*is_buffer=*/false)) p.value().set_data(t);
+    }
+    for (auto& b : module->named_buffers()) {
+        torch::Tensor t;
+        if (ar.try_read(b.key(), t, /*is_buffer=*/true)) b.value().set_data(t);
+    }
+}
 }  // namespace
 
 // ============================================================================
@@ -85,6 +114,9 @@ ActorCriticImpl::ActorCriticImpl() {
                                   torch::nn::Linear(HIDDEN, DISC_CATS));  // 17-way categorical
     value       = register_module("value",
                                   torch::nn::Linear(HIDDEN, 1));
+    // D-123 SF: successor-feature head ψ (HIDDEN -> SF_DIM). Sibling of value.
+    successor   = register_module("successor",
+                                  torch::nn::Linear(HIDDEN, SF_DIM));
 
     // log_std initialised to log(0.5) ≈ -0.693 (moderate exploration).
     log_std = register_parameter(
@@ -101,6 +133,7 @@ ActorCriticImpl::ActorCriticImpl() {
     orthogonal_(cont_mean,   0.01f);   // small final-layer
     orthogonal_(disc_logits, 0.01f);
     orthogonal_(value,       1.0f);
+    orthogonal_(successor,   1.0f);    // D-123 SF: same as value head
     // GRUCell weights are initialised by libtorch with reasonable defaults
     // (uniform Kaiming-ish). We leave them alone.
 }
@@ -116,6 +149,13 @@ ActorCriticImpl::forward_step(const torch::Tensor& obs,
     auto dl  = disc_logits(h);                          // [B, DISC_DIM]
     auto v   = value(h).squeeze(-1);                    // [B]
     return {cm, cs, dl, v, h};
+}
+
+// D-123 SF: ψ(s) = linear read-out of the hidden state -> [B, SF_DIM].
+// No internal detach: training passes h.detach() so only `successor` learns;
+// self-tests may pass a grad-enabled h to exercise the head directly.
+torch::Tensor ActorCriticImpl::psi(const torch::Tensor& h) {
+    return successor(h);                                // [B, SF_DIM]
 }
 
 // ============================================================================
@@ -413,7 +453,8 @@ std::pair<float, int> PPO::mean_adv_for_action(
 }
 
 PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
-                             float last_value, bool critic_only)
+                             float last_value, bool critic_only,
+                             bool sf_warmup)
 {
     constexpr int O = ActorCriticImpl::OBS_DIM;
     constexpr int C = ActorCriticImpl::CONT_DIM;
@@ -491,6 +532,56 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     auto t_adv   = torch::from_blob(adv.data(),       {N},    torch::kFloat32).clone().to(device_);
     auto t_ret   = torch::from_blob(ret.data(),       {N},    torch::kFloat32).clone().to(device_);
 
+    // ---------- D-123 SF: ψ TD target (host, fixed within this update) ----------
+    // ψ(s) predicts the discounted future accumulation of each reward feature
+    // φ. We train it with the vector Bellman target ψ(s_t) <- φ_t + γ(1-done)·
+    // ψ(s_{t+1}). Build the bootstrap ψ(s_{i+1}) ONCE from a no-grad forward
+    // over the whole rollout (same stale-hidden as the minibatch re-forward),
+    // exactly mirroring how the value head uses precomputed returns. Skipped
+    // (sf_enabled=false) if the caller never filled Transition.phi -> full
+    // back-compat for legacy rollouts.
+    constexpr int F = ActorCriticImpl::SF_DIM;
+    const bool sf_enabled = (cfg_.sf_coef > 0.0f || sf_warmup)
+                            && N > 0
+                            && static_cast<int>(rollout[0].phi.size()) == F;
+    torch::Tensor t_psiret;   // [N, F]; defined iff sf_enabled
+    if (sf_enabled) {
+        std::vector<float> phi_flat;
+        phi_flat.reserve(static_cast<size_t>(N) * F);
+        bool phi_ok = true;
+        for (int i = 0; i < N; ++i) {
+            if (static_cast<int>(rollout[i].phi.size()) != F) { phi_ok = false; break; }
+            phi_flat.insert(phi_flat.end(), rollout[i].phi.begin(), rollout[i].phi.end());
+        }
+        if (phi_ok) {
+            std::vector<float> psi_all(static_cast<size_t>(N) * F, 0.0f);
+            {
+                torch::NoGradGuard ng;
+                auto fo    = net_->forward_step(t_obs, t_hin);
+                auto h_all = std::get<4>(fo);
+                auto psi   = net_->psi(h_all).to(torch::kCPU).contiguous();  // [N,F]
+                std::copy(psi.data_ptr<float>(),
+                          psi.data_ptr<float>() + psi_all.size(),
+                          psi_all.data());
+            }
+            std::vector<float> psi_ret(static_cast<size_t>(N) * F, 0.0f);
+            for (int i = 0; i < N; ++i) {
+                const float nonterm = rollout[i].done ? 0.0f : 1.0f;
+                const size_t base   = static_cast<size_t>(i) * F;
+                // Bootstrap with next state's ψ; at the rollout boundary there is
+                // no next state cached, so self-bootstrap (negligible: 1/N rows).
+                const size_t nbase  = (i == N - 1) ? base
+                                                   : static_cast<size_t>(i + 1) * F;
+                for (int f = 0; f < F; ++f) {
+                    psi_ret[base + f] = phi_flat[base + f]
+                                      + cfg_.gamma * nonterm * psi_all[nbase + f];
+                }
+            }
+            t_psiret = torch::from_blob(psi_ret.data(), {N, F}, torch::kFloat32)
+                           .clone().to(device_);
+        }
+    }
+
     // ---------- PPO update ----------
     UpdateStats stats;
     stats.adv_attack = ew_adv_attack;  stats.cnt_attack = ew_cnt_attack;
@@ -548,6 +639,17 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             auto policy_loss = -torch::min(unclipped, clipped).mean();
             auto value_loss  = (v - b_ret).pow(2).mean();
 
+            // D-123 SF: ψ TD loss on the DETACHED trunk. Because h_out is
+            // detached, this gradient updates ONLY the `successor` head -> the
+            // policy/value/encoder/GRU receive exactly zero ψ gradient (champion
+            // is byte-stable). Target b_psiret is the fixed Bellman target above.
+            torch::Tensor sf_loss;
+            if (sf_enabled && t_psiret.defined()) {
+                auto b_psiret = t_psiret.index_select(0, t_idx);   // [B, F]
+                auto psi_pred = net_->psi(h_out.detach());          // [B, F]
+                sf_loss = (psi_pred - b_psiret).pow(2).mean();
+            }
+
             // decision_round_17 (S4 PPO C): KL-to-reference (pi || pi_ref=bc_v9)
             // anchor keeps the finetuned policy inside the BC basin so the
             // night PBRS can refine behaviour without the cloned policy drift
@@ -573,6 +675,22 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                 kl_ref = (kl_cont + kl_disc).mean();
             }
 
+            // D-123 SF ψ-only warmup: freeze policy/value/trunk, train just the
+            // ψ head (analogous to D-101 critic_only). If φ was not provided
+            // there is nothing to warm up, so skip the minibatch entirely.
+            if (sf_warmup) {
+                if (!sf_loss.defined()) continue;
+                auto loss = cfg_.sf_coef * sf_loss;
+                opt_->zero_grad();
+                loss.backward();
+                torch::nn::utils::clip_grad_norm_(net_->parameters(),
+                                                  cfg_.max_grad_norm);
+                opt_->step();
+                stats.sf_loss += sf_loss.item<float>();
+                ++total_minibatches;
+                continue;
+            }
+
             // D-101 critic warmup: value-only loss. value_loss does not flow
             // through the policy heads, so the BC policy is frozen exactly
             // while the critic learns V(s) for it.
@@ -581,6 +699,8 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                 : (policy_loss + cfg_.vf_coef * value_loss
                    - cfg_.ent_coef * entropy);
             if (kl_ref.defined()) loss = loss + cfg_.kl_ref_coef * kl_ref;
+            // ψ TD loss rides along on the detached head (zero policy effect).
+            if (sf_loss.defined()) loss = loss + cfg_.sf_coef * sf_loss;
 
             opt_->zero_grad();
             loss.backward();
@@ -614,6 +734,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             stats.policy_loss += policy_loss.item<float>();
             stats.value_loss  += value_loss.item<float>();
             stats.entropy     += entropy.item<float>();
+            if (sf_loss.defined()) stats.sf_loss += sf_loss.item<float>();
             stats.approx_kl   += (b_lpold - lp_new).mean().item<float>();
             stats.clip_frac   += ((ratio - 1.0f).abs() > cfg_.clip_eps)
                                    .to(torch::kFloat32)
@@ -636,6 +757,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
         stats.entropy     /= total_minibatches;
         stats.approx_kl   /= total_minibatches;
         stats.clip_frac   /= total_minibatches;
+        stats.sf_loss     /= total_minibatches;
     }
     return stats;
 }
@@ -654,7 +776,9 @@ void PPO::load(const std::string& path) {
     // torch::load adopts the checkpoint's shapes, so this fully loads bc_v9
     // (encoder comes back at its 567 input width). §3a widens only that first
     // layer to the current 569 obs width, zero-padding the new nutrition cols.
-    torch::load(net_, path);
+    // D-123 SF: tolerant load so a pre-SF checkpoint (no `successor.*`) still
+    // warm-starts, with the ψ head left at fresh init for an sf_warmup phase.
+    load_module_tolerant(net_, path);
     const bool enc_surgery  = expand_encoder_if_needed(net_);
     const bool disc_surgery = expand_disc_logits_if_needed(net_);  // D-122 one-pot
     const bool did_surgery  = enc_surgery || disc_surgery;
@@ -683,7 +807,7 @@ void PPO::load_reference(const std::string& path) {
     // §3a: the KL anchor must be the SAME bc_v9 widened to 569 so its outputs
     // match the warm-started policy exactly at step 0.
     ref_net_ = ActorCritic();
-    torch::load(ref_net_, path);
+    load_module_tolerant(ref_net_, path);   // D-123 SF: tolerant (bc_v9 lacks ψ)
     expand_encoder_if_needed(ref_net_);
     expand_disc_logits_if_needed(ref_net_);  // D-122 one-pot: match policy head width
     ref_net_->to(device_);

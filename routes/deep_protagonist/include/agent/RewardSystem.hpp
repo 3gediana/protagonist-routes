@@ -2,6 +2,8 @@
 
 #include "agent/VitalSystem.hpp"
 
+#include <array>
+
 namespace dp::agent {
 
 // PPO needs a single scalar per tick. We compose it from a small set of
@@ -192,6 +194,40 @@ public:
         void add(const StepReward& s);
     };
 
+    // ------------------------------------------------------------------
+    // D-123 Successor-Features (ψ) support. The total reward is a LINEAR
+    // weighted sum of named components: reward = Σᵢ wᵢ·φᵢ. Exposing the
+    // UN-weighted feature vector φ (last_features) and the weight vector w
+    // (weight_vector) lets a learned successor head ψ(s) (discounted future
+    // Σφ) estimate "value under a NEW weight recipe w'" as ψ(s)·w' WITHOUT
+    // retraining (see docs/Successor_Features_设计.md). F is append-only:
+    // adding a future reward term grows F by 1, never reorders/removes.
+    //
+    // φ channel layout (index : meaning : weight in weight_vector()):
+    //   0 alive     : seconds alive this step       : alive_step
+    //   1 food      : drive_reduction from eating    : food_coef
+    //   2 water     : drive_reduction from drinking   : water_coef
+    //   3 kills      : wolves killed this step (count) : wolf_killed
+    //   4 bites      : bite damage points absorbed     : wolf_bite_dmg (<0)
+    //   5 death      : 1 if died this step else 0       : death
+    //   6 vital      : BLENDED bucket (decay+danger+action_cost), stored
+    //                  already-summed                  : 1.0  (frozen blend)
+    //   7 collect    : BLENDED bucket (collected+deposited), already-summed
+    //                                                    : 1.0  (frozen blend)
+    //   8 shelter    : shelters built this step (count) : built_shelter
+    //   9 craft      : tools crafted this step (count)  : crafted_tool
+    //  10 milestone  : milestone scale fired this step  : milestone
+    //  11 potential  : clamped Φ(s) state value          : state_bonus_coef
+    //
+    // The two BLENDED buckets (vital, collect) fold several sub-weights into
+    // one StepReward field, so they are stored as the already-weighted sum
+    // with w=1 (you can scale the whole bucket via w', but not its internal
+    // split). The other 10 store the raw quantity so their single weight is
+    // freely re-weightable for recipe screening (this is the point: e.g.
+    // "what if kills weight x3"). Invariant (self-tested): dot(last_features,
+    // weight_vector) == last_step().total() exactly.
+    static constexpr int F = 12;
+
     explicit RewardSystem(const Weights& w = {}) : w_(w) {}
 
     void   begin_step();
@@ -243,11 +279,36 @@ public:
     void                reset_episode() { ep_.reset(); }
     const Weights&      weights()    const { return w_; }
 
+    // D-123 SF: the UN-weighted feature vector φ for the LAST closed step
+    // (snapshotted in end_step, parallel to last_step()). Length F.
+    const std::array<float, F>& last_features() const { return last_feat_; }
+
+    // D-123 SF: the weight vector w, flattened from Weights in the same order
+    // as the φ channels above. dot(last_features(), weight_vector()) reproduces
+    // last_step().total() (self-tested). Blended buckets (idx 6,7) carry w=1.
+    std::array<float, F> weight_vector() const {
+        return { w_.alive_step,    // 0 alive
+                 w_.food_coef,     // 1 food
+                 w_.water_coef,    // 2 water
+                 w_.wolf_killed,   // 3 kills
+                 w_.wolf_bite_dmg, // 4 bites (negative)
+                 w_.death,         // 5 death
+                 1.0f,             // 6 vital  (blended, stored weighted)
+                 1.0f,             // 7 collect (blended, stored weighted)
+                 w_.built_shelter, // 8 shelter
+                 w_.crafted_tool,  // 9 craft
+                 w_.milestone,     // 10 milestone
+                 w_.state_bonus_coef }; // 11 potential
+    }
+
 private:
     Weights      w_;
     StepReward   step_{};
     StepReward   last_{};
     EpisodeStats ep_{};
+    // D-123 SF: parallel un-weighted φ accumulator (current step) + snapshot.
+    std::array<float, F> feat_{};
+    std::array<float, F> last_feat_{};
 };
 
 }  // namespace dp::agent

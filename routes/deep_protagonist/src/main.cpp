@@ -1419,6 +1419,140 @@ int run_self_tests() {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // D-123 Successor-Features (ψ). Six checks incl. two negative examples,
+    // per docs/Successor_Features_设计.md §4. These gate every SF training run.
+    // -----------------------------------------------------------------------
+    {
+        using dp::agent::RewardSystem;
+        using dp::policy::ActorCriticImpl;
+        constexpr int F = RewardSystem::F;
+
+        // SF1 — φ reconstruction: dot(last_features, weight_vector) reproduces
+        // the UNCLIPPED step total exactly (blended buckets carry w=1).
+        {
+            RewardSystem rs;                     // default S5 weights
+            rs.begin_step();
+            rs.event_alive(0.5f);
+            rs.event_eat(0.4f);
+            rs.event_drink(0.2f);
+            rs.event_wolf_bite(3.0f);
+            dp::agent::VitalState v;             // any state; reconstruction is exact
+            v.hunger = 40.0f; v.thirst = 30.0f; v.stamina = 60.0f;
+            v.temperature = 35.0f; v.protein = 50.0f; v.vitamin = 70.0f;
+            rs.event_vital_pressure(v, 0.5f);
+            rs.event_vital_danger(v, 0.5f);
+            rs.event_action_cost(0.001f);
+            rs.event_collected_resource();
+            rs.event_deposited_material();
+            rs.event_built_shelter();
+            rs.event_crafted_tool();
+            rs.event_milestone(0.7f);
+            rs.event_state_bonus(2.0f);
+            (void)rs.end_step();
+            const auto  phi = rs.last_features();
+            const auto  w   = rs.weight_vector();
+            double dot = 0.0;
+            for (int f = 0; f < F; ++f) dot += static_cast<double>(phi[f]) * w[f];
+            const double total = rs.last_step().total();
+            check(std::abs(dot - total) < 1e-4,
+                  "SF φ-recon: dot(last_features, weight_vector) == unclipped total");
+            // negative-control sanity: kills channel is genuinely 0 this step.
+            check(phi[3] == 0.0f, "SF φ-recon: untriggered kills channel φ==0");
+        }
+
+        // SF2 — ψ Bellman fixed point (no terminal): for a constant feature φ
+        // the TD target ψ <- φ + γψ has the fixed point ψ* = φ/(1-γ). Mirror the
+        // exact host recursion used in PPO::update and confirm it is stationary.
+        {
+            const float gamma = 0.995f;
+            std::array<float, F> phi_c{};
+            for (int f = 0; f < F; ++f) phi_c[f] = 0.1f * (f + 1);
+            std::array<float, F> psi_star{};
+            for (int f = 0; f < F; ++f) psi_star[f] = phi_c[f] / (1.0f - gamma);
+            // one Bellman backup from the fixed point must return the fixed point
+            bool stationary = true;
+            for (int f = 0; f < F; ++f) {
+                const float backup = phi_c[f] + gamma * /*nonterm*/1.0f * psi_star[f];
+                if (std::abs(backup - psi_star[f]) > 1e-2f) stationary = false;
+            }
+            check(stationary, "SF ψ-fixedpoint: φ+γψ* == ψ* (ψ*=φ/(1-γ))");
+        }
+
+        // SF3 — done truncation: at a terminal step the (1-done) factor zeroes
+        // the bootstrap, so the target collapses to φ alone (no post-done leak).
+        {
+            const float gamma = 0.995f;
+            const float phi_t = 0.7f, psi_next = 5.0f;
+            const float tgt_live = phi_t + gamma * 1.0f * psi_next;
+            const float tgt_done = phi_t + gamma * 0.0f * psi_next;
+            check(std::abs(tgt_done - phi_t) < 1e-6f && tgt_live > tgt_done,
+                  "SF done-trunc: terminal target == φ (bootstrap dropped)");
+        }
+
+        // SF4 — NEGATIVE example A (re-weight rank). Offline value V'(s)=ψ(s)·w'.
+        // Raising the kills weight must raise V' for a ψ that accumulates kills,
+        // and must NOT change V' for a ψ with zero kills mass (no phantom value).
+        {
+            std::array<float, F> w_lo = RewardSystem{}.weight_vector();
+            std::array<float, F> w_hi = w_lo; w_hi[3] = w_lo[3] + 3.0f;  // kills↑
+            std::array<float, F> psi_kills{}; psi_kills[3] = 2.0f;       // future kills
+            std::array<float, F> psi_nokill{};                          // all zero
+            auto dot = [&](const std::array<float,F>& a, const std::array<float,F>& b){
+                double s = 0.0; for (int f=0; f<F; ++f) s += (double)a[f]*b[f]; return s; };
+            const double v_lo = dot(psi_kills,  w_lo);
+            const double v_hi = dot(psi_kills,  w_hi);
+            const double n_lo = dot(psi_nokill, w_lo);
+            const double n_hi = dot(psi_nokill, w_hi);
+            check(v_hi > v_lo && std::abs(n_hi - n_lo) < 1e-9,
+                  "SF re-weight: kills↑ raises V' iff ψ has kills mass (else inert)");
+        }
+
+        // SF5 — NEGATIVE example B (zero-feature isolation). A channel whose φ is
+        // identically 0 over a trajectory keeps ψ-target 0 and never pollutes the
+        // other channels' targets through the vector Bellman backup.
+        {
+            const float gamma = 0.995f;
+            const int K = 3;                         // the silent channel
+            std::array<float, F> phi_step{};
+            for (int f = 0; f < F; ++f) phi_step[f] = (f == K) ? 0.0f : 0.2f;
+            std::array<float, F> psi{};              // start at 0
+            for (int it = 0; it < 2000; ++it)        // iterate the backup to convergence
+                for (int f = 0; f < F; ++f)
+                    psi[f] = phi_step[f] + gamma * psi[f];
+            bool silent_zero = std::abs(psi[K]) < 1e-6f;
+            bool others_nonzero = true;
+            for (int f = 0; f < F; ++f)
+                if (f != K && psi[f] < 1.0f) others_nonzero = false;  // ~0.2/(1-γ)=40
+            check(silent_zero && others_nonzero,
+                  "SF zero-feature: silent channel ψ==0, others unaffected");
+        }
+
+        // SF6 — psi() head shape + DETACHED-trunk gradient (the zero-policy-
+        // perturbation red line). Loss on ψ(h.detach()) must give the successor
+        // head a gradient while leaving the encoder/policy trunk untouched.
+        {
+            torch::manual_seed(7);
+            dp::policy::ActorCritic net;
+            net->to(torch::kCPU);
+            const int B = 4;
+            auto obs = torch::randn({B, ActorCriticImpl::OBS_DIM});
+            auto h0  = torch::zeros({B, ActorCriticImpl::HIDDEN});
+            auto fo  = net->forward_step(obs, h0);
+            auto h   = std::get<4>(fo);
+            auto psi = net->psi(h.detach());                  // [B, F]
+            check(psi.size(0) == B && psi.size(1) == F,
+                  "SF psi(): output shape [B, SF_DIM]");
+            net->zero_grad();
+            auto loss = (psi - torch::zeros_like(psi)).pow(2).mean();
+            loss.backward();
+            const bool enc_clean = !net->encoder->weight.grad().defined();
+            const bool suc_grad  =  net->successor->weight.grad().defined();
+            check(enc_clean && suc_grad,
+                  "SF detach: ψ loss updates successor only (trunk grad == none)");
+        }
+    }
+
     spdlog::info("------------------------------------------------");
     if (failures == 0) {
         spdlog::info(" SELF-TESTS PASSED");

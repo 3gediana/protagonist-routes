@@ -2,6 +2,7 @@
 
 #include "agent/AgentAction.hpp"
 #include "agent/Observation.hpp"
+#include "agent/RewardSystem.hpp"   // D-123 SF: feature dimension F
 
 #include <torch/torch.h>
 
@@ -70,12 +71,21 @@ struct ActorCriticImpl : torch::nn::Module {
     // diverse biomes + slope/temp coupling) it actually needs the capacity
     // for, and trades sample-efficiency for ceiling per the owner's decision.
     static constexpr int HIDDEN    = 1408;
+    // D-123 Successor-Features: ψ head width = number of reward feature
+    // channels φ. Tied to RewardSystem::F so dot(φ, w) stays consistent;
+    // a static_assert in main.cpp pins them equal.
+    static constexpr int SF_DIM    = dp::agent::RewardSystem::F;   // 12
 
     torch::nn::Linear   encoder{nullptr};
     torch::nn::GRUCell  gru{nullptr};
     torch::nn::Linear   cont_mean{nullptr};
     torch::nn::Linear   disc_logits{nullptr};
     torch::nn::Linear   value{nullptr};
+    // D-123 SF: successor-feature head. ψ(s) predicts the discounted future
+    // accumulation of each reward feature φ (length SF_DIM). It is a sibling
+    // of `value` reading the SAME hidden h; trained (detached, see psi()) so
+    // its gradient never perturbs the champion policy/value/trunk.
+    torch::nn::Linear   successor{nullptr};
     torch::Tensor       log_std;   // shape [CONT_DIM]
 
     ActorCriticImpl();
@@ -86,6 +96,12 @@ struct ActorCriticImpl : torch::nn::Module {
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor,
                torch::Tensor, torch::Tensor>
     forward_step(const torch::Tensor& obs, const torch::Tensor& h_in);
+
+    // D-123 SF: successor features ψ from a hidden state h:[B,HIDDEN] ->
+    // [B,SF_DIM]. Pure linear read-out; does NOT detach internally so callers
+    // choose: training detaches h (h.detach()) so only `successor` updates,
+    // self-tests may pass a grad-enabled h to check the head itself.
+    torch::Tensor psi(const torch::Tensor& h);
 };
 TORCH_MODULE(ActorCritic);
 
@@ -101,6 +117,10 @@ struct Transition {
     float               value  = 0.0f;
     float               log_prob = 0.0f;
     bool                done   = false;
+    // D-123 SF: the UN-weighted reward feature vector φ for this step
+    // (RewardSystem::last_features(), length SF_DIM). Empty if the caller
+    // never filled it -> ψ TD loss is skipped for that rollout (back-compat).
+    std::vector<float>  phi;
 };
 
 // =============================================================================
@@ -141,6 +161,11 @@ struct PPOConfig {
     bool   allow_craft_axe  = false;  // idx 20
     bool   allow_craft_pick = false;  // idx 21
     bool   allow_monument   = false;  // idx 22
+    // D-123 Successor-Features: weight of the ψ TD loss added to the PPO
+    // objective. ψ is trained on a DETACHED trunk so this term only updates
+    // the `successor` head -> zero perturbation to policy/value. 0 disables
+    // ψ learning entirely (e.g. legacy runs). 0.5 is the design default.
+    float  sf_coef          = 0.5f;
 };
 
 class PPO {
@@ -224,6 +249,8 @@ public:
         std::array<float, ActorCriticImpl::DISC_CATS> adv_by_action{};
         std::array<int,   ActorCriticImpl::DISC_CATS> cnt_by_action{};
         int total_transitions = 0;
+        // D-123 SF: mean ψ TD loss this update (0 if φ not provided / sf_coef 0).
+        float sf_loss = 0.0f;
     };
 
     // D-122 early-warning helper (pure math, no network / no GPU; unit-tested
@@ -242,8 +269,15 @@ public:
     // the critic starts random; without a warmup the first updates compute
     // garbage advantages and destroy the warm-started policy before the
     // critic converges (observed: bldg_ticks 1806 -> 0 by update ~250).
+    // D-123 SF: `sf_warmup` trains ONLY the ψ head (policy+value+trunk frozen),
+    // analogous to critic_only -- use it for the first few hundred updates after
+    // warm-starting a champion that has a randomly-initialised ψ head, so ψ
+    // converges before you trust ψ·w' recipe screens. With the detached trunk,
+    // the normal (non-warmup) path ALSO leaves the policy untouched by ψ; warmup
+    // additionally suppresses the policy/value gradients so nothing moves at all.
     UpdateStats update(const std::vector<Transition>& rollout,
-                       float last_value, bool critic_only = false);
+                       float last_value, bool critic_only = false,
+                       bool sf_warmup = false);
 
     // Persist / restore. Saves both the network weights AND the optimizer
     // state to a single file using libtorch's archive format. Use this
