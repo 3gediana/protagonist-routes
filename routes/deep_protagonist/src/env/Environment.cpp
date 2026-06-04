@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
 
 namespace dp::env {
 
@@ -294,6 +296,16 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
 
     was_alive_  = true;
     step_index_ = 0;
+    prey_hits_      = 0;
+    true_prey_hits_ = 0;
+    atk_prey_reach_ = 0;
+    atk_prey_cone_  = 0;
+    opp_reach_      = 0;
+    opp_rest_       = 0;
+    visited_cells_.clear();   // D-131: fresh map coverage each life
+    explore_new_cells_ = 0;
+    closest_prey_m_ = 1e9f;
+    closest_rest_m_ = 1e9f;
     selected_building_ = dp::world::BuildingType::Shed;
     last_seed_kind_    = dp::world::PlantKind::Berry;
     spatial_.clear();   // cognitive map is per-life (one episode)
@@ -315,6 +327,7 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     first_shelter_fired_        = false;
     first_clothing_fired_       = false;
     first_hunt_fired_           = false;
+    prey_blow_fired_            = false;
     first_seed_planted_fired_   = false;
     first_house_built_fired_    = false;
     first_crop_harvested_fired_ = false;
@@ -433,6 +446,37 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
 
     reward_.begin_step();
     reward_.event_alive(dt);
+
+    // D-131 COVERAGE LURE. The whole-life trace (D-130) showed the BC-imprinted
+    // settler never leaves its spawn corner, so distant prey clusters are never
+    // even seen. Pay a small bonus the FIRST time the agent enters a given map
+    // cell this life -- this drives it to walk the world and ENCOUNTER mechanics
+    // (prey, biomes) it otherwise never reaches. Deliberately instrumental, not
+    // curiosity-for-its-own-sake: paid once per cell (pacing/old cells pay 0, so
+    // it cannot be farmed) and it self-fades as the map fills, so the agent
+    // reverts to real survival/hunting once it has roamed. Env-gated: default
+    // DP_EXPLORE_REW=0 leaves the shipped reward landscape byte-identical.
+    {
+        static const float EXPLORE_REW = []{
+            const char* v = std::getenv("DP_EXPLORE_REW");
+            if (!v || !*v) return 0.0f;
+            char* e = nullptr; float f = std::strtof(v, &e);
+            return (e == v) ? 0.0f : f;
+        }();
+        static const float EXPLORE_CELL = []{
+            const char* v = std::getenv("DP_EXPLORE_CELL");
+            if (!v || !*v) return 24.0f;
+            char* e = nullptr; float f = std::strtof(v, &e);
+            return (e == v || f <= 1.0f) ? 24.0f : f;
+        }();
+        const long cx = static_cast<long>(std::floor(as.pos_x / EXPLORE_CELL));
+        const long cy = static_cast<long>(std::floor(as.pos_y / EXPLORE_CELL));
+        const long key = cy * 1000003L + cx;
+        if (visited_cells_.insert(key).second) {
+            ++explore_new_cells_;
+            if (EXPLORE_REW > 0.0f) reward_.event_explore(EXPLORE_REW);
+        }
+    }
 
     // D-041 / D-043: fire a per-episode milestone exactly once. The flag
     // resets every episode (see Environment::reset). D-043 P1: crisis_scale_
@@ -1277,12 +1321,162 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     if (action.place_shelter) {
         // intentionally no-op
     }
+    // D-123 hunt diagnostic: every step, record the TRUE closest the agent ever
+    // gets to a huntable prey (rabbit/deer), regardless of whether it attacks.
+    // This separates "never approaches" (closest stays large) from "approaches
+    // but can't finish" (closest reaches <=2.5m melee but kills==0).
+    {
+        float dmin2      = 1e18f;
+        float dmin2_rest = 1e18f;   // closest to a prey that is winded/resting
+        // D-129: ground-truth OPPORTUNITY census, independent of what the agent
+        // does this step. The reward-stacking sweeps kept failing to lift prey
+        // hits, so before adding ANY more shaping we must answer the real
+        // question: is kills=0 because the agent WON'T hunt, or because it never
+        // GETS a huntable moment? A "window" = a rabbit/deer within OPP_REACH and
+        // in the agent's forward arc (it could connect if it fired now); a
+        // "rest window" additionally requires the prey to be winded/stationary
+        // (the textbook catchable moment). Counting these every step lets us
+        // compare windows-that-exist vs windows-the-agent-acts-in:
+        //   opp_rest == 0           -> NO opportunity (mechanics never deliver a
+        //                              catchable prey at reach) -> fix the world.
+        //   opp_rest > 0 & reach==0 -> opportunity exists, agent won't act ->
+        //                              capability gap -> real training, not shaping.
+        const float OPP_REACH = 3.5f;            // spear reach we have been testing
+        const float OPP_REACH2 = OPP_REACH * OPP_REACH;
+        const float ofx = std::cos(agent_.yaw()), ofy = std::sin(agent_.yaw());
+        bool opp_window = false, opp_rest_window = false;
+        for (const auto& an : animals_.animals()) {
+            if (an.state == dp::world::AnimalState::Dead) continue;
+            if (an.kind != dp::world::AnimalKind::Rabbit &&
+                an.kind != dp::world::AnimalKind::Deer) continue;
+            float ddx = an.pos_x - as.pos_x, ddy = an.pos_y - as.pos_y;
+            float dd2 = ddx * ddx + ddy * ddy;
+            if (dd2 < dmin2) dmin2 = dd2;
+            // D-125: is this prey currently stationary (panting)? If so it is
+            // the catchable window -- track how close the agent gets then.
+            if (an.flee_rest > 0.0f && dd2 < dmin2_rest) dmin2_rest = dd2;
+            // D-129 opportunity window: within reach AND in the forward arc.
+            if (dd2 <= OPP_REACH2 && (ddx * ofx + ddy * ofy) >= 0.0f) {
+                opp_window = true;
+                if (an.flee_rest > 0.0f) opp_rest_window = true;
+            }
+        }
+        if (opp_window)      ++opp_reach_;
+        if (opp_rest_window) ++opp_rest_;
+        if (dmin2 < 1e17f) {
+            float dm = std::sqrt(dmin2);
+            if (dm < closest_prey_m_) closest_prey_m_ = dm;
+        }
+        if (dmin2_rest < 1e17f) {
+            float dr = std::sqrt(dmin2_rest);
+            if (dr < closest_rest_m_) closest_rest_m_ = dr;
+        }
+    }
     if (action.attack) {
         bool has_spear = inventory_.num_of(dp::agent::ItemKind::Spear) > 0;
-        float reach  = has_spear ? 2.5f : 1.5f;
+        // D-126c: v10 埋点显示 agent 能稳定贴到 2.8-2.9m（含正在力竭的猎物），
+        // 但 spear reach=2.5m 恰好差一口气 -> kills 仍=0。长矛真实有效突刺距离
+        // ~3m（矛长+手臂+前冲）。env 可调以便并发 sweep。
+        static const float SPEAR_REACH = []{
+            const char* v = std::getenv("DP_SPEAR_REACH");
+            if (!v || !*v) return 3.0f;
+            char* e = nullptr; float f = std::strtof(v, &e);
+            return (e == v) ? 3.0f : f;
+        }();
+        float reach  = has_spear ? SPEAR_REACH : 1.5f;
         float damage = has_spear ? 50.0f : 20.0f;
+        // D-128c: at THIS attack step, is a rabbit/deer within reach, and is it
+        // also inside the same forward cone agent_attack uses? Lets the episode
+        // log split the never-registering prey hit into timing (reach=0 -> the
+        // agent only ever fires when prey is far) vs facing (reach>0 cone=0 ->
+        // prey is beside/behind it when it fires). Mirrors agent_attack's geom.
+        {
+            float dfx = std::cos(agent_.yaw()), dfy = std::sin(agent_.yaw());
+            float r2 = reach * reach;
+            bool in_reach = false, in_cone = false;
+            // D-128d: nearest rabbit/deer that is IN FRONT (forward cone) and
+            // within DP_PREYFIRE_RAD, to drive the dense fire-at-prey shaping.
+            float nearest_fire_d = 1e9f;
+            const auto& al = animals_.animals();
+            for (int i = 0; i < int(al.size()); ++i) {
+                const auto& a = al[i];
+                if (a.state == dp::world::AnimalState::Dead) continue;
+                if (!(a.kind == dp::world::AnimalKind::Rabbit ||
+                      a.kind == dp::world::AnimalKind::Deer)) continue;
+                float dx = a.pos_x - as.pos_x, dy = a.pos_y - as.pos_y;
+                float d2 = dx*dx + dy*dy;
+                bool fwd = (dx*dfx + dy*dfy >= 0.0f);
+                if (d2 <= r2) { in_reach = true; if (fwd) in_cone = true; }
+                // D-128e: the cone gate made the fire reward trigger ~never (the
+                // density sweep proved the agent never attacks within 3.5m of
+                // prey even surrounded by 600 rabbits -- attack is bound to old
+                // fishing contexts, NOT prey-approach). Drop the cone for the
+                // reward so it fires whenever prey is nearby in ANY direction,
+                // densely reinforcing "attack when prey is around" to break the
+                // entrenched decoupling. Prey-only + no-fish variant, so it is
+                // hunting practice, not the D-064 fish-farm.
+                float d = std::sqrt(d2); if (d < nearest_fire_d) nearest_fire_d = d;
+            }
+            if (in_reach) ++atk_prey_reach_;
+            if (in_cone)  ++atk_prey_cone_;
+            // D-128d: the atk_prey_reach diagnostic proved the agent NEVER fires
+            // within 3.5m of prey (reach=0 over 800+ eps) -- "approach prey" and
+            // "fire spear" are temporally decoupled, so neither the kill reward
+            // nor the once/episode prey-blow reward can ever fire to bootstrap.
+            // This dense shaping rewards the ATTACK ACTION whenever a rabbit/deer
+            // is in front within DP_PREYFIRE_RAD, decaying linearly with range.
+            // Unlike a landed-hit reward it fires on misses too, directly
+            // teaching "fire toward prey". Prey-only + forward-cone, so it CANNOT
+            // be farmed on fish schools (the failure mode of the reverted D-064);
+            // and "farming" it == learning to fire at prey == exactly the goal.
+            static const float PREYFIRE_REW = []{
+                const char* v = std::getenv("DP_PREYFIRE_REW");
+                if (!v || !*v) return 0.0f;
+                char* e = nullptr; float f = std::strtof(v, &e);
+                return (e == v) ? 0.0f : f;
+            }();
+            static const float PREYFIRE_RAD = []{
+                const char* v = std::getenv("DP_PREYFIRE_RAD");
+                if (!v || !*v) return 8.0f;
+                char* e = nullptr; float f = std::strtof(v, &e);
+                return (e == v || f <= 0.0f) ? 8.0f : f;
+            }();
+            if (PREYFIRE_REW > 0.0f && nearest_fire_d < PREYFIRE_RAD) {
+                float w = 1.0f - nearest_fire_d / PREYFIRE_RAD;   // 1 at 0m -> 0 at RAD
+                reward_.event_prey_blow(PREYFIRE_REW * w);
+            }
+        }
         auto hit = animals_.agent_attack(as.pos_x, as.pos_y,
                                          agent_.yaw(), reach, damage);
+        // D-123: count spear blows that connected with a prey (non-kill hits).
+        if (hit.index >= 0 && !hit.killed) {
+            ++prey_hits_;
+            // D-127: split out the blows that actually struck a rabbit/deer
+            // (vs a fish/wolf), to prove whether the spear is being wasted on
+            // closer non-prey while the wounded prey never takes its 2nd hit.
+            auto hk = animals_.animals()[hit.index].kind;
+            if (hk == dp::world::AnimalKind::Rabbit ||
+                hk == dp::world::AnimalKind::Deer) {
+                ++true_prey_hits_;
+                // D-128b: env-gated, once-per-episode, prey-only first-blow
+                // reward. The v-sweep proved the agent reaches a resting prey
+                // at 0m yet never fires the spear there (prey_kind_hits=0 over
+                // 230+ eps): the resumed policy predates huntability and has no
+                // gradient linking "approach prey" to "kill". This supplies it.
+                // Prey-only + once/episode + small, so it cannot be farmed on
+                // fish schools the way the reverted D-064 per-hit reward was.
+                static const float PREYBLOW_REW = []{
+                    const char* v = std::getenv("DP_PREYBLOW_REW");
+                    if (!v || !*v) return 0.0f;
+                    char* e = nullptr; float f = std::strtof(v, &e);
+                    return (e == v) ? 0.0f : f;
+                }();
+                if (PREYBLOW_REW > 0.0f && !prey_blow_fired_) {
+                    prey_blow_fired_ = true;
+                    reward_.event_prey_blow(PREYBLOW_REW);
+                }
+            }
+        }
         // D-065: D-064 per-hit reward reverted. D-064 measured: hunt 8%->0%,
         // col 68%->37%, drink 100%->90%, score 0.292->0.281. Confirmed user
         // warning that direct per-hit shaping causes reward hacking. The
@@ -1602,7 +1796,83 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
 
     if (done) {
         last_ep_stats_ = reward_.episode();
+        last_prey_hits_      = prey_hits_;       // D-123 snapshot before reset
+        last_true_prey_hits_ = true_prey_hits_;  // D-127 snapshot before reset
+        last_atk_prey_reach_ = atk_prey_reach_;  // D-128c snapshot before reset
+        last_atk_prey_cone_  = atk_prey_cone_;
+        last_opp_reach_      = opp_reach_;        // D-129 snapshot before reset
+        last_opp_rest_       = opp_rest_;
+        last_explore_new_cells_ = explore_new_cells_;  // D-131 coverage snapshot
+        last_closest_prey_m_ = closest_prey_m_;
+        last_closest_rest_m_ = closest_rest_m_;
         ++episodes_completed_;
+    }
+
+    // D-130 WHOLE-EPISODE BEHAVIOR TRACE. Per the "stop staring at one metric,
+    // first watch what he does for a whole life" directive: when DP_TRACE points
+    // at a file, ONE env instance (the first to run with the flag set) appends a
+    // per-step row -- position, facing, the action it chose, its needs, and what
+    // is around it (nearest prey/fish/wolf, biome). Reading the whole timeline
+    // back reconstructs the behavioral narrative (where it goes, what it spends
+    // its steps on, what context precedes an attack) instead of chasing kills.
+    {
+        static const char* TRACE_PATH = std::getenv("DP_TRACE");
+        static Environment* tracer = nullptr;
+        if (TRACE_PATH && *TRACE_PATH && tracer == nullptr) tracer = this;
+        if (TRACE_PATH && *TRACE_PATH && tracer == this) {
+            static std::ofstream tf(TRACE_PATH, std::ios::out | std::ios::trunc);
+            static bool hdr = [&]{
+                tf << "ep,step,x,y,yaw,biome,stam,hunger,thirst,wet,spear,"
+                      "act,move,attack,prey_d,prey_rest,fish_d,wolf_d\n";
+                return true;
+            }();
+            (void)hdr;
+            const auto& ts = agent_.state();
+            float pd = 1e9f, fd = 1e9f, wd = 1e9f; int prest = 0;
+            for (const auto& an : animals_.animals()) {
+                if (an.state == dp::world::AnimalState::Dead) continue;
+                float ex = an.pos_x - ts.pos_x, ey = an.pos_y - ts.pos_y;
+                float d = std::sqrt(ex*ex + ey*ey);
+                if (an.kind == dp::world::AnimalKind::Rabbit ||
+                    an.kind == dp::world::AnimalKind::Deer) {
+                    if (d < pd) { pd = d; prest = (an.flee_rest > 0.0f) ? 1 : 0; }
+                } else if (an.kind == dp::world::AnimalKind::Fish) {
+                    if (d < fd) fd = d;
+                } else if (an.kind == dp::world::AnimalKind::Wolf) {
+                    if (d < wd) wd = d;
+                }
+            }
+            const char* act = "move";
+            if      (action.attack)            act = "ATTACK";
+            else if (action.drink)             act = "drink";
+            else if (action.eat)               act = "eat";
+            else if (action.collect)           act = "collect";
+            else if (action.craft_spear)       act = "craft_spear";
+            else if (action.cook)              act = "cook";
+            else if (action.sleep)             act = "sleep";
+            else if (action.mine)              act = "mine";
+            else if (action.plant_seed)        act = "plant";
+            else if (action.water_plot)        act = "water";
+            else if (action.place_blueprint)   act = "blueprint";
+            else if (action.deposit_to_site)   act = "deposit";
+            else if (action.tend_fire)         act = "tend_fire";
+            else if (action.craft_axe || action.craft_pickaxe) act = "craft_tool";
+            else if (action.wear_clothes || action.craft_grass_dress ||
+                     action.craft_fur_cloak)   act = "clothes";
+            float mvx = action.move_x, mvy = action.move_y;
+            float mv = std::sqrt(mvx*mvx + mvy*mvy);
+            tf << out.episode_id << ',' << step_index_ << ','
+               << int(ts.pos_x) << ',' << int(ts.pos_y) << ','
+               << int(agent_.yaw() * 57.2958f) << ','
+               << int(world_.biome_at(ts.pos_x, ts.pos_y)) << ','
+               << int(vital_state_.stamina) << ',' << int(vital_state_.hunger) << ','
+               << int(vital_state_.thirst) << ',' << int(vital_state_.wetness*100) << ','
+               << (inventory_.num_of(dp::agent::ItemKind::Spear) > 0 ? 1 : 0) << ','
+               << act << ',' << int(mv*100) << ',' << (action.attack ? 1 : 0) << ','
+               << (pd > 1e8f ? -1.0f : pd) << ',' << prest << ','
+               << (fd > 1e8f ? -1.0f : fd) << ',' << (wd > 1e8f ? -1.0f : wd) << '\n';
+            if (done) tf.flush();
+        }
     }
 
     rebuild_observation_(out.obs);

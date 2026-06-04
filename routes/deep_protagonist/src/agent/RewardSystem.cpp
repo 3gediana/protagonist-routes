@@ -139,6 +139,15 @@ void RewardSystem::event_milestone(float scale) {
     feat_[10]       += s;             // φ milestone = clamped scale (w = milestone)
 }
 
+// D-128b: direct sparse reward (NOT a potential, so feat_ is untouched) for
+// the first prey blow of an episode. Caller gates it (env DP_PREYBLOW_REW)
+// and fires it at most once per episode on a rabbit/deer hit.
+void RewardSystem::event_prey_blow(float v) { step_.milestone += v; }
+
+// D-131: instrumental coverage bonus, paid once per new map cell this life.
+// Routed to milestone (like prey_blow) so it never reads as a real kill/score.
+void RewardSystem::event_explore(float v) { step_.milestone += v; }
+
 void RewardSystem::event_state_bonus(float phi) {
     // D-043 P2: per-step state-based reward. phi is expected to be a small
     // non-negative quantity (~ [0, 1.5]) representing accumulated state

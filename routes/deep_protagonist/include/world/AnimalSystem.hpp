@@ -36,6 +36,19 @@ struct AnimalInstance {
     float health = 100.0f;
     float state_timer = 0.0f;
     float wander_x = 1.0f, wander_y = 0.0f;
+    // Persistence-hunting stamina: prey can only sprint at panic_speed for
+    // flee_sprint seconds before being winded, then must rest (flee_rest > 0,
+    // stopped) so a slower tracking agent can close the gap for a kill.
+    float flee_sprint = 1.2f;
+    float flee_rest   = 0.0f;
+    // D-126 cumulative fatigue. Unlike flee_sprint (which the old code reset to
+    // full the instant the prey slipped past FLEE_TRIGGER -- so a 6 m/s prey
+    // outrunning a 3 m/s agent NEVER stayed engaged long enough to get winded,
+    // and the rest window never opened), flee_stamina DRAINS while fleeing and
+    // only refills SLOWLY when safe. Sustained pursuit therefore accumulates
+    // fatigue across brief escapes until the prey collapses into a forced rest
+    // -- the authentic persistence hunt. Seconds of sprint left before collapse.
+    float flee_stamina = 3.0f;
     // Marked by TameSystem: wolves should not pick this prey, and the
     // animal stays close to the agent via TameSystem::apply_follow().
     bool  is_tamed = false;

@@ -25,6 +25,8 @@
 #include "world/World.hpp"
 
 #include <cstdint>
+#include <unordered_set>
+#include <vector>
 
 namespace dp::env {
 
@@ -70,6 +72,50 @@ struct EnvConfig {
     // sweep them from CLI. All default to the "off" / VitalConfig defaults so
     // that omitting --nutrition leaves the old world byte-for-byte unchanged.
     bool     nutrition_enabled     = false;
+    // --- D-122 RUNG 1 tech-tree: cook + light economy master switch --------
+    // OFF by default so omitting --allow-cook leaves the world byte-for-byte
+    // identical (no raw/cooked meat, eat/kill loops unchanged, obs 573..575=0,
+    // and the cook categorical class stays masked in PPO). When ON (RUNG 1
+    // curriculum stage): prey kills also drop a storable RawMeat byproduct
+    // (existing instant nutrition UNCHANGED), the cook action turns RawMeat ->
+    // CookedMeat at a lit fire (burning extra fuel), eating CookedMeat refills
+    // more hunger+protein than fresh kills ("更顶饿" + food security), and a
+    // lit fire lets the agent forage at night (照明). All additive: nothing
+    // the v7 champion already relies on is reduced.
+    bool     cook_enabled          = false;
+    // --- D-122 RUNG 2 tech-tree: cave mining master switch -----------------
+    // OFF by default so omitting --allow-mine leaves the world byte-for-byte
+    // identical (no ore nodes scattered, obs 576..577 stay 0, and the mine
+    // categorical class stays masked in PPO). When ON (RUNG 2 curriculum
+    // stage): ore nodes are scattered inside the caves each life and the mine
+    // action chips ore (costs stamina) while the agent is underground -
+    // feedstock for the later stone-tool / monument rungs. Purely additive;
+    // nothing the v7 champion relies on is reduced.
+    bool     mine_enabled          = false;
+    // --- D-122 RUNG 3 tech-tree: stone-tool crafting master switch ---------
+    // OFF by default (omit --allow-craft-axe/--allow-craft-pickaxe) so the
+    // world is byte-for-byte identical: no axe/pickaxe can be crafted, obs
+    // 578..579 stay 0, the craft_axe/craft_pickaxe classes stay masked. When
+    // ON: 1 Wood + 1 ore -> a stone axe (faster wood gather) or pickaxe
+    // (faster, cheaper mining). Causally chained to RUNG 2 (ore is the
+    // feedstock). Purely additive; nothing the champion relies on changes.
+    bool     tools_enabled         = false;
+    // --- D-122 RUNG 4 tech-tree: upgraded-building tier gate ---------------
+    // OFF by default. When ON, the advanced building tiers cost a tool to
+    // place (StoneHouse needs a pickaxe, BigHouse needs axe+pickaxe), so the
+    // settlement upgrade is gated behind the tool rung. Reuses the existing
+    // building system + actions (no new action/obs). The basic Shed/WoodHouse
+    // stay free, so an agent without tools is never worse off than the v7
+    // champion (which only ever builds the auto-placed Shed).
+    bool     tier_gate_enabled     = false;
+    // --- D-122 RUNG 5 tech-tree: capstone monument + boss master switch ----
+    // OFF by default. When ON: a great-furnace monument site is placed each
+    // life; build_monument hauls ore into it (needs tools + being at the
+    // site) and, once complete, the monument radiates strong warmth. Building
+    // it ARMS a boss ordeal (a lethal cold-snap + heightened predator alert)
+    // that the agent can only survive by sheltering in the monument's warmth
+    // -> "先建大工程，再用它扛过 Boss". obs 580/581 stay 0 while OFF.
+    bool     monument_enabled      = false;
     float    protein_decay_per_min = 20.0f;
     float    vitamin_decay_per_min = 20.0f;
     float    nutri_debuff_thresh   = 0.30f;
@@ -183,6 +229,92 @@ public:
     // the per-tick reward, and a done flag. After done==true the caller
     // MUST call reset() before stepping again.
     StepResult step(const dp::agent::AgentAction& action);
+
+    // D-123 hunt diagnostics (per-episode, reset in reset()): how many spear
+    // blows actually CONNECTED with a prey (non-kill hits), and the closest
+    // the agent ever got to a prey at the moment it pressed attack. These
+    // disambiguate where the kill chain breaks: hits>0 & kills=0 -> the
+    // finishing 2nd blow; hits=0 & closest<=2.5 -> aim/arc; closest>2.5 ->
+    // the approach never reaches melee range.
+    int   prey_hits()      const { return last_prey_hits_; }
+    // D-127: of those non-kill connects, how many landed on an actual
+    // rabbit/deer (vs a closer fish/wolf that ate the spear).
+    int   true_prey_hits() const { return last_true_prey_hits_; }
+    // D-128c: at attack steps, was a rabbit/deer within reach (atk_prey_reach)
+    // and additionally inside the forward cone (atk_prey_cone)? Splits the
+    // never-registering prey hit into timing (reach=0 -> agent only attacks
+    // when prey far) vs facing (reach>0 but cone=0 -> prey beside/behind).
+    int   atk_prey_reach() const { return last_atk_prey_reach_; }
+    int   atk_prey_cone()  const { return last_atk_prey_cone_; }
+    // D-129: ground-truth opportunity census (independent of agent action).
+    // opp_reach = steps with a prey within reach + forward arc (a window where
+    // firing could connect); opp_rest = subset where the prey is also winded
+    // (the textbook catchable moment). opp_rest>0 while atk_prey_reach==0 proves
+    // the opportunity exists but the agent won't act (capability, not lack of
+    // chance); opp_rest==0 proves the mechanics never deliver a catchable prey.
+    int   opp_reach() const { return last_opp_reach_; }
+    int   opp_rest()  const { return last_opp_rest_; }
+    // D-131: number of never-before-visited map cells the agent entered this
+    // episode (map-coverage / how far it roamed). Snapshotted at episode end.
+    int   explore_cells() const { return last_explore_new_cells_; }
+    float closest_prey_m() const { return last_closest_prey_m_; }
+    float closest_rest_m() const { return last_closest_rest_m_; }
+
+    // D-122 RUNG 1 cook+light END-TO-END self-test. Drives the REAL step()
+    // cook handler (not a copy) through a deterministic, fully-controlled
+    // scenario so we can prove the mechanic is causally closed without relying
+    // on an untrained policy ever happening to hunt+stand-at-fire+sample-cook.
+    // Forces cook_enabled, builds a lit fuelled fire at the agent's feet, hands
+    // it RawMeat, then verifies: (1) cook at a lit fire with RawMeat + fuel
+    // turns 1 raw -> 1 cooked and burns fuel; (2) cook with NO RawMeat is a
+    // no-op; (3) cook with NO lit fire is a no-op (causal gate); (4) eating
+    // afterwards drains the CookedMeat ration. Prints PASS/FAIL per check and
+    // returns true iff all pass. Invoked by `--cook-selftest` in main_train.
+    bool cook_selftest();
+
+    // D-122 RUNG 2 cave-mining END-TO-END self-test. Same philosophy as
+    // cook_selftest: drives the REAL step() mine handler through a
+    // deterministic, fully-controlled scenario (teleport the agent into a
+    // cave, drop an ore node at its feet, fill stamina) so causal closure is
+    // proven without relying on an untrained policy ever finding a cave.
+    // Verifies: (1) mine underground at a node with stamina spends stamina,
+    // depletes the node and banks +1 ore + fires the milestone; (2) mine with
+    // NO node in reach is a no-op; (3) mine while NOT inside a cave is a no-op
+    // (causal gate); (4) mine with too little stamina is a no-op. Prints
+    // PASS/FAIL per check; returns true iff all pass. Invoked by
+    // `--mine-selftest` in main_train.
+    bool mine_selftest();
+
+    // D-122 RUNG 3 stone-tool END-TO-END self-test. Drives the REAL step()
+    // craft handlers + tool effects deterministically. Verifies: (1) craft an
+    // axe with Wood+ore consumes both and grants has_axe + milestone; (2)
+    // craft with NO ore is a no-op (causal chain to RUNG 2); (3) craft with
+    // NO wood is a no-op; (4) crafting again when already owned is a no-op;
+    // (5) the axe actually speeds wood gathering and (6) the pickaxe actually
+    // makes a mine yield more ore than the bare-handed baseline. Invoked by
+    // `--tools-selftest`.
+    bool tools_selftest();
+
+    // D-122 RUNG 5 capstone monument + boss END-TO-END self-test. Drives the
+    // REAL step() build_monument handler + boss state machine. Verifies: (1)
+    // build_monument at the site with ore + tools advances progress and
+    // consumes ore; (2) build with NO ore is a no-op; (3) build with NO tools
+    // is a no-op (causal chain to RUNG 3); (4) completing the monument fires
+    // the milestone and ARMS the boss; (5) once armed the boss becomes active
+    // and raises boss_threat; (6) being inside the monument warmth aura
+    // offsets the boss cold-snap (survivable) whereas being far away does
+    // not (the ordeal is real). Invoked by `--monument-selftest`.
+    bool monument_selftest();
+
+    // D-122 RUNG 4 building-tier-gate self-test. The only new logic in RUNG 4
+    // is the tier-gate predicate (building_tier_allowed_) that the real
+    // place_blueprint path consults; the placement machinery itself is the
+    // pre-existing, already-tested building system. Exhaustively verifies that
+    // predicate across all tier x tool combinations: gate OFF -> every tier
+    // free (v7 behaviour); gate ON -> Shed/WoodHouse always free, StoneHouse
+    // needs a pickaxe, BigHouse needs axe+pickaxe. Invoked by
+    // `--tier-gate-selftest`.
+    bool tier_gate_selftest();
 
     // D-049 #2: blueprint line 62 "体力低就走慢". Pure helper so self-tests
     // can lock the curve without spinning up a full Environment. Returns
@@ -309,15 +441,130 @@ private:
     // so the 撩狼 carrot stays gone. Wolves remain pure danger; prey are
     // the legitimate hunting target per blueprint line 22.
     bool                            first_hunt_fired_           = false;
+    // D-128b: gates the once-per-episode prey-blow shaping reward.
+    bool                            prey_blow_fired_            = false;
     bool                            first_seed_planted_fired_   = false;
     bool                            first_house_built_fired_    = false;
     bool                            first_crop_harvested_fired_ = false;
     bool                            first_follower_fired_       = false;
     bool                            was_alive_                  = true;
 
+    // ---- D-122 RUNG 1 tech-tree: cook economy (active iff cfg_.cook_enabled).
+    // raw/cooked meat are tracked as dedicated capped counters, NOT Inventory
+    // slots, because Inventory CAPACITY==3 is already fully spoken for by
+    // Wood/Stone/Grass (the same block that made clothing-as-item infeasible,
+    // see FireSystem.hpp). Reset to 0 each episode. first_cook_fired_ pays a
+    // one-shot milestone the first time the agent cooks (curriculum carrot;
+    // NOT added to the 10-entry EpisodeMilestones score vector, so the
+    // Crafter-style score scale is unchanged).
+    static constexpr int            RAW_MEAT_CAP    = 5;
+    static constexpr int            COOKED_MEAT_CAP = 5;
+    int                             raw_meat_                   = 0;
+    int                             cooked_meat_                = 0;
+    bool                            first_cook_fired_           = false;
+
+    // ---- D-122 RUNG 2 tech-tree: cave mining (active iff cfg_.mine_enabled).
+    // Ore is won ONLY underground: the agent must find + enter a cave, stand at
+    // an ore node and spend stamina to chip it out. Causally closed (costs
+    // stamina + a depleting node + being inside a cave; capped so no hoarding).
+    // Ore nodes are per-life like the cook economy: scattered inside the
+    // (persistent) caves at reset and depleted as they are mined. ore_ resets
+    // to 0 each episode; first_mine_fired_ pays a one-shot milestone the first
+    // time the agent mines (curriculum carrot; NOT added to the 10-entry
+    // EpisodeMilestones score vector, matching first_cook).
+    struct OreNode { float x; float y; float z; int remaining; };
+    static constexpr int            ORE_CAP            = 5;
+    static constexpr int            ORE_NODE_RICHNESS  = 3;     // mines per node
+    static constexpr float          MINE_REACH         = 3.0f;  // metres to node
+    static constexpr float          MINE_STAMINA_COST  = 8.0f;  // stamina / mine
+    int                             ore_                        = 0;
+    bool                            first_mine_fired_           = false;
+    std::vector<OreNode>            ore_nodes_;
+    // (Re)scatter ore nodes inside the caves; called from reset(). Clears the
+    // list and places nothing unless cfg_.mine_enabled, so the champion world
+    // is untouched.
+    void scatter_ore_nodes_();
+
+    // ---- D-122 RUNG 3 tech-tree: stone tools (active iff cfg_.tools_enabled).
+    // Tools are tracked as dedicated per-life bools (NOT Inventory items, whose
+    // 3 slots are spoken for by Wood/Stone/Grass). Each is crafted ONCE per
+    // life from 1 Wood + 1 ore (ore ties the recipe to RUNG 2). has_axe_ makes
+    // a wood collect yield a bonus log; has_pickaxe_ makes a mine yield an
+    // extra ore for half the stamina. first_*_fired_ pay a one-shot milestone.
+    static constexpr int            TOOL_WOOD_COST = 1;
+    static constexpr int            TOOL_ORE_COST  = 1;
+    bool                            has_axe_                    = false;
+    bool                            has_pickaxe_                = false;
+    bool                            first_axe_fired_            = false;
+    bool                            first_pickaxe_fired_        = false;
+
+    // ---- D-122 RUNG 5 tech-tree: capstone monument + boss ordeal (active iff
+    // cfg_.monument_enabled). The monument is a single great-furnace site
+    // placed near spawn each life; build_monument hauls 1 ore per action into
+    // it (requires tools + being within MONUMENT_REACH). At MONUMENT_GOAL it
+    // is BUILT: it radiates MONUMENT_WARM_RATE within MONUMENT_WARM_RADIUS.
+    // The boss is a FIXED-SCHEDULE event: at episode time BOSS_ARRIVAL_S the
+    // cold-snap arrives regardless of whether the monument is built, and runs
+    // for BOSS_DURATION_S with an extra BOSS_COLD_DRAIN temp loss + raised
+    // predator alert. The monument is the DEFENSE, not the trigger: you must
+    // finish it BEFORE the deadline so its warmth aura (folded into
+    // fire_warmth) carries you through; otherwise you survive only on a strong
+    // fire + shelter. Surviving the ordeal alive fires the endgame milestone.
+    // All per-life; resets to 0/false each episode.
+    static constexpr int            MONUMENT_GOAL        = 10;     // ore hauls to finish
+    static constexpr float          MONUMENT_REACH       = 3.0f;   // metres to site
+    static constexpr float          MONUMENT_WARM_RADIUS = 8.0f;   // warmth aura radius
+    static constexpr float          MONUMENT_WARM_RATE   = 60.0f;  // temp pts/min near it
+    static constexpr float          BOSS_ARRIVAL_S       = 180.0f; // fixed t into each life
+    static constexpr float          BOSS_DURATION_S      = 60.0f;  // ordeal length
+    static constexpr float          BOSS_COLD_DRAIN      = 60.0f;  // extra temp pts/min
+    float                           monument_x_                 = 0.0f;
+    float                           monument_y_                 = 0.0f;
+    float                           monument_z_                 = 0.0f;
+    int                             monument_progress_          = 0;
+    bool                            monument_built_             = false;
+    bool                            first_monument_fired_       = false;
+    float                           boss_timer_                 = 0.0f;
+    bool                            boss_started_               = false;
+    bool                            boss_active_                = false;
+    bool                            boss_survived_              = false;
+    bool                            first_boss_survived_fired_  = false;
+    // Place the single monument site near spawn; no-op unless monument_enabled.
+    void  place_monument_site_();
+    // Warmth contributed by a BUILT monument at (px,py); 0 if not built / out
+    // of radius / monument disabled. Added to the fire warmth fed to vitals.
+    float monument_warm_at_(float px, float py) const;
+
+    // ---- D-122 RUNG 4 tech-tree: upgraded-building tier gate. Sole new logic:
+    // is the agent allowed to place this building tier right now? Always true
+    // unless cfg_.tier_gate_enabled; then the advanced tiers cost stone-age
+    // tools (StoneHouse needs a pickaxe, BigHouse needs axe+pickaxe) while the
+    // basic Shed/WoodHouse stay free. Consulted by the place_blueprint handler.
+    bool  building_tier_allowed_(dp::world::BuildingType bt) const;
+
     // Logging / metrics scratch.
     int                                          episodes_completed_ = 0;
     int                                          step_index_         = 0;
+    int                                          prey_hits_          = 0;
+    float                                        closest_prey_m_     = 1e9f;
+    float                                        closest_rest_m_     = 1e9f;
+    int                                          last_prey_hits_     = 0;
+    int                                          true_prey_hits_     = 0;
+    int                                          last_true_prey_hits_ = 0;
+    int                                          atk_prey_reach_      = 0;
+    int                                          atk_prey_cone_       = 0;
+    int                                          last_atk_prey_reach_ = 0;
+    int                                          last_atk_prey_cone_  = 0;
+    int                                          opp_reach_           = 0;  // D-129
+    int                                          opp_rest_            = 0;
+    int                                          last_opp_reach_      = 0;
+    int                                          last_opp_rest_       = 0;
+    // D-131 coverage: cells entered this episode (one-time each) + snapshot.
+    std::unordered_set<long>                     visited_cells_;
+    int                                          explore_new_cells_   = 0;
+    int                                          last_explore_new_cells_ = 0;
+    float                                        last_closest_prey_m_ = 1e9f;
+    float                                        last_closest_rest_m_ = 1e9f;
     dp::agent::RewardSystem::EpisodeStats        last_ep_stats_{};
 
     // D-091: settlement metrics counters, reset per-episode.

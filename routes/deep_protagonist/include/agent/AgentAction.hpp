@@ -65,6 +65,20 @@ struct AgentAction {
     // time (see world/FireSystem). Mapped to categorical index 17 (AFTER
     // NOOP=16) so existing recorded demos keep their meaning.
     bool tend_fire  = false;  // G: build/refuel a campfire at feet
+
+    // ---- D-122 one-pot tech-tree triggers (reserved, append-only) --------
+    // Locked in NOW so the discrete categorical NEVER changes size again
+    // (training iron law: "网络输出包含所有动作，即使早期没用"). Each maps to a
+    // NEW categorical class AFTER tend_fire (ids 18..22), so all existing ids
+    // 0..17 — and every recorded demo — keep their meaning. Until its
+    // curriculum stage unlocks it, the class is masked to -inf in
+    // PPO::apply_disc_mask AND its logit row is zero-init by warm-start
+    // surgery, so a warm-started champion behaves byte-identically.
+    bool cook           = false;  // cook raw meat at a lit fire -> protein-rich cooked meat (idx 18)
+    bool mine           = false;  // mine an ore node while sheltering in a cave; costs stamina (idx 19)
+    bool craft_axe      = false;  // craft stone axe -> faster chopping                       (idx 20)
+    bool craft_pickaxe  = false;  // craft stone pickaxe -> faster mining                      (idx 21)
+    bool build_monument = false;  // haul/advance the capstone monument (great furnace)        (idx 22)
 };
 
 // Total channel count for sizing PPO action heads.
@@ -73,6 +87,9 @@ struct AgentAction {
 // NOT part of ACTION_DISCRETE_DIM (which stays 16 to keep NOOP_IDX==16 and
 // all previously recorded demo indices valid). The categorical class count
 // (DISC_CATS) is widened to 18 in policy/PPO.hpp.
+// D-122 one-pot: 5 reserved tech-tree triggers appended as categorical ids
+// 18..22 (cook/mine/craft_axe/craft_pickaxe/build_monument). ACTION_DISCRETE_DIM
+// STILL stays 16 (NOOP_IDX==16 fixed); DISC_CATS widens to 23 in policy/PPO.hpp.
 constexpr int ACTION_CONTINUOUS_DIM = 3;
 constexpr int ACTION_DISCRETE_DIM   = 16;
 

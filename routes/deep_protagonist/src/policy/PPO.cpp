@@ -796,8 +796,20 @@ void PPO::load(const std::string& path) {
     if (did_surgery) {
         spdlog::info("PPO warm-started via surgery from {} (fresh optimizer)", path);
     } else if (std::filesystem::exists(opt_path)) {
-        torch::load(*opt_, opt_path);
-        spdlog::info("PPO checkpoint + optimizer loaded: {}", path);
+        // D-123 SF: a pre-SF checkpoint's optimizer state has no entries for
+        // the new psi (successor) head, so the saved Adam state is param-set
+        // incompatible and torch::load throws. Fall back to a fresh optimizer
+        // (params were still warm-started above) instead of aborting.
+        try {
+            torch::load(*opt_, opt_path);
+            spdlog::info("PPO checkpoint + optimizer loaded: {}", path);
+        } catch (const std::exception& e) {
+            opt_ = std::make_shared<torch::optim::Adam>(
+                net_->parameters(), torch::optim::AdamOptions(cfg_.lr));
+            spdlog::warn("optimizer load from {} failed ({}); using fresh "
+                         "optimizer (params warm-started, psi at fresh init)",
+                         opt_path, e.what());
+        }
     } else {
         spdlog::info("PPO checkpoint loaded (no optimizer file): {}", path);
     }

@@ -265,6 +265,23 @@ public:
     // `scale` parameter ∈ [0, 1] dampens the milestone when the agent is
     // in vital crisis (eg. about to die of thirst). Default 1.0 = full.
     void   event_milestone(float scale = 1.0f);
+    // D-128b: small once-per-episode reward for the FIRST spear blow that
+    // lands on a rabbit/deer. Supplies the missing gradient bridging
+    // "approach prey" -> "kill" (the v-sweep proved the agent reaches a
+    // resting prey at 0m but never fires there). Routed to the milestone
+    // bucket so it never masquerades as a real kill in logs. Prey-only, so
+    // unlike the reverted D-064 per-hit reward it cannot be farmed on fish.
+    void   event_prey_blow(float v);
+    // D-131: small per-NEW-map-cell reward (count-based coverage bonus). The
+    // whole-life trace (D-130) showed the BC-imprinted settler stays in its
+    // spawn corner forever, so prey (clustered far across the 1024 world,
+    // mostly beyond the 60m vision) are never even seen. This is an
+    // INSTRUMENTAL lure to walk the world: paid once per never-before-visited
+    // grid cell THIS life, so it cannot be farmed by pacing (old cells pay 0)
+    // and self-fades once the map is covered -> the agent reverts to survival/
+    // hunting instead of exploring for its own sake. Routed to milestone bucket
+    // and env-gated (DP_EXPLORE_REW, default 0 = shipped landscape unchanged).
+    void   event_explore(float v);
     // D-043 P2: per-step "state-bonus" reward. Pass Φ(s_now), the
     // hand-crafted potential of the agent's current state (has_house +
     // has_clothes + n_followers + inventory_diversity). Bonus added each

@@ -1794,13 +1794,23 @@ int main(int argc, char** argv) {
                      "(alive={:+.1f} food={:+.1f} water={:+.1f} kills={:+.1f} "
                      "bites={:+.1f} death={:+.1f} vital={:+.1f} "
                      "collect={:+.1f} shelter={:+.1f} craft={:+.1f} "
-                     "milestone={:+.1f} potential={:+.1f})",
+                     "milestone={:+.1f} potential={:+.1f}) "
+                     "hunt_hits={} prey_kind_hits={} atk_prey_reach={} atk_prey_cone={} opp_reach={} opp_rest={} explore_cells={} closest_prey={:.1f}m closest_rest={:.1f}m",
                      episode_id, s.steps, s.total_reward,
                      ms.count(), dp::env::EpisodeMilestones::N, score,
                      s.r_alive, s.r_food, s.r_water, s.r_kills,
                      s.r_bites, s.r_death, s.r_vital,
                      s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
-                     s.r_potential);
+                     s.r_potential,
+                     e.prey_hits(),
+                     e.true_prey_hits(),
+                     e.atk_prey_reach(),
+                     e.atk_prey_cone(),
+                     e.opp_reach(),
+                     e.opp_rest(),
+                     e.explore_cells(),
+                     (e.closest_prey_m() > 1e8f ? -1.0f : e.closest_prey_m()),
+                     (e.closest_rest_m() > 1e8f ? -1.0f : e.closest_rest_m()));
         if (mf) {
             double mv = astats.ticks > 0 ? astats.move_mag_sum / astats.ticks : 0.0;
             double yw = astats.ticks > 0 ? astats.yaw_abs_sum  / astats.ticks : 0.0;

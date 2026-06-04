@@ -68,6 +68,15 @@ public:
     // heat-source term (parallel to cold_resist).
     float warm_rate_at(float px, float py) const;
 
+    // D-122 RUNG 1 (cook): burn `amount` seconds of fuel off the nearest LIT
+    // fire within `radius` of (px,py). Returns true iff such a fire existed
+    // (and the fuel was charged). This is the CAUSAL COST of cooking: each
+    // cook action spends extra fuel, so the agent must keep feeding the fire
+    // Wood (tend_fire) or it goes out — cooking is never free. No reward is
+    // attached. The fire may drop to 0 fuel and be extinguished by the next
+    // tick(), exactly as if it had burned down naturally.
+    bool consume_fuel_near(float px, float py, float radius, float amount);
+
     int count_lit() const;
 
     const std::vector<Campfire>& fires() const { return fires_; }

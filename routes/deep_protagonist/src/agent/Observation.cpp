@@ -160,17 +160,49 @@ void ObservationBuilder::compose(const dp::world::World&         world,
         }
     }
 
-    // ---- 4 nearest animals ----
+    // ---- 4 nearest animals (slot 0 = guaranteed nearest huntable prey) ----
+    // D-124: slot 0 is a dedicated rabbit/deer channel, mirroring the D-048
+    // wolf slot. The generic "K nearest of any kind" fill let fish schools
+    // (5-9/school) and wolf packs crowd out the nearest prey, so the policy
+    // went blind to its hunt target -- AND phi_hunt_progress (which reads
+    // these same slots) saw no prey, zeroing the approach-shaping gradient.
+    // Pinning the nearest prey to slot 0 keeps it visible out to VISION_RANGE
+    // so the agent can navigate to it and the shaping pull stays alive. The
+    // remaining slots are still the nearest animals of any kind (excluding the
+    // prey already in slot 0). Slot count / dims are unchanged (foundation).
     {
+        const auto& av = animals.animals();
         int idx[K_ANIMALS];
-        k_nearest(animals.animals(), s.pos_x, s.pos_y, K_ANIMALS,
+        for (int k = 0; k < K_ANIMALS; ++k) idx[k] = -1;
+
+        int prey1[1] = {-1};
+        k_nearest(av, s.pos_x, s.pos_y, 1,
                   [](const dp::world::AnimalInstance& a, float& x, float& y) {
                       x = a.pos_x; y = a.pos_y;
                   },
                   [](const dp::world::AnimalInstance& a) {
-                      return a.state != dp::world::AnimalState::Dead;
+                      return a.state != dp::world::AnimalState::Dead &&
+                             (a.kind == dp::world::AnimalKind::Rabbit ||
+                              a.kind == dp::world::AnimalKind::Deer);
                   },
-                  idx);
+                  prey1);
+        idx[0] = prey1[0];
+        const int slot0 = idx[0];
+
+        int rest[K_ANIMALS];
+        k_nearest(av, s.pos_x, s.pos_y, K_ANIMALS,
+                  [](const dp::world::AnimalInstance& a, float& x, float& y) {
+                      x = a.pos_x; y = a.pos_y;
+                  },
+                  [&av, slot0](const dp::world::AnimalInstance& a) {
+                      if (a.state == dp::world::AnimalState::Dead) return false;
+                      if (slot0 >= 0 && &a == &av[slot0]) return false;
+                      return true;
+                  },
+                  rest);
+        int r = 0;
+        for (int k = 1; k < K_ANIMALS; ++k) idx[k] = rest[r++];
+
         for (int k = 0; k < K_ANIMALS; ++k) {
             if (idx[k] < 0) {
                 write_zero_slot(out.data() + p, 5);
@@ -515,6 +547,13 @@ void ObservationBuilder::compose(const dp::world::World&         world,
     // fire / take cover / wear clothes before the cold drain bites.
     out[p++] = clamp01(rain_intensity);
     out[p++] = clamp01(wetness);
+
+    // ---- D-122 one-pot tech-tree: reserved sense block (9 slots) ---------
+    // Locked in now; each reads 0 until its rung's system lands, so a
+    // warm-started champion (zero-padded encoder cols) is blind to them and
+    // the old world behaves byte-identically. RUNG code will replace these
+    // zeros with real signals (near_cookfire, ore_in_reach, has_axe, ...).
+    for (int i = 0; i < OBS_TECH_RESERVED; ++i) out[p++] = 0.0f;
 
     // p should equal SIZE here.
 }

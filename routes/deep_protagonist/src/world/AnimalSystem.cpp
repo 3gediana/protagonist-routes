@@ -2,8 +2,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace dp::world {
+
+// Env-var override for hunt tuning, cached on first use so concurrent training
+// processes can sweep persistence-hunt knobs without recompiling N binaries.
+static float env_f(const char* name, float dflt) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) return dflt;
+    char* end = nullptr;
+    float f = std::strtof(v, &end);
+    return (end == v) ? dflt : f;
+}
+
+static int env_i(const char* name, int dflt) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) return dflt;
+    char* end = nullptr;
+    long n = std::strtol(v, &end, 10);
+    return (end == v) ? dflt : static_cast<int>(n);
+}
 
 const char* animal_kind_name(AnimalKind k) {
     switch (k) {
@@ -126,6 +145,17 @@ void AnimalSystem::initialize(uint64_t seed, const World& world,
             }
         }
     };
+    // D-128: env-gated population override. The D-127 v-sweep proved the agent
+    // reaches land prey to 0.6m yet lands ZERO of its many spear hits on
+    // rabbit/deer (prey_kind_hits=0 across 180-271 eps): it fishes the
+    // riverbank instead of hunting land prey. These knobs let a variant starve
+    // the fishing basin (fewer/no fish) and ease predation (fewer wolves) to
+    // force land-hunting, without touching the locked 582-dim obs / 23-action
+    // geometry. Defaults preserve the shipped counts when unset.
+    rabbits = env_i("DP_RABBIT_COUNT", rabbits);
+    deer    = env_i("DP_DEER_COUNT",   deer);
+    wolves  = env_i("DP_WOLF_COUNT",   wolves);
+    fish    = env_i("DP_FISH_COUNT",   fish);
     add(AnimalKind::Rabbit, rabbits, 4, 7, 0.020f);  // warrens
     add(AnimalKind::Deer,   deer,    3, 6, 0.028f);  // grazing herds
     add(AnimalKind::Wolf,   wolves,  2, 3, 0.035f);  // packs
@@ -156,16 +186,49 @@ void AnimalSystem::tick_rabbit(AnimalInstance& a, const World& world,
     auto t = traits_for(AnimalKind::Rabbit);
     float dx = ax - a.pos_x, dy = ay - a.pos_y;
     float d2 = dx * dx + dy * dy;
-    bool agent_close = d2 < t.perception_range * t.perception_range;
 
+    // Persistence hunting. A healthy rabbit is faster than the agent (6 m/s vs
+    // 3) and only bolts once the agent is fairly near (FLEE_TRIGGER), sprinting
+    // in bursts then panting (SPRINT_CAP/REST_DUR) so a tracker can close in.
+    // Crucially, a SPEARED rabbit (health < full after the first 50-dmg blow)
+    // bleeds and tires: its sprint drops below human pace and its panting runs
+    // longer, so the wounded animal becomes catchable for the killing 2nd hit.
+    // Healthy prey stay faster than the agent -- only the wounded slow below it.
+    // D-126b: v9 proved rests now open but prey collapse ~10m out and the 2s
+    // window only let the 3 m/s agent close 6m. Tire sooner (more frequent
+    // rests) + pant longer (bigger catch window). Healthy sprint stays 6 m/s
+    // (> agent), so the "animals faster than human" rule still holds.
+    static const float STAM_MAX     = env_f("DP_RAB_STAM", 2.0f);  // sprint secs before collapse
+    static const float REST_DUR     = env_f("DP_RAB_REST", 3.0f);  // secs stopped to pant
+    static const float RECOVER      = env_f("DP_RAB_RECOVER", 0.4f); // stamina/sec when safe
+    static const float FLEE_TRIGGER = env_f("DP_RAB_TRIGGER", 12.0f); // bolt when agent this near
+    bool agent_close = d2 < FLEE_TRIGGER * FLEE_TRIGGER;
     if (agent_close) {
         a.state = AnimalState::Flee;
-        // Run away from agent
         float d = std::sqrt(d2) + 1e-3f;
-        a.vel_x = -dx / d * t.panic_speed;
-        a.vel_y = -dy / d * t.panic_speed;
+        bool  wounded = a.health < 99.0f;             // took at least one hit
+        float pspd    = wounded ? t.panic_speed * 0.42f : t.panic_speed;
+        float rest    = wounded ? REST_DUR * 1.8f : REST_DUR;
+        if (a.flee_rest > 0.0f) {
+            // winded: stop and pant -> the pursuing agent gains ground
+            a.flee_rest -= dt;
+            a.vel_x = 0.0f;
+            a.vel_y = 0.0f;
+            if (a.flee_rest <= 0.0f) a.flee_stamina = STAM_MAX;  // caught breath
+        } else {
+            // healthy prey still sprint FASTER than the agent (>3 m/s); only
+            // cumulative fatigue (not a per-burst timer) eventually grounds it.
+            a.vel_x = -dx / d * pspd;
+            a.vel_y = -dy / d * pspd;
+            a.flee_stamina -= dt;
+            if (a.flee_stamina <= 0.0f) a.flee_rest = rest;  // collapse -> window
+        }
         a.state_timer = 1.0f;
     } else {
+        // Safe: stamina refills SLOWLY (it is NOT reset), so a brief escape past
+        // the trigger cannot undo the fatigue a sustained chase has built up.
+        a.flee_stamina = std::min(STAM_MAX, a.flee_stamina + RECOVER * dt);
+        a.flee_rest    = 0.0f;
         a.state_timer -= dt;
         if (a.state_timer <= 0.0f) {
             a.state = AnimalState::Wander;
@@ -185,15 +248,42 @@ void AnimalSystem::tick_deer(AnimalInstance& a, const World& world,
     auto t = traits_for(AnimalKind::Deer);
     float dx = ax - a.pos_x, dy = ay - a.pos_y;
     float d2 = dx * dx + dy * dy;
-    bool agent_close = d2 < t.perception_range * t.perception_range;
 
+    // Persistence hunting (see tick_rabbit): a healthy deer sprints at 7 m/s and
+    // bolts only when the agent is near; a speared (wounded) deer slows below
+    // human pace and pants longer, becoming catchable for the killing 2nd hit.
+    // D-126b: see tick_rabbit. Tire sooner + pant longer so the 3 m/s agent can
+    // close during the rest window; healthy deer still sprint 7 m/s (> agent).
+    static const float STAM_MAX     = env_f("DP_DEER_STAM", 2.5f);  // sprint secs before collapse
+    static const float REST_DUR     = env_f("DP_DEER_REST", 3.2f);  // secs stopped to pant
+    static const float RECOVER      = env_f("DP_DEER_RECOVER", 0.4f); // stamina/sec when safe
+    static const float FLEE_TRIGGER = env_f("DP_DEER_TRIGGER", 16.0f); // bolt when agent this near
+    bool agent_close = d2 < FLEE_TRIGGER * FLEE_TRIGGER;
     if (agent_close) {
         a.state = AnimalState::Flee;
         float d = std::sqrt(d2) + 1e-3f;
-        a.vel_x = -dx / d * t.panic_speed;
-        a.vel_y = -dy / d * t.panic_speed;
+        bool  wounded = a.health < 99.0f;
+        float pspd    = wounded ? t.panic_speed * 0.40f : t.panic_speed;
+        float rest    = wounded ? REST_DUR * 1.8f : REST_DUR;
+        if (a.flee_rest > 0.0f) {
+            a.flee_rest -= dt;
+            a.vel_x = 0.0f;
+            a.vel_y = 0.0f;
+            if (a.flee_rest <= 0.0f) a.flee_stamina = STAM_MAX;  // caught breath
+        } else {
+            // healthy deer sprint at 7 m/s (> agent); cumulative fatigue, not a
+            // per-burst timer, is what finally grounds it for the catch.
+            a.vel_x = -dx / d * pspd;
+            a.vel_y = -dy / d * pspd;
+            a.flee_stamina -= dt;
+            if (a.flee_stamina <= 0.0f) a.flee_rest = rest;  // collapse -> window
+        }
         a.state_timer = 2.0f;
     } else {
+        // Safe: stamina refills SLOWLY (not reset) so brief escapes don't erase
+        // the fatigue built up over a sustained chase.
+        a.flee_stamina = std::min(STAM_MAX, a.flee_stamina + RECOVER * dt);
+        a.flee_rest    = 0.0f;
         a.state_timer -= dt;
         if (a.state_timer <= 0.0f) {
             a.state = AnimalState::Wander;
@@ -417,7 +507,18 @@ AnimalSystem::AttackResult AnimalSystem::agent_attack(
     float fx = std::cos(yaw);
     float fy = std::sin(yaw);
     float reach2 = reach * reach;
-    float best_d2 = reach2;
+    // D-127: with DP_PREY_PRIORITY=1, a spear thrust prefers the nearest
+    // rabbit/deer over any closer fish/wolf in the same cone. The v-sweep
+    // proved the agent reaches prey to 0m yet kills=0 because fish (schools of
+    // 5-9) sit closer and eat the blow (`agent_attack` picked nearest of ANY
+    // species). Prioritising prey lets the 2nd killing hit land on the wounded
+    // prey instead of being wasted on a fish.
+    static const bool PREY_PRIORITY = []{
+        const char* v = std::getenv("DP_PREY_PRIORITY");
+        return v && *v && *v != '0';
+    }();
+    int   best_any_i  = -1; float best_any_d2  = reach2;
+    int   best_prey_i = -1; float best_prey_d2 = reach2;
     for (int i = 0; i < int(animals_.size()); ++i) {
         auto& a = animals_[i];
         if (a.state == AnimalState::Dead) continue;
@@ -429,11 +530,11 @@ AnimalSystem::AttackResult AnimalSystem::agent_attack(
         if (d2 > reach2) continue;
         // Forward arc: dot(facing, toward_target) > 0 (>=90 deg cone)
         if (dx * fx + dy * fy < 0.0f) continue;
-        if (d2 < best_d2) {
-            best_d2 = d2;
-            res.index = i;
-        }
+        if (d2 < best_any_d2) { best_any_d2 = d2; best_any_i = i; }
+        bool is_prey = (a.kind == AnimalKind::Rabbit || a.kind == AnimalKind::Deer);
+        if (is_prey && d2 < best_prey_d2) { best_prey_d2 = d2; best_prey_i = i; }
     }
+    res.index = (PREY_PRIORITY && best_prey_i >= 0) ? best_prey_i : best_any_i;
     if (res.index < 0) return res;
     auto& tgt = animals_[res.index];
     tgt.health -= damage;

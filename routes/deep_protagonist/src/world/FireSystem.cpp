@@ -80,6 +80,26 @@ float FireSystem::warm_rate_at(float px, float py) const {
     return 0.0f;
 }
 
+bool FireSystem::consume_fuel_near(float px, float py, float radius,
+                                   float amount) {
+    // D-122 RUNG 1 (cook): charge `amount` seconds of fuel to the NEAREST lit
+    // fire within `radius`. Mirrors warm_rate_at's lit-fire scan; picks the
+    // closest so cooking spends the fire the agent is actually standing at.
+    const float r2 = radius * radius;
+    int   best   = -1;
+    float best_d2 = r2;
+    for (int i = 0; i < int(fires_.size()); ++i) {
+        if (!fires_[i].lit) continue;
+        float dx = fires_[i].x - px;
+        float dy = fires_[i].y - py;
+        float d2 = dx * dx + dy * dy;
+        if (d2 <= best_d2) { best_d2 = d2; best = i; }
+    }
+    if (best < 0) return false;                 // no lit fire in reach
+    fires_[best].fuel = std::max(0.0f, fires_[best].fuel - amount);
+    return true;
+}
+
 int FireSystem::count_lit() const {
     int n = 0;
     for (const auto& f : fires_) {

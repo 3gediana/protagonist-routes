@@ -85,6 +85,15 @@ public:
     static constexpr float MAX_HEIGHT_REL = 30.0f;
     static constexpr int N_BIOMES         = 6;
     static constexpr int N_BUILDING_TYPES = 4;
+    // D-122 one-pot tech-tree: reserved observation slots, locked in NOW so
+    // OBS_DIM never changes again. Appended at the VERY END (see SIZE), each
+    // reads 0 until its rung's system lands, so a warm-started champion
+    // zero-pads these encoder columns and is blind to them (behaviour
+    // unchanged). Layout (indices 573..581):
+    //   573 near_cookfire   574 rawmeat/cap     575 cookedmeat/cap
+    //   576 ore_in_reach    577 ore/cap         578 has_axe   579 has_pickaxe
+    //   580 monument_progress  581 boss_threat
+    static constexpr int OBS_TECH_RESERVED = 9;
 
     static constexpr int SIZE =
           4                               // vital
@@ -129,7 +138,12 @@ public:
         // VERY END so indices 0..570 stay byte-stable; a 571-dim first layer
         // warm-starts by zero-padding these 2 new encoder columns (surgery).
         // Both read 0 when weather is disabled, so the old world is invisible.
-        + 2;                              // rain_intensity (571), wetness (572)
+        + 2                               // rain_intensity (571), wetness (572)
+        // --- D-122 one-pot tech-tree: reserved sense block (573..581) ---
+        // 9 slots locked in NOW so OBS_DIM never changes again. Each reads 0
+        // until its rung lands; a warm-started champion zero-pads these new
+        // encoder columns and is blind to them (old world byte-identical).
+        + OBS_TECH_RESERVED;              // 9 reserved (573..581)
 
     using Vector = std::array<float, SIZE>;
 
