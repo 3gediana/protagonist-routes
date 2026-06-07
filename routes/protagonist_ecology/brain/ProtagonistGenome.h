@@ -50,6 +50,20 @@ public:
     std::vector<float>& hiddenInterfaceWeights() { return hidden_interface_weights_; }
     std::vector<float>& interfaceBias() { return interface_bias_; }
 
+    // One-pot checkpoint surgery: grow the action output dimension to
+    // new_action_dim, re-striding hidden_action_weights_ (hidden-major,
+    // element [h * action_dim + a]) and zero-filling the new action columns
+    // and biases. The new outputs are therefore identically 0 on the first
+    // step, so behavior is unchanged; evolution grows the new weights from
+    // zero. Returns false (no-op) when new_action_dim <= current action_dim.
+    bool extendActionDim(std::size_t new_action_dim);
+
+    // One-pot checkpoint surgery: zero the input->hidden weights for the
+    // contiguous block of input channels [begin, begin + count). Used when a
+    // previously zero-fed perception is activated so the first step stays
+    // unperturbed (weight * signal = 0), then evolution grows the weights.
+    void zeroInputChannelWeights(std::size_t begin, std::size_t count);
+
     static std::unique_ptr<ProtagonistGenome> random(GenomeId id,
                                                      std::size_t input_dim,
                                                      std::size_t hidden_dim,

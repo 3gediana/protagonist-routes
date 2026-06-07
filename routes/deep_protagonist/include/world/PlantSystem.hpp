@@ -39,6 +39,11 @@ public:
                     const Decorations& decorations);
 
     void tick(float dt);
+    // D-132 forage scarcity: same regrow logic, but also drives the periodic
+    // global redistribution (needs the agent position to push the new field
+    // away from where the agent currently sits). When scarcity is disabled
+    // this is identical to tick(dt).
+    void tick(float dt, float agent_x, float agent_y);
 
     // Try to harvest any ripe plant within `radius` of (x,y,z). Returns the
     // KIND of plant harvested for each pellet eaten this tick. Multiple
@@ -54,6 +59,34 @@ public:
 
     const std::vector<PlantInstance>& plants() const { return plants_; }
 
+    // ---- D-132 forage scarcity (env-gated; default disabled = world unchanged)
+    // Instead of giving an exploration *reward* (which Goodharts into
+    // wandering), we make the WORLD itself scarce near the agent so leaving
+    // the spawn corner becomes instrumentally necessary to keep eating:
+    //   - barren spawn: no ripe forage within `barren_r` of the spawn point
+    //   - far initial placement: all plants relocated outside that radius
+    //   - vicinity depletes: a harvested plant respawns far away (not in place)
+    //   - non-stationary: every `redist_sec` the whole forage field is
+    //     re-scattered to fresh random land, biased away from the agent
+    // Only forageable plants move; animals/fish/water are untouched.
+    struct ScarcityCfg {
+        bool  enabled    = false;
+        float barren_r   = 90.0f;   // ripe forage kept out of this radius
+        float redist_sec = 90.0f;   // global redistribution period (0 = never)
+        float spawn_x    = 0.0f;
+        float spawn_y    = 0.0f;
+    };
+    void configure_scarcity(const ScarcityCfg& c, const World* world);
+    // D-133: when the spawn is randomised per episode, move the barren ring's
+    // centre to follow it. No-op fields if scarcity is disabled.
+    void set_scarcity_spawn(float x, float y) { scar_.spawn_x = x; scar_.spawn_y = y; }
+    // Relocate every plant to random land outside `barren_r` of spawn. Call
+    // once after the spawn point is chosen and again at each episode reset so
+    // every life starts with a barren spawn vicinity. No-op if disabled.
+    void apply_initial_scarcity();
+    // Distance from (x,y) to the nearest ripe plant (for logging/metrics).
+    float nearest_ripe_dist(float x, float y) const;
+
     // Tunables
     float fruit_regrow_seconds  = 60.0f;
     float berry_regrow_seconds  = 30.0f;
@@ -63,6 +96,15 @@ public:
 private:
     std::vector<PlantInstance> plants_;
     uint64_t rng_state_ = 1;
+
+    // D-132 forage scarcity state
+    ScarcityCfg  scar_;
+    const World* scar_world_ = nullptr;
+    float        redist_timer_ = 0.0f;
+    // Move one plant to a random dry-land surface spot that is > barren_r from
+    // spawn AND > avoid_r from (avoid_x, avoid_y). Preserves the plant kind.
+    void relocate_plant_(PlantInstance& p,
+                         float avoid_x, float avoid_y, float avoid_r);
 
     float frand();
     float regrow_for(PlantKind k) const;

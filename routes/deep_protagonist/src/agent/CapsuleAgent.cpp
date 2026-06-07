@@ -2,8 +2,38 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace dp::agent {
+
+namespace {
+// D-134 HUNT_V2 (env-gated, default OFF -> world byte-identical). Two-phase
+// locomotion: the continuous move vector's length [0,1] now selects a speed
+// BAND instead of linearly scaling one top speed -- push <= WALK_PUSH walks
+// (up to move_speed_), push > WALK_PUSH sprints (move_speed_ -> SPRINT_SPEED).
+// Sprinting exceeds VitalSystem::run_speed_threshold (4 m/s) so it already
+// drains stamina_run_decay and gets throttled back when exhausted -- the
+// policy decides when to spend that budget purely via push magnitude, so no
+// new action channel is added and action_dim (hence checkpoint resume) is
+// unchanged.
+struct HuntV2Cfg {
+    bool  on;
+    float walk_push;
+    float sprint_speed;
+};
+const HuntV2Cfg& hunt_v2() {
+    static const HuntV2Cfg c = []{
+        const char* v = std::getenv("DP_HUNT_V2");
+        bool on = v && *v && std::atoi(v) != 0;
+        const char* wp = std::getenv("DP_HUNT_V2_WALKPUSH");
+        const char* ss = std::getenv("DP_HUNT_V2_SPRINT");
+        return HuntV2Cfg{ on,
+            (wp && *wp) ? float(std::atof(wp)) : 0.6f,
+            (ss && *ss) ? float(std::atof(ss)) : 6.0f };
+    }();
+    return c;
+}
+}  // namespace
 
 CapsuleAgent::CapsuleAgent(uint64_t seed) : rng_state_(seed ? seed : 1) {
     state_.radius = 0.4f;
@@ -76,8 +106,31 @@ void CapsuleAgent::apply_action(const AgentAction& a,
     }
     float effective_speed = move_speed_ * speed_mult;
 
-    // Drive horizontal velocity toward action target (ground only).
-    if (state_.on_ground) {
+    // D-134 HUNT_V2: remap the push magnitude to a two-band speed (walk vs
+    // sprint). Direction is preserved; the band is chosen by |push|, so the
+    // policy gains a sprint gear without any new action channel. Default OFF
+    // keeps the legacy linear |push| * move_speed_ mapping below.
+    const auto& hv2 = hunt_v2();
+    if (hv2.on && state_.on_ground) {
+        float m = std::sqrt(mx*mx + my*my);          // already clamped to [0,1]
+        if (m > 1e-4f) {
+            float band_speed;
+            if (m <= hv2.walk_push) {
+                band_speed = (m / hv2.walk_push) * move_speed_;          // 0..walk
+            } else {
+                float t = (m - hv2.walk_push) / (1.0f - hv2.walk_push);   // 0..1
+                band_speed = move_speed_
+                           + t * (hv2.sprint_speed - move_speed_);        // walk..sprint
+            }
+            band_speed *= speed_mult;
+            float inv = band_speed / m;              // dir(unit) * band_speed
+            state_.vel_x = mx * inv;
+            state_.vel_y = my * inv;
+        } else {
+            state_.vel_x = 0.0f;
+            state_.vel_y = 0.0f;
+        }
+    } else if (state_.on_ground) {
         state_.vel_x = mx * effective_speed;
         state_.vel_y = my * effective_speed;
     }

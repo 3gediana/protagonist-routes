@@ -240,6 +240,10 @@ public:
     // D-127: of those non-kill connects, how many landed on an actual
     // rabbit/deer (vs a closer fish/wolf that ate the spear).
     int   true_prey_hits() const { return last_true_prey_hits_; }
+    // D-134: actual rabbit/deer KILLS this episode. The reward breakdown's
+    // "kills" field is the kill REWARD (0 by design, anti-Goodhart), so it
+    // could never measure huntability; this counts real downed prey.
+    int   prey_kills() const { return last_prey_kills_; }
     // D-128c: at attack steps, was a rabbit/deer within reach (atk_prey_reach)
     // and additionally inside the forward cone (atk_prey_cone)? Splits the
     // never-registering prey hit into timing (reach=0 -> agent only attacks
@@ -389,10 +393,17 @@ private:
     // value, defeating the D-043 P1 [-10,+10] safety clip.
     float apply_action_effects_(const dp::agent::AgentAction& action);
 
+    // D-133 random spawn: pick a fresh valid spawn (water in vision + dry land,
+    // not underground) anywhere on the map. Returns true and writes sx/sy/sz on
+    // success; false leaves the current spawn untouched. Used per-episode when
+    // DP_SPAWN_RANDOM is on, so there is no fixed safe corner to camp.
+    bool pick_random_spawn_(float& sx, float& sy, float& sz);
+
     EnvConfig                       cfg_;
     float                           spawn_x_ = 0.0f;
     float                           spawn_y_ = 0.0f;
     float                           spawn_z_ = 0.0f;
+    uint64_t                        spawn_rng_ = 1;   // D-133 spawn RNG state
 
     // World-static (never reset across episodes)
     dp::world::World                world_;
@@ -551,6 +562,8 @@ private:
     int                                          last_prey_hits_     = 0;
     int                                          true_prey_hits_     = 0;
     int                                          last_true_prey_hits_ = 0;
+    int                                          prey_kills_          = 0;  // D-134
+    int                                          last_prey_kills_     = 0;  // D-134
     int                                          atk_prey_reach_      = 0;
     int                                          atk_prey_cone_       = 0;
     int                                          last_atk_prey_reach_ = 0;

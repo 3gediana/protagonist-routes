@@ -1,5 +1,7 @@
 #include "world/PlantSystem.hpp"
 
+#include <cmath>
+
 #include <spdlog/spdlog.h>
 
 namespace dp::world {
@@ -136,6 +138,86 @@ void PlantSystem::tick(float dt) {
     }
 }
 
+// ---- D-132 forage scarcity ------------------------------------------------
+
+void PlantSystem::configure_scarcity(const ScarcityCfg& c, const World* world) {
+    scar_ = c;
+    scar_world_ = world;
+    redist_timer_ = 0.0f;
+}
+
+void PlantSystem::relocate_plant_(PlantInstance& p,
+                                  float avoid_x, float avoid_y, float avoid_r) {
+    if (!scar_world_) return;
+    const float wx_max = scar_world_->heightmap().world_size_x();
+    const float wy_max = scar_world_->heightmap().world_size_y();
+    const float br2 = scar_.barren_r * scar_.barren_r;
+    const float ar2 = avoid_r * avoid_r;
+    // Preferred: dry land outside BOTH the spawn barren ring and the avoid ring.
+    for (int attempts = 0; attempts < 32; ++attempts) {
+        float x = frand() * wx_max;
+        float y = frand() * wy_max;
+        float dsx = x - scar_.spawn_x, dsy = y - scar_.spawn_y;
+        if (dsx * dsx + dsy * dsy < br2) continue;
+        float dax = x - avoid_x, day = y - avoid_y;
+        if (dax * dax + day * day < ar2) continue;
+        Biome b = scar_world_->biome_at(x, y);
+        if (b == Biome::River || b == Biome::Swamp) continue;
+        float z = scar_world_->surface_height(x, y);
+        if (scar_world_->is_underground(x, y, z + 0.5f)) continue;
+        p.x = x; p.y = y; p.z = z + 0.5f;
+        return;
+    }
+    // Fallback: any dry-land spot outside the spawn barren ring.
+    for (int attempts = 0; attempts < 16; ++attempts) {
+        float x = frand() * wx_max;
+        float y = frand() * wy_max;
+        float dsx = x - scar_.spawn_x, dsy = y - scar_.spawn_y;
+        if (dsx * dsx + dsy * dsy < br2) continue;
+        Biome b = scar_world_->biome_at(x, y);
+        if (b == Biome::River || b == Biome::Swamp) continue;
+        p.x = x; p.y = y; p.z = scar_world_->surface_height(x, y) + 0.5f;
+        return;
+    }
+    // Give up: leave the plant where it is (rare).
+}
+
+void PlantSystem::apply_initial_scarcity() {
+    if (!scar_.enabled || !scar_world_) return;
+    for (auto& p : plants_) {
+        relocate_plant_(p, scar_.spawn_x, scar_.spawn_y, scar_.barren_r);
+        p.ripe = true;
+        p.regrow_timer = 0.0f;
+    }
+    redist_timer_ = 0.0f;
+}
+
+float PlantSystem::nearest_ripe_dist(float x, float y) const {
+    float best2 = 1e18f;
+    for (const auto& p : plants_) {
+        if (!p.ripe) continue;
+        float dx = p.x - x, dy = p.y - y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 < best2) best2 = d2;
+    }
+    return (best2 >= 1e18f) ? -1.0f : std::sqrt(best2);
+}
+
+void PlantSystem::tick(float dt, float agent_x, float agent_y) {
+    tick(dt);  // ordinary in-place regrow
+    if (!scar_.enabled || !scar_world_ || scar_.redist_sec <= 0.0f) return;
+    redist_timer_ += dt;
+    if (redist_timer_ >= scar_.redist_sec) {
+        redist_timer_ = 0.0f;
+        // Re-scatter the whole forage field to fresh land, pushed away from
+        // wherever the agent currently is so the resources never sit on his
+        // lap. Ripeness/regrow state is preserved.
+        for (auto& p : plants_) {
+            relocate_plant_(p, agent_x, agent_y, scar_.barren_r);
+        }
+    }
+}
+
 std::vector<PlantKind> PlantSystem::try_harvest(float x, float y, float z, float radius,
                                                 bool is_night) {
     std::vector<PlantKind> out;
@@ -154,6 +236,12 @@ std::vector<PlantKind> PlantSystem::try_harvest(float x, float y, float z, float
             out.push_back(p.kind);
             p.ripe = false;
             p.regrow_timer = regrow_for(p.kind);
+            // D-132: vicinity depletes -- the eaten plant regrows far away
+            // (outside the barren ring around the agent) instead of in place,
+            // so the agent cannot camp a single bush.
+            if (scar_.enabled && scar_world_) {
+                relocate_plant_(p, x, y, scar_.barren_r);
+            }
         }
     }
     return out;

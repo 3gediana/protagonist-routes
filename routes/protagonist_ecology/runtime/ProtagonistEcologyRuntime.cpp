@@ -1351,6 +1351,17 @@ std::vector<std::unique_ptr<IGenome>> loadProtagonistCheckpointPopulation(const 
             throw std::runtime_error(describeProtagonistGenomeLoadFailure(path,
                                                                          "failed to load protagonist checkpoint genome: "));
         }
+        // One-pot warmstart: a checkpoint evolved with a smaller action_dim is
+        // grown to the configured (locked) action_dim by zero-filling the new
+        // action columns, so old behavior is preserved while phases D/E reserve
+        // their output slots. Only the action dimension may differ; every other
+        // dimension must still match the shape check below.
+        if (route.protagonist_unified_encoding_enabled
+            && route.protagonist.action_dim > genome->actionDim()) {
+            if (!genome->extendActionDim(route.protagonist.action_dim)) {
+                throw std::runtime_error("failed to extend protagonist checkpoint genome action dimension: " + path.string());
+            }
+        }
         if (genome->inputDim() != protagonistSensoryDim(route)
             || genome->hiddenDim() != route.protagonist.hidden_dim
             || genome->memoryCells() != route.protagonist.memory_cells
@@ -1374,6 +1385,16 @@ std::vector<std::unique_ptr<IGenome>> createPopulationFromGenomeFile(const Prota
     if (loaded == nullptr) {
         throw std::runtime_error(describeProtagonistGenomeLoadFailure(genome_path,
                                                                      "failed to load protagonist genome: "));
+    }
+
+    // One-pot warmstart: grow a smaller-action_dim genome to the configured
+    // (locked) action_dim, zero-filling new action columns (see checkpoint
+    // population path above for rationale).
+    if (route.protagonist_unified_encoding_enabled
+        && route.protagonist.action_dim > loaded->actionDim()) {
+        if (!loaded->extendActionDim(route.protagonist.action_dim)) {
+            throw std::runtime_error("failed to extend protagonist genome action dimension");
+        }
     }
 
     if (loaded->inputDim() != protagonistSensoryDim(route)
@@ -4182,6 +4203,40 @@ int ProtagonistEcologyRuntime::runTraining() {
                          "borderland/main pools start empty (pre-snapshot checkpoint; resume will NOT "
                          "be bit-identical for triple_world runs)",
                          resume_triple_world_dir.string());
+        }
+    }
+
+    // One-pot warmstart: grow resumed triple_world protagonist pool genomes to
+    // the locked action_dim. Archetype 0 holds ProtagonistGenome (background
+    // archetypes are NeatGenome and fail the dynamic_cast), so only protagonist
+    // brains widen -- matching the main-population extend on load above, so that
+    // every protagonist genome (main population, borderland, main_world, and
+    // their future offspring) shares one action output width. New action columns
+    // are zero-filled, leaving behavior identical; idempotent when a genome is
+    // already at the target width. Without this, pool genomes resumed at the old
+    // width build narrower brains than the capability stack expects and spam
+    // "capability output slice overflow" at apply time.
+    if (route.protagonist_unified_encoding_enabled) {
+        const std::size_t locked_action_dim = route.protagonist.action_dim;
+        auto grow_protagonist_pool = [locked_action_dim](WorldSlot& slot) {
+            std::size_t grown = 0;
+            for (auto& pool : slot.pools_by_archetype) {
+                for (auto& genome : pool.genomes) {
+                    auto* pg = dynamic_cast<ProtagonistGenome*>(genome.get());
+                    if (pg != nullptr && pg->actionDim() < locked_action_dim
+                        && pg->extendActionDim(locked_action_dim)) {
+                        ++grown;
+                    }
+                }
+            }
+            return grown;
+        };
+        const std::size_t grown_border = grow_protagonist_pool(triple_world.borderland());
+        const std::size_t grown_main = grow_protagonist_pool(triple_world.mainWorld());
+        if (grown_border + grown_main > 0) {
+            spdlog::info("One-pot warmstart: extended {} borderland + {} main_world "
+                         "protagonist pool genomes to action_dim={}",
+                         grown_border, grown_main, locked_action_dim);
         }
     }
 

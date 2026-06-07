@@ -574,7 +574,10 @@ mutation_boost = 2.0
 
 [compute]
 agent_decision_threads = 1
-protagonist_dense_gpu_enabled = false
+protagonist_batched_dense_enabled = true
+protagonist_dense_gpu_enabled = true
+
+
 
 
 

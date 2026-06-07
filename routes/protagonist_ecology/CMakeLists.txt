@@ -5,6 +5,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     capability/ChopTreeCapability.cpp
     capability/CraftSpearCapability.cpp
     capability/IgniteFireCapability.cpp
+    capability/SocialActionCapability.cpp
     capability/DrinkWaterCapability.cpp
     capability/GoalActionAssistCapability.cpp
     capability/GoalAwareDropCapability.cpp
@@ -67,6 +68,7 @@ set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
     world/BackgroundMemoryLayer.cpp
     world/BaseLayer.cpp
     world/CampfireLayer.cpp
+    world/TerritoryMarkLayer.cpp
     world/InterventionDirectorLayer.cpp
     world/MemoryTrialLayer.cpp
     world/NurseryLogisticsLayer.cpp

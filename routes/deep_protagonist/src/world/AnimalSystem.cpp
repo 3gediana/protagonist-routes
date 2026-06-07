@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace dp::world {
@@ -187,6 +188,49 @@ void AnimalSystem::tick_rabbit(AnimalInstance& a, const World& world,
     float dx = ax - a.pos_x, dy = ay - a.pos_y;
     float d2 = dx * dx + dy * dy;
 
+    // D-134 HUNT_V2 (env-gated, default OFF). Two-phase prey movement: a
+    // healthy rabbit grazes at walk_speed and does NOT flee from proximity, so
+    // a hunter can walk right up and land the first spear. A hit (health drops
+    // below full) makes agent_attack set state=Flee/state_timer, which drives a
+    // short sprint BURST here; once the timer expires the rabbit calms and
+    // slow-wanders WITHOUT re-panicking, leaving a window to close and finish.
+    // Each new hit refreshes the burst. Replaces the legacy persistence chase.
+    static const bool HUNT_V2 = env_i("DP_HUNT_V2", 0) != 0;
+    if (HUNT_V2) {
+        static const float V2_REST = env_f("DP_HUNT_V2_REST", 2.5f);  // sitting-duck secs
+        bool wounded = a.health < 99.0f;
+        if (wounded && a.state == AnimalState::Flee && a.state_timer > 0.0f) {
+            float d = std::sqrt(d2) + 1e-3f;
+            a.vel_x = -dx / d * t.panic_speed;     // sprint straight away
+            a.vel_y = -dy / d * t.panic_speed;
+            a.state_timer -= dt;
+            if (a.state_timer <= 0.0f) {           // burst spent -> drop to rest
+                a.flee_rest = V2_REST;
+                a.state = AnimalState::Wander;
+            }
+        } else if (a.flee_rest > 0.0f) {
+            a.vel_x = 0.0f;                         // panting, stationary: the kill
+            a.vel_y = 0.0f;                         // window -- no re-flee on approach
+            a.flee_rest -= dt;
+        } else {
+            if (a.state != AnimalState::Wander) {
+                a.state = AnimalState::Wander;
+                a.state_timer = 1.5f + frand() * 1.5f;
+            }
+            a.state_timer -= dt;
+            if (a.state_timer <= 0.0f) {
+                float angle = frand() * 6.2831853f;
+                a.wander_x = std::cos(angle);
+                a.wander_y = std::sin(angle);
+                a.state_timer = 1.5f + frand() * 1.5f;
+            }
+            a.vel_x = a.wander_x * t.walk_speed;
+            a.vel_y = a.wander_y * t.walk_speed;
+        }
+        integrate_with_terrain(a, world, dt);
+        return;
+    }
+
     // Persistence hunting. A healthy rabbit is faster than the agent (6 m/s vs
     // 3) and only bolts once the agent is fairly near (FLEE_TRIGGER), sprinting
     // in bursts then panting (SPRINT_CAP/REST_DUR) so a tracker can close in.
@@ -248,6 +292,45 @@ void AnimalSystem::tick_deer(AnimalInstance& a, const World& world,
     auto t = traits_for(AnimalKind::Deer);
     float dx = ax - a.pos_x, dy = ay - a.pos_y;
     float d2 = dx * dx + dy * dy;
+
+    // D-134 HUNT_V2 (env-gated, default OFF): two-phase prey movement, mirror
+    // of tick_rabbit -- graze at walk_speed with no proximity flee; a hit
+    // triggers a short sprint burst then a calm, catchable slow-wander.
+    static const bool HUNT_V2_D = env_i("DP_HUNT_V2", 0) != 0;
+    if (HUNT_V2_D) {
+        static const float V2_REST_D = env_f("DP_HUNT_V2_REST", 2.5f);
+        bool wounded = a.health < 99.0f;
+        if (wounded && a.state == AnimalState::Flee && a.state_timer > 0.0f) {
+            float d = std::sqrt(d2) + 1e-3f;
+            a.vel_x = -dx / d * t.panic_speed;
+            a.vel_y = -dy / d * t.panic_speed;
+            a.state_timer -= dt;
+            if (a.state_timer <= 0.0f) {
+                a.flee_rest = V2_REST_D;
+                a.state = AnimalState::Wander;
+            }
+        } else if (a.flee_rest > 0.0f) {
+            a.vel_x = 0.0f;
+            a.vel_y = 0.0f;
+            a.flee_rest -= dt;
+        } else {
+            if (a.state != AnimalState::Wander) {
+                a.state = AnimalState::Wander;
+                a.state_timer = 2.0f + frand() * 2.0f;
+            }
+            a.state_timer -= dt;
+            if (a.state_timer <= 0.0f) {
+                float angle = frand() * 6.2831853f;
+                a.wander_x = std::cos(angle);
+                a.wander_y = std::sin(angle);
+                a.state_timer = 2.0f + frand() * 2.0f;
+            }
+            a.vel_x = a.wander_x * t.walk_speed;
+            a.vel_y = a.wander_y * t.walk_speed;
+        }
+        integrate_with_terrain(a, world, dt);
+        return;
+    }
 
     // Persistence hunting (see tick_rabbit): a healthy deer sprints at 7 m/s and
     // bolts only when the agent is near; a speared (wounded) deer slows below
@@ -517,8 +600,19 @@ AnimalSystem::AttackResult AnimalSystem::agent_attack(
         const char* v = std::getenv("DP_PREY_PRIORITY");
         return v && *v && *v != '0';
     }();
+    // D-134 HUNT_V2: among prey in cone+reach, FINISH the one already wounded
+    // (lowest health, tiebreak nearest) instead of grabbing the nearest fresh
+    // herd member. Without this, in a herd every thrust hits a new full-health
+    // animal -> 7 hits spread over 7 rabbits, none accrues the 2nd killing
+    // blow (the v-sweep smoking gun: prey_kind_hits=7, kills=0). Default OFF
+    // keeps the legacy "nearest prey" pick.
+    static const bool HUNT_V2 = []{
+        const char* v = std::getenv("DP_HUNT_V2");
+        return v && *v && *v != '0';
+    }();
     int   best_any_i  = -1; float best_any_d2  = reach2;
     int   best_prey_i = -1; float best_prey_d2 = reach2;
+    float best_prey_hp = 1e9f;
     for (int i = 0; i < int(animals_.size()); ++i) {
         auto& a = animals_[i];
         if (a.state == AnimalState::Dead) continue;
@@ -528,15 +622,40 @@ AnimalSystem::AttackResult AnimalSystem::agent_attack(
         float dy = a.pos_y - ay;
         float d2 = dx*dx + dy*dy;
         if (d2 > reach2) continue;
-        // Forward arc: dot(facing, toward_target) > 0 (>=90 deg cone)
-        if (dx * fx + dy * fy < 0.0f) continue;
+        // Forward arc: dot(facing, toward_target) > 0 (>=90 deg cone). D-134
+        // HUNT_V2 drops this 360deg at melee reach: the v-sweep showed the
+        // oracle spams attacks point-blank (atk_prey_reach=488) but its facing
+        // is undefined when prey sits at ~0m (atk_prey_cone=12) -> the cone
+        // gate, not aim, was eating 97% of thrusts. A 3m spear jab needs no
+        // precise heading.
+        if (!HUNT_V2 && dx * fx + dy * fy < 0.0f) continue;
         if (d2 < best_any_d2) { best_any_d2 = d2; best_any_i = i; }
         bool is_prey = (a.kind == AnimalKind::Rabbit || a.kind == AnimalKind::Deer);
-        if (is_prey && d2 < best_prey_d2) { best_prey_d2 = d2; best_prey_i = i; }
+        if (is_prey) {
+            if (HUNT_V2) {
+                // wounded-first: lower health wins; near-equal health -> nearer.
+                if (best_prey_i < 0 || a.health < best_prey_hp - 0.5f
+                    || (std::abs(a.health - best_prey_hp) <= 0.5f && d2 < best_prey_d2)) {
+                    best_prey_i = i; best_prey_d2 = d2; best_prey_hp = a.health;
+                }
+            } else if (d2 < best_prey_d2) {
+                best_prey_d2 = d2; best_prey_i = i;
+            }
+        }
     }
     res.index = (PREY_PRIORITY && best_prey_i >= 0) ? best_prey_i : best_any_i;
     if (res.index < 0) return res;
     auto& tgt = animals_[res.index];
+    static const bool V2HIT_DEBUG = []{
+        const char* v = std::getenv("DP_V2HIT_DEBUG");
+        return v && *v && *v != '0';
+    }();
+    if (V2HIT_DEBUG && HUNT_V2 &&
+        (tgt.kind == AnimalKind::Rabbit || tgt.kind == AnimalKind::Deer)) {
+        std::fprintf(stderr, "[V2HIT] idx=%d hp_pre=%.0f dmg=%.0f d=%.2f best_prey_hp=%.0f preyfirst=%d\n",
+                     res.index, tgt.health, damage, std::sqrt(best_any_d2),
+                     best_prey_hp, (PREY_PRIORITY && best_prey_i >= 0) ? 1 : 0);
+    }
     tgt.health -= damage;
     if (tgt.health <= 0.0f) {
         tgt.health = 0.0f;
@@ -545,9 +664,19 @@ AnimalSystem::AttackResult AnimalSystem::agent_attack(
         tgt.vel_y = 0.0f;
         res.killed = true;
     } else {
-        // Hurt animal flees
+        // Hurt animal flees. D-134 HUNT_V2: keep the burst SHORT (default
+        // 0.35s) so the wounded prey only opens ~2m before dropping to its
+        // stationary rest -- a 1.5s/6m-s burst (legacy) flung it ~9m away,
+        // out of reach, and the hunter (targeting nearest) abandoned it for a
+        // fresh herd member, spreading hits and never landing the 2nd blow
+        // (opp_rest=0, kills=0 across the v-sweep). A short burst leaves the
+        // wounded animal resting within reach for the finishing thrust.
+        static const float V2_BURST = []{
+            const char* v = std::getenv("DP_HUNT_V2_BURST");
+            return (v && *v) ? float(std::atof(v)) : 0.35f;
+        }();
         tgt.state = AnimalState::Flee;
-        tgt.state_timer = 1.5f;
+        tgt.state_timer = HUNT_V2 ? V2_BURST : 1.5f;
     }
     return res;
 }

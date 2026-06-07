@@ -14,6 +14,7 @@
 #include "core/world/layers/WeatherLayer.h"
 #include "world/BaseLayer.h"
 #include "world/CampfireLayer.h"
+#include "world/TerritoryMarkLayer.h"
 #include "world/InterventionDirectorLayer.h"
 #include "world/BackgroundMemoryLayer.h"
 #include "world/MemoryTrialLayer.h"
@@ -215,6 +216,12 @@ std::unique_ptr<World2D> createBootstrapWorld(const ProtagonistEcologyConfig& co
             config.campfire.danger_damage,
             config.random_seed + 901));
     }
+
+    // Territory marks (Phase E): a lightweight decaying scent-mark store agents
+    // can drop to claim ground. Always present (no config) so the mark/evict
+    // actions and the TerritorySocialPerception channel read real state. With
+    // the one-pot weights zeroed it has zero effect until a PE run grows them.
+    world->addLayer(std::make_unique<TerritoryMarkLayer>());
 
     if (config.base.enabled && config.water.enabled) {
         world->addLayer(std::make_unique<WaterLayer>(

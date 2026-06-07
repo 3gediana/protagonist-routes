@@ -4,6 +4,7 @@
 #include "brain/ProtagonistBrain.h"
 #include "brain/ProtagonistGenome.h"
 #include "capability/CaveHideCapability.h"
+#include "capability/SocialActionCapability.h"
 #include "capability/ChopTreeCapability.h"
 #include "capability/CraftSpearCapability.h"
 #include "capability/DrinkWaterCapability.h"
@@ -311,6 +312,16 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
 
     const std::size_t sensory_dim = protagonistSensoryDim(config);
 
+    // One-pot (PHASE D/E reserved action outputs): when unified encoding
+    // locks the I/O layout, reserve a fixed block of action outputs for
+    // not-yet-active phase capabilities (D feed-offspring x1, E mark-territory
+    // x1 + evict-intruder x1) so action_dim is fixed once and future phases
+    // reuse the checkpoint instead of retraining. The matching genome weights
+    // are 0 (see ProtagonistGenome::extendActionDim), so the reserved outputs
+    // stay identically 0 until a real capability replaces ReservedActionCapability.
+    constexpr std::size_t kUnifiedReservedActionOutputs = 3;
+    const std::size_t reserved_action_dim =
+        config.protagonist_unified_encoding_enabled ? kUnifiedReservedActionOutputs : 0;
     const std::size_t required_action_dim = 2
         + (config.signal.enabled ? config.signal.channels : 0)
         + (config.water.enabled && config.survival.enabled ? 1 : 0)
@@ -319,9 +330,13 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         + (has_tool_curriculum ? 3 : 0)
         + (config.objects.enabled ? 2 : 0)
         + (config.protagonist.building_type_choice_enabled ? 4 : 0)  // L5 #6
-        + (config.campfire.enabled ? 1 : 0);  // ignite-fire skill (1 output)
+        + (config.campfire.enabled ? 1 : 0)  // ignite-fire skill (1 output)
+        + reserved_action_dim;
     if (config.protagonist.action_dim != required_action_dim) {
-        throw std::runtime_error("protagonist action_dim does not match configured move/signal capability outputs");
+        throw std::runtime_error("protagonist action_dim does not match configured move/signal capability outputs"
+                                 " (configured=" + std::to_string(config.protagonist.action_dim)
+                                 + " required=" + std::to_string(required_action_dim)
+                                 + " reserved=" + std::to_string(reserved_action_dim) + ")");
     }
 
     auto brain = genome != nullptr ? makeProtagonistBrain(*genome, config, id)
@@ -431,13 +446,15 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
 
     // One-pot unified bloodline (2026-06-01): reserve all A–F perception
     // channels. SelfHeading carries real signal (Phase C proprioception);
-    // kin/territory/world-history are zero stubs until their phase logic lands.
+    // kin/territory/world-history now carry REAL signals (genetic relatedness,
+    // dominance/territory/rival, structure-development/world-age). The one-pot
+    // zeroed weights keep activation-day behavior unchanged.
     // Order MUST match the dim summation in protagonistSensoryDim.
     if (config.protagonist_unified_encoding_enabled) {
         agent->addPerception(std::make_unique<SelfHeadingPerception>());
-        agent->addPerception(std::make_unique<KinPerception>());
-        agent->addPerception(std::make_unique<TerritorySocialPerception>());
-        agent->addPerception(std::make_unique<WorldHistoryPerception>());
+        agent->addPerception(std::make_unique<KinPerception>(kSocialSenseRadius));
+        agent->addPerception(std::make_unique<TerritorySocialPerception>(kSocialSenseRadius));
+        agent->addPerception(std::make_unique<WorldHistoryPerception>(kSocialSenseRadius));
     }
 
     // Realism (2026-06): cave perception. Added last so it matches the
@@ -497,6 +514,19 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     // the world handing out lightning-lit fires.
     if (config.campfire.enabled) {
         agent->addCapability(std::make_unique<IgniteFireCapability>());
+    }
+
+    // One-pot reserved action outputs (PHASE D/E). Registered last among
+    // output-consuming capabilities so the reserved slots are the final
+    // kUnifiedReservedActionOutputs indices of the action vector, matching the
+    // zero-filled columns produced by ProtagonistGenome::extendActionDim.
+    // These now carry REAL effects (feed-kin / mark[honest no-op] / evict-
+    // intruder), computed from data already in the sim. The genome weights
+    // feeding them are zeroed by the one-pot surgery, so every output stays 0
+    // until a PE run grows them -- activation-day behavior is unchanged.
+    if (reserved_action_dim > 0) {
+        agent->addCapability(
+            std::make_unique<SocialActionCapability>(reserved_action_dim, kSocialSenseRadius));
     }
 
     // L2.2 v2: drive tick (last so it sees foodEatenThisTick from

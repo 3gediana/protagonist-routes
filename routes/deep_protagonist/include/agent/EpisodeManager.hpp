@@ -36,6 +36,9 @@ public:
     };
 
     void configure(const Config& cfg) { cfg_ = cfg; }
+    // D-133: update only the spawn point (keeps animal seed / timing config).
+    // Lets Environment randomise the spawn per episode without re-seeding.
+    void set_spawn(float x, float y) { cfg_.spawn_x = x; cfg_.spawn_y = y; }
 
     // Mark a fresh episode: returns id of the new episode.
     int  begin_episode();

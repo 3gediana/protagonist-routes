@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <random>
@@ -837,6 +838,80 @@ struct ScriptedSettler {
             return a;
         }
 
+        // ---------- Layer 2.7: HUNT OPPORTUNITY (D-134, env-gated) ----------
+        // The default oracle's protein branch (Layer 3N step 2) prefers FISHING
+        // whenever water is in vision, so the BC base it produced never learned
+        // to chase+spear land prey -- exactly the skill the champion is missing.
+        // With D-133 random spawn the agent now frequently starts near
+        // rabbits/deer, so this layer makes the teacher COMMIT to a persistence
+        // hunt when prey is in vision and it is safe (no wolf -- handled above,
+        // daytime, vitals ok). Prey flee but their flee_stamina (D-126) drains
+        // until they collapse into a forced rest, so a steady chase closes the
+        // gap; press attack inside spear reach. Gated daytime + vitals so the
+        // hunt never causes a freeze/thirst death. DP_ORACLE_HUNT default 0 ->
+        // oracle byte-for-byte unchanged.
+        {
+            static const bool ORACLE_HUNT = []{
+                const char* v = std::getenv("DP_ORACLE_HUNT");
+                return v && *v && std::atoi(v) != 0;
+            }();
+            // Only genuine emergencies (Layers 1-2 already returned for those)
+            // or night stand the hunt down. Moderate hunger/thirst must NOT
+            // abort it: the prey only tires while we stay <12m (FLEE_TRIGGER),
+            // so breaking off to fish lets its stamina recover and the chase
+            // never collapses. Note: a spear is REQUIRED -- a bare-hand blow
+            // (1.4m, low dmg) can't down prey, and with random spawn there is
+            // no home to craft at, so this layer forges one IN PLACE.
+            if (ORACLE_HUNT && !is_night
+                && hunger > TH_CRIT_LOW && thirst > TH_CRIT_LOW) {
+                float qx, qy;
+                if (find_prey_(obs, qx, qy)) {
+                    const float qd2  = qx*qx + qy*qy;
+                    const float qd_m = std::sqrt(qd2) * VISION_RANGE;
+                    if (qd_m < 55.0f) {                 // prey in vision -> engage
+                        const bool have_spear_h = obs[OBS_INV_SPEAR] > 0.005f;
+                        if (have_spear_h) {
+                            // Persistence hunt: chase relentlessly. Healthy prey
+                            // (6-7 m/s) outruns us (3) during a sprint but its
+                            // cumulative fatigue forces a ~3s rest; we close ~9m
+                            // each rest, land the 1st 50-dmg hit, the wounded
+                            // prey then slows below us, and the 2nd hit kills.
+                            const float ATTACK_RANGE_H = 2.3f / VISION_RANGE;
+                            steer_(a, qx, qy);
+                            if (std::sqrt(qd2) < ATTACK_RANGE_H) a.attack = true;
+                            return a;
+                        }
+                        // No spear -> acquire one. Craft in place if we have the
+                        // materials; otherwise fetch the nearest wood then stone.
+                        if (obs[OBS_INV_WOOD]  > 0.005f
+                            && obs[OBS_INV_STONE] > 0.005f
+                            && craft_cooldown == 0) {
+                            a.craft_spear = true;
+                            craft_cooldown = 8;
+                            return a;
+                        }
+                        float rx, ry;
+                        if (obs[OBS_INV_WOOD] <= 0.005f
+                            && find_resource_(obs, 0, rx, ry)) {
+                            steer_(a, rx, ry);
+                            if (std::sqrt(rx*rx + ry*ry) < COLLECT_RANGE)
+                                a.collect = true;
+                            return a;
+                        }
+                        if (obs[OBS_INV_STONE] <= 0.005f
+                            && find_resource_(obs, 1, rx, ry)) {
+                            steer_(a, rx, ry);
+                            if (std::sqrt(rx*rx + ry*ry) < COLLECT_RANGE)
+                                a.collect = true;
+                            return a;
+                        }
+                        // Materials not in sight: fall through to the normal
+                        // gather/forage layers (don't idle), retry next tick.
+                    }
+                }
+            }
+        }
+
         // ---------- Layer 3N: NUTRITION MAINTENANCE ----------
         // decision_blueprint_world_coherence §4/§5a: protein (obs 567) and
         // vitamin (obs 568) decay independently of hunger/thirst. The caveman
@@ -1328,6 +1403,24 @@ static float phi_hunt_progress(const dp::agent::ObservationBuilder::Vector& obs)
     }
     return 0.45f * best;   // 0 (far / no prey) -> 0.45, strictly below 0.50 pelt rung
 }
+
+// D-136 warmth PBRS: the breadth (phi_repertoire) runs cap at ~2.7/10 because
+// the agent freezes to death at ~6000 steps (cold deaths dominate), so it never
+// survives long enough to chain multi-step mechanisms. Diagnosis: every warmth
+// source EXCEPT clothing requires staying put (fire/lean-to/house warm only
+// while standing in range), which conflicts with the agent's dominant wander-
+// and-forage strategy -> it builds a fire, walks off, and freezes. Clothing is
+// the only PORTABLE warmth. This strict potential-based shaping (Ng/Harada/
+// Russell 1999; policy-invariant) rewards body-temperature RECOVERY by ANY
+// means; because clothing is the only warmth compatible with foraging, a
+// foraging policy that wants to avoid the cooling penalty is pulled toward
+// wearing it. Phi in [0,1]: saturates at thermal neutral (temp>=0.5) so the
+// agent is paid for climbing OUT of cold, NOT for banking excess midday heat
+// (no Goodhart). OBS_TEMP=3 is body temp/100 (0.15=freezing, 0.5=neutral).
+static float phi_warmth(const dp::agent::ObservationBuilder::Vector& obs) {
+    constexpr int IDX_TEMP = 3;   // matches OBS_TEMP in the scripted settler
+    return std::clamp(obs[IDX_TEMP] / 0.5f, 0.0f, 1.0f);  // 1 @>=neutral -> 0 @freezing
+}
 int main(int argc, char** argv) {
     auto console = spdlog::stdout_color_mt("deep_protagonist_train");
     spdlog::set_default_logger(console);
@@ -1392,6 +1485,17 @@ int main(int argc, char** argv) {
     float       ppo_night_shaping = 0.0f; // decision_round_16 Step2: coef for night-shelter PBRS (0=off)
     float       ppo_day_shaping   = 0.0f; // round_19 Path B: coef for daytime-forage PBRS (0=off)
     float       ppo_hunt_shaping  = 0.0f; // grain-trail: coef for land-hunt-chain PBRS (0=off)
+    // D-136 repertoire breadth: PBRS over count of distinct episode milestones
+    // (drink/eat/collect/spear/shelter/clothing/seed/house/crop/follower).
+    // Potential Phi_rep = milestones().count(); each NEW mechanism gives a
+    // one-time pulse (~coef), holding pays ~0 -> rewards WIDTH, not grinding a
+    // single action. Bounded at 10 (anti-Goodhart). 0=off.
+    float       ppo_repertoire_shaping = 0.0f;
+    // D-136 warmth: PBRS on body-temperature recovery (see phi_warmth above).
+    // Breaks the ~6000-step freeze wall that caps breadth, pulling the policy
+    // toward PORTABLE warmth (clothing) since that is the only heat source
+    // compatible with its wander-and-forage strategy. 0=off.
+    float       ppo_warmth_shaping = 0.0f;
     // decision_blueprint_nutrition (round_21): dual nutrition bars + hunting.
     bool        nutrition_enabled = false; // master switch (default off = old world)
     float       nutri_protein_decay = 20.0f;
@@ -1471,6 +1575,8 @@ int main(int argc, char** argv) {
         else if (a == "--ppo-night-shaping") ppo_night_shaping = std::stof(next());
         else if (a == "--ppo-day-shaping")   ppo_day_shaping   = std::stof(next());
         else if (a == "--ppo-hunt-shaping")  ppo_hunt_shaping  = std::stof(next());
+        else if (a == "--ppo-repertoire-shaping") ppo_repertoire_shaping = std::stof(next());
+        else if (a == "--ppo-warmth-shaping")     ppo_warmth_shaping     = std::stof(next());
         else if (a == "--nutrition")            nutrition_enabled  = true;
         else if (a == "--nutri-protein-decay") nutri_protein_decay = std::stof(next());
         else if (a == "--nutri-vitamin-decay") nutri_vitamin_decay = std::stof(next());
@@ -1795,7 +1901,7 @@ int main(int argc, char** argv) {
                      "bites={:+.1f} death={:+.1f} vital={:+.1f} "
                      "collect={:+.1f} shelter={:+.1f} craft={:+.1f} "
                      "milestone={:+.1f} potential={:+.1f}) "
-                     "hunt_hits={} prey_kind_hits={} atk_prey_reach={} atk_prey_cone={} opp_reach={} opp_rest={} explore_cells={} closest_prey={:.1f}m closest_rest={:.1f}m",
+                     "hunt_hits={} prey_kind_hits={} prey_kills={} atk_prey_reach={} atk_prey_cone={} opp_reach={} opp_rest={} explore_cells={} closest_prey={:.1f}m closest_rest={:.1f}m",
                      episode_id, s.steps, s.total_reward,
                      ms.count(), dp::env::EpisodeMilestones::N, score,
                      s.r_alive, s.r_food, s.r_water, s.r_kills,
@@ -1804,6 +1910,7 @@ int main(int argc, char** argv) {
                      s.r_potential,
                      e.prey_hits(),
                      e.true_prey_hits(),
+                     e.prey_kills(),
                      e.atk_prey_reach(),
                      e.atk_prey_cone(),
                      e.opp_reach(),
@@ -1901,6 +2008,9 @@ int main(int argc, char** argv) {
         std::vector<float>                       v_lp(n_envs), v_val(n_envs);
         std::vector<std::vector<float>>          v_hin(n_envs);
         std::vector<dp::env::StepResult>         v_sr(n_envs);
+        // D-136: per-env distinct-mechanism count snapshot taken BEFORE each
+        // step, so Phi_rep(s) for the PBRS shaping below uses the pre-step state.
+        std::vector<int>                         v_rep_before(n_envs, 0);
 
         while (steps_done < max_steps) {
             // Snapshot per-env GRU hiddens BEFORE the batched sample.
@@ -1909,6 +2019,11 @@ int main(int argc, char** argv) {
             // Batched policy forward (single GPU call for N envs).
             ppo->sample_actions_batch(obs_batch, v_actions, v_conts,
                                       v_disc, v_lp, v_val);
+
+            // D-136: snapshot pre-step repertoire (distinct milestones) per env.
+            if (ppo_repertoire_shaping > 0.0f)
+                for (int i = 0; i < n_envs; ++i)
+                    v_rep_before[i] = venv.env(i).milestones().count();
 
             // Parallel env step (N std::async tasks).
             venv.step_all(v_actions, v_sr);
@@ -1944,6 +2059,23 @@ int main(int argc, char** argv) {
                                        : phi_hunt_progress(v_sr[i].obs);
                         shaped_r += ppo_hunt_shaping
                                   * (pcfg.gamma * hphi_sp - hphi_s);
+                    }
+                    if (ppo_repertoire_shaping > 0.0f) {
+                        // env(i) is post-step but NOT yet reset here (reset
+                        // happens in the done-branch below), so milestones()
+                        // is Phi_rep(s'). Terminal potential = 0 by convention.
+                        float rphi_s  = static_cast<float>(v_rep_before[i]);
+                        float rphi_sp = v_sr[i].done ? 0.0f
+                                       : static_cast<float>(venv.env(i).milestones().count());
+                        shaped_r += ppo_repertoire_shaping
+                                  * (pcfg.gamma * rphi_sp - rphi_s);
+                    }
+                    if (ppo_warmth_shaping > 0.0f) {
+                        float wphi_s  = phi_warmth(obs_batch[i]);
+                        float wphi_sp = v_sr[i].done ? 0.0f
+                                       : phi_warmth(v_sr[i].obs);
+                        shaped_r += ppo_warmth_shaping
+                                  * (pcfg.gamma * wphi_sp - wphi_s);
                     }
                     tr.reward   = shaped_r;
                     tr.value    = v_val[i];
@@ -2065,6 +2197,9 @@ int main(int argc, char** argv) {
         }
 
         astats.accumulate(action);
+        // D-136: pre-step repertoire snapshot for PBRS breadth shaping.
+        int rep_before = ppo_repertoire_shaping > 0.0f
+                       ? env.milestones().count() : 0;
         auto sr = env.step(action);
         ++steps_done;
 
@@ -2112,6 +2247,17 @@ int main(int argc, char** argv) {
                 float hphi_s  = phi_hunt_progress(obs);
                 float hphi_sp = sr.done ? 0.0f : phi_hunt_progress(sr.obs);
                 shaped_r += ppo_hunt_shaping * (pcfg.gamma * hphi_sp - hphi_s);
+            }
+            if (ppo_repertoire_shaping > 0.0f) {
+                float rphi_s  = static_cast<float>(rep_before);
+                float rphi_sp = sr.done ? 0.0f
+                               : static_cast<float>(env.milestones().count());
+                shaped_r += ppo_repertoire_shaping * (pcfg.gamma * rphi_sp - rphi_s);
+            }
+            if (ppo_warmth_shaping > 0.0f) {
+                float wphi_s  = phi_warmth(obs);
+                float wphi_sp = sr.done ? 0.0f : phi_warmth(sr.obs);
+                shaped_r += ppo_warmth_shaping * (pcfg.gamma * wphi_sp - wphi_s);
             }
             tr.reward   = shaped_r;
             tr.value    = vv;

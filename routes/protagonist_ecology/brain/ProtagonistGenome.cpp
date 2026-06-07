@@ -1,5 +1,7 @@
 #include "brain/ProtagonistGenome.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <random>
@@ -109,6 +111,39 @@ std::unique_ptr<ProtagonistGenome> ProtagonistGenome::random(GenomeId id,
     fillRandom(genome->hidden_interface_weights_, rng);
     fillRandom(genome->interface_bias_, rng);
     return genome;
+}
+
+bool ProtagonistGenome::extendActionDim(std::size_t new_action_dim) {
+    if (new_action_dim <= action_dim_) {
+        return false;
+    }
+    const std::size_t old_action_dim = action_dim_;
+    // hidden_action_weights_ is hidden-major: element [h * action_dim + a].
+    // Growing action_dim changes the per-hidden-row stride, so re-stride into
+    // a fresh buffer and leave the new action columns at 0.
+    std::vector<float> grown(hidden_dim_ * new_action_dim, 0.0f);
+    for (std::size_t h = 0; h < hidden_dim_; ++h) {
+        for (std::size_t a = 0; a < old_action_dim; ++a) {
+            grown[h * new_action_dim + a] = hidden_action_weights_[h * old_action_dim + a];
+        }
+    }
+    hidden_action_weights_ = std::move(grown);
+    action_bias_.resize(new_action_dim, 0.0f);
+    action_dim_ = new_action_dim;
+    return true;
+}
+
+void ProtagonistGenome::zeroInputChannelWeights(std::size_t begin, std::size_t count) {
+    // input_hidden_weights_ is aug-input-major: channel i occupies
+    // [i * hidden_dim_, (i + 1) * hidden_dim_). External perception channels
+    // are the first input_dim_ rows (memory-read rows follow).
+    const std::size_t aug_rows = input_dim_ + memory_cells_ * read_heads_;
+    const std::size_t end = std::min(begin + count, aug_rows);
+    for (std::size_t i = begin; i < end; ++i) {
+        std::fill(input_hidden_weights_.begin() + static_cast<std::ptrdiff_t>(i * hidden_dim_),
+                  input_hidden_weights_.begin() + static_cast<std::ptrdiff_t>((i + 1) * hidden_dim_),
+                  0.0f);
+    }
 }
 
 bool ProtagonistGenome::saveToFile(const std::filesystem::path& path) const {

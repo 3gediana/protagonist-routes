@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <random>
 #include <stdexcept>
 
@@ -24,6 +25,16 @@ void fillRandom(std::vector<float>& data, std::mt19937& rng, float scale = 0.35f
     for (float& value : data) {
         value = dist(rng);
     }
+}
+
+// Deterministic 64-bit mixer (splitmix64). Used to derive the fixed sign
+// pattern for the genetic-fingerprint random projection so every brain in a
+// run shares the same projection and the fingerprints stay comparable.
+std::uint64_t splitmix64(std::uint64_t x) {
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
 }
 
 void addWrapped(std::span<float> target,
@@ -239,6 +250,8 @@ ProtagonistBrain::ProtagonistBrain(std::size_t input_dim,
             dense_gpu_.reset();
         }
     }
+
+    computeGeneticFingerprint();
 }
 
 ProtagonistBrain::ProtagonistBrain(const ProtagonistGenome& genome, bool enable_gpu_dense)
@@ -281,6 +294,45 @@ ProtagonistBrain::ProtagonistBrain(const ProtagonistGenome& genome, bool enable_
                                                            interface_bias_);
         if (!dense_gpu_->ready()) {
             dense_gpu_.reset();
+        }
+    }
+
+    computeGeneticFingerprint();
+}
+
+void ProtagonistBrain::computeGeneticFingerprint() {
+    // Sign random projection (Achlioptas) of the input->hidden weight vector to
+    // a low-dim fingerprint. To bound construction cost we sample at most
+    // kMaxSamples weights at a fixed stride (identical across brains in a run,
+    // since they share total_input_dim_/hidden_dim_), which preserves cosine.
+    constexpr std::uint64_t kProjSeed = 0x4B494E2D44ull;  // "KIN-D"
+    constexpr std::size_t kMaxSamples = 4096;
+    genetic_fingerprint_.assign(kGeneticFingerprintDim, 0.0f);
+
+    const std::vector<float>& w = in_hidden_weights_;
+    if (w.empty()) {
+        return;
+    }
+    const std::size_t stride = std::max<std::size_t>(1, w.size() / kMaxSamples);
+
+    for (std::size_t d = 0; d < kGeneticFingerprintDim; ++d) {
+        float acc = 0.0f;
+        const std::uint64_t row_seed = kProjSeed ^ (static_cast<std::uint64_t>(d) << 40);
+        for (std::size_t i = 0; i < w.size(); i += stride) {
+            const std::uint64_t h = splitmix64(row_seed ^ static_cast<std::uint64_t>(i));
+            acc += (h & 1ull) ? w[i] : -w[i];
+        }
+        genetic_fingerprint_[d] = acc;
+    }
+
+    float norm = 0.0f;
+    for (const float v : genetic_fingerprint_) {
+        norm += v * v;
+    }
+    norm = std::sqrt(norm);
+    if (norm > 1.0e-8f) {
+        for (float& v : genetic_fingerprint_) {
+            v /= norm;
         }
     }
 }

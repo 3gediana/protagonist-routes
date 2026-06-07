@@ -176,6 +176,9 @@ Environment::Environment(const EnvConfig& cfg)
         }
     }
     spawn_z_ = world_.surface_height(spawn_x_, spawn_y_) + 5.0f;
+    // D-133: seed the per-episode spawn RNG (only used when DP_SPAWN_RANDOM on).
+    spawn_rng_ = (cfg_.world.seed ^ 0x53504157C0FFEEULL);
+    if (!spawn_rng_) spawn_rng_ = 1;
     spdlog::info("Environment D-050: spawn=({:.1f},{:.1f},{:.1f}), "
                  "water_in_vision={} food_in_vision={}",
                  spawn_x_, spawn_y_, spawn_z_,
@@ -258,6 +261,48 @@ Environment::Environment(const EnvConfig& cfg)
         }
     }
 
+    // ---- D-132 forage scarcity (env-gated) --------------------------------
+    // Instead of paying an exploration reward (which Goodharts into pure
+    // wandering, cf. D-131), make the WORLD scarce so leaving the spawn
+    // corner becomes instrumentally necessary to keep eating: barren spawn
+    // vicinity + forage relocated far + vicinity depletes as eaten + the
+    // whole field periodically re-scattered. Only forageable plants move;
+    // animals/fish/water are untouched. Default off (DP_FORAGE_SCARCITY unset
+    // or 0) => the plant field is byte-identical to the shipped world.
+    {
+        static const int FORAGE_SCARCITY = []{
+            const char* v = std::getenv("DP_FORAGE_SCARCITY");
+            return (v && *v && std::atoi(v) != 0) ? 1 : 0;
+        }();
+        static const float FORAGE_BARREN_R = []{
+            const char* v = std::getenv("DP_FORAGE_BARREN_R");
+            if (!v || !*v) return 90.0f;
+            char* e = nullptr; float f = std::strtof(v, &e);
+            return (e == v || f < 1.0f) ? 90.0f : f;
+        }();
+        static const float FORAGE_REDIST_SEC = []{
+            const char* v = std::getenv("DP_FORAGE_REDIST_SEC");
+            if (!v || !*v) return 90.0f;
+            char* e = nullptr; float f = std::strtof(v, &e);
+            return (e == v || f < 0.0f) ? 90.0f : f;
+        }();
+        if (FORAGE_SCARCITY) {
+            dp::world::PlantSystem::ScarcityCfg sc;
+            sc.enabled    = true;
+            sc.barren_r   = FORAGE_BARREN_R;
+            sc.redist_sec = FORAGE_REDIST_SEC;
+            sc.spawn_x    = spawn_x_;
+            sc.spawn_y    = spawn_y_;
+            plants_.configure_scarcity(sc, &world_);
+            plants_.apply_initial_scarcity();
+            spdlog::info("Environment D-132 FORAGE-SCARCITY: on "
+                         "(barren_r={:.0f}m redist={:.0f}s) -> nearest ripe "
+                         "forage now {:.1f}m from spawn",
+                         FORAGE_BARREN_R, FORAGE_REDIST_SEC,
+                         plants_.nearest_ripe_dist(spawn_x_, spawn_y_));
+        }
+    }
+
     dp::agent::EpisodeManager::Config ecfg;
     ecfg.spawn_x          = spawn_x_;
     ecfg.spawn_y          = spawn_y_;
@@ -269,9 +314,73 @@ Environment::Environment(const EnvConfig& cfg)
     spatial_.configure(0.0f, 0.0f);
 }
 
+bool Environment::pick_random_spawn_(float& sx, float& sy, float& sz) {
+    const float wx_max = world_.heightmap().world_size_x();
+    const float wy_max = world_.heightmap().world_size_y();
+    const float R  = dp::agent::ObservationBuilder::VISION_RANGE;
+    const float R2 = R * R;
+    auto biome_at = [&](float x, float y) -> dp::world::Biome {
+        if (x < 0.0f || y < 0.0f || x >= wx_max || y >= wy_max)
+            return dp::world::Biome::Plain;
+        return world_.biome_at(x, y);
+    };
+    auto water_in_vision = [&](float cx, float cy) {
+        const float step = 8.0f;
+        for (float dy = -R; dy <= R; dy += step) {
+            for (float dx = -R; dx <= R; dx += step) {
+                if (dx*dx + dy*dy > R2) continue;
+                auto b = biome_at(cx + dx, cy + dy);
+                if (b == dp::world::Biome::River
+                 || b == dp::world::Biome::Swamp) return true;
+            }
+        }
+        return false;
+    };
+    auto frand = [&]() {
+        spawn_rng_ ^= spawn_rng_ >> 12;
+        spawn_rng_ ^= spawn_rng_ << 25;
+        spawn_rng_ ^= spawn_rng_ >> 27;
+        uint64_t r = spawn_rng_ * 0x2545F4914F6CDD1DULL;
+        return static_cast<float>(r & 0xFFFFFFu) / 16777216.0f;
+    };
+    const float margin = 24.0f;
+    for (int attempt = 0; attempt < 256; ++attempt) {
+        float x = margin + frand() * (wx_max - 2.0f * margin);
+        float y = margin + frand() * (wy_max - 2.0f * margin);
+        auto b = biome_at(x, y);
+        if (b == dp::world::Biome::River || b == dp::world::Biome::Swamp)
+            continue;                       // must be dry land
+        if (!water_in_vision(x, y)) continue; // must see water (no thirst trap)
+        float gz = world_.surface_height(x, y);
+        if (world_.is_underground(x, y, gz + 0.5f)) continue;
+        sx = x; sy = y; sz = gz + 5.0f;
+        return true;
+    }
+    return false;  // keep the existing spawn
+}
+
 void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     // First-time reset (episode_id == -1) or post-done reset both go
     // through here.
+    // D-133 random spawn (env-gated): pick a fresh valid spawn each episode so
+    // there is no fixed safe corner to camp. Must run BEFORE the branch below
+    // so both first-life (agent_.reset) and respawn (episodes_.reset, which
+    // snaps to the configured spawn) use the new point. Default off
+    // (DP_SPAWN_RANDOM unset/0) => spawn stays fixed exactly as before.
+    {
+        static const int SPAWN_RANDOM = []{
+            const char* v = std::getenv("DP_SPAWN_RANDOM");
+            return (v && *v && std::atoi(v) != 0) ? 1 : 0;
+        }();
+        if (SPAWN_RANDOM) {
+            float sx, sy, sz;
+            if (pick_random_spawn_(sx, sy, sz)) {
+                spawn_x_ = sx; spawn_y_ = sy; spawn_z_ = sz;
+                episodes_.set_spawn(sx, sy);     // respawn snaps here
+                plants_.set_scarcity_spawn(sx, sy);  // barren ring follows spawn
+            }
+        }
+    }
     if (episodes_.episode_id() < 0) {
         agent_.reset(spawn_x_, spawn_y_, spawn_z_);
         // Initialise vital state to full / neutral.
@@ -298,12 +407,16 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     step_index_ = 0;
     prey_hits_      = 0;
     true_prey_hits_ = 0;
+    prey_kills_     = 0;  // D-134
     atk_prey_reach_ = 0;
     atk_prey_cone_  = 0;
     opp_reach_      = 0;
     opp_rest_       = 0;
     visited_cells_.clear();   // D-131: fresh map coverage each life
     explore_new_cells_ = 0;
+    // D-132: re-scatter forage so every life starts with a barren spawn
+    // vicinity (no-op when DP_FORAGE_SCARCITY is off).
+    plants_.apply_initial_scarcity();
     closest_prey_m_ = 1e9f;
     closest_rest_m_ = 1e9f;
     selected_building_ = dp::world::BuildingType::Shed;
@@ -621,7 +734,7 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
         tame_.apply_follow(animals_, as.pos_x, as.pos_y, dt);
     }
 
-    plants_.tick(dt);
+    plants_.tick(dt, as.pos_x, as.pos_y);
     resources_.tick(dt);
     farming_.tick(dt, &buildings_);  // D-091: pass buildings so plots near home grow faster.
 
@@ -1318,8 +1431,32 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // reward path forces PPO to keep using the multi-step deposit chain
     // (which it already proved learnable in ep 0-100). Action stays in the
     // action space (PPO sees consistent action_dim) but does nothing.
+    //
+    // D-136: opt-in re-enable behind DP_LEANTO=1 (default off => exactly the
+    // D-089 no-op above). Why bring it back: the breadth (phi_repertoire) runs
+    // plateau at ~2.7/10 mechanisms because the agent freezes to death at
+    // ~6000 steps having only had time for collect+spear, and shelter/house
+    // never complete. The lean-to is a 1-action "don't freeze" so episodes can
+    // last long enough to chain more mechanisms (the real breadth bottleneck is
+    // survival time, not incentive). The original D-089 grind worry is now
+    // neutralised two ways: (1) we only ever allow ONE lean-to per episode
+    // (gated on !shelter_.placed()), so repeated presses cost nothing and earn
+    // nothing -> zero spam vector; (2) the breadth reward only pays first-use,
+    // so camping a lean-to cannot farm width. The +5 built_shelter and the
+    // shelter milestone therefore fire exactly once per life.
+    static const bool kLeanToEnabled = [] {
+        const char* v = std::getenv("DP_LEANTO");
+        return v && v[0] == '1';
+    }();
     if (action.place_shelter) {
-        // intentionally no-op
+        if (kLeanToEnabled && !shelter_.placed()) {
+            if (shelter_.try_place(inventory_, as.pos_x, as.pos_y, as.pos_z)) {
+                reward_.event_built_shelter();
+                fire_once_critical(first_shelter_fired_);
+            }
+        }
+        // else: intentionally no-op (D-089 behaviour when switch is off, or
+        // a lean-to already exists this episode).
     }
     // D-123 hunt diagnostic: every step, record the TRUE closest the agent ever
     // gets to a huntable prey (rabbit/deer), regardless of whether it attacks.
@@ -1501,12 +1638,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
                 inventory_.add(dp::agent::ItemKind::Fur);
                 reward_.event_collected_resource();  // D-062
                 fire_once_critical(first_hunt_fired_);  // D-062
+                ++prey_kills_;  // D-134
             } else if (kind == dp::world::AnimalKind::Deer) {
                 const float ate = eat_drive(40.0f);
                 if (ate > 0.5f) fire_once_critical(first_eat_fired_);
                 inventory_.add(dp::agent::ItemKind::Fur);
                 reward_.event_collected_resource();  // D-062
                 fire_once_critical(first_hunt_fired_);  // D-062
+                ++prey_kills_;  // D-134
             } else if (kind == dp::world::AnimalKind::Fish) {
                 const float ate = eat_drive(20.0f);
                 if (ate > 0.5f) fire_once_critical(first_eat_fired_);
@@ -1798,6 +1937,7 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
         last_ep_stats_ = reward_.episode();
         last_prey_hits_      = prey_hits_;       // D-123 snapshot before reset
         last_true_prey_hits_ = true_prey_hits_;  // D-127 snapshot before reset
+        last_prey_kills_     = prey_kills_;      // D-134 snapshot before reset
         last_atk_prey_reach_ = atk_prey_reach_;  // D-128c snapshot before reset
         last_atk_prey_cone_  = atk_prey_cone_;
         last_opp_reach_      = opp_reach_;        // D-129 snapshot before reset

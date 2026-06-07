@@ -9,6 +9,7 @@
 #include "core/interfaces/IBrain.h"
 
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace neuro::routes::protagonist {
@@ -60,6 +61,13 @@ public:
     std::size_t memorySlots() const { return memory_slots_; }
     std::size_t readHeads() const { return read_heads_; }
 
+    // Kin(D): low-dim genetic fingerprint of this brain, computed once from the
+    // input->hidden weight vector via a deterministic sign random projection
+    // (Achlioptas JL). Reproduction blends/mutates parent weights, so the
+    // cosine similarity of two fingerprints approximates genetic relatedness.
+    static constexpr std::size_t kGeneticFingerprintDim = 24;
+    std::span<const float> geneticFingerprint() const { return genetic_fingerprint_; }
+
     DNCStateSummary dncSummary() const;
 
     DNCMemory& dncMemory() { return dnc_memory_; }
@@ -84,6 +92,8 @@ public:
     const BodyStateMemory& bodyStateMemory() const { return body_state_memory_; }
 
 private:
+    void computeGeneticFingerprint();
+
     std::size_t external_input_dim_;
     std::size_t total_input_dim_;
     std::size_t hidden_dim_;
@@ -97,6 +107,7 @@ private:
     std::vector<float> action_bias_;
     std::vector<float> hidden_interface_weights_;
     std::vector<float> interface_bias_;
+    std::vector<float> genetic_fingerprint_;
     ObservationEncoder observation_encoder_;
     MemoryQueryEncoder memory_query_encoder_;
     BodyStateMemory body_state_memory_;
