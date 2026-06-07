@@ -182,6 +182,18 @@ function surfaceH(wx, wy) {
   return (h00*(1-tx)+h10*tx)*(1-ty) + (h01*(1-tx)+h11*tx)*ty;
 }
 
+// Ground a moving animal onto the (exaggerated) surface. The sim reports a raw
+// world z that does NOT match the non-linear display terrain, so using it sinks
+// every creature underground. Re-seat by kind: ground animals on the surface,
+// fish at the water line, eagles soaring above the ground. Returns three.js Y.
+const FISH_KIND = 3, EAGLE_KIND = 4;
+function animalY(kind, wx, wy) {
+  const g = surfaceH(wx, wy);
+  if (kind === EAGLE_KIND) return g + 16;                       // soaring raptor
+  if (kind === FISH_KIND)  return Math.min(g, dispY(WATER_LEVEL)) - 0.2; // in the water
+  return g;                                                     // rabbit/deer/wolf walk the ground
+}
+
 // ---------------------------------------------------------------- renderer / scene
 const app = $('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -790,6 +802,9 @@ function makeEagle() {
 }
 const ANIMAL_GEO = [makeRabbit, makeDeer, makeWolf, makeFish, makeEagle];
 const ANIMAL_COL = [0xf0f0f0, 0xa06e3c, 0x5a5a64, 0x78b4dc, 0x3c3228];
+// up-scale the creatures so the herds read clearly at world scale (a real 0.35 m
+// rabbit is a sub-pixel speck on a 1024 m map). Per-kind so proportions stay sane.
+const ANIMAL_VSCALE = [2.4, 1.8, 1.9, 2.2, 2.0];   // rabbit, deer, wolf, fish, eagle
 const WOLF_HUNT_COL = new THREE.Color(0xdc3c3c);
 function buildAnimals() {
   const grp = new THREE.Group();
@@ -977,9 +992,9 @@ function applyFrame(ph) {
       if (!an0) { inst.setMatrixAt(q, _hide); continue; }
       const dead = an0[1] === ANIMAL_DEAD_STATE || an0[6] <= 0;
       if (dead) { inst.setMatrixAt(q, _hide); continue; }
-      const x = lerp(an0[2],an1[2],t), y = lerp(an0[3],an1[3],t), z = lerp(an0[4],an1[4],t);
+      const x = lerp(an0[2],an1[2],t), y = lerp(an0[3],an1[3],t);
       const yaw = angLerp(an0[5],an1[5],t);
-      inst.setMatrixAt(q, mat4(W(x,y,z), 1, -yaw + Math.PI/2));
+      inst.setMatrixAt(q, mat4(W(x, y, animalY(k, x, y)), ANIMAL_VSCALE[k], -yaw + Math.PI/2));
       if (k===2 && inst.instanceColor) inst.setColorAt(q, an0[1]===3 ? _wolfHunt : _wolfCalm); // state 3 = Hunt
     }
     inst.instanceMatrix.needsUpdate = true;
@@ -1049,7 +1064,7 @@ function rebuildStructures(f) {
   for (const g of [buildGroup, farmGroup]) { while(g.children.length) { const c=g.children.pop(); c.geometry?.dispose(); } }
   // sites: [type,x,y,z,progress,completed]
   for (const s of (f.site||[])) {
-    const [ty,x,y,z,prog] = s; const w = (BUILD_FOOT[ty]||2)*2;
+    const [ty,x,y,,prog] = s; const z = surfaceH(x,y); const w = (BUILD_FOOT[ty]||2)*2;
     const foot = new THREE.Mesh(new THREE.BoxGeometry(w,0.1,w), new THREE.MeshStandardMaterial({color:0xcccccc, transparent:true, opacity:0.4}));
     foot.position.copy(W(x,y,z+0.05)); buildGroup.add(foot);
     if (prog >= 0.5) {
@@ -1060,7 +1075,7 @@ function rebuildStructures(f) {
   }
   // finished buildings: [type,x,y,z,coverage]
   for (const b of (f.bld||[])) {
-    const [ty,x,y,z] = b; const w=(BUILD_FOOT[ty]||2)*2; const h=[1.6,2.6,2.6,3.4][ty]||2.4;
+    const [ty,x,y] = b; const z = surfaceH(x,y); const w=(BUILD_FOOT[ty]||2)*2; const h=[1.6,2.6,2.6,3.4][ty]||2.4;
     const box=new THREE.Mesh(new THREE.BoxGeometry(w,h,w), new THREE.MeshStandardMaterial({color:BUILD_COL[ty], roughness:0.9}));
     box.position.copy(W(x,y,z+h*0.5)); buildGroup.add(box);
     const roof=new THREE.Mesh(new THREE.ConeGeometry(w*0.8,h*0.5,4), new THREE.MeshStandardMaterial({color:0x803020}));
@@ -1068,7 +1083,7 @@ function rebuildStructures(f) {
   }
   // farm plots: [x,y,z,kind,growth,water,ripe]
   for (const p of (f.farm||[])) {
-    const [x,y,z,kind,growth,,ripe] = p;
+    const [x,y,,kind,growth,,ripe] = p; const z = surfaceH(x,y);
     const soil=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.12,1.4), new THREE.MeshStandardMaterial({color:0x5a3c28}));
     soil.position.copy(W(x,y,z+0.06)); farmGroup.add(soil);
     if (growth>0.05){ const ch=0.1+0.6*growth;
@@ -1077,7 +1092,7 @@ function rebuildStructures(f) {
   }
   // shelter: [x,y,z,r]
   while(LAYERS.builds && false){break;}
-  if (f.sh && f.sh.length===4){ const [x,y,z,r]=f.sh;
+  if (f.sh && f.sh.length===4){ const [x,y,,r]=f.sh; const z = surfaceH(x,y);
     const dome=new THREE.Mesh(new THREE.SphereGeometry(r,16,10,0,Math.PI*2,0,Math.PI/2), new THREE.MeshStandardMaterial({color:0x8a6a4a, transparent:true, opacity:0.55}));
     dome.position.copy(W(x,y,z)); buildGroup.add(dome); }
 }
@@ -1115,10 +1130,10 @@ function pickClip(clips, prefer){
 // animal kinds: 0 Rabbit,1 Deer,2 Wolf,3 Fish,4 Eagle.
 // Eagle has no GLB in the pack -> keeps its low-poly glider geometry.
 const ANIMAL_GLB = [
-  { url:'./assets/Animated_Animal_Pack/y4wdQpg767_y4wdQpg767.glb', h:0.6, rot:0, clip:['gallop','walk','idle'] }, // rabbit -> small dog (ShibaInu)
-  { url:'./assets/Animated_Animal_Pack/T6Cs7tmMHJ_T6Cs7tmMHJ.glb', h:1.7, rot:0, clip:['gallop','walk','idle'] }, // deer
-  { url:'./assets/Animated_Animal_Pack/P1gU3Qkr9r_P1gU3Qkr9r.glb', h:1.1, rot:0, clip:['gallop','walk','idle'] }, // wolf
-  { url:'./assets/Animated_Fish_Bundle/1tycAcvSVW_1tycAcvSVW.glb', h:0.7, rot:0, clip:['swim','idle'] },          // fish -> Tuna
+  { url:'./assets/Animated_Animal_Pack/y4wdQpg767_y4wdQpg767.glb', h:1.2, rot:0, clip:['gallop','walk','idle'] }, // rabbit -> small dog (ShibaInu)
+  { url:'./assets/Animated_Animal_Pack/T6Cs7tmMHJ_T6Cs7tmMHJ.glb', h:2.6, rot:0, clip:['gallop','walk','idle'] }, // deer
+  { url:'./assets/Animated_Animal_Pack/P1gU3Qkr9r_P1gU3Qkr9r.glb', h:2.0, rot:0, clip:['gallop','walk','idle'] }, // wolf
+  { url:'./assets/Animated_Fish_Bundle/1tycAcvSVW_1tycAcvSVW.glb', h:1.4, rot:0, clip:['swim','idle'] },          // fish -> Tuna
   null,
 ];
 const animalGLBGroup = reg('animals', new THREE.Group());
@@ -1155,9 +1170,9 @@ frameHooks.push((fa, fb, t)=>{
       const dead = !an0 || an0[1]===ANIMAL_DEAD_STATE || an0[6]<=0;
       if (dead){ ent.pivot.visible=false; continue; }
       ent.pivot.visible = true;
-      const x=lerp(an0[2],an1[2],t), y=lerp(an0[3],an1[3],t), z=lerp(an0[4],an1[4],t);
+      const x=lerp(an0[2],an1[2],t), y=lerp(an0[3],an1[3],t);
       const yaw=angLerp(an0[5],an1[5],t);
-      ent.pivot.position.copy(W(x,y,z));
+      ent.pivot.position.copy(W(x, y, animalY(k, x, y)));
       ent.pivot.rotation.y = -yaw + Math.PI/2 + ent.pivot.userData.rot;
     }
   }
