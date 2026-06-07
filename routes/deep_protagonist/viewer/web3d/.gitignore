@@ -1,0 +1,7 @@
+# 3D model asset packs (Quaternius/Kenney). Large binaries kept out of git, same
+# as the source res_* packs under protagonist_ecology/viewer/godot_demo. Copy
+# them in before serving the viewer:
+#   res_nature\*     -> assets\nature\
+#   res_animals\*    -> assets\animals\
+#   res_characters\* -> assets\characters\
+assets/

@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/FBXLoader.js';
 import { clone as skinnedClone } from 'three/addons/SkeletonUtils.js';
 
 const $ = (id) => document.getElementById(id);
@@ -383,16 +384,17 @@ function mat4(pos, scale, rotY) {
 }
 
 // ---------------------------------------------------------------- decorations
-// kinds: 0 Tree, 1 Rock, 2 Cactus.  Real Quaternius GLB models (biome-varied),
-// each normalised to unit height with its base at y=0, then instanced.
+// kinds: 0 Tree, 1 Rock, 2 Cactus.  Real Quaternius nature models (res_nature,
+// biome-varied, textured glTF), each normalised to unit height with its base at
+// y=0, then instanced. File names mirror the project's res_nature pack.
 const NATURE_DIR = './assets/nature/';
 const NATURE_FILES = {
   common:  ['CommonTree_1','CommonTree_2','CommonTree_3','CommonTree_4','CommonTree_5'],
-  pine:    ['Pine_1','Pine_2','Pine_3','Pine_5'],
-  twisted: ['TwistedTree_1','TwistedTree_2'],
-  dead:    ['DeadTree_1','DeadTree_2'],
-  bush:    ['Bush_1','Bush_2'],
-  rock:    ['Rock_1','Rock_2','Rock_3'],
+  pine:    ['Pine_1','Pine_2','Pine_3','Pine_4','Pine_5'],
+  twisted: ['TwistedTree_1','TwistedTree_2','TwistedTree_3','TwistedTree_4','TwistedTree_5'],
+  dead:    ['DeadTree_1','DeadTree_2','DeadTree_3','DeadTree_4','DeadTree_5'],
+  bush:    ['Bush_Common','Bush_Common_Flowers'],
+  rock:    ['Rock_Medium_1','Rock_Medium_2','Rock_Medium_3'],
 };
 // natural metre height a unit-model is scaled to (before per-instance variation)
 const NATURE_H = { common: 6.0, pine: 7.5, twisted: 5.5, dead: 5.0, bush: 1.5, rock: 1.6 };
@@ -400,8 +402,8 @@ const MODELS = {};                       // category -> [{prims:[{geo,mat}]}]
 const _natureGltf = new GLTFLoader();
 const loadNatureGLB = (url) => new Promise((res, rej) => _natureGltf.load(url, res, undefined, rej));
 
-async function loadNatureModel(file, dir = NATURE_DIR) {
-  const g = await loadNatureGLB(dir + file + '.glb');
+async function loadNatureModel(file, dir = NATURE_DIR, ext = '.gltf') {
+  const g = await loadNatureGLB(dir + file + ext);
   g.scene.updateMatrixWorld(true);
   const prims = [];
   g.scene.traverse((o) => {
@@ -679,17 +681,17 @@ buildGrass();
 
 // ---------------------------------------------------------------- caves
 // Caves are a thermal + predator refuge in the sim (the agent shelters inside).
-// Cave entrances are rendered with Kenney "Nature Kit" (CC0) models — the
-// cliff_cave facade for the mouth plus rock_large boulders to ground it. The
-// MODEL is only the visual asset; every number that defines a cave (how many,
-// where, how wide/tall, which way it faces) is read from the real world.json
-// cave records: [cx, cy, floorZ, ceilZ, halfX, halfY].
-const CAVE_DIR = './assets/kenney/';
+// res_nature ships no cave/cliff asset, so each cave mouth is assembled from the
+// pack's Rock_Medium boulders clustered into a rocky outcrop around a dark
+// interior ("use the pack where it exists; hand-build only what's missing" — here
+// only the arrangement). The MODELS are just the visual; every number that
+// defines a cave (how many, where, how wide/tall, which way it faces) is read
+// from the real world.json cave records: [cx, cy, floorZ, ceilZ, halfX, halfY].
 const caveModels = {};   // name -> { prims:[{geo,mat}] } (unit height, base y=0, centred)
 async function loadCaveModels() {
-  for (const f of ['cave_entrance','rock_largeA','rock_largeB','rock_largeC','rock_largeD']) {
-    try { caveModels[f] = await loadNatureModel(f, CAVE_DIR); }
-    catch (e) { console.warn('cave model load failed:', f, e.message); }
+  for (const f of ['Rock_Medium_1','Rock_Medium_2','Rock_Medium_3']) {
+    try { caveModels[f] = await loadNatureModel(f, NATURE_DIR); }
+    catch (e) { console.warn('cave rock load failed:', f, e.message); }
   }
 }
 function bboxOf(model) {
@@ -708,11 +710,19 @@ function buildCaves() {
   // black blob from behind). Matches the flat-shaded low-poly look of the trees.
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8f897e, roughness: 0.96, metalness: 0.0, flatShading: true });
   const cenX = WSX*0.5, cenY = WSY*0.5;
-  // purpose-built low-poly cave-entrance model (CC0, OrbitStudios / OpenGameArt):
-  // a rock mass with a recessed arched mouth + flanking rocks. Unit-height, base
-  // at y=0, centred. Its own mouth opens along local +Z.
-  const cave = caveModels['cave_entrance'];
-  const cd   = cave ? bboxOf(cave) : null;
+  const rockKeys = ['Rock_Medium_1','Rock_Medium_2','Rock_Medium_3'].filter(k => caveModels[k]);
+  // drop one pack boulder (shared geometry, own transform) at a world point,
+  // sized to (bw,bh,bd) world units and yaw-rotated.
+  const addBoulder = (cgrp, model, wx, wy, wz, bw, bh, bd, rotY) => {
+    const d = bboxOf(model), pos = W(wx, wy, wz);
+    model.prims.forEach((p) => {
+      const m = new THREE.Mesh(p.geo, stoneMat);
+      m.scale.set(bw / d.x, bh / d.y, bd / d.z);
+      m.rotation.y = rotY;
+      m.position.copy(pos);
+      cgrp.add(m);
+    });
+  };
   caves.forEach((c, ci) => {
     const [cxw, cyw, fz, cz, hx, hy] = c;
     const baseY = surfaceH(cxw, cyw);
@@ -720,27 +730,26 @@ function buildCaves() {
     // mouth faces the map interior so it opens toward where the action happens
     const rotY = Math.atan2(cenX - cxw, cenY - cyw);   // rotates local +Z toward centre
     const ux = Math.sin(rotY), uy = Math.cos(rotY);    // mouth-facing unit (toward centre)
+    const px = uy, py = -ux;                           // perpendicular (mouth-width axis)
     // EVERY dimension comes from the data footprint: width<-halfX, depth<-halfY,
-    // height<-(ceil-floor). The model is only the shape; the numbers are the world.
+    // height<-(ceil-floor). The rocks are only the shape; the numbers are the world.
     const Wt = Math.max(46, hx * 2.9);                 // target width  (across the mouth)
     const Dt = Math.max(40, hy * 2.9);                 // target depth  (front-to-back)
     const Ht = Math.max(26, (cz - fz) * 1.9);          // target height (floor->ceiling brow)
-    if (cave) {
-      const sink = Ht * 0.20;                          // bury the lower part into the knoll so it isn't perched
-      const pos  = W(cxw, cyw, baseY - sink);
-      cave.prims.forEach((p) => {
-        const m = new THREE.Mesh(p.geo, stoneMat);
-        m.scale.set(Wt/cd.x, (Ht + sink)/cd.y, Dt/cd.z);
-        m.rotation.y = rotY;
-        m.position.copy(pos);
-        cgrp.add(m);
-      });
-    }
     // a dark box tucked just inside the mouth guarantees a black interior at any angle
     const back = new THREE.Mesh(new THREE.BoxGeometry(Wt*0.30, Ht*0.55, Dt*0.5), voidMat);
     back.rotation.y = rotY;
     back.position.copy(W(cxw - ux*Dt*0.22, cyw - uy*Dt*0.22, baseY + Ht*0.26));
     cgrp.add(back);
+    if (rockKeys.length) {
+      const rk = (n) => caveModels[rockKeys[(ci + n) % rockKeys.length]];
+      // back wall behind the interior, two shoulders flanking the mouth, and a
+      // brow boulder overhanging the top -> a horseshoe opening toward centre.
+      addBoulder(cgrp, rk(0), cxw - ux*Dt*0.34,             cyw - uy*Dt*0.34,             baseY,            Wt*0.95, Ht*1.15, Dt*0.55, rotY);
+      addBoulder(cgrp, rk(1), cxw + px*Wt*0.40 - ux*Dt*0.05, cyw + py*Wt*0.40 - uy*Dt*0.05, baseY,            Wt*0.55, Ht*1.00, Dt*0.80, rotY + 0.5);
+      addBoulder(cgrp, rk(2), cxw - px*Wt*0.40 - ux*Dt*0.05, cyw - py*Wt*0.40 - uy*Dt*0.05, baseY,            Wt*0.55, Ht*1.00, Dt*0.80, rotY - 0.5);
+      addBoulder(cgrp, rk(1), cxw - ux*Dt*0.18,             cyw - uy*Dt*0.18,             baseY + Ht*0.62,  Wt*0.85, Ht*0.55, Dt*0.45, rotY + 0.3);
+    }
     grp.add(cgrp);
   });
   return reg('caves', grp);
@@ -1209,9 +1218,18 @@ function rebuildStructures(f) {
 // Skinned meshes MUST be cloned with SkeletonUtils.clone — a plain .clone() shares
 // one skeleton across all copies and collapses the mesh (the invisible-model bug).
 const gltfLoader = new GLTFLoader();
+const fbxLoader  = new FBXLoader();
 const _clock = new THREE.Clock();
 const _allMixers = [];
 function loadGLB(url){ return new Promise((res,rej)=> gltfLoader.load(url, g=>res(g), undefined, rej)); }
+function loadFBXObj(url){ return new Promise((res,rej)=> fbxLoader.load(url, o=>res(o), undefined, rej)); }
+// unified loader: returns { scene, animations } for either .glb/.gltf or .fbx so
+// the GLB-era animal/agent pipeline below works unchanged with the project's
+// res_* FBX packs (Quaternius rigs ship their clips on the object's .animations).
+async function loadModel(url){
+  if (/\.fbx$/i.test(url)) { const o = await loadFBXObj(url); return { scene:o, animations:o.animations||[] }; }
+  const g = await loadGLB(url); return { scene:g.scene, animations:g.animations||[] };
+}
 // scale a model so its largest dimension == targetH metres, then drop feet to y=0.
 // Measure ONLY mesh geometry after updating world matrices: skinned meshes carry
 // their real size in node scales (not the raw verts), so Box3.setFromObject on an
@@ -1233,13 +1251,15 @@ function pickClip(clips, prefer){
 }
 
 // animal kinds: 0 Rabbit,1 Deer,2 Wolf,3 Fish,4 Eagle.
-// Eagle has no GLB in the pack -> keeps its low-poly glider geometry.
+// Real models come from the project's res_animals pack (Quaternius FBX, skinned +
+// animated). Rabbit/Deer have no model in the pack, so they keep their hand-built
+// low-poly geometry ("use the packs where they exist, hand-craft only what's missing").
 const ANIMAL_GLB = [
-  { url:'./assets/Animated_Animal_Pack/y4wdQpg767_y4wdQpg767.glb', h:1.2, rot:0, clip:['gallop','walk','idle'] }, // rabbit -> small dog (ShibaInu)
-  { url:'./assets/Animated_Animal_Pack/T6Cs7tmMHJ_T6Cs7tmMHJ.glb', h:2.6, rot:0, clip:['gallop','walk','idle'] }, // deer
-  { url:'./assets/Animated_Animal_Pack/P1gU3Qkr9r_P1gU3Qkr9r.glb', h:2.0, rot:0, clip:['gallop','walk','idle'] }, // wolf
-  { url:'./assets/Animated_Fish_Bundle/1tycAcvSVW_1tycAcvSVW.glb', h:1.4, rot:0, clip:['swim','idle'] },          // fish -> Tuna
-  null,
+  null,                                                                   // 0 rabbit -> low-poly (no pack model)
+  null,                                                                   // 1 deer   -> low-poly (no pack model)
+  { url:'./assets/animals/Wolf.fbx',    h:2.0, rot:0, clip:['walk','idle'] },   // 2 wolf
+  { url:'./assets/animals/Piranha.fbx', h:1.4, rot:0, clip:['swim','idle'] },   // 3 fish -> piranha
+  { url:'./assets/animals/Eagle.fbx',   h:2.0, rot:0, clip:['fly','idle'] },    // 4 eagle
 ];
 const animalGLBGroup = reg('animals', new THREE.Group());
 const animalGLB = [];   // animalGLB[k][q] = {pivot, mixer} aligned to animalBuckets[k]
@@ -1247,7 +1267,7 @@ async function buildAnimalGLB(){
   for (let k=0;k<5;k++){
     const spec = ANIMAL_GLB[k], bucket = animalBuckets[k];
     if (!spec || !bucket || !bucket.length) continue;
-    let gltf; try { gltf = await loadGLB(spec.url); } catch(e){ console.warn('GLB load failed', spec.url, e); continue; }
+    let gltf; try { gltf = await loadModel(spec.url); } catch(e){ console.warn('animal model load failed', spec.url, e); continue; }
     const clip = pickClip(gltf.animations||[], spec.clip);
     const arr = [];
     for (let q=0;q<bucket.length;q++){
@@ -1352,8 +1372,8 @@ function setLabel(spr,text){
 }
 let agentMixer=null, agentActions={}, agentCur=null, agentPropHolder=null, agentProps={}, agentLabel=null, agentWorn=false, agentCloak=null;
 async function buildAgentGLB(){
-  let gltf; try { gltf = await loadGLB('./assets/Animated_Men_Pack/DLptRuewTn_DLptRuewTn.glb'); }
-  catch(e){ console.warn('human GLB failed', e); return; }
+  let gltf; try { gltf = await loadModel('./assets/characters/Viking_Male.fbx'); }
+  catch(e){ console.warn('human model failed', e); return; }
   const human = skinnedClone(gltf.scene);
   human.traverse(o=>{ if(o.isMesh){ o.frustumCulled=false; } });
   fitModel(human, 1.85);
@@ -1364,9 +1384,16 @@ async function buildAgentGLB(){
   // all clips -> named actions (key = lowercased suffix after 'Man_')
   agentMixer = new THREE.AnimationMixer(human);
   for (const clip of (gltf.animations||[])){
-    const key = clip.name.toLowerCase().replace(/^.*man_/,'').replace(/[^a-z]/g,'');
+    // clip names arrive as 'CharacterArmature|Idle' / 'Man_Idle' etc -> take the
+    // final segment, drop non-letters: 'idle','walk','sitdown','pickup','punch'...
+    const key = clip.name.toLowerCase().split('|').pop().replace(/^.*man_/,'').replace(/[^a-z]/g,'');
     agentActions[key] = agentMixer.clipAction(clip);
   }
+  // map the action-table's clip vocabulary onto the Viking (res_characters) rig's
+  // clip set so eating/sleeping sit, gathering punches, building/crafting picks up,
+  // and death plays Defeat — instead of everything collapsing to idle.
+  const ALIAS = { sitting:'sitdown', clapping:'pickup', swordslash:'punch', standing:'standup', run:'walk', death:'defeat' };
+  for (const a in ALIAS){ if(!agentActions[a] && agentActions[ALIAS[a]]) agentActions[a] = agentActions[ALIAS[a]]; }
   _allMixers.push(agentMixer);
 
   // right-hand bone -> prop holder, counter-scaled so props read in true metres
@@ -1459,9 +1486,8 @@ async function buildAgentGLB(){
     setLabel(agentLabel, aliveNow ? spec.l : 'Died');
   });
 }
-// buildAnimalGLB();  // disabled: the hand-built low-poly creatures are the intended
-// look and ship inside this file; external animal GLBs aren't deployed with the viewer.
-buildAgentGLB();
+buildAnimalGLB();  // swaps res_animals FBX (wolf/fish/eagle) in over the low-poly fallbacks
+buildAgentGLB();   // swaps the res_characters Viking in over the placeholder capsule
 
 // ---------------------------------------------------------------- main loop
 $('loading').style.display = 'none';
@@ -1474,7 +1500,7 @@ let followCam = true, followInit = false;
 addEventListener('keydown', e => { if (e.key === 'f' || e.key === 'F') followCam = !followCam; });
 const _ap = new THREE.Vector3();
 function updateFollow() {
-  if (!followCam || window.__noFollow || !agentGroup) return;
+  if (!followCam || !agentGroup) return;
   agentGroup.getWorldPosition(_ap); _ap.y += 1.2;
   if (!followInit) {                       // first frame: high angled view, clears tree canopy
     camera.position.copy(_ap).add(new THREE.Vector3(8.5, 13, 8.5));
