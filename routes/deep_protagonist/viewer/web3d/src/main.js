@@ -122,36 +122,18 @@ const BIO        = WORLD.biomes;            // GX*GY digit string
     }
   }
 })();
-// Caves in nature open into rock, not flat grassland. The sim hands us cave
-// footprints that can land on plains, so BEFORE the terrain mesh we raise a
-// rocky knoll at each cave and tag those cells as rock — the cave then sits
-// embedded in a hillside (geologically sensible) and the boulders/mouth seat on
-// the mound. Pure viewer geometry, mutates H exactly like carveRivers().
-const caveRock = new Float32Array(GX * GY);   // 0..1 rockiness from cave knolls
-(function raiseCaveHills() {
-  const caves = WORLD.caves || [];
-  if (!caves.length) return;
-  for (const c of caves) {
-    const [cxw, cyw, fz, cz, hx, hy] = c;
-    const R = Math.max(58, Math.max(hx, hy) * 3.6);   // knoll radius (m) — wide so the rock seats flush
-    const peak = 7 + Math.max(hx, hy) * 0.35;         // knoll height (m, pre-VEXAG)
-    const i0 = Math.max(0, Math.floor((cxw - R) / CS)), i1 = Math.min(GX - 1, Math.ceil((cxw + R) / CS));
-    const j0 = Math.max(0, Math.floor((cyw - R) / CS)), j1 = Math.min(GY - 1, Math.ceil((cyw + R) / CS));
-    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      const dx = i * CS - cxw, dy = j * CS - cyw, d = Math.hypot(dx, dy);
-      if (d > R) continue;
-      const f = 0.5 + 0.5 * Math.cos(Math.PI * d / R);   // 1 centre -> 0 rim, smooth
-      const idx = j * GX + i;
-      H[idx] += peak * f * f;
-      if (f > caveRock[idx]) caveRock[idx] = f;
-    }
-  }
-})();
+// NOTE: we deliberately do NOT raise any synthetic terrain at cave positions.
+// An earlier version sculpted a cosine knoll under every cave, which (a) put a
+// fake pointed hill under each of the 6 caves and (b) invented terrain that is
+// not in the simulation's heightmap. Caves now sit on the REAL ground exactly
+// where the data places them. caveRock stays all-zero (kept so the grass code's
+// reference still resolves) — grass grows normally right up to the cave.
+const caveRock = new Float32Array(GX * GY);   // all 0: no fabricated cave knolls
 // Vertical exaggeration: the real world is ~77 m of relief over a 1024 m map
 // (~7.5%), which reads as flat from a high camera. Scale height for display so
 // mountains/valleys are legible. Applied at EVERY height source (surfaceH +
 // terrain mesh + water tiles) so entities, ring and camera stay grounded.
-const VEXAG      = 2.4;
+const VEXAG      = 1.5;
 
 // bilinear terrain height at world (wx,wy)
 function surfaceH(wx, wy) {
@@ -275,11 +257,11 @@ buildTerrain();
 // No more flat tiles floating above the ground bumps.
 function buildWater() {
   const grp = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x2f6fc0, transparent: true, opacity: 0.62,
-    roughness: 0.18, metalness: 0.35, side: THREE.DoubleSide });
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.80,
+    roughness: 0.12, metalness: 0.45, side: THREE.DoubleSide });
   const segs = WORLD.rivers || [];
   if (segs.length) {
-    const halfW = CS * 1.5;
+    const halfW = CS * 2.2;
     const verts = [], idxs = [];
     let base = 0;
     const wy = (x, y) => surfaceH(x, y) - 0.10;     // water surface just under the bank
@@ -339,8 +321,8 @@ const MODELS = {};                       // category -> [{prims:[{geo,mat}]}]
 const _natureGltf = new GLTFLoader();
 const loadNatureGLB = (url) => new Promise((res, rej) => _natureGltf.load(url, res, undefined, rej));
 
-async function loadNatureModel(file) {
-  const g = await loadNatureGLB(NATURE_DIR + file + '.glb');
+async function loadNatureModel(file, dir = NATURE_DIR) {
+  const g = await loadNatureGLB(dir + file + '.glb');
   g.scene.updateMatrixWorld(true);
   const prims = [];
   g.scene.traverse((o) => {
@@ -363,13 +345,80 @@ async function loadNatureModel(file) {
   return { prims };
 }
 
+// ---- procedural low-poly fallback templates -------------------------------
+// Used when the Quaternius GLBs are not present in assets/nature/. Produces the
+// same {prims:[{geo,mat}]} unit-height contract buildDecos expects, so trees,
+// bushes and rocks render (biome-varied) with zero external assets. Purely
+// decorative geometry — positions/counts/biomes still come from world.json.
+function _normalizePrims(prims) {
+  const bb = new THREE.Box3();
+  prims.forEach(p => { p.geo.computeBoundingBox(); bb.union(p.geo.boundingBox); });
+  const cx = (bb.min.x + bb.max.x) * 0.5, cz = (bb.min.z + bb.max.z) * 0.5;
+  const h = Math.max(1e-3, bb.max.y - bb.min.y);
+  prims.forEach(p => { p.geo.translate(-cx, -bb.min.y, -cz); p.geo.scale(1 / h, 1 / h, 1 / h); });
+  return { prims };
+}
+function _mat(col, rough) {
+  return new THREE.MeshStandardMaterial({ color: col, roughness: rough ?? 0.9, metalness: 0.0, flatShading: true });
+}
+function _trunk(rTop, rBot, h, col) {
+  const g = new THREE.CylinderGeometry(rTop, rBot, h, 6); g.translate(0, h / 2, 0);
+  return { geo: g, mat: _mat(col, 0.95) };
+}
+function _coneStack(layers, col) {       // layers: [{r,h,y}] (y = base of cone)
+  const geos = layers.map(l => { const g = new THREE.ConeGeometry(l.r, l.h, 8); g.translate(0, l.y + l.h / 2, 0); return g; });
+  return { geo: mergeGeometries(geos), mat: _mat(col, 0.85) };
+}
+function _blobs(list, col) {              // list: [{r,y,x?,z?,sy?}]
+  const geos = list.map(b => { const g = new THREE.IcosahedronGeometry(b.r, 0); if (b.sy) g.scale(1, b.sy, 1); g.translate(b.x || 0, b.y, b.z || 0); return g; });
+  return { geo: mergeGeometries(geos), mat: _mat(col, 0.85) };
+}
+function makeProcTemplates(cat, n) {
+  const out = [];
+  const rnd = (s) => { const x = Math.sin(s * 99.13 + 4.7) * 43758.5453; return x - Math.floor(x); };
+  for (let v = 0; v < Math.max(1, n); v++) {
+    const j = rnd(cat.length * 7 + v * 131);   // 0..1 per-variant jitter
+    let prims;
+    if (cat === 'pine') {
+      const tint = new THREE.Color().setHSL(0.33 + 0.03 * (j - 0.5), 0.46, 0.24 + 0.05 * j).getHex();
+      prims = [ _trunk(0.03, 0.05, 0.22, 0x6b4a2b),
+        _coneStack([{ r: 0.25 + 0.04 * j, h: 0.34, y: 0.13 }, { r: 0.19, h: 0.30, y: 0.33 }, { r: 0.12, h: 0.32, y: 0.55 }], tint) ];
+    } else if (cat === 'common') {
+      const tint = new THREE.Color().setHSL(0.27 + 0.04 * (j - 0.5), 0.50, 0.33 + 0.06 * j).getHex();
+      const cy = 0.52;
+      prims = [ _trunk(0.045, 0.065, 0.34, 0x6f4a28),
+        _blobs([{ r: 0.28, y: cy }, { r: 0.23, y: cy + 0.16, x: 0.12 * (j - 0.5) }, { r: 0.18, y: cy + 0.28, z: 0.10 * (j - 0.5) }], tint) ];
+    } else if (cat === 'twisted') {
+      const tint = new THREE.Color().setHSL(0.20 + 0.03 * j, 0.42, 0.32).getHex();
+      prims = [ _trunk(0.04, 0.06, 0.42, 0x5e4a30),
+        _blobs([{ r: 0.30, y: 0.58, sy: 0.7 }, { r: 0.22, y: 0.72, sy: 0.7, x: 0.14 * (j - 0.5) }], tint) ];
+    } else if (cat === 'dead') {
+      const t = _trunk(0.035, 0.055, 0.82, 0x6a5743);
+      const b1 = new THREE.CylinderGeometry(0.02, 0.03, 0.30, 5); b1.rotateZ(0.7); b1.translate(0.10, 0.60, 0);
+      const b2 = new THREE.CylinderGeometry(0.02, 0.03, 0.26, 5); b2.rotateZ(-0.7); b2.translate(-0.09, 0.68, 0.04);
+      prims = [ { geo: mergeGeometries([t.geo, b1, b2]), mat: _mat(0x6a5743, 0.95) } ];
+    } else if (cat === 'bush') {
+      const tint = new THREE.Color().setHSL(0.30, 0.50, 0.30 + 0.06 * j).getHex();
+      prims = [ _blobs([{ r: 0.40, y: 0.40 }, { r: 0.32, y: 0.50, x: 0.20 * (j - 0.5) }, { r: 0.28, y: 0.42, z: 0.22 * (j - 0.5) }], tint) ];
+    } else if (cat === 'rock') {
+      const g = new THREE.IcosahedronGeometry(0.5, 0); g.scale(1, 0.6 + 0.15 * j, 1);
+      prims = [ { geo: g, mat: _mat(0x8d8a82, 1.0) } ];
+    } else {
+      prims = [ _blobs([{ r: 0.4, y: 0.4 }], 0x4f8f3f) ];
+    }
+    out.push(_normalizePrims(prims));
+  }
+  return out;
+}
+
 async function loadNature() {
   for (const [cat, files] of Object.entries(NATURE_FILES)) {
     MODELS[cat] = [];
     for (const f of files) {
       try { MODELS[cat].push(await loadNatureModel(f)); }
-      catch (e) { console.warn('nature load failed:', f, e.message); }
+      catch (e) { /* GLB absent — fall back to procedural below */ }
     }
+    if (!MODELS[cat].length) MODELS[cat] = makeProcTemplates(cat, files.length);
   }
 }
 
@@ -400,7 +449,9 @@ function buildDecos() {
     const h = (cat === 'rock' || cat === 'bush')
       ? base * (0.55 + 0.30 * d[3])
       : base * (0.55 + 0.15 * d[3]);
-    const m = mat4(W(d[0], d[1], d[2]), h, -d[4]);
+    // seat on the EXAGGERATED surface (surfaceH already applies VEXAG) so props
+    // hug the visible terrain instead of sinking by the (VEXAG-1)*h offset.
+    const m = mat4(W(d[0], d[1], surfaceH(d[0], d[1])), h, -d[4]);
     ((buckets[cat] ||= {})[vi] ||= []).push(m);
   });
   for (const cat in buckets) {
@@ -437,7 +488,7 @@ function buildPlants() {
   items.forEach((p, n) => {
     const k = p[3]; const r = PLANT_R[k] || 0.25;
     plantScale[n] = r;
-    plantInst.setMatrixAt(n, mat4(W(p[0], p[1], p[2]+r), r, 0));
+    plantInst.setMatrixAt(n, mat4(W(p[0], p[1], surfaceH(p[0], p[1]) + r), r, 0));
     col.setHex(PLANT_COL[k] || 0xffffff);
     plantInst.setColorAt(n, col);
   });
@@ -461,21 +512,21 @@ function buildResources() {
     const g = new THREE.CylinderGeometry(0.05, 0.07, 0.8, 5); g.rotateZ(Math.PI/2); g.translate(0,0.06,0);
     const m = new THREE.MeshStandardMaterial({ color: 0x785023, roughness: 1 });
     out.wood = new THREE.InstancedMesh(g, m, wood.length);
-    wood.forEach(([r], i) => out.wood.setMatrixAt(i, mat4(W(r[0], r[1], r[2]), 1, 0)));
+    wood.forEach(([r], i) => out.wood.setMatrixAt(i, mat4(W(r[0], r[1], surfaceH(r[0], r[1])), 1, 0)));
     out.wood.instanceMatrix.needsUpdate = true; grp.add(out.wood);
   }
   if (stone.length) {
     const g = new THREE.BoxGeometry(0.45, 0.30, 0.45); g.translate(0,0.18,0);
     const m = new THREE.MeshStandardMaterial({ color: 0xa0a0a0, roughness: 1 });
     out.stone = new THREE.InstancedMesh(g, m, stone.length);
-    stone.forEach(([r], i) => out.stone.setMatrixAt(i, mat4(W(r[0], r[1], r[2]), 1, 0)));
+    stone.forEach(([r], i) => out.stone.setMatrixAt(i, mat4(W(r[0], r[1], surfaceH(r[0], r[1])), 1, 0)));
     out.stone.instanceMatrix.needsUpdate = true; grp.add(out.stone);
   }
   if (grass.length) {
     const g = new THREE.ConeGeometry(0.10, 0.45, 5); g.translate(0,0.22,0);
     const m = new THREE.MeshStandardMaterial({ color: 0x50b450, roughness: 1 });
     out.grass = new THREE.InstancedMesh(g, m, grass.length);
-    grass.forEach(([r], i) => out.grass.setMatrixAt(i, mat4(W(r[0], r[1], r[2]), 1, 0)));
+    grass.forEach(([r], i) => out.grass.setMatrixAt(i, mat4(W(r[0], r[1], surfaceH(r[0], r[1])), 1, 0)));
     out.grass.instanceMatrix.needsUpdate = true; grp.add(out.grass);
   }
   // map global resource index -> {mesh, localIndex, basePos} so rgone can hide
@@ -483,7 +534,7 @@ function buildResources() {
   const ptr = { wood:0, stone:0, grass:0 };
   items.forEach((r, n) => {
     const k = r[3]; const key = k===0?'wood':k===1?'stone':'grass';
-    resInst.index[n] = { key, li: ptr[key]++, pos: W(r[0], r[1], r[2]) };
+    resInst.index[n] = { key, li: ptr[key]++, pos: W(r[0], r[1], surfaceH(r[0], r[1])) };
   });
   return reg('resources', grp);
 }
@@ -541,88 +592,73 @@ buildGrass();
 
 // ---------------------------------------------------------------- caves
 // Caves are a thermal + predator refuge in the sim (the agent shelters inside).
-// Each cave is rendered as ONE coherent low-poly rock mound (a craggy displaced
-// dome — a single solid mass, not scattered boulders) seated on the raised knoll.
-// The near (south, camera-facing) face has a pocket scooped into it, and a dark
-// tunnel recedes back into the hill through that pocket -> a real arched mouth at
-// ground level that you could walk into, with genuine depth (not a flat black
-// disc lying on top). Front of the world = -Y (scene -Z), so the mouth opens that
-// way. cave footprint: [cxw, cyw, floorZ, ceilZ, hx, hy].
+// Cave entrances are rendered with Kenney "Nature Kit" (CC0) models — the
+// cliff_cave facade for the mouth plus rock_large boulders to ground it. The
+// MODEL is only the visual asset; every number that defines a cave (how many,
+// where, how wide/tall, which way it faces) is read from the real world.json
+// cave records: [cx, cy, floorZ, ceilZ, halfX, halfY].
+const CAVE_DIR = './assets/kenney/';
+const caveModels = {};   // name -> { prims:[{geo,mat}] } (unit height, base y=0, centred)
+async function loadCaveModels() {
+  for (const f of ['cave_entrance','rock_largeA','rock_largeB','rock_largeC','rock_largeD']) {
+    try { caveModels[f] = await loadNatureModel(f, CAVE_DIR); }
+    catch (e) { console.warn('cave model load failed:', f, e.message); }
+  }
+}
+function bboxOf(model) {
+  const bb = new THREE.Box3();
+  model.prims.forEach((p) => { p.geo.computeBoundingBox(); bb.union(p.geo.boundingBox); });
+  return { x: bb.max.x - bb.min.x, y: bb.max.y - bb.min.y, z: bb.max.z - bb.min.z };
+}
 function buildCaves() {
   const grp = new THREE.Group();
   const caves = WORLD.caves || [];
   if (!caves.length) return reg('caves', grp);
-  // cheap 3d value noise for craggy rock displacement
-  const h3 = (x, y, z) => { const n = Math.sin(x*12.9898 + y*78.233 + z*37.719) * 43758.5453; return n - Math.floor(n); };
-  const vn3 = (x, y, z) => {
-    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
-    const xf = x-xi, yf = y-yi, zf = z-zi;
-    const u = xf*xf*(3-2*xf), v = yf*yf*(3-2*yf), w = zf*zf*(3-2*zf);
-    const L = (a,b,t)=>a+(b-a)*t;
-    const c000=h3(xi,yi,zi),     c100=h3(xi+1,yi,zi);
-    const c010=h3(xi,yi+1,zi),   c110=h3(xi+1,yi+1,zi);
-    const c001=h3(xi,yi,zi+1),   c101=h3(xi+1,yi,zi+1);
-    const c011=h3(xi,yi+1,zi+1), c111=h3(xi+1,yi+1,zi+1);
-    return L(L(L(c000,c100,u),L(c010,c110,u),v), L(L(c001,c101,u),L(c011,c111,u),v), w);
-  };
-  const upY = new THREE.Vector3(0, 1, 0), backZ = new THREE.Vector3(0, 0, 1);
+  const voidMat = new THREE.MeshBasicMaterial({ color: 0x05060a });   // flat black, for the deep interior
+  const h3 = (x, y) => { const n = Math.sin(x*12.9898 + y*78.233) * 43758.5453; return n - Math.floor(n); };
+  // override the GLB's near-black material with a lit, low-poly grey stone so the
+  // rock reads as natural rock from every angle (the old material rendered as a
+  // black blob from behind). Matches the flat-shaded low-poly look of the trees.
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8f897e, roughness: 0.96, metalness: 0.0, flatShading: true });
+  const cenX = WSX*0.5, cenY = WSY*0.5;
+  // purpose-built low-poly cave-entrance model (CC0, OrbitStudios / OpenGameArt):
+  // a rock mass with a recessed arched mouth + flanking rocks. Unit-height, base
+  // at y=0, centred. Its own mouth opens along local +Z.
+  const cave = caveModels['cave_entrance'];
+  const cd   = cave ? bboxOf(cave) : null;
   caves.forEach((c, ci) => {
     const [cxw, cyw, fz, cz, hx, hy] = c;
-    const span = Math.max(hx, hy);
-    const Rd = Math.max(24, span * 2.3);          // mound radius (m)
-    const baseY = surfaceH(cxw, cyw);             // scene height at cave centre (on the knoll)
-    // ---- one solid craggy rock mound ----
-    // a HEMISPHERE (widest at the base) so it seats flush on the knoll with no
-    // overhang/mushroom, unlike a full sphere whose mid-bulge floats over the slope.
-    const geo = new THREE.SphereGeometry(Rd, 30, 18, 0, Math.PI * 2, 0, Math.PI * 0.5);
-    const pos = geo.attributes.position;
-    const col = new Float32Array(pos.count * 3);
-    const cc = new THREE.Color(), rA = new THREE.Color(0xc7c1b5), rB = new THREE.Color(0x8a8377);
-    const openR = Math.max(7.0, span * 0.55);     // entrance half-size (m)
-    const ocy = Rd * 0.05;                         // opening centre height (local, just above the base)
-    for (let k = 0; k < pos.count; k++) {
-      let x = pos.getX(k), y = pos.getY(k), z = pos.getZ(k);
-      const n = vn3(x*0.10 + 11, y*0.10 + 4, z*0.10 + 7);
-      const disp = 1 + (n - 0.5) * 0.30;          // craggy surface
-      x *= disp; z *= disp; y *= disp * 1.02;     // craggy, full-height dome
-      // scoop a pocket into the front (-Z) face around the opening
-      const dop = Math.hypot(x, (y - ocy) * 1.05, z + Rd);
-      let pocket = 0;
-      if (z < 0 && dop < openR * 1.9) {
-        pocket = 1 - dop / (openR * 1.9);
-        z += openR * 1.55 * pocket * pocket;       // pull face deep inward -> real concavity
-        x *= (1 - 0.40 * pocket);
-      }
-      pos.setXYZ(k, x, Math.max(0, y), z);
-      cc.copy(rA).lerp(rB, n * 0.7 + pocket * 0.3);  // darker inside the pocket
-      col[k*3] = cc.r; col[k*3+1] = cc.g; col[k*3+2] = cc.b;
+    const baseY = surfaceH(cxw, cyw);
+    const cgrp  = new THREE.Group();
+    // mouth faces the map interior so it opens toward where the action happens
+    const rotY = Math.atan2(cenX - cxw, cenY - cyw);   // rotates local +Z toward centre
+    const ux = Math.sin(rotY), uy = Math.cos(rotY);    // mouth-facing unit (toward centre)
+    // EVERY dimension comes from the data footprint: width<-halfX, depth<-halfY,
+    // height<-(ceil-floor). The model is only the shape; the numbers are the world.
+    const Wt = Math.max(46, hx * 2.9);                 // target width  (across the mouth)
+    const Dt = Math.max(40, hy * 2.9);                 // target depth  (front-to-back)
+    const Ht = Math.max(26, (cz - fz) * 1.9);          // target height (floor->ceiling brow)
+    if (cave) {
+      const sink = Ht * 0.20;                          // bury the lower part into the knoll so it isn't perched
+      const pos  = W(cxw, cyw, baseY - sink);
+      cave.prims.forEach((p) => {
+        const m = new THREE.Mesh(p.geo, stoneMat);
+        m.scale.set(Wt/cd.x, (Ht + sink)/cd.y, Dt/cd.z);
+        m.rotation.y = rotY;
+        m.position.copy(pos);
+        cgrp.add(m);
+      });
     }
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    geo.computeVertexNormals();
-    const mound = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1.0, metalness: 0.0, flatShading: true, emissive: 0x3b382f, emissiveIntensity: 0.6 }));
-    const seatY = baseY - 2.0;                     // base sits just into the knoll top
-    mound.position.copy(W(cxw, cyw, seatY));
-    grp.add(mound);
-    // ---- dark tunnel receding into the hill through the pocket ----
-    const tunLen = Rd * 1.5;
-    const tun = new THREE.Mesh(
-      new THREE.ConeGeometry(openR, tunLen, 24, 1, true),
-      new THREE.MeshStandardMaterial({ color: 0x050507, roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide }));
-    tun.quaternion.setFromUnitVectors(upY, backZ);   // apex points into hill (+Z), open base faces front (-Z)
-    tun.scale.set(0.9, 1.0, 1.3);                    // upright, door-ish opening; long into the hill
-    const openWY = cyw - Rd * 1.02;                  // mouth flush with the front face
-    const openSY = seatY + openR * 0.78;             // opening centre scene height (bottom ~ground)
-    tun.position.copy(W(cxw, openWY + tunLen * 0.5, openSY));
-    grp.add(tun);
-    // a flat dark disc deep in the throat so the tunnel never shows sky through the tip
-    const cap = new THREE.Mesh(new THREE.CircleGeometry(openR * 0.6, 20),
-      new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    cap.position.copy(W(cxw, openWY + tunLen * 0.92, openSY));
-    cap.lookAt(W(cxw, openWY, openSY));
-    grp.add(cap);
+    // a dark box tucked just inside the mouth guarantees a black interior at any angle
+    const back = new THREE.Mesh(new THREE.BoxGeometry(Wt*0.34, Ht*0.7, Dt*0.5), voidMat);
+    back.rotation.y = rotY;
+    back.position.copy(W(cxw - ux*Dt*0.14, cyw - uy*Dt*0.14, baseY + Ht*0.30));
+    cgrp.add(back);
+    grp.add(cgrp);
   });
   return reg('caves', grp);
 }
+await loadCaveModels();
 buildCaves();
 
 // ---------------------------------------------------------------- animals
