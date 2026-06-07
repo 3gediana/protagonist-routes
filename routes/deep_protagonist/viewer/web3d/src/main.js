@@ -753,15 +753,59 @@ buildCaves();
 const ANIMAL_DEAD_STATE = 5;   // AnimalState::Dead (skip)
 const animalKindMeshes = [];
 const animalBuckets = [];      // animalBuckets[kind] = [globalAnimalIndex,...]
-function makeRabbit() {
-  const body = new THREE.BoxGeometry(0.35, 0.30, 0.35); body.translate(0,0.15,0);
-  const ear  = new THREE.BoxGeometry(0.10, 0.30, 0.10); ear.translate(0,0.45,0);
-  return mergeBoxes([[body],[ear]]);
+// ---- low-poly creature builder ------------------------------------------
+// A creature is a list of coloured boxes (body, head, legs, ears, ...). Each
+// part bakes its rotation/translation into the vertices, and carries a colour
+// that is written into a per-vertex colour attribute so one InstancedMesh can
+// show a multi-tone animal (white rabbit w/ pink ears, antlered brown deer...).
+// Convention: forward = +Z, up = +Y, origin at the feet (y=0 touches ground).
+function P(w,h,d, x,y,z, col, rx=0,ry=0,rz=0) {
+  const g = new THREE.BoxGeometry(w,h,d);
+  if (rx) g.rotateX(rx); if (ry) g.rotateY(ry); if (rz) g.rotateZ(rz);
+  g.translate(x,y,z);
+  g.userData.col = new THREE.Color(col);
+  return g;
 }
-function mergeBoxes(parts) {
-  // simple manual merge of BoxGeometry list into one BufferGeometry
-  const geos = parts.map(p => p[0]);
-  return mergeGeometries(geos);
+function mergeColored(parts) {
+  let total = 0; for (const g of parts) total += g.attributes.position.count;
+  const pos = new Float32Array(total*3), norm = new Float32Array(total*3), col = new Float32Array(total*3);
+  let o = 0; const idx = []; let base = 0;
+  for (const g of parts) {
+    const p = g.attributes.position, nrm = g.attributes.normal, c = g.userData.col;
+    for (let i=0;i<p.count;i++){ pos[o*3]=p.getX(i);pos[o*3+1]=p.getY(i);pos[o*3+2]=p.getZ(i);
+      norm[o*3]=nrm.getX(i);norm[o*3+1]=nrm.getY(i);norm[o*3+2]=nrm.getZ(i);
+      col[o*3]=c.r;col[o*3+1]=c.g;col[o*3+2]=c.b; o++; }
+    const gi = g.index ? g.index.array : null;
+    if (gi) for (let i=0;i<gi.length;i++) idx.push(gi[i]+base);
+    else for (let i=0;i<p.count;i++) idx.push(base+i);
+    base += p.count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  out.setAttribute('normal',   new THREE.BufferAttribute(norm,3));
+  out.setAttribute('color',    new THREE.BufferAttribute(col,3));
+  out.setIndex(idx);
+  return out;
+}
+function makeRabbit() {
+  const W=0xf4f4f2, G=0xe2e2e0, PK=0xe39aa3, DK=0x1c1c1c;
+  return mergeColored([
+    P(0.34,0.34,0.46, 0,0.21,-0.04, W),                    // haunch / body
+    P(0.27,0.25,0.22, 0,0.15,0.22,  G),                    // chest
+    P(0.24,0.22,0.22, 0,0.36,0.30,  W),                    // head
+    P(0.07,0.32,0.11, -0.075,0.58,0.24, W, 0.12,0,0.06),   // ear L
+    P(0.07,0.32,0.11,  0.075,0.58,0.24, W, 0.12,0,-0.06),  // ear R
+    P(0.035,0.22,0.06,-0.075,0.58,0.245, PK, 0.12,0,0.06), // inner ear L
+    P(0.035,0.22,0.06, 0.075,0.58,0.245, PK, 0.12,0,-0.06),// inner ear R
+    P(0.10,0.11,0.26, -0.12,0.055,0.02, G),                // hind foot L
+    P(0.10,0.11,0.26,  0.12,0.055,0.02, G),                // hind foot R
+    P(0.085,0.13,0.15,-0.10,0.075,0.30, G),                // front paw L
+    P(0.085,0.13,0.15, 0.10,0.075,0.30, G),                // front paw R
+    P(0.13,0.13,0.11, 0,0.24,-0.30, 0xffffff),             // cotton tail
+    P(0.05,0.04,0.05, 0,0.33,0.41, PK),                    // nose
+    P(0.035,0.045,0.04,-0.075,0.39,0.37, DK),              // eye L
+    P(0.035,0.045,0.04, 0.075,0.39,0.37, DK),              // eye R
+  ]);
 }
 function mergeGeometries(geos) {
   let total = 0; for (const g of geos) total += g.attributes.position.count;
@@ -784,27 +828,86 @@ function mergeGeometries(geos) {
   return out;
 }
 function makeDeer() {
-  const body = new THREE.BoxGeometry(0.7, 0.5, 1.0); body.translate(0,0.55,0);
-  const head = new THREE.BoxGeometry(0.4, 0.4, 0.4); head.translate(0,0.9,0.55);
-  const ant  = new THREE.BoxGeometry(0.08,0.3,0.08); ant.translate(0,1.25,0.55);
-  return mergeGeometries([body, head, ant]);
+  const B=0xa3713f, T=0xb98a55, D=0x6e4a28, AN=0x5c4630, W=0xefe7d4, DK=0x161616;
+  return mergeColored([
+    P(0.44,0.48,0.98, 0,0.94,0.0, B),                      // body
+    P(0.40,0.20,0.92, 0,0.78,0.0, T),                      // lighter belly band
+    P(0.24,0.52,0.24, 0,1.18,0.42, B, 0.55,0,0),           // neck (leaning fwd)
+    P(0.23,0.24,0.30, 0,1.46,0.62, B),                     // head
+    P(0.15,0.14,0.22, 0,1.40,0.82, T),                     // snout
+    P(0.05,0.04,0.04,-0.07,1.50,0.96, DK),                 // nose tip L
+    P(0.05,0.04,0.04, 0.07,1.50,0.96, DK),                 // nose tip R
+    P(0.07,0.18,0.10,-0.15,1.56,0.58, B, 0,0,0.35),        // ear L
+    P(0.07,0.18,0.10, 0.15,1.56,0.58, B, 0,0,-0.35),       // ear R
+    P(0.05,0.36,0.05,-0.10,1.74,0.60, AN),                 // antler stem L
+    P(0.05,0.36,0.05, 0.10,1.74,0.60, AN),                 // antler stem R
+    P(0.045,0.18,0.045,-0.20,1.86,0.60, AN, 0,0,0.6),      // antler tine L
+    P(0.045,0.18,0.045, 0.20,1.86,0.60, AN, 0,0,-0.6),     // antler tine R
+    P(0.045,0.16,0.045,-0.12,1.96,0.60, AN, 0,0,0.25),     // antler tine L2
+    P(0.045,0.16,0.045, 0.12,1.96,0.60, AN, 0,0,-0.25),    // antler tine R2
+    P(0.10,0.92,0.10,-0.16,0.46,0.36, D),                  // leg FL
+    P(0.10,0.92,0.10, 0.16,0.46,0.36, D),                  // leg FR
+    P(0.10,0.92,0.10,-0.16,0.46,-0.36, D),                 // leg BL
+    P(0.10,0.92,0.10, 0.16,0.46,-0.36, D),                 // leg BR
+    P(0.10,0.18,0.08, 0,0.96,-0.52, W),                    // tail
+    P(0.035,0.05,0.035,-0.075,1.49,0.74, DK),              // eye L
+    P(0.035,0.05,0.035, 0.075,1.49,0.74, DK),              // eye R
+  ]);
 }
 function makeWolf() {
-  const body = new THREE.BoxGeometry(0.55, 0.4, 1.1); body.translate(0,0.4,0);
-  const head = new THREE.BoxGeometry(0.35,0.35,0.35); head.translate(0,0.55,0.6);
-  return mergeGeometries([body, head]);
+  const B=0x71717a, D=0x4c4c54, L=0x8a8a92, DK=0x141414;
+  return mergeColored([
+    P(0.40,0.40,1.06, 0,0.52,0.0, B),                      // body
+    P(0.30,0.12,0.92, 0,0.72,0.0, D),                      // dark dorsal stripe
+    P(0.36,0.36,0.34, 0,0.55,0.50, B),                     // chest/shoulders
+    P(0.30,0.30,0.30, 0,0.62,0.70, L),                     // head
+    P(0.16,0.14,0.24, 0,0.55,0.90, D),                     // snout
+    P(0.05,0.05,0.05, 0,0.55,1.03, DK),                    // nose
+    P(0.10,0.15,0.06,-0.11,0.80,0.66, D, 0,0,0.18),        // ear L
+    P(0.10,0.15,0.06, 0.11,0.80,0.66, D, 0,0,-0.18),       // ear R
+    P(0.11,0.52,0.11,-0.15,0.26,0.40, D),                  // leg FL
+    P(0.11,0.52,0.11, 0.15,0.26,0.40, D),                  // leg FR
+    P(0.11,0.52,0.11,-0.15,0.26,-0.40, D),                 // leg BL
+    P(0.11,0.52,0.11, 0.15,0.26,-0.40, D),                 // leg BR
+    P(0.13,0.13,0.46, 0,0.52,-0.66, B, -0.5,0,0),          // bushy tail
+    P(0.035,0.05,0.035,-0.085,0.66,0.80, DK),              // eye L
+    P(0.035,0.05,0.035, 0.085,0.66,0.80, DK),              // eye R
+  ]);
 }
-function makeFish() { const g = new THREE.BoxGeometry(0.18,0.18,0.4); g.translate(0,0.1,0); return g; }
+function makeFish() {
+  const B=0x4d90c4, D=0x356d9c, L=0xd9e6ef, DK=0x111111;
+  return mergeColored([
+    P(0.22,0.28,0.42, 0,0,0.04, B),                        // body
+    P(0.17,0.12,0.40, 0,-0.10,0.02, L),                    // pale belly
+    P(0.16,0.18,0.16, 0,0.02,0.26, B),                     // head taper
+    P(0.03,0.30,0.22, 0,0,-0.30, D),                       // tail fin (vertical)
+    P(0.03,0.16,0.20, 0,0.18,0.02, D),                     // dorsal fin
+    P(0.16,0.03,0.12,-0.10,-0.04,0.08, D, 0,0.3,0),        // pectoral fin L
+    P(0.16,0.03,0.12, 0.10,-0.04,0.08, D, 0,-0.3,0),       // pectoral fin R
+    P(0.04,0.05,0.04,-0.09,0.04,0.30, DK),                 // eye L
+    P(0.04,0.05,0.04, 0.09,0.04,0.30, DK),                 // eye R
+  ]);
+}
 function makeEagle() {
-  const wing = new THREE.BoxGeometry(1.6,0.05,0.2);
-  const body = new THREE.BoxGeometry(0.3,0.15,0.3);
-  return mergeGeometries([wing, body]);
+  const B=0x4a3a2a, D=0x33271b, W=0xeae6dc, Y=0xe7b53c, DK=0x111111;
+  return mergeColored([
+    P(0.26,0.26,0.66, 0,0,0.0, B),                         // body
+    P(0.19,0.19,0.19, 0,0.07,0.38, W),                     // white head
+    P(0.08,0.07,0.12, 0,0.04,0.50, Y),                     // beak
+    P(0.36,0.04,0.32, 0,0.0,-0.42, D),                     // tail fan
+    P(0.95,0.05,0.36,-0.62,0.06,0.02, B, 0,0.25,0.16),     // wing L (swept, dihedral)
+    P(0.95,0.05,0.36, 0.62,0.06,0.02, B, 0,-0.25,-0.16),   // wing R
+    P(0.40,0.04,0.20,-1.02,0.14,-0.10, D, 0,0.25,0.16),    // wingtip L
+    P(0.40,0.04,0.20, 1.02,0.14,-0.10, D, 0,-0.25,-0.16),  // wingtip R
+    P(0.04,0.05,0.04,-0.07,0.09,0.44, DK),                 // eye L
+    P(0.04,0.05,0.04, 0.07,0.09,0.44, DK),                 // eye R
+  ]);
 }
 const ANIMAL_GEO = [makeRabbit, makeDeer, makeWolf, makeFish, makeEagle];
-const ANIMAL_COL = [0xf0f0f0, 0xa06e3c, 0x5a5a64, 0x78b4dc, 0x3c3228];
-// up-scale the creatures so the herds read clearly at world scale (a real 0.35 m
+const ANIMAL_COL = [0xf0f0f0, 0xa06e3c, 0x5a5a64, 0x78b4dc, 0x3c3228]; // legend swatches
+// up-scale the creatures so the herds read clearly at world scale (a real 0.4 m
 // rabbit is a sub-pixel speck on a 1024 m map). Per-kind so proportions stay sane.
-const ANIMAL_VSCALE = [2.4, 1.8, 1.9, 2.2, 2.0];   // rabbit, deer, wolf, fish, eagle
+const ANIMAL_VSCALE = [2.6, 1.7, 1.8, 2.6, 2.2];   // rabbit, deer, wolf, fish, eagle
 const WOLF_HUNT_COL = new THREE.Color(0xdc3c3c);
 function buildAnimals() {
   const grp = new THREE.Group();
@@ -814,11 +917,12 @@ function buildAnimals() {
   for (let k=0;k<5;k++) {
     const n = animalBuckets[k].length; if (!n) { animalKindMeshes[k]=null; continue; }
     const geo = ANIMAL_GEO[k]();
-    const mat = new THREE.MeshStandardMaterial({ color: ANIMAL_COL[k], roughness: 0.85 });
+    // vertexColors lets one mesh carry the creature's multi-tone paint job.
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78 });
     const inst = new THREE.InstancedMesh(geo, mat, n);
-    if (k===2) { // wolf: per-instance colour for hunt state
+    if (k===2) { // wolf: per-instance tint, multiplied over its grey vertex colours
       inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n*3), 3);
-      const c = new THREE.Color(ANIMAL_COL[2]); for (let q=0;q<n;q++) inst.setColorAt(q,c);
+      const c = new THREE.Color(0xffffff); for (let q=0;q<n;q++) inst.setColorAt(q,c);
     }
     inst.frustumCulled = false;
     animalKindMeshes[k] = inst; grp.add(inst);
@@ -935,7 +1039,8 @@ document.querySelectorAll('#layers input').forEach(inp => inp.onchange = () => {
 
 // ---------------------------------------------------------------- per-frame apply
 const _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _hide = mat4(new THREE.Vector3(0,-9999,0), 0.0001, 0);
-const _wolfHunt = new THREE.Color(0xdc3c3c), _wolfCalm = new THREE.Color(ANIMAL_COL[2]);
+// tints multiplied over the wolf's grey vertex colours: calm = no tint, hunt = angry red.
+const _wolfHunt = new THREE.Color(0xff6450), _wolfCalm = new THREE.Color(0xffffff);
 let lastResGone = new Set(), lastPlantGone = new Set();
 
 function lerp(a,b,t){ return a+(b-a)*t; }
@@ -1354,7 +1459,8 @@ async function buildAgentGLB(){
     setLabel(agentLabel, aliveNow ? spec.l : 'Died');
   });
 }
-buildAnimalGLB();
+// buildAnimalGLB();  // disabled: the hand-built low-poly creatures are the intended
+// look and ship inside this file; external animal GLBs aren't deployed with the viewer.
 buildAgentGLB();
 
 // ---------------------------------------------------------------- main loop
