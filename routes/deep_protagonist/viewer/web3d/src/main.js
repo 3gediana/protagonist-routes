@@ -1372,8 +1372,8 @@ function setLabel(spr,text){
 }
 let agentMixer=null, agentActions={}, agentCur=null, agentPropHolder=null, agentProps={}, agentLabel=null, agentWorn=false, agentCloak=null;
 async function buildAgentGLB(){
-  let gltf; try { gltf = await loadModel('./assets/characters/Viking_Male.fbx'); }
-  catch(e){ console.warn('human model failed', e); return; }
+  let gltf; try { gltf = await loadModel('./assets/Animated_Men_Pack/DLptRuewTn_DLptRuewTn.glb'); }
+  catch(e){ console.warn('human GLB failed', e); return; }
   const human = skinnedClone(gltf.scene);
   human.traverse(o=>{ if(o.isMesh){ o.frustumCulled=false; } });
   fitModel(human, 1.85);
@@ -1384,16 +1384,9 @@ async function buildAgentGLB(){
   // all clips -> named actions (key = lowercased suffix after 'Man_')
   agentMixer = new THREE.AnimationMixer(human);
   for (const clip of (gltf.animations||[])){
-    // clip names arrive as 'CharacterArmature|Idle' / 'Man_Idle' etc -> take the
-    // final segment, drop non-letters: 'idle','walk','sitdown','pickup','punch'...
-    const key = clip.name.toLowerCase().split('|').pop().replace(/^.*man_/,'').replace(/[^a-z]/g,'');
+    const key = clip.name.toLowerCase().replace(/^.*man_/,'').replace(/[^a-z]/g,'');
     agentActions[key] = agentMixer.clipAction(clip);
   }
-  // map the action-table's clip vocabulary onto the Viking (res_characters) rig's
-  // clip set so eating/sleeping sit, gathering punches, building/crafting picks up,
-  // and death plays Defeat — instead of everything collapsing to idle.
-  const ALIAS = { sitting:'sitdown', clapping:'pickup', swordslash:'punch', standing:'standup', run:'walk', death:'defeat' };
-  for (const a in ALIAS){ if(!agentActions[a] && agentActions[ALIAS[a]]) agentActions[a] = agentActions[ALIAS[a]]; }
   _allMixers.push(agentMixer);
 
   // right-hand bone -> prop holder, counter-scaled so props read in true metres
