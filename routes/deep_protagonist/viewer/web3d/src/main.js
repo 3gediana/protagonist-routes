@@ -17,13 +17,16 @@ const W = (x, y, z) => new THREE.Vector3(x, z, y);   // world -> three
 
 // ---------------------------------------------------------------- biome colours
 // Exact RGB values mirrored from DP's native WorldRenderer.cpp::biome_color.
+// Pushed apart in both hue and value so the zones read at a glance: plains are a
+// bright warm grass-green, forest a deep cool green, mountain bare grey rock,
+// swamp a murky olive-brown (clearly NOT plain/forest green), desert warm sand.
 const BIOME_COL = [
-  [110,180, 80],  // 0 Plain
-  [ 52,120, 56],  // 1 Forest (lifted off near-black so canopy floor isn't muddy)
-  [150,145,140],  // 2 Mountain
-  [ 60,130,220],  // 3 River (water)
-  [ 74,104, 86],  // 4 Swamp (greener wetland floor; marsh water laid on top)
-  [220,195,130],  // 5 Desert
+  [140,186, 70],  // 0 Plain    — bright warm grassland
+  [ 38, 92, 50],  // 1 Forest   — deep cool green (canopy floor)
+  [148,142,134],  // 2 Mountain — bare grey rock
+  [ 56,128,214],  // 3 River    — water blue
+  [ 96, 96, 56],  // 4 Swamp    — murky olive-brown wetland (distinct from green)
+  [222,196,128],  // 5 Desert   — warm sand
 ];
 
 // ---------------------------------------------------------------- load data
@@ -129,22 +132,54 @@ const BIO        = WORLD.biomes;            // GX*GY digit string
 // where the data places them. caveRock stays all-zero (kept so the grass code's
 // reference still resolves) — grass grows normally right up to the cave.
 const caveRock = new Float32Array(GX * GY);   // all 0: no fabricated cave knolls
-// Vertical exaggeration: the real world is ~77 m of relief over a 1024 m map
-// (~7.5%), which reads as flat from a high camera. Scale height for display so
-// mountains/valleys are legible. Applied at EVERY height source (surfaceH +
-// terrain mesh + water tiles) so entities, ring and camera stay grounded.
-const VEXAG      = 1.5;
 
-// bilinear terrain height at world (wx,wy)
+// Real-relief stats over the live (ruggedised/carved) heightmap.
+let H_MIN = Infinity, H_MAX = -Infinity;
+for (let k = 0; k < H.length; k++) { if (H[k] < H_MIN) H_MIN = H[k]; if (H[k] > H_MAX) H_MAX = H[k]; }
+const H_RANGE = Math.max(1e-3, H_MAX - H_MIN);
+
+// Non-linear vertical exaggeration: the real world is only ~77 m of relief over
+// a 1024 m map (~7.5%), which reads dead-flat. A flat multiplier either leaves it
+// flat or makes lowlands climby. Instead keep valleys/plains gentle and walkable
+// (linear base) while pushing the high ground up hard (quadratic boost) so the
+// mountains actually tower and the biomes read as different elevations. Applied
+// at EVERY height source (surfaceH + terrain mesh + water) so entities, ring and
+// camera stay grounded on the same surface.
+const VEXAG = 1.6;             // gentle base lift for low/mid ground
+const PEAK_BOOST = 78;         // extra metres added to the very highest ground
+function dispY(h) {
+  const e = (h - H_MIN) / H_RANGE;          // 0 at lowest, 1 at highest
+  return h * VEXAG + (e * e) * PEAK_BOOST;
+}
+
+// Water line: median height of the Swamp lowland (biome 4) — the world's natural
+// basin where water collects. Computed from the live H so it tracks the data; if
+// the world has no swamp, fall back to a low percentile of all heights. Used both
+// to build the lake surface AND to keep vegetation/props out of the water.
+const WATER_LEVEL = (() => {
+  const sw = [];
+  for (let k = 0; k < GX*GY; k++) if (BIO.charCodeAt(k) - 48 === 4) sw.push(H[k]);
+  if (sw.length) { sw.sort((a,b)=>a-b); return sw[(sw.length*0.65)|0]; }
+  const all = Array.from(H).sort((a,b)=>a-b); return all[(all.length*0.12)|0];
+})();
+// true if the cell at world (wx,wy) lies below the water line (i.e. submerged).
+function isUnderwater(wx, wy) {
+  const i = Math.max(0, Math.min(GX-1, Math.round(wx / CS)));
+  const j = Math.max(0, Math.min(GY-1, Math.round(wy / CS)));
+  return H[j*GX+i] < WATER_LEVEL;
+}
+
+// bilinear DISPLAY height at world (wx,wy) — interpolates the per-corner display
+// heights so props seat exactly on the (non-linearly) exaggerated mesh.
 function surfaceH(wx, wy) {
   let fx = wx / CS, fy = wy / CS;
   fx = Math.max(0, Math.min(GX-1.001, fx));
   fy = Math.max(0, Math.min(GY-1.001, fy));
   const x0 = Math.floor(fx), y0 = Math.floor(fy);
   const tx = fx - x0, ty = fy - y0;
-  const h00 = H[y0*GX+x0],     h10 = H[y0*GX+x0+1];
-  const h01 = H[(y0+1)*GX+x0], h11 = H[(y0+1)*GX+x0+1];
-  return ((h00*(1-tx)+h10*tx)*(1-ty) + (h01*(1-tx)+h11*tx)*ty) * VEXAG;
+  const h00 = dispY(H[y0*GX+x0]),     h10 = dispY(H[y0*GX+x0+1]);
+  const h01 = dispY(H[(y0+1)*GX+x0]), h11 = dispY(H[(y0+1)*GX+x0+1]);
+  return (h00*(1-tx)+h10*tx)*(1-ty) + (h01*(1-tx)+h11*tx)*ty;
 }
 
 // ---------------------------------------------------------------- renderer / scene
@@ -201,11 +236,9 @@ function buildTerrain() {
   const col = new Float32Array(pos.count*3);
   const c = new THREE.Color();
   const rock = new THREE.Color(0x6f6a60), snow = new THREE.Color(0xeef2f8);
-  // normalize over the ACTUAL relief (not MAXH=120, which the world never reaches),
-  // so the rock/snow bands and valley shading actually land on real terrain.
-  let hMin = Infinity, hMax = -Infinity;
-  for (let k = 0; k < H.length; k++) { if (H[k] < hMin) hMin = H[k]; if (H[k] > hMax) hMax = H[k]; }
-  const range = Math.max(1e-3, hMax - hMin);
+  // normalize over the ACTUAL relief (shared module stats) so the rock/snow bands
+  // and valley shading land on real terrain.
+  const hMin = H_MIN, hMax = H_MAX, range = H_RANGE;
   // cheap value noise so each flat biome breaks up into mottled patches instead of
   // one solid block of paint (the main thing that read as "crude" vs PE).
   const hsh = (x, y) => { const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return n - Math.floor(n); };
@@ -222,7 +255,7 @@ function buildTerrain() {
       // PlaneGeometry verts run +x then +z(=world y); shift origin to (0,0)
       pos.setX(vi, i*CS);
       pos.setZ(vi, j*CS);
-      pos.setY(vi, h*VEXAG);
+      pos.setY(vi, dispY(h));
       const b = BIO.charCodeAt(vi) - 48;
       const rgb = BIOME_COL[b] || BIOME_COL[0];
       c.setRGB(rgb[0]/255, rgb[1]/255, rgb[2]/255);
@@ -232,10 +265,12 @@ function buildTerrain() {
       const macro = vn(i, j, 13.0) - 0.5;
       const shade = 1 + micro*0.15 + macro*0.20 - (1 - e)*0.12;
       c.multiplyScalar(Math.max(0.62, shade));
-      // rocky tint up the slopes + snow on the real peaks (skip water & desert)
+      // rocky tint + snow only high up, and only on rising ground (mountain/plain/
+      // forest fringes) so the lowland biomes keep their own colour instead of all
+      // greying toward rock. Skip water & desert.
       if (b !== 3 && b !== 5) {
-        if (e > 0.52) c.lerp(rock, Math.min(1, (e - 0.52)/0.32) * 0.6);
-        if (e > 0.80) c.lerp(snow, Math.min(1, (e - 0.80)/0.20));
+        if (e > 0.62) c.lerp(rock, Math.min(1, (e - 0.62)/0.30) * 0.5);
+        if (e > 0.86) c.lerp(snow, Math.min(1, (e - 0.86)/0.14));
       }
       // cave knolls read as bare rock regardless of underlying biome
       const cr = caveRock[vi];
@@ -268,14 +303,10 @@ function buildWater() {
   // low percentile of all heights if the world has no swamp. Computed from the live
   // (ruggedised/carved) H so it tracks the actual terrain the mesh is built from.
   (function buildLakes() {
-    const swampH = [];
-    for (let k = 0; k < GX*GY; k++) if (BIO.charCodeAt(k) - 48 === 4) swampH.push(H[k]);
-    let level;
-    if (swampH.length) { swampH.sort((a,b)=>a-b); level = swampH[(swampH.length*0.65)|0]; }
-    else { const all = Array.from(H).sort((a,b)=>a-b); level = all[(all.length*0.12)|0]; }
+    const level = WATER_LEVEL;               // shared swamp-lowland water line
     const wlMat = new THREE.MeshStandardMaterial({ color: 0x2c6fbf, transparent: true,
       opacity: 0.82, roughness: 0.08, metalness: 0.55, side: THREE.DoubleSide });
-    const y = level * VEXAG + 0.05;          // flat water plane height (three.js up)
+    const y = dispY(level) + 0.05;           // flat water plane height (three.js up)
     const verts = [], idxs = []; let base = 0;
     for (let j = 0; j < GY-1; j++) for (let i = 0; i < GX-1; i++) {
       // flood a quad if ANY corner sits below the water line, so neighbouring low
@@ -323,7 +354,7 @@ function buildWater() {
     const m = new THREE.Matrix4(); let k = 0;
     for (let j = 0; j < GY; j++) for (let i = 0; i < GX; i++) {
       if (BIO.charCodeAt(j*GX+i) - 48 !== 3) continue;
-      m.makeTranslation(i*CS, H[j*GX+i]*VEXAG - 0.10, j*CS); inst.setMatrixAt(k++, m);
+      m.makeTranslation(i*CS, dispY(H[j*GX+i]) - 0.10, j*CS); inst.setMatrixAt(k++, m);
     }
     inst.instanceMatrix.needsUpdate = true; grp.add(inst);
   }
@@ -472,6 +503,7 @@ function buildDecos() {
   // buckets[cat][variantIdx] = [matrices]
   const buckets = {};
   WORLD.decos.forEach((d, idx) => {
+    if (isUnderwater(d[0], d[1])) return;               // no trees/rocks in the water
     const k = d[5], b = biomeAt(d[0], d[1]);
     let cat;
     if (k === 1)       cat = 'rock';
@@ -511,20 +543,22 @@ buildDecos();
 // ---------------------------------------------------------------- plants (food)
 // kinds: 0 Berry,1 Fruit,2 Cactus,3 Mushroom — small coloured spheres on the ground
 const PLANT_COL = [0xdc325a, 0xffaa1e, 0x64dc96, 0xd2d25a];
-const PLANT_R   = [0.13, 0.16, 0.20, 0.12];   // small berry/fruit pickups, not big balls
-let plantInst, plantScale = [];
+const PLANT_R   = [0.32, 0.40, 0.50, 0.30];   // berry/fruit/cactus/mushroom pickups (legible at world scale)
+let plantInst, plantScale = [], plantUW = [];
 function buildPlants() {
   const grp = new THREE.Group();
   const items = WORLD.plants;
   const g = new THREE.IcosahedronGeometry(1, 1);
   const m = new THREE.MeshStandardMaterial({ vertexColors: false, roughness: 0.8 });
+  const hide = mat4(new THREE.Vector3(0,-9999,0), 0.0001, 0);
   plantInst = new THREE.InstancedMesh(g, m, items.length);
   plantInst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(items.length*3), 3);
   const col = new THREE.Color();
   items.forEach((p, n) => {
     const k = p[3]; const r = PLANT_R[k] || 0.25;
     plantScale[n] = r;
-    plantInst.setMatrixAt(n, mat4(W(p[0], p[1], surfaceH(p[0], p[1]) + r), r, 0));
+    const uw = isUnderwater(p[0], p[1]); plantUW[n] = uw;   // no plants in the water
+    plantInst.setMatrixAt(n, uw ? hide : mat4(W(p[0], p[1], surfaceH(p[0], p[1]) + r), r, 0));
     col.setHex(PLANT_COL[k] || 0xffffff);
     plantInst.setColorAt(n, col);
   });
@@ -541,36 +575,40 @@ let resInst, resBaseScale = [];
 function buildResources() {
   const grp = new THREE.Group();
   const items = WORLD.res;
+  const hide = mat4(new THREE.Vector3(0,-9999,0), 0.0001, 0);
   const wood = [], stone = [], grass = [];
   items.forEach((r, n) => { const k=r[3]; (k===0?wood:k===1?stone:grass).push([r,n]); });
   const out = { wood:null, stone:null, grass:null };
+  // submerged resources are hidden (no logs/stones floating in the lakes)
+  const place = (mesh, i, r) => mesh.setMatrixAt(i, isUnderwater(r[0],r[1]) ? hide
+    : mat4(W(r[0], r[1], surfaceH(r[0], r[1])), 1, 0));
   if (wood.length) {
-    const g = new THREE.CylinderGeometry(0.05, 0.07, 0.8, 5); g.rotateZ(Math.PI/2); g.translate(0,0.06,0);
-    const m = new THREE.MeshStandardMaterial({ color: 0x785023, roughness: 1 });
+    const g = new THREE.CylinderGeometry(0.11, 0.15, 1.7, 6); g.rotateZ(Math.PI/2); g.translate(0,0.13,0);
+    const m = new THREE.MeshStandardMaterial({ color: 0x6f4a20, roughness: 1 });
     out.wood = new THREE.InstancedMesh(g, m, wood.length);
-    wood.forEach(([r], i) => out.wood.setMatrixAt(i, mat4(W(r[0], r[1], surfaceH(r[0], r[1])), 1, 0)));
+    wood.forEach(([r], i) => place(out.wood, i, r));
     out.wood.instanceMatrix.needsUpdate = true; grp.add(out.wood);
   }
   if (stone.length) {
-    const g = new THREE.BoxGeometry(0.45, 0.30, 0.45); g.translate(0,0.18,0);
-    const m = new THREE.MeshStandardMaterial({ color: 0xa0a0a0, roughness: 1 });
+    const g = new THREE.BoxGeometry(0.85, 0.58, 0.85); g.translate(0,0.30,0);
+    const m = new THREE.MeshStandardMaterial({ color: 0x9a9a9a, roughness: 1, flatShading: true });
     out.stone = new THREE.InstancedMesh(g, m, stone.length);
-    stone.forEach(([r], i) => out.stone.setMatrixAt(i, mat4(W(r[0], r[1], surfaceH(r[0], r[1])), 1, 0)));
+    stone.forEach(([r], i) => place(out.stone, i, r));
     out.stone.instanceMatrix.needsUpdate = true; grp.add(out.stone);
   }
   if (grass.length) {
-    const g = new THREE.ConeGeometry(0.10, 0.45, 5); g.translate(0,0.22,0);
-    const m = new THREE.MeshStandardMaterial({ color: 0x50b450, roughness: 1 });
+    const g = new THREE.ConeGeometry(0.22, 0.95, 5); g.translate(0,0.47,0);
+    const m = new THREE.MeshStandardMaterial({ color: 0x6abf4a, roughness: 1 });
     out.grass = new THREE.InstancedMesh(g, m, grass.length);
-    grass.forEach(([r], i) => out.grass.setMatrixAt(i, mat4(W(r[0], r[1], surfaceH(r[0], r[1])), 1, 0)));
+    grass.forEach(([r], i) => place(out.grass, i, r));
     out.grass.instanceMatrix.needsUpdate = true; grp.add(out.grass);
   }
-  // map global resource index -> {mesh, localIndex, basePos} so rgone can hide
+  // map global resource index -> {mesh, localIndex, basePos, uw} so rgone can hide
   resInst = { groups: out, index: new Array(items.length) };
   const ptr = { wood:0, stone:0, grass:0 };
   items.forEach((r, n) => {
     const k = r[3]; const key = k===0?'wood':k===1?'stone':'grass';
-    resInst.index[n] = { key, li: ptr[key]++, pos: W(r[0], r[1], surfaceH(r[0], r[1])) };
+    resInst.index[n] = { key, li: ptr[key]++, pos: W(r[0], r[1], surfaceH(r[0], r[1])), uw: isUnderwater(r[0],r[1]) };
   });
   return reg('resources', grp);
 }
@@ -607,6 +645,7 @@ function buildGrass() {
     const wx = Math.random() * WSX, wy = Math.random() * WSY;
     const b = biomeAt(wx, wy);
     if (b !== 0 && b !== 1 && b !== 4) continue;     // grassland: Plain / Forest / Swamp
+    if (isUnderwater(wx, wy)) continue;              // no grass blades in the lakes
     const cci = Math.floor(wy / CS) * GX + Math.floor(wx / CS);
     if (caveRock[cci] > 0.3) continue;               // bare rock on cave knolls, no grass
     const s = 0.6 + Math.random() * 0.7;
@@ -686,9 +725,9 @@ function buildCaves() {
       });
     }
     // a dark box tucked just inside the mouth guarantees a black interior at any angle
-    const back = new THREE.Mesh(new THREE.BoxGeometry(Wt*0.34, Ht*0.7, Dt*0.5), voidMat);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(Wt*0.30, Ht*0.55, Dt*0.5), voidMat);
     back.rotation.y = rotY;
-    back.position.copy(W(cxw - ux*Dt*0.14, cyw - uy*Dt*0.14, baseY + Ht*0.30));
+    back.position.copy(W(cxw - ux*Dt*0.22, cyw - uy*Dt*0.22, baseY + Ht*0.26));
     cgrp.add(back);
     grp.add(cgrp);
   });
@@ -955,7 +994,7 @@ function applyFrame(ph) {
     for (const gi of touch) {
       const info = resInst.index[gi]; if (!info) continue;
       const mesh = resInst.groups[info.key]; if (!mesh) continue;
-      mesh.setMatrixAt(info.li, rgone.has(gi) ? _hide : mat4(info.pos, 1, 0));
+      mesh.setMatrixAt(info.li, (rgone.has(gi) || info.uw) ? _hide : mat4(info.pos, 1, 0));
       mesh.instanceMatrix.needsUpdate = true;
     }
     lastResGone = rgone;
@@ -966,7 +1005,8 @@ function applyFrame(ph) {
     const touch = new Set([...pgone, ...lastPlantGone]);
     for (const gi of touch) {
       const p = WORLD.plants[gi]; if (!p) continue; const r = plantScale[gi];
-      plantInst.setMatrixAt(gi, pgone.has(gi) ? _hide : mat4(W(p[0],p[1],p[2]+r), r, 0));
+      plantInst.setMatrixAt(gi, (pgone.has(gi) || plantUW[gi]) ? _hide
+        : mat4(W(p[0],p[1],surfaceH(p[0],p[1])+r), r, 0));
     }
     plantInst.instanceMatrix.needsUpdate = true;
     lastPlantGone = pgone;
