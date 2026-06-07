@@ -19,10 +19,10 @@ const W = (x, y, z) => new THREE.Vector3(x, z, y);   // world -> three
 // Exact RGB values mirrored from DP's native WorldRenderer.cpp::biome_color.
 const BIOME_COL = [
   [110,180, 80],  // 0 Plain
-  [ 30,110, 40],  // 1 Forest
+  [ 52,120, 56],  // 1 Forest (lifted off near-black so canopy floor isn't muddy)
   [150,145,140],  // 2 Mountain
   [ 60,130,220],  // 3 River (water)
-  [ 80, 90, 60],  // 4 Swamp
+  [ 74,104, 86],  // 4 Swamp (greener wetland floor; marsh water laid on top)
   [220,195,130],  // 5 Desert
 ];
 
@@ -161,7 +161,7 @@ app.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const skyColor = new THREE.Color(0x9ec7ff);
 scene.background = skyColor.clone();
-scene.fog = new THREE.Fog(skyColor.clone(), 350, 1400);
+scene.fog = new THREE.Fog(skyColor.clone(), 600, 2000);
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.5, 4000);
 const cx = WSX*0.5, cy = WSY*0.5, ch = surfaceH(cx, cy);
@@ -180,9 +180,9 @@ controls.maxDistance = 1800;
 controls.minDistance = 8;
 
 // lights
-const hemi = new THREE.HemisphereLight(0xbfd6ff, 0x4a4533, 0.55);
+const hemi = new THREE.HemisphereLight(0xbfd6ff, 0x4a4533, 0.42);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff2d6, 1.4);
+const sun = new THREE.DirectionalLight(0xfff2d6, 1.65);
 sun.position.copy(W(cx+300, cy+200, ch+500));
 scene.add(sun);
 const ambient = new THREE.AmbientLight(0xffffff, 0.18);
@@ -290,6 +290,25 @@ function buildWater() {
       m.makeTranslation(i*CS, H[j*GX+i]*VEXAG - 0.10, j*CS); inst.setMatrixAt(k++, m);
     }
     inst.instanceMatrix.needsUpdate = true; grp.add(inst);
+  }
+  // Swamp marsh: the Swamp biome is the world's LOWEST ground (mean ~8.7 m vs
+  // ~15 m for plain/forest), i.e. the natural lowland where water collects. Lay a
+  // translucent wet sheen over every Swamp cell so ~10% of the map reads as
+  // marsh/wetland instead of dry green. Data-driven: cells come straight from the
+  // biome map; seated just above the surface so props/reeds still poke through.
+  const marshMat = new THREE.MeshStandardMaterial({ color: 0x2f6f6a, transparent: true,
+    opacity: 0.66, roughness: 0.16, metalness: 0.30, side: THREE.DoubleSide });
+  let scnt = 0;
+  for (let j = 0; j < GY; j++) for (let i = 0; i < GX; i++) if (BIO.charCodeAt(j*GX+i) - 48 === 4) scnt++;
+  if (scnt) {
+    const geo = new THREE.PlaneGeometry(CS, CS); geo.rotateX(-Math.PI/2);
+    const inst = new THREE.InstancedMesh(geo, marshMat, scnt);
+    const m = new THREE.Matrix4(); let k = 0;
+    for (let j = 0; j < GY; j++) for (let i = 0; i < GX; i++) {
+      if (BIO.charCodeAt(j*GX+i) - 48 !== 4) continue;
+      m.makeTranslation(i*CS, H[j*GX+i]*VEXAG + 0.06, j*CS); inst.setMatrixAt(k++, m);
+    }
+    inst.instanceMatrix.needsUpdate = true; inst.renderOrder = 1; grp.add(inst);
   }
   return reg('water', grp);
 }
