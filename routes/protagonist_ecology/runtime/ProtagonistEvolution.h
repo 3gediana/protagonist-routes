@@ -54,6 +54,15 @@ public:
         double line_sigma,
         double mutation_boost);
 
+    std::vector<std::unique_ptr<IGenome>> reproduceFromArchiveGenomes(
+        const std::vector<const ProtagonistGenome*>& archive_elites,
+        const std::vector<IGenome*>& current_genomes,
+        std::size_t population_size,
+        std::size_t current_generation,
+        std::size_t init_generations,
+        double line_sigma,
+        double mutation_boost);
+
     const char* name() const override;
 
     ProtagonistEvolutionState exportState() const;

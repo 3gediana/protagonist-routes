@@ -661,6 +661,9 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.me_neat_cvt_kmeans_iters = config.getOr<int>(
         "evolution.me_neat.cvt_kmeans_iters",
         out.me_neat_cvt_kmeans_iters);
+    out.me_neat_lifetime_archive_enabled = config.getOr<bool>(
+        "evolution.me_neat.lifetime_archive_enabled",
+        out.me_neat_lifetime_archive_enabled);
     out.me_neat_non_elite_weight = config.getOr<double>(
         "evolution.me_neat.non_elite_weight",
         out.me_neat_non_elite_weight);

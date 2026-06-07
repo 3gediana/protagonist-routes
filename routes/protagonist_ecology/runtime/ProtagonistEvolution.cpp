@@ -269,6 +269,77 @@ std::vector<std::unique_ptr<IGenome>> ProtagonistEvolution::reproduceFromArchive
     return next_generation;
 }
 
+std::vector<std::unique_ptr<IGenome>> ProtagonistEvolution::reproduceFromArchiveGenomes(
+    const std::vector<const ProtagonistGenome*>& archive_elites,
+    const std::vector<IGenome*>& current_genomes,
+    std::size_t population_size,
+    std::size_t current_generation,
+    std::size_t init_generations,
+    double line_sigma,
+    double mutation_boost) {
+    if (current_genomes.empty() || population_size == 0) {
+        return {};
+    }
+
+    GenomeId max_id = kInvalidGenomeId;
+    for (const IGenome* genome : current_genomes) {
+        if (genome != nullptr && genome->id().value > max_id.value) {
+            max_id = genome->id();
+        }
+    }
+
+    std::vector<const ProtagonistGenome*> valid_archive_elites;
+    valid_archive_elites.reserve(archive_elites.size());
+    for (const ProtagonistGenome* elite : archive_elites) {
+        if (elite != nullptr) {
+            valid_archive_elites.push_back(elite);
+        }
+    }
+
+    std::vector<std::unique_ptr<IGenome>> next_generation;
+    next_generation.reserve(population_size);
+
+    const bool in_init_phase = current_generation < init_generations;
+    if (!in_init_phase) {
+        for (const ProtagonistGenome* elite : valid_archive_elites) {
+            auto child = std::make_unique<ProtagonistGenome>(*elite);
+            child->setId(GenomeId{++max_id.value});
+            next_generation.push_back(std::move(child));
+            if (next_generation.size() >= population_size) {
+                return next_generation;
+            }
+        }
+    }
+
+    const bool use_archive = !in_init_phase && valid_archive_elites.size() >= 2;
+    std::uniform_int_distribution<std::size_t> archive_dist(
+        0, valid_archive_elites.empty() ? 0 : valid_archive_elites.size() - 1);
+    std::uniform_int_distribution<std::size_t> pop_dist(0, current_genomes.size() - 1);
+
+    auto pick_parent = [&]() -> const ProtagonistGenome* {
+        if (use_archive) {
+            return valid_archive_elites[archive_dist(rng_)];
+        }
+        IGenome* g = current_genomes[pop_dist(rng_)];
+        return g != nullptr ? dynamic_cast<const ProtagonistGenome*>(g) : nullptr;
+    };
+
+    while (next_generation.size() < population_size) {
+        const ProtagonistGenome* parent_a = pick_parent();
+        const ProtagonistGenome* parent_b = pick_parent();
+        if (parent_a == nullptr || parent_b == nullptr) {
+            break;
+        }
+        ProtagonistGenome child = (line_sigma > 0.0)
+            ? crossoverLine(*parent_a, *parent_b, GenomeId{++max_id.value}, line_sigma)
+            : crossover(*parent_a, *parent_b, GenomeId{++max_id.value});
+        mutateBoosted(child, mutation_boost);
+        next_generation.push_back(std::make_unique<ProtagonistGenome>(std::move(child)));
+    }
+
+    return next_generation;
+}
+
 const ProtagonistGenome* ProtagonistEvolution::findGenome(const std::vector<IGenome*>& current_genomes,
                                                           GenomeId id) const {
     for (const IGenome* genome : current_genomes) {

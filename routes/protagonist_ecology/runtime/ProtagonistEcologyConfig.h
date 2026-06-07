@@ -736,6 +736,7 @@ struct ProtagonistEcologyConfig {
     int me_neat_cvt_num_centroids{64};       // k: number of Voronoi cells
     int me_neat_cvt_samples_per_centroid{100};  // k-means initialisation density
     int me_neat_cvt_kmeans_iters{32};        // Lloyd iterations
+    bool me_neat_lifetime_archive_enabled{false};
     // When 0 < w < 1, non-elite genomes have their fitness multiplied
     // by w during reproduce. EliteSelection then naturally lifts cell
     // elites into the survivor set, and tournament samples favour them.

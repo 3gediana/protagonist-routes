@@ -103,6 +103,8 @@ public:
     // this becomes the cell elite; otherwise the higher-fitness one wins.
     void submit(GenomeId id, double fitness, const BehaviorDescriptor& bd);
 
+    CellKey cellKeyFor(const BehaviorDescriptor& bd) const { return cellOf(bd); }
+
     // For breeding selection: ids of all current cell elites (one per
     // filled cell).
     std::vector<GenomeId> eliteIds() const;

@@ -68,6 +68,8 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
+#include <memory>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -4240,6 +4242,19 @@ int ProtagonistEcologyRuntime::runTraining() {
         }
     }
 
+    QualityDiversityArchive me_archive(route.me_neat_chops_bin_size,
+                                       route.me_neat_workcraft_bin_size,
+                                       route.me_neat_max_bins,
+                                       route.me_neat_hunt_bin_size,
+                                       route.me_neat_hunt_max_bins);
+    if (route.me_neat_enabled && route.me_neat_cvt_enabled) {
+        me_archive.initCvt(route.me_neat_cvt_num_centroids,
+                           route.me_neat_cvt_samples_per_centroid,
+                           route.me_neat_cvt_kmeans_iters,
+                           static_cast<std::uint32_t>(route.random_seed + 0x1A2B));
+    }
+    std::map<QualityDiversityArchive::CellKey, std::unique_ptr<ProtagonistGenome>> me_archive_genomes;
+
     for (std::size_t generation = start_generation; generation < params.generations; ++generation) {
         if (stop_requested_.load()) {
             break;
@@ -4602,33 +4617,32 @@ int ProtagonistEcologyRuntime::runTraining() {
         const auto evaluated = collectEvaluated(population, fitness_sum, episodes_per_generation);
         const auto stats = computeStats(evaluated);
 
-        // L2.8 v14 ME-NEAT: build quality-diversity archive from this
-        // generation. Each evaluated individual's BD (chops, build+craft)
-        // bins it into one of N x N cells; only the highest-fitness
-        // genome per cell survives. evaluated_for_breeding clones
-        // evaluated and suppresses non-cell-elite fitness so EliteSelection
-        // + TournamentSelection in evolution.reproduce naturally bias
-        // toward cell elites. When me_neat_enabled=false the archive is
-        // empty, the breeding evaluated == evaluated, and selection is
-        // identical to v13.
-        QualityDiversityArchive me_archive(route.me_neat_chops_bin_size,
-                                           route.me_neat_workcraft_bin_size,
-                                           route.me_neat_max_bins,
-                                           route.me_neat_hunt_bin_size,
-                                           route.me_neat_hunt_max_bins);
-        // v18 CVT-MAP-Elites: opt-in replacement for grid mode. Seeded
-        // from world tick so a resumed run reproduces the same centroids.
-        if (route.me_neat_enabled && route.me_neat_cvt_enabled) {
-            me_archive.initCvt(route.me_neat_cvt_num_centroids,
-                               route.me_neat_cvt_samples_per_centroid,
-                               route.me_neat_cvt_kmeans_iters,
-                               static_cast<std::uint32_t>(route.random_seed + 0x1A2B));
-        }
         if (route.me_neat_enabled) {
+            if (!route.me_neat_lifetime_archive_enabled) {
+                me_archive.clear();
+                me_archive_genomes.clear();
+            }
+            auto find_protagonist = [&](GenomeId id) -> const ProtagonistGenome* {
+                for (const auto& genome : population) {
+                    if (genome != nullptr && genome->id() == id) {
+                        return dynamic_cast<const ProtagonistGenome*>(genome.get());
+                    }
+                }
+                return nullptr;
+            };
             for (const auto& ev : evaluated) {
                 auto it = behavior_per_genome.find(ev.genome_id);
                 if (it == behavior_per_genome.end()) continue;
+                const auto cell_key = me_archive.cellKeyFor(it->second);
                 me_archive.submit(ev.genome_id, ev.fitness, it->second);
+                if (route.me_neat_lifetime_archive_enabled) {
+                    const auto cell_it = me_archive.cells().find(cell_key);
+                    if (cell_it != me_archive.cells().end() && cell_it->second.elite_id == ev.genome_id) {
+                        if (const auto* elite_genome = find_protagonist(ev.genome_id); elite_genome != nullptr) {
+                            me_archive_genomes[cell_key] = std::make_unique<ProtagonistGenome>(*elite_genome);
+                        }
+                    }
+                }
             }
         }
 
@@ -5238,15 +5252,34 @@ int ProtagonistEcologyRuntime::runTraining() {
                 && route.me_neat_archive_breeding
                 && protag_evolution != nullptr;
             if (use_v15_archive_breeding) {
-                const auto archive_ids = me_archive.eliteIds();
-                next_population = protag_evolution->reproduceFromArchive(
-                    archive_ids,
-                    raw,
-                    evaluated.size(),
-                    generation,
-                    route.me_neat_init_generations,
-                    route.me_neat_line_sigma,
-                    route.me_neat_mutation_boost);
+                if (route.me_neat_lifetime_archive_enabled) {
+                    std::vector<const ProtagonistGenome*> archive_genomes;
+                    archive_genomes.reserve(me_archive.cells().size());
+                    for (const auto& [cell_key, cell] : me_archive.cells()) {
+                        auto it = me_archive_genomes.find(cell_key);
+                        if (it != me_archive_genomes.end() && it->second != nullptr) {
+                            archive_genomes.push_back(it->second.get());
+                        }
+                    }
+                    next_population = protag_evolution->reproduceFromArchiveGenomes(
+                        archive_genomes,
+                        raw,
+                        evaluated.size(),
+                        generation,
+                        route.me_neat_init_generations,
+                        route.me_neat_line_sigma,
+                        route.me_neat_mutation_boost);
+                } else {
+                    const auto archive_ids = me_archive.eliteIds();
+                    next_population = protag_evolution->reproduceFromArchive(
+                        archive_ids,
+                        raw,
+                        evaluated.size(),
+                        generation,
+                        route.me_neat_init_generations,
+                        route.me_neat_line_sigma,
+                        route.me_neat_mutation_boost);
+                }
             } else {
                 // L2.8 v14 ME-NEAT (implicit fitness-shaped) or v8-v13
                 // plain NEAT: suppress non-cell-elite fitness if archive
