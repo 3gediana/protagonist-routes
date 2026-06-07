@@ -252,13 +252,49 @@ function buildTerrain() {
 }
 buildTerrain();
 
-// water: the river network rendered as a continuous ribbon seated in the carved
-// streambed (see carveRivers) + any standing River-biome cells as recessed pools.
-// No more flat tiles floating above the ground bumps.
+// water: real water is a FLAT horizontal surface, not tiles draped over the bumpy
+// ground. We flood every cell whose terrain sits below a data-derived water level
+// (the median height of the Swamp biome — the world's natural lowland) so the low
+// ground turns into lakes/wetland with proper, automatic shorelines where the
+// terrain crosses the water plane. The mountain stream (WORLD.rivers) is kept as a
+// separate carved ribbon up in the hills.
 function buildWater() {
   const grp = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.80,
     roughness: 0.12, metalness: 0.45, side: THREE.DoubleSide });
+
+  // ---- lowland lakes: flat surface at the swamp-median water line --------------
+  // water level = median terrain height over Swamp cells (biome 4); falls back to a
+  // low percentile of all heights if the world has no swamp. Computed from the live
+  // (ruggedised/carved) H so it tracks the actual terrain the mesh is built from.
+  (function buildLakes() {
+    const swampH = [];
+    for (let k = 0; k < GX*GY; k++) if (BIO.charCodeAt(k) - 48 === 4) swampH.push(H[k]);
+    let level;
+    if (swampH.length) { swampH.sort((a,b)=>a-b); level = swampH[(swampH.length*0.65)|0]; }
+    else { const all = Array.from(H).sort((a,b)=>a-b); level = all[(all.length*0.12)|0]; }
+    const wlMat = new THREE.MeshStandardMaterial({ color: 0x2c6fbf, transparent: true,
+      opacity: 0.82, roughness: 0.08, metalness: 0.55, side: THREE.DoubleSide });
+    const y = level * VEXAG + 0.05;          // flat water plane height (three.js up)
+    const verts = [], idxs = []; let base = 0;
+    for (let j = 0; j < GY-1; j++) for (let i = 0; i < GX-1; i++) {
+      // flood a quad if ANY corner sits below the water line, so neighbouring low
+      // cells merge into continuous lakes/wetland instead of fragmenting into specks.
+      const h00=H[j*GX+i], h10=H[j*GX+i+1], h01=H[(j+1)*GX+i], h11=H[(j+1)*GX+i+1];
+      if (h00>level && h10>level && h01>level && h11>level) continue;
+      const x0=i*CS, x1=(i+1)*CS, z0=j*CS, z1=(j+1)*CS;
+      verts.push(x0,y,z0, x1,y,z0, x0,y,z1, x1,y,z1);
+      idxs.push(base,base+2,base+1, base+1,base+2,base+3);
+      base += 4;
+    }
+    if (base) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      geo.setIndex(idxs); geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, wlMat); mesh.renderOrder = 1; grp.add(mesh);
+    }
+  })();
+
   const segs = WORLD.rivers || [];
   if (segs.length) {
     const halfW = CS * 2.2;
@@ -290,25 +326,6 @@ function buildWater() {
       m.makeTranslation(i*CS, H[j*GX+i]*VEXAG - 0.10, j*CS); inst.setMatrixAt(k++, m);
     }
     inst.instanceMatrix.needsUpdate = true; grp.add(inst);
-  }
-  // Swamp marsh: the Swamp biome is the world's LOWEST ground (mean ~8.7 m vs
-  // ~15 m for plain/forest), i.e. the natural lowland where water collects. Lay a
-  // translucent wet sheen over every Swamp cell so ~10% of the map reads as
-  // marsh/wetland instead of dry green. Data-driven: cells come straight from the
-  // biome map; seated just above the surface so props/reeds still poke through.
-  const marshMat = new THREE.MeshStandardMaterial({ color: 0x2f6f6a, transparent: true,
-    opacity: 0.66, roughness: 0.16, metalness: 0.30, side: THREE.DoubleSide });
-  let scnt = 0;
-  for (let j = 0; j < GY; j++) for (let i = 0; i < GX; i++) if (BIO.charCodeAt(j*GX+i) - 48 === 4) scnt++;
-  if (scnt) {
-    const geo = new THREE.PlaneGeometry(CS, CS); geo.rotateX(-Math.PI/2);
-    const inst = new THREE.InstancedMesh(geo, marshMat, scnt);
-    const m = new THREE.Matrix4(); let k = 0;
-    for (let j = 0; j < GY; j++) for (let i = 0; i < GX; i++) {
-      if (BIO.charCodeAt(j*GX+i) - 48 !== 4) continue;
-      m.makeTranslation(i*CS, H[j*GX+i]*VEXAG + 0.06, j*CS); inst.setMatrixAt(k++, m);
-    }
-    inst.instanceMatrix.needsUpdate = true; inst.renderOrder = 1; grp.add(inst);
   }
   return reg('water', grp);
 }
