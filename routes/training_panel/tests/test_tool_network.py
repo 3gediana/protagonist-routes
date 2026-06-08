@@ -179,3 +179,48 @@ def test_every_meta_pack_is_known():
         pk = meta.get("pack")
         if pk is not None:
             assert pk in LONGTAIL_PACKS, nm
+
+
+# --------------------------- launch resource guard ------------------------- #
+GCFG = {"max_procs": 10, "disk_low_gb": 190, "gpu_min_free_mb": 1500}
+
+
+def _patch_status(monkeypatch, *, total=0, free_gb=400, gpu=None):
+    import server
+    monkeypatch.setattr(server, "processes", lambda: {"total": total,
+                        "dp_count": 0, "pe_count": 0})
+    monkeypatch.setattr(server, "system_status",
+                        lambda: {"disk": {"free_gb": free_gb}, "gpu": gpu})
+
+
+def test_guard_refuses_when_vram_headroom_too_low(monkeypatch):
+    _patch_status(monkeypatch, gpu={"util_pct": 96, "mem_used_mb": 7800,
+                                    "mem_total_mb": 8151})  # ~351MB free
+    reason = agent._guard_launch(GCFG)
+    assert reason and "显存" in reason
+
+
+def test_guard_allows_when_vram_has_headroom(monkeypatch):
+    _patch_status(monkeypatch, gpu={"util_pct": 2, "mem_used_mb": 2300,
+                                    "mem_total_mb": 8151})  # ~5.8GB free
+    assert agent._guard_launch(GCFG) is None
+
+
+def test_guard_multi_gpu_uses_freest(monkeypatch):
+    # one GPU is full, another is mostly free -> allow (run lands on the freest)
+    _patch_status(monkeypatch, gpu=[{"mem_used_mb": 7900, "mem_total_mb": 8151},
+                                    {"mem_used_mb": 1000, "mem_total_mb": 8151}])
+    assert agent._guard_launch(GCFG) is None
+
+
+def test_guard_proc_cap_takes_precedence(monkeypatch):
+    _patch_status(monkeypatch, total=10, gpu={"mem_used_mb": 100,
+                                              "mem_total_mb": 8151})
+    reason = agent._guard_launch(GCFG)
+    assert reason and "上限" in reason
+
+
+def test_guard_no_gpu_reading_does_not_block(monkeypatch):
+    # nvidia-smi unavailable -> gpu None -> VRAM check is skipped, not a refusal
+    _patch_status(monkeypatch, gpu=None)
+    assert agent._guard_launch(GCFG) is None

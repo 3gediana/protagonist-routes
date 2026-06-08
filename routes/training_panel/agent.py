@@ -1444,6 +1444,18 @@ def _guard_launch(cfg: dict[str, Any]) -> Optional[str]:
         if free is not None and free < cfg.get("disk_low_gb", 25.0):
             return (f"拒绝启动:磁盘只剩 {free}G,低于阈值 {cfg['disk_low_gb']}G。"
                     f"请先 cleanup_disk 释放空间。")
+        # Single 8G card: refuse a new launch when no GPU has enough free VRAM,
+        # so we fail loud here instead of OOM-crashing mid-train. Take the GPU
+        # with the MOST free memory (the freest candidate the run could land on).
+        gpu = st.get("gpu")
+        rows = gpu if isinstance(gpu, list) else ([gpu] if gpu else [])
+        min_free = cfg.get("gpu_min_free_mb", 1500.0)
+        frees = [r["mem_total_mb"] - r["mem_used_mb"] for r in rows
+                 if isinstance(r, dict) and r.get("mem_total_mb") is not None
+                 and r.get("mem_used_mb") is not None]
+        if frees and max(frees) < min_free:
+            return (f"拒绝启动:GPU 可用显存只剩 {max(frees):.0f}MB,低于安全余量 "
+                    f"{min_free:.0f}MB。等显存释放或先 stop_training 腾显存,避免 OOM 崩溃。")
     except Exception:  # noqa: BLE001
         pass
     return None
@@ -1653,6 +1665,9 @@ def _execute_tool(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> dict[
                       tag=kw["tag"])
             return {"ok": True, **res}
         if name == "dp_train_bc":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
             kw = {"demos": args["demos"], "tag": args.get("tag", "agent"),
                   "epochs": int(args.get("epochs", 10)),
                   "batch": int(args.get("batch", 16)),
@@ -1999,7 +2014,8 @@ def _system_prompt(cfg: dict[str, Any]) -> dict[str, Any]:
                  if mode == "request" else
                  "【完全决策权】你的动作会自动批准并立即执行,但参数+理由都会进历史。")
     extra = (f"\n# 当前设置\n模式: {mode_note}\n并发进程上限: {cfg['max_procs']}。"
-             f"磁盘低于 {cfg['disk_low_gb']}G 会强制先清理。\n"
+             f"磁盘低于 {cfg['disk_low_gb']}G 会强制先清理。"
+             f"GPU 可用显存低于 {int(cfg.get('gpu_min_free_mb', 1500))}MB 会拒绝启动新训练(防 OOM)。\n"
              f"用户目标: {cfg.get('objective','')}\n")
     extra += _cognition_block(cfg)
     specs = cfg.get("pinned_specs") or []
