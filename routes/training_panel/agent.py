@@ -46,6 +46,8 @@ from typing import Any, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+import spectrum  # behavioural-panorama derivation (pure)
+
 AGENT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = AGENT_DIR / "agent_config.json"
 TIMELINE_PATH = AGENT_DIR / "agent_timeline.jsonl"
@@ -723,10 +725,40 @@ def _viability_hint(trends: list[dict[str, Any]]) -> str:
     return "涨跌互现,再观察一窗口确认趋势"
 
 
+def _attach_panorama(am: dict[str, Any], project: str, file: str,
+                     window: int = 0) -> dict[str, Any]:
+    """Enrich an analyze_metrics result with the full behavioural panorama and
+    the two-axis (progress / breadth) trends the multi-axis verdict reads. This
+    is what lets the agent see 'the direction' instead of 3-4 coarse scalars.
+    Best-effort: any failure leaves `am` untouched (panorama is additive)."""
+    import server  # lazy
+    try:
+        if project == "dp":
+            spec = server.dp_spectrum_payload(file, window)
+        else:
+            spec = server.pe_spectrum_payload(file)
+    except Exception as e:  # noqa: BLE001
+        am["panorama_error"] = str(e)
+        return am
+    if not spec.get("ok"):
+        am["panorama_error"] = spec.get("error", "spectrum unavailable")
+        return am
+    axes = spec.pop("axes", None)
+    am["spectrum"] = spec
+    am["panorama"] = spectrum.summarize(spec)
+    if axes:
+        am["axes_trend"] = {
+            "progress": _trend(axes.get("progress", [])),
+            "breadth": _trend(axes.get("breadth", [])),
+        }
+    return am
+
+
 def _analyze_metrics(project: str, file: str, window: int = 0) -> dict[str, Any]:
     """Quick viability read of a run's metrics (reuses the panel's parsing).
     PE: parse 'Gen N | avg/best/me_cov/qd' lines. DP: parse jsonl score/reward.
-    Returns per-metric trend + a coarse continue/early-stop hint."""
+    Returns per-metric trend + a coarse continue/early-stop hint, PLUS the full
+    behavioural panorama (spectrum) and two-axis trends for the agent."""
     import server  # lazy
     if project == "pe":
         p = server.PE_ROOT / file
@@ -747,11 +779,12 @@ def _analyze_metrics(project: str, file: str, window: int = 0) -> dict[str, Any]
         cov = _trend([float(r[3]) for r in rows])
         qd = _trend([float(r[5]) for r in rows])
         extinct = sum(1 for ln in lines if "extinct" in ln.lower())
-        return {"ok": True, "project": "pe", "file": file,
-                "gen_range": [gens[0], gens[-1]], "points": len(rows),
-                "avg": avg, "best": best, "me_cov": cov, "qd": qd,
-                "extinct_hits": extinct,
-                "hint": _viability_hint([avg, qd, cov])}
+        am = {"ok": True, "project": "pe", "file": file,
+              "gen_range": [gens[0], gens[-1]], "points": len(rows),
+              "avg": avg, "best": best, "me_cov": cov, "qd": qd,
+              "extinct_hits": extinct,
+              "hint": _viability_hint([avg, qd, cov])}
+        return _attach_panorama(am, "pe", file, window)
     # DP jsonl
     p = server.DP_METRICS / file
     if not p.exists():
@@ -772,10 +805,11 @@ def _analyze_metrics(project: str, file: str, window: int = 0) -> dict[str, Any]
     score = _trend([float(r.get("score", 0) or 0) for r in recs])
     reward = _trend([float(r.get("reward", 0) or 0) for r in recs])
     unlocks = _trend([float(sum(1 for x in r.get("unlocks", []) if x)) for r in recs])
-    return {"ok": True, "project": "dp", "file": file, "points": len(recs),
-            "episode_last": recs[-1].get("episode"),
-            "score": score, "reward": reward, "unlocks": unlocks,
-            "hint": _viability_hint([score, reward, unlocks])}
+    am = {"ok": True, "project": "dp", "file": file, "points": len(recs),
+          "episode_last": recs[-1].get("episode"),
+          "score": score, "reward": reward, "unlocks": unlocks,
+          "hint": _viability_hint([score, reward, unlocks])}
+    return _attach_panorama(am, "dp", file, window)
 
 
 def _compare_runs(project: str, files: list[str], window: int = 0) -> dict[str, Any]:
@@ -1018,8 +1052,12 @@ def _all_tool_defs() -> list[dict[str, Any]]:
              "project": {"type": "string", "enum": ["dp", "pe"]},
              "n": {"type": "integer", "default": 40}}),
         _fn("analyze_metrics",
-            "快速判断某个 run 的参数是否值得继续(读它的指标做趋势分析):PE 看 avg/best/me_cov/qd 逐代趋势,DP 看 score/reward/unlocks 逐集趋势,"
-            "返回每个指标的 改善/平台/下行 判定 + 一句可继续性建议(hint)。用于快速迭代:小步探路后先 analyze 再决定继续/早停/换参。"
+            "判断某个 run 是否值得继续,并拿到【行为全景谱 panorama】——这是看清『方向』的主要依据,不要只看 avg/score。"
+            "返回里含:粗趋势(PE avg/best/me_cov/qd;DP score/reward/unlocks)+ hint;**spectrum**=多维全景"
+            "(DP:主线深度/广度·科技树·动作熵·每命机制数·夜间避寒·死因均衡·链闭合·奖励构成;"
+            "PE:砍/造/投/猎成功率漏斗·niche占用·专精/通才·覆盖/QD·通讯响应·记忆·存活);"
+            "**panorama**=一句话谱摘要(直接拿去 kb_write 记账);**axes_trend**=进度轴 vs 广度轴趋势。"
+            "调参铁律:**广度轴坍缩(熵↓/niche被通才洗掉/覆盖↓)即便进度上行也算坏方向**(反 Goodhart)——别为单标量刷分。"
             "file 用 get_status 里看到的 run 文件名(PE 用 .log,DP 用 .jsonl)。window=只看最近 N 个点(0=全部)。",
             {"project": {"type": "string", "enum": ["dp", "pe"]},
              "file": {"type": "string", "description": "PE: onepot_sD_*.log;DP: ft_*.jsonl"},
@@ -1650,12 +1688,25 @@ def _campaign_verdict(project: str, am: dict[str, Any], *,
                       at_final: bool) -> tuple[str, str]:
     """Decide the next move from analyze_metrics output. PURE -> unit-testable.
     Returns one of: promote | revert | extend | done | stop, plus a reason.
-    Conservative by construction: extinction or any declining metric -> revert;
-    clear improvement -> promote; plateau -> done at the final stage else
-    promote (the scale is exhausted, go bigger); too few points -> extend
-    (re-observe once); unreadable metrics -> stop (don't escalate blind)."""
+
+    PREFERRED path (when the behavioural panorama resolved): a MULTI-AXIS verdict
+    over a PROGRESS axis (方向: main-line depth / fitness) and a BREADTH axis
+    (不退化: repertoire-per-life / MAP-Elites coverage). The anti-Goodhart rule —
+    a collapsing breadth axis vetoes promotion even when progress rises — is what
+    keeps '永续自迭代' from drifting into score-gaming single-strategy collapse.
+
+    FALLBACK (panorama unavailable): the legacy coarse-scalar logic so older runs
+    / log-only PE still get a conservative verdict. Extinction or any declining
+    metric -> revert; improvement -> promote; plateau -> done at final else
+    promote; too few points -> extend; unreadable -> stop."""
     if not am or not am.get("ok"):
         return "stop", "无法读取指标(metrics 不可解析)——不盲目晋级,停下待人工。"
+    # preferred: multi-axis (progress vs breadth) with anti-Goodhart veto
+    axt = am.get("axes_trend")
+    if axt and axt.get("progress") and axt.get("breadth"):
+        extinct = project == "pe" and (am.get("extinct_hits") or 0) > 0
+        return spectrum.multi_axis_verdict(
+            axt["progress"], axt["breadth"], at_final=at_final, extinct=extinct)
     if project == "pe":
         if (am.get("extinct_hits") or 0) > 0:
             return "revert", "检测到灭绝(extinct)——回退到上一阶段并保持,别继续加压。"
@@ -1776,7 +1827,8 @@ def _campaign_advance(cid: str, cfg: dict[str, Any]) -> dict[str, Any]:
     stage = camp["stages"][camp["stage_idx"]]
     camp.setdefault("history", []).append(
         {"stage": stage, "file": camp.get("last_run_file"), "verdict": verdict,
-         "reason": vreason, "hint": am.get("hint"), "ts": time.time()})
+         "reason": vreason, "hint": am.get("hint"),
+         "panorama": am.get("panorama"), "ts": time.time()})
     launched: Optional[dict[str, Any]] = None
     if verdict == "promote":
         if camp["project"] == "dp" and camp.get("last_run_file"):
@@ -1812,10 +1864,12 @@ def _campaign_advance(cid: str, cfg: dict[str, Any]) -> dict[str, Any]:
         camp["status"] = "done" if verdict == "done" else "stopped"
     _save_campaigns(camps)
     _timeline("campaign_advance", id=cid, from_stage=stage, verdict=verdict,
-              status=camp["status"], launched=launched)
+              status=camp["status"], launched=launched,
+              panorama=am.get("panorama"))
     return {"ok": True, "verdict": verdict, "reason": vreason,
             "status": camp["status"], "stage_idx": camp["stage_idx"],
-            "launched": launched, "hint": am.get("hint"), "campaign": camp}
+            "launched": launched, "hint": am.get("hint"),
+            "panorama": am.get("panorama"), "campaign": camp}
 
 
 # ----- bounded closed-loop reward/evo auto-tune (③, PE safe-zone only) ----- #
@@ -1940,8 +1994,10 @@ def _watcher_campaign_selfheal(cfg: dict[str, Any]) -> str:
     for c in pending:
         if auto:
             res = _campaign_advance(c["id"], cfg)
+            pano = res.get("panorama")
             bits.append(f"campaign {c['id']} 自动推进:{res.get('verdict')}"
-                        f"({res.get('status')})")
+                        f"({res.get('status')})"
+                        + (f" | {pano}" if pano else ""))
         else:
             bits.append(f"campaign {c['id']}({c['project']},"
                         f"{c['stages'][c['stage_idx']]})的 run 已结束,待 advance_campaign")

@@ -96,6 +96,30 @@ def test_verdict_dp_uses_score_reward_unlocks():
     assert _campaign_verdict("dp", am, at_final=False)[0] == "revert"
 
 
+# ---- multi-axis (panorama) path: takes precedence over coarse scalars ------ #
+def _axes(progress, breadth):
+    return {"axes_trend": {"progress": _trend(progress), "breadth": _trend(breadth)}}
+
+
+def test_verdict_multiaxis_breadth_collapse_vetoes_progress():
+    # progress improving but breadth collapsing -> revert (anti-Goodhart),
+    # even though the legacy score/avg would have said promote.
+    am = {"ok": True, "avg": _trend("improving"), "qd": _trend("improving"),
+          "me_cov": _trend("improving"), **_axes("improving", "declining")}
+    v, why = _campaign_verdict("pe", am, at_final=False)
+    assert v == "revert" and "Goodhart" in why
+
+
+def test_verdict_multiaxis_healthy_promotes():
+    am = {"ok": True, **_axes("improving", "plateau")}
+    assert _campaign_verdict("dp", am, at_final=False)[0] == "promote"
+
+
+def test_verdict_multiaxis_extinct_still_reverts():
+    am = {"ok": True, "extinct_hits": 2, **_axes("improving", "improving")}
+    assert _campaign_verdict("pe", am, at_final=False)[0] == "revert"
+
+
 # ---------------------------- advance orchestration ------------------------ #
 def _setup_campaign_file(tmp_path, monkeypatch, camp):
     p = tmp_path / "camps.json"

@@ -68,6 +68,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import spectrum  # behavioural-panorama derivation (pure)
+
 # --------------------------------------------------------------------------- #
 # Paths — auto-derived from this file's location.
 # --------------------------------------------------------------------------- #
@@ -1466,6 +1468,98 @@ def pe_curve(file: str) -> dict[str, Any]:
     return {"ok": True, "file": file, "n": len(gens), "gen": gens,
             "avg": avg, "best": best, "qd": qd,
             "me_cov": me_cov, "me_total": me_total, "extinct_hits": extinct}
+
+
+# ----------------------- behavioural panorama (spectrum) ------------------- #
+_TS_TAIL_RE = re.compile(r"_\d{8}-\d{6}$")
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    """Tolerant CSV -> list[dict] (empty list if missing/unreadable)."""
+    if not path.exists():
+        return []
+    try:
+        import csv
+        with open(path, "r", encoding="utf-8", errors="ignore", newline="") as fh:
+            return list(csv.DictReader(fh))
+    except (OSError, csv.Error):  # type: ignore[name-defined]
+        return []
+
+
+def _pe_csv_dir(file: str) -> Optional[Path]:
+    """Map a PE console-log filename to its run CSV directory.
+
+    Console logs are '<scenario>_<ts>.stdout.log'; the engine writes CSVs under
+    PE_RUNS/<scenario>/<run_ts>/. The panel ts and run ts differ, so we resolve
+    the scenario name then take the newest timestamp subdir that has a
+    fitness.csv. Falls back to stripping the trailing _YYYYMMDD-HHMMSS so a
+    cloned-config stem still resolves."""
+    if not PE_RUNS.exists():
+        return None
+    stem = file
+    for suf in (".stdout.log", ".stderr.log", ".log"):
+        if stem.endswith(suf):
+            stem = stem[: -len(suf)]
+            break
+    candidates = [stem]
+    stripped = _TS_TAIL_RE.sub("", stem)
+    if stripped != stem:
+        candidates.append(stripped)
+    for name in candidates:
+        scen = PE_RUNS / name
+        if not scen.is_dir():
+            continue
+        subs = [d for d in scen.iterdir() if d.is_dir()
+                and (d / "fitness.csv").exists()]
+        if subs:
+            return max(subs, key=lambda d: d.stat().st_mtime)
+        if (scen / "fitness.csv").exists():
+            return scen
+    return None
+
+
+def dp_spectrum_payload(file: str, window: int = 0) -> dict[str, Any]:
+    """Read a DP metrics jsonl and return the full behavioural panorama+axes."""
+    path = _safe_join(DP_METRICS, file)
+    if not path.exists():
+        return {"ok": False, "error": f"DP jsonl not found: {file}"}
+    rows = _load_jsonl(path)
+    if window:
+        rows = rows[-int(window):]
+    spec = spectrum.dp_spectrum(rows)
+    if spec.get("ok"):
+        spec["axes"] = spectrum.dp_axes(rows)
+    return spec
+
+
+def pe_spectrum_payload(file: str) -> dict[str, Any]:
+    """Resolve a PE run's CSVs and return the full behavioural panorama+axes."""
+    d = _pe_csv_dir(file)
+    if d is None:
+        return {"ok": False, "error": f"PE CSV dir not found for: {file}"}
+    behaviors = _read_csv(d / "protagonist_behaviors.csv")
+    fitness = _read_csv(d / "fitness.csv")
+    evolution = _read_csv(d / "evolution.csv")
+    spec = spectrum.pe_spectrum(behaviors, fitness, evolution)
+    if spec.get("ok"):
+        spec["axes"] = spectrum.pe_axes(behaviors, fitness, evolution)
+        spec["csv_dir"] = str(d)
+    return spec
+
+
+@app.get("/api/spectrum")
+def spectrum_endpoint(project: str, file: str, window: int = 0) -> dict[str, Any]:
+    """Behavioural panorama for a run — the multi-dimensional view the agent and
+    panel read to see 'the direction' (not just avg/score)."""
+    if project == "dp":
+        out = dp_spectrum_payload(file, window)
+    elif project == "pe":
+        out = pe_spectrum_payload(file)
+    else:
+        raise HTTPException(400, "project must be 'dp' or 'pe'")
+    if not out.get("ok"):
+        raise HTTPException(404, out.get("error", "spectrum unavailable"))
+    return out
 
 
 # ----------------------------- traces / replay ----------------------------- #
