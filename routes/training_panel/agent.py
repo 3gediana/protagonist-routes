@@ -1252,6 +1252,51 @@ def _all_tool_defs() -> list[dict[str, Any]]:
              "reason": {"type": "string", "description": "为何改课程、改成什么方向(必填,进历史+待批卡)"},
              "purpose": {"type": "string"}},
             ["config", "edits", "reason"]),
+        # ---- autonomous campaign controller (staged-ladder自治,跨 dp/pe) ---- #
+        _fn("start_campaign",
+            "【自治训练战役】让你独立把当前焦点项目的一条血脉从零/从基线训到收敛,不用每次升级都等人批。"
+            "代码强制走分级阶梯 smoke→short→long:先起 smoke 小跑;结束后你调 advance_campaign,"
+            "由代码按这一阶段自己的指标判定【晋级/回退/延长/收尾】——你无法对不合格的阶段强行晋级。"
+            "DP 会把产出的 checkpoint 接力到下一阶段;PE 是种群法,smoke 当可行性探针、晋级=换更长代数重跑。"
+            "这取代了『新血脉必须人批』:阶梯+健康门就是安全机制。仍受资源 guard(进程/磁盘/显存)约束。先 kb_query。",
+            {"goal": {"type": "string", "description": "这条血脉的目标(进历史/台账)"},
+             "config": {"type": "string", "description": "PE:基线 TOML(必填);DP 不用"},
+             "base_checkpoint": {"type": "string",
+                                 "description": "可选:DP 从此 checkpoint 热启动;留空=从零起新血脉(smoke 起步,安全)"},
+             "seed": {"type": "integer"}, "n_envs": {"type": "integer", "default": 4},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["goal", "reason"]),
+        _fn("advance_campaign",
+            "评估某 campaign 刚结束阶段的指标并推进:代码据指标给出 promote(晋级更大规模)/revert(下行或灭绝→回退保持)/"
+            "extend(样本太少→延长再判,有上限)/done(收敛收尾)/stop(指标读不出→停)。判定在代码里,你不能伪造晋级。"
+            "当 get_status/唤醒提示某 campaign 的 run 已结束时调它。先 kb_query 回顾既往坑。",
+            {"campaign_id": {"type": "string"},
+             "reason": {"type": "string"}},
+            ["campaign_id", "reason"]),
+        _fn("campaign_status",
+            "列出所有自治训练战役及其阶段/状态/历史判定(只读,随时可调)。",
+            {}),
+        _fn("start_tune",
+            "【安全域自动调参闭环(PE)】对一个旋钮在 tier-C 低风险域内(同号、幅度≤reward_pct_limit)给几个候选值,"
+            "代码逐个核验安全性(结构性候选会被拒),为每个安全候选生成隔离变体并起 smoke;之后调 resolve_tune 由代码 compare 选赢家。"
+            "这让调参真正闭环收敛,而不是拍一下走一下。超出安全域的改动仍要走 pe_reward_tune→人批。先 kb_query。",
+            {"config": {"type": "string", "description": "基线 PE TOML"},
+             "knob": {"type": "string", "description": "点分旋钮,如 reward.food_weight"},
+             "values": {"type": "array", "items": {"type": "number"},
+                        "description": "候选值列表(每个都须落在同号且≤pct_limit 的安全域)"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "knob", "values", "reason"]),
+        _fn("resolve_tune",
+            "结算一个 start_tune 批次:确认各候选 smoke 已结束后,代码 compare_runs 选出赢家(PE 按 avg/qd,剔除灭绝),"
+            "记台账、保留赢家变体。先 kb_query。",
+            {"tune_id": {"type": "string"}, "reason": {"type": "string"}},
+            ["tune_id", "reason"]),
+        _fn("curriculum_advance",
+            "【沿预设课程阶梯自主推进一档】仅当存在人工预先评定好的课程阶梯(curriculum_ladder.json)时可自主把课程推进到下一档;"
+            "这给你『渐进难度』这个必需杠杆,又不让你凭空造任务。若没有预设阶梯,则退回到 pe_curriculum_edit(高风险→人批)。先 kb_query。",
+            {"config": {"type": "string", "description": "当前 PE TOML"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "reason"]),
     ]
 
 
@@ -1280,6 +1325,10 @@ TOOL_META: dict[str, dict[str, Any]] = {
     "analyze_metrics": {"project": "shared"}, "compare_runs": {"project": "shared"},
     "read_log_tail": {"project": "shared"}, "cleanup_disk": {"project": "shared"},
     "stop_training": {"project": "shared"}, "list_checkpoints": {"project": "shared"},
+    # autonomous campaign controller — campaign_status is resident/read-only;
+    # start/advance act on the current focus project (shared, serialized).
+    "campaign_status": {"project": "any"},
+    "start_campaign": {"project": "shared"}, "advance_campaign": {"project": "shared"},
     # DP focus — primary (auto-active) + long-tail pipeline (find_tools)
     "start_dp_training": {"project": "dp"},
     "delete_checkpoint": {"project": "dp"},
@@ -1296,6 +1345,10 @@ TOOL_META: dict[str, dict[str, Any]] = {
     "pe_archive_geometry": {"project": "pe", "pack": "pe_evolution"},
     "pe_evolution_tune": {"project": "pe", "pack": "pe_evolution"},
     "pe_curriculum_edit": {"project": "pe", "pack": "pe_curriculum"},
+    # PE autonomy: bounded auto-tune loop + vetted-ladder curriculum advance
+    "start_tune": {"project": "pe", "pack": "pe_reward"},
+    "resolve_tune": {"project": "pe", "pack": "pe_reward"},
+    "curriculum_advance": {"project": "pe", "pack": "pe_curriculum"},
 }
 
 # keyword -> pack, for find_tools discovery (focus-scoped at call time).
@@ -1303,12 +1356,14 @@ _PACK_KEYWORDS: dict[str, list[str]] = {
     "dp_pipeline": ["bc", "克隆", "clone", "老师", "teacher", "oracle", "demos",
                     "数据集", "dataset", "record", "录", "dagger", "纠偏",
                     "finetune", "微调", "ppo", "shaping", "塑形", "pipeline", "流水线"],
-    "pe_reward": ["reward", "奖励", "惩罚", "penalty", "权重", "weight", "combat"],
+    "pe_reward": ["reward", "奖励", "惩罚", "penalty", "权重", "weight", "combat",
+                  "tune", "调参", "闭环", "auto", "自动", "sweep", "扫"],
     "pe_evolution": ["archive", "档案", "几何", "geometry", "cvt", "bin", "bins",
                      "centroid", "质心", "evolution", "进化", "neat", "mutation",
                      "sigma", "selection", "精英", "elite"],
     "pe_curriculum": ["curriculum", "课程", "task", "任务", "template",
-                      "task_templates", "难度", "difficulty"],
+                      "task_templates", "难度", "difficulty", "阶梯", "ladder",
+                      "推进", "advance", "进阶"],
 }
 
 
@@ -1421,7 +1476,8 @@ READ_TOOLS = {"get_status", "list_pe_configs", "list_checkpoints", "read_log_tai
 CONCURRENCY_SAFE_TOOLS = {"get_status", "list_pe_configs", "list_checkpoints",
                           "read_log_tail", "analyze_metrics", "compare_runs",
                           "inspect_config", "recall_timeline", "list_docs",
-                          "read_doc", "kb_query", "query_gens", "list_strategies"}
+                          "read_doc", "kb_query", "query_gens", "list_strategies",
+                          "campaign_status"}
 
 
 # --------------------------------------------------------------------------- #
@@ -1551,6 +1607,349 @@ def _needs_approval(name: str, args: dict[str, Any],
     return False, ""
 
 
+# --------------------------------------------------------------------------- #
+# Autonomous training campaigns (blueprint-level autonomy).
+#
+# A campaign lets the agent drive a FULL training lineage on its own without a
+# human approving every escalation, while a human-equivalent *direct* full-scale
+# launch still needs approval. Safety moves from "a human approves each
+# high-leverage launch" to "CODE enforces a staged validation ladder + health
+# gates":   smoke -> (health pass) -> short -> (health pass) -> long.
+# Every promotion verdict is computed IN CODE from the stage's own metrics; the
+# LLM cannot fabricate a "promote" for a failing stage. Failing health reverts
+# to the last good stage and HOLDS (no infinite escalation). This is the
+# mechanism that closes the "agent alone reaches a ~good model" gap, without
+# opening the Goodhart/instability footgun (objective/curriculum/mechanism
+# redesign stay human-gated).
+# --------------------------------------------------------------------------- #
+CAMPAIGN_PATH = AGENT_DIR / "agent_campaigns.json"
+CURRICULUM_LADDER_PATH = AGENT_DIR / "curriculum_ladder.json"
+
+CAMPAIGN_STAGES = ["smoke", "short", "long"]
+_DP_LADDER_STEPS = {"smoke": 200_000, "short": 1_000_000, "long": 8_000_000}
+_PE_LADDER_GENS = {"smoke": 4, "short": 15, "long": 60}
+
+
+def _campaign_stages(project: str, tc: dict[str, Any]) -> dict[str, int]:
+    """Per-stage scale (DP steps / PE generations), overridable from tier_c."""
+    if project == "dp":
+        d = dict(_DP_LADDER_STEPS)
+        d["smoke"] = int(tc.get("dp_smoke_steps", d["smoke"]))
+        override = tc.get("dp_ladder_steps") or {}
+    else:
+        d = dict(_PE_LADDER_GENS)
+        d["smoke"] = int(tc.get("pe_smoke_generations", d["smoke"]))
+        override = tc.get("pe_ladder_generations") or {}
+    for k, v in override.items():
+        if k in d and _num(v) is not None:
+            d[k] = int(v)
+    return d
+
+
+def _campaign_verdict(project: str, am: dict[str, Any], *,
+                      at_final: bool) -> tuple[str, str]:
+    """Decide the next move from analyze_metrics output. PURE -> unit-testable.
+    Returns one of: promote | revert | extend | done | stop, plus a reason.
+    Conservative by construction: extinction or any declining metric -> revert;
+    clear improvement -> promote; plateau -> done at the final stage else
+    promote (the scale is exhausted, go bigger); too few points -> extend
+    (re-observe once); unreadable metrics -> stop (don't escalate blind)."""
+    if not am or not am.get("ok"):
+        return "stop", "无法读取指标(metrics 不可解析)——不盲目晋级,停下待人工。"
+    if project == "pe":
+        if (am.get("extinct_hits") or 0) > 0:
+            return "revert", "检测到灭绝(extinct)——回退到上一阶段并保持,别继续加压。"
+        keys = ["avg", "qd", "me_cov"]
+    else:
+        keys = ["score", "reward", "unlocks"]
+    verds = [(am.get(k) or {}).get("verdict") for k in keys]
+    verds = [v for v in verds if v]
+    if not verds or all(v == "too_short" for v in verds):
+        return "extend", "样本太少,延长观察一档再判定。"
+    if any(v == "declining" for v in verds):
+        return "revert", ("指标下行(%s 中出现 declining)——回退保持,先查既往坑。"
+                          % "/".join(keys))
+    if any(v == "improving" for v in verds):
+        if at_final:
+            return "done", "最终阶段仍在上行且无更大规模可升——产出当前最优,收尾。"
+        return "promote", "指标上行且无下行——晋级到更大规模/更长训练。"
+    # all plateau (no improving, no declining)
+    if at_final:
+        return "done", "最终阶段进入平台——视为收敛,产出当前最优,结束。"
+    return "promote", "当前规模已学满(平台)——晋级到更大规模继续提升。"
+
+
+def _load_campaigns() -> list[dict[str, Any]]:
+    if CAMPAIGN_PATH.exists():
+        try:
+            data = json.loads(CAMPAIGN_PATH.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+def _save_campaigns(camps: list[dict[str, Any]]) -> None:
+    CAMPAIGN_PATH.write_text(json.dumps(camps, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+
+
+def _find_campaign(camps: list[dict[str, Any]], cid: str) -> Optional[dict[str, Any]]:
+    for c in camps:
+        if c.get("id") == cid:
+            return c
+    return None
+
+
+TUNE_PATH = AGENT_DIR / "agent_tunes.json"
+
+
+def _load_tunes() -> list[dict[str, Any]]:
+    if TUNE_PATH.exists():
+        try:
+            data = json.loads(TUNE_PATH.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+def _save_tunes(tunes: list[dict[str, Any]]) -> None:
+    TUNE_PATH.write_text(json.dumps(tunes, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+
+
+def _campaign_launch_stage(camp: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    """Launch the campaign's CURRENT stage. Campaign launches bypass the
+    new-bloodline approval gate (the staged ladder + health gates ARE the
+    safety mechanism), but the resource guard (procs/disk/VRAM) still applies.
+    DP carries its produced checkpoint forward on promote; PE re-runs longer
+    from the base config (population-based: smoke is a viability probe)."""
+    import server
+    refusal = _guard_launch(cfg)
+    if refusal:
+        return {"ok": False, "refused": True, "reason": refusal}
+    tc = cfg.get("tier_c", {})
+    stage = camp["stages"][camp["stage_idx"]]
+    scale = _campaign_stages(camp["project"], tc).get(stage)
+    tag = f"camp{camp['id']}_{stage}"
+    if camp["project"] == "dp":
+        res = server.dp_train(server.DPTrainReq(
+            checkpoint=camp.get("base_checkpoint"),
+            seed=int(camp.get("seed") or 24), steps=int(scale),
+            n_envs=int(camp.get("n_envs") or 4), tag=tag,
+            reason=f"[campaign {camp['id']}] stage={stage} steps={scale}",
+            purpose=camp.get("goal")))
+        camp["last_run_file"] = res.get("metrics")
+    else:
+        res = server.pe_train(server.PETrainReq(
+            config=camp["base_config"], seed=camp.get("seed"),
+            resume_checkpoint=camp.get("base_checkpoint"),
+            generations=int(scale),
+            reason=f"[campaign {camp['id']}] stage={stage} gens={scale}",
+            purpose=camp.get("goal")))
+        camp["last_run_file"] = os.path.basename(res.get("log") or "") or None
+    camp["last_run_id"] = res.get("run_id")
+    camp["status"] = "running"
+    STATE.stats["actions"] += 1
+    _timeline("campaign_launch", id=camp["id"], project=camp["project"],
+              stage=stage, scale=scale, run_id=res.get("run_id"))
+    return res
+
+
+def _campaign_advance(cid: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate the just-finished stage and act: promote / extend / revert /
+    done / stop. The verdict is decided in code from the stage's metrics."""
+    import server
+    camps = _load_campaigns()
+    camp = _find_campaign(camps, cid)
+    if not camp:
+        return {"ok": False, "error": f"未找到 campaign {cid}"}
+    if camp["status"] in ("done", "stopped"):
+        return {"ok": False, "error": f"campaign {cid} 已结束({camp['status']})"}
+    live = {p.get("run_id") for p in (server.processes().get("processes") or [])}
+    if camp.get("last_run_id") in live:
+        return {"ok": False, "error": "当前阶段仍在训练,等它结束(或先 stop_training)再 advance。"}
+    am = _analyze_metrics(camp["project"], camp.get("last_run_file") or "", 0)
+    at_final = camp["stage_idx"] >= len(camp["stages"]) - 1
+    verdict, vreason = _campaign_verdict(camp["project"], am, at_final=at_final)
+    stage = camp["stages"][camp["stage_idx"]]
+    camp.setdefault("history", []).append(
+        {"stage": stage, "file": camp.get("last_run_file"), "verdict": verdict,
+         "reason": vreason, "hint": am.get("hint"), "ts": time.time()})
+    launched: Optional[dict[str, Any]] = None
+    if verdict == "promote":
+        if camp["project"] == "dp" and camp.get("last_run_file"):
+            camp["base_checkpoint"] = ("checkpoints/"
+                                       + camp["last_run_file"].replace(".jsonl", ".pt"))
+        camp["stage_idx"] += 1
+        res = _campaign_launch_stage(camp, cfg)
+        if not res.get("ok"):
+            camp["stage_idx"] -= 1
+            camp["status"] = "held"
+            _save_campaigns(camps)
+            return {"ok": False, "verdict": verdict, "reason": vreason,
+                    "launch_refused": res.get("reason"), "campaign": camp}
+        launched = {"stage": camp["stages"][camp["stage_idx"]],
+                    "run_id": res.get("run_id")}
+    elif verdict == "extend":
+        if int(camp.get("extends", 0)) >= int(cfg.get("tier_c", {})
+                                               .get("campaign_max_extends", 1)):
+            camp["status"] = "stopped"
+            vreason += "(已达延长上限,停止待人工)"
+        else:
+            camp["extends"] = int(camp.get("extends", 0)) + 1
+            res = _campaign_launch_stage(camp, cfg)
+            if res.get("ok"):
+                launched = {"stage": stage, "run_id": res.get("run_id"),
+                            "re_extend": True}
+            else:
+                camp["status"] = "held"
+    elif verdict == "revert":
+        camp["stage_idx"] = max(0, camp["stage_idx"] - 1)
+        camp["status"] = "reverted"       # hold at last good stage; no auto-escalation
+    else:                                  # done | stop
+        camp["status"] = "done" if verdict == "done" else "stopped"
+    _save_campaigns(camps)
+    _timeline("campaign_advance", id=cid, from_stage=stage, verdict=verdict,
+              status=camp["status"], launched=launched)
+    return {"ok": True, "verdict": verdict, "reason": vreason,
+            "status": camp["status"], "stage_idx": camp["stage_idx"],
+            "launched": launched, "hint": am.get("hint"), "campaign": camp}
+
+
+# ----- bounded closed-loop reward/evo auto-tune (③, PE safe-zone only) ----- #
+def _tune_candidate_is_safe(config: str, knob: str, value: Any,
+                            pct_limit: float) -> tuple[bool, str]:
+    """A tune candidate is allowed autonomously only if it stays in the tier-C
+    LOW-risk zone (same sign, |Δ|/old <= pct_limit, numeric, no add/remove).
+    Uses the server pe_tune dry_run for the authoritative old->new delta."""
+    import server
+    try:
+        res = server.pe_tune(server.PETuneReq(
+            config=config, edits={knob: value}, label="tune_probe", dry_run=True))
+    except Exception as e:  # noqa: BLE001
+        return False, f"无法核验改动安全性(dry_run 失败:{e})"
+    for a in (res.get("applied") or []):
+        if _delta_is_structural(a.get("delta") or {}, pct_limit):
+            return False, f"{a.get('knob')} 是结构性改动(变号/幅度>{int(pct_limit*100)}%/增删项)——超出自动调参安全域"
+    return True, ""
+
+
+def _tune_pick_winner(project: str, cmp: dict[str, Any]) -> Optional[str]:
+    """Pick the winning run file from a compare_runs result. PURE.
+    PE ranks by avg_recent then qd_recent; DP by score/reward recent. Runs with
+    any extinction or a parse error are disqualified."""
+    rows = [r for r in (cmp.get("rows") or []) if r.get("ok")]
+    if project == "pe":
+        rows = [r for r in rows if not (r.get("extinct_hits") or 0)]
+        key = lambda r: ((r.get("avg_recent") if r.get("avg_recent") is not None else -1e9),
+                         (r.get("qd_recent") if r.get("qd_recent") is not None else -1e9))
+    else:
+        key = lambda r: ((r.get("score_recent") if r.get("score_recent") is not None else -1e9),
+                         (r.get("reward_recent") if r.get("reward_recent") is not None else -1e9))
+    if not rows:
+        return None
+    return max(rows, key=key).get("file")
+
+
+# ----- vetted-ladder curriculum advance (② autonomy within a pre-vetted path) #
+CURRICULUM_STATE_PATH = AGENT_DIR / "agent_curriculum_state.json"
+
+
+def _load_curriculum_ladder() -> Optional[dict[str, Any]]:
+    """A HUMAN-authored, pre-vetted curriculum ladder. Its presence is what
+    lets the agent advance curriculum autonomously (within this fixed path);
+    without it, curriculum edits stay human-gated. Schema:
+      {"stages": [{"name": str, "edits": {dotted_knob: value, ...}}, ...]}"""
+    if not CURRICULUM_LADDER_PATH.exists():
+        return None
+    try:
+        data = json.loads(CURRICULUM_LADDER_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    stages = data.get("stages") if isinstance(data, dict) else None
+    if not isinstance(stages, list) or not stages:
+        return None
+    return data
+
+
+def _curriculum_advance(config: str, cfg: dict[str, Any], *,
+                        reason: str = "") -> dict[str, Any]:
+    """Advance the curriculum ONE rung along the vetted ladder, autonomously.
+    Falls back to the gated pe_curriculum_edit path if no vetted ladder exists."""
+    import server
+    if not config:
+        return {"ok": False, "error": "需要 config(当前 PE TOML)。"}
+    ladder = _load_curriculum_ladder()
+    if ladder is None:
+        return {"ok": False, "gated": True,
+                "error": ("没有预先评定的课程阶梯(curriculum_ladder.json)——"
+                          "凭空改课程是最高杠杆,请走 pe_curriculum_edit 提议→人工批准。"
+                          "若要开放自主推进,请人工放置 vetted 的 curriculum_ladder.json。")}
+    stages = ladder["stages"]
+    try:
+        state = json.loads(CURRICULUM_STATE_PATH.read_text(encoding="utf-8")) \
+            if CURRICULUM_STATE_PATH.exists() else {}
+    except Exception:  # noqa: BLE001
+        state = {}
+    cur = int(state.get(config, -1))
+    nxt = cur + 1
+    if nxt >= len(stages):
+        return {"ok": False, "error": f"课程已在阶梯顶端(stage {cur}),无更高难度可推进。"}
+    stage = stages[nxt]
+    edits = stage.get("edits") or {}
+    if not edits:
+        return {"ok": False, "error": f"阶梯 stage {nxt} 未定义 edits。"}
+    res = server.pe_tune(server.PETuneReq(
+        config=config, edits=edits,
+        label=f"curri_{stage.get('name', nxt)}"))
+    if not res.get("ok"):
+        return res
+    state[config] = nxt
+    CURRICULUM_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+    STATE.stats["actions"] += 1
+    _timeline("curriculum_advance", config=config, to_stage=nxt,
+              stage_name=stage.get("name"), variant=res.get("variant"))
+    return {"ok": True, "advanced_to": nxt, "stage_name": stage.get("name"),
+            "variant": res.get("variant"), "applied": res.get("applied"),
+            "note": "已沿预设阶梯推进一档(vetted 范围内,自主)。"}
+
+
+def _campaigns_awaiting_advance() -> list[dict[str, Any]]:
+    """Campaigns whose current-stage run has ended but that are still 'running'
+    (status not yet advanced). PURE-ish (reads campaign file + live procs)."""
+    import server
+    camps = _load_campaigns()
+    live = {p.get("run_id") for p in (server.processes().get("processes") or [])}
+    return [c for c in camps if c.get("status") == "running"
+            and c.get("last_run_id") not in live]
+
+
+def _watcher_campaign_selfheal(cfg: dict[str, Any]) -> str:
+    """④ watcher self-heal: when a campaign's stage run ends, either auto-drive
+    the code-decided next move (when autonomy_auto_advance is on) or surface a
+    hint so the woken agent advances it. The verdict is always code-decided in
+    _campaign_advance (extinction/decline->revert, plateau->done, up->promote)."""
+    pending = _campaigns_awaiting_advance()
+    if not pending:
+        return ""
+    auto = bool(cfg.get("autonomy_auto_advance", False))
+    bits: list[str] = []
+    for c in pending:
+        if auto:
+            res = _campaign_advance(c["id"], cfg)
+            bits.append(f"campaign {c['id']} 自动推进:{res.get('verdict')}"
+                        f"({res.get('status')})")
+        else:
+            bits.append(f"campaign {c['id']}({c['project']},"
+                        f"{c['stages'][c['stage_idx']]})的 run 已结束,待 advance_campaign")
+    if auto:
+        return " 自治推进:" + ";".join(bits) + "。仍请 record_gen 记台账。"
+    return " " + ";".join(bits) + "。先 kb_query→record_gen,再 advance_campaign。"
+
+
 def _kb_query_in_recent(msgs: list[dict[str, Any]], lookback: int = 8) -> bool:
     """True if kb_query was called within the last few messages — used to FORCE
     a knowledge lookup before any high-leverage action."""
@@ -1567,6 +1966,8 @@ _REQUIRE_KB_FIRST = {
     "dp_record_demos", "dp_train_bc", "dp_dagger", "dp_finetune",
     "pe_reward_tune", "pe_archive_geometry", "pe_evolution_tune",
     "pe_curriculum_edit",
+    "start_campaign", "advance_campaign", "start_tune", "resolve_tune",
+    "curriculum_advance",
 }
 
 
@@ -1726,6 +2127,129 @@ def _execute_tool(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> dict[
                 _timeline("pe_tune", tool=name, base=res.get("base"),
                           variant=res.get("variant"), applied=res.get("applied"))
             return res
+        # ---- autonomous campaign controller --------------------------------- #
+        if name == "start_campaign":
+            proj = STATE.focus_project
+            if proj not in ("dp", "pe"):
+                return {"ok": False, "error": "请先 focus_project(dp|pe) 再起 campaign。"}
+            base_config = args.get("config") or args.get("base_config")
+            if proj == "pe" and not base_config:
+                return {"ok": False, "error": "PE campaign 需要 config(.toml 基线)。"}
+            camps = _load_campaigns()
+            cid = datetime.now().strftime("%m%d%H%M%S")
+            camp = {"id": cid, "project": proj,
+                    "goal": args.get("goal") or cfg.get("objective", ""),
+                    "stages": list(CAMPAIGN_STAGES), "stage_idx": 0,
+                    "status": "new", "base_checkpoint": args.get("base_checkpoint"),
+                    "base_config": base_config, "seed": args.get("seed"),
+                    "n_envs": int(args.get("n_envs", 4) or 4), "history": [],
+                    "extends": 0, "created_at": time.time(),
+                    "reason": args.get("reason", "")}
+            res = _campaign_launch_stage(camp, cfg)
+            if not res.get("ok"):
+                return res
+            camps.append(camp)
+            _save_campaigns(camps)
+            return {"ok": True, "campaign_id": cid, "project": proj,
+                    "stage": "smoke", "run_id": res.get("run_id"),
+                    "metrics_file": camp.get("last_run_file"),
+                    "note": ("smoke 已启动;结束后调 advance_campaign,"
+                             "由代码按指标判定晋级/回退/收尾。")}
+        if name == "advance_campaign":
+            return _campaign_advance(args.get("campaign_id", ""), cfg)
+        if name == "campaign_status":
+            camps = _load_campaigns()
+            return {"ok": True, "count": len(camps),
+                    "campaigns": [{"id": c["id"], "project": c["project"],
+                                   "stage": c["stages"][c["stage_idx"]],
+                                   "stage_idx": c["stage_idx"], "status": c["status"],
+                                   "goal": c.get("goal"),
+                                   "last_run_file": c.get("last_run_file"),
+                                   "history": c.get("history", [])}
+                                  for c in camps]}
+        # ---- bounded closed-loop auto-tune (PE safe-zone) ------------------- #
+        if name == "start_tune":
+            if STATE.focus_project != "pe":
+                return {"ok": False, "error": "auto-tune 目前支持 PE 安全域;请先 focus pe。"}
+            base = args.get("config", "")
+            knob = args.get("knob", "")
+            values = args.get("values") or []
+            if not base or not knob or not values:
+                return {"ok": False, "error": "start_tune 需要 config + knob + values。"}
+            pct_limit = float(cfg.get("tier_c", {}).get("reward_pct_limit", 0.25))
+            max_n = max(1, int(cfg.get("max_procs", 10)) - 1)   # leave headroom
+            checked: list[dict[str, Any]] = []
+            for v in values[:max_n]:
+                safe, why = _tune_candidate_is_safe(base, knob, v, pct_limit)
+                checked.append({"value": v, "safe": safe, "why": why})
+            safe_vals = [c["value"] for c in checked if c["safe"]]
+            if not safe_vals:
+                return {"ok": False, "error": "所有候选都超出自动调参安全域(需走 pe_reward_tune→人批)。",
+                        "checked": checked}
+            arms: list[dict[str, Any]] = []
+            for v in safe_vals:
+                refusal = _guard_launch(cfg)
+                if refusal:
+                    arms.append({"value": v, "launched": False, "reason": refusal})
+                    continue
+                var = server.make_config_variant(base, knob, v)
+                if not var.get("ok"):
+                    arms.append({"value": v, "launched": False, "reason": var.get("error")})
+                    continue
+                variant_cfg = var.get("variant")
+                gens = int(cfg.get("tier_c", {}).get("pe_smoke_generations", 4))
+                pr = server.pe_train(server.PETrainReq(
+                    config=variant_cfg, generations=gens,
+                    reason=f"[tune {knob}={v}] smoke", purpose=args.get("purpose")))
+                arms.append({"value": v, "launched": True, "config": variant_cfg,
+                             "run_id": pr.get("run_id"),
+                             "file": os.path.basename(pr.get("log") or "") or None})
+                STATE.stats["actions"] += 1
+            tunes = _load_tunes()
+            tid = "t" + datetime.now().strftime("%m%d%H%M%S")
+            tunes.append({"id": tid, "project": "pe", "base": base, "knob": knob,
+                          "status": "running", "arms": arms, "checked": checked,
+                          "created_at": time.time(), "reason": args.get("reason", "")})
+            _save_tunes(tunes)
+            _timeline("start_tune", id=tid, knob=knob,
+                      launched=[a for a in arms if a.get("launched")])
+            return {"ok": True, "tune_id": tid, "knob": knob, "arms": arms,
+                    "rejected": [c for c in checked if not c["safe"]],
+                    "note": "各候选 smoke 已起;结束后调 resolve_tune 由代码 compare 选赢家。"}
+        if name == "resolve_tune":
+            tunes = _load_tunes()
+            tune = next((t for t in tunes if t.get("id") == args.get("tune_id")), None)
+            if not tune:
+                return {"ok": False, "error": f"未找到 tune {args.get('tune_id')}"}
+            if tune["status"] == "resolved":
+                return {"ok": False, "error": "该批次已结算。", "tune": tune}
+            live = {p.get("run_id") for p in (server.processes().get("processes") or [])}
+            still = [a for a in tune["arms"]
+                     if a.get("launched") and a.get("run_id") in live]
+            if still:
+                return {"ok": False, "error": "仍有候选在训练,等结束再 resolve。",
+                        "still_running": [a["run_id"] for a in still]}
+            files = [a["file"] for a in tune["arms"] if a.get("launched") and a.get("file")]
+            if len(files) < 2:
+                return {"ok": False, "error": "可比较的已完成候选 <2,无法选赢家。"}
+            cmp = _compare_runs("pe", files, 0)
+            winner = _tune_pick_winner("pe", cmp)
+            tune["status"] = "resolved"
+            tune["winner_file"] = winner
+            tune["winner_value"] = next((a["value"] for a in tune["arms"]
+                                         if a.get("file") == winner), None)
+            tune["compare"] = cmp
+            _save_tunes(tunes)
+            _timeline("resolve_tune", id=tune["id"], knob=tune["knob"],
+                      winner_value=tune.get("winner_value"), winner_file=winner)
+            return {"ok": True, "tune_id": tune["id"], "knob": tune["knob"],
+                    "winner_value": tune.get("winner_value"),
+                    "winner_file": winner, "ranking": cmp.get("ranking"),
+                    "note": "赢家变体已记台账;后续可用它做 start_campaign 的基线。"}
+        # ---- vetted-ladder curriculum advance (autonomous within envelope) -- #
+        if name == "curriculum_advance":
+            return _curriculum_advance(args.get("config", ""), cfg,
+                                       reason=args.get("reason", ""))
         if name == "start_pe_training":
             refusal = _guard_launch(cfg)
             if refusal:
@@ -2001,7 +2525,16 @@ def _cognition_block(cfg: dict[str, Any]) -> str:
 - 任何高杠杆动作(启训/录数据集/BC/DAgger/微调/奖励/档案/进化/课程/做变体)前,**必须先 kb_query** 查既往坑与结论,否则被拦截。
 - run 结束被唤醒后,**先 kb_query 回顾 → record_gen 记台账 → kb_write 沉淀结论**,没 record_gen 不允许 sleep。
 - C 分级:低风险(势能塑形系数、seed、档案几何、用现成老师跑 BC/DAgger/微调、PE 奖励权重同号且幅度≤{pct}%)可自主跑;
-  高风险(改奖励【结构】=变号/幅度>{pct}%/增删项、动课程 task_templates、起新血脉)无论什么模式都【只提议、挂待批】。
+  高风险(改奖励【结构】=变号/幅度>{pct}%/增删项、凭空改课程 task_templates、人工等价的【直接】全量起新血脉)无论什么模式都【只提议、挂待批】。
+
+# 自治认知 (新:把"人批每个高杠杆动作"换成"代码强制的分级验证 + 健康门")
+- **start_campaign**:你可以【自主】把一条血脉从零/基线训到收敛——但代码强制走 smoke→short→long 阶梯。
+  每阶段结束后调 **advance_campaign**,由【代码】按这一阶段的指标判定 晋级/回退/延长/收尾;你无法对不合格阶段强行晋级。
+  灭绝/下行→自动回退保持;平台→收尾;上行→晋级更大规模。这取代了"新血脉必须人批":阶梯+健康门就是安全机制。
+- **start_tune / resolve_tune**:在同号且≤{pct}% 的安全域内对一个旋钮给几个候选→代码核验安全性→各起 smoke→compare 选赢家。让调参真正闭环收敛。
+- **curriculum_advance**:仅当存在人工预先评定的课程阶梯(curriculum_ladder.json)时,可【自主】沿阶梯推进一档;没有阶梯则退回 pe_curriculum_edit(挂待批)。
+- 仍然永不放开(Layer-3 人工):改 C++ 源码/观测 82 维/动作 23 维/引擎机制、奖励结构重设计、凭空发明新课程任务。
+- run 结束被唤醒时:若它属于某 campaign(campaign_status 里 status=running 但进程已停),先 kb_query→record_gen→再 advance_campaign 让代码判定下一步。
 """
 
 
@@ -2567,6 +3100,10 @@ def _critical_wake(cfg: dict[str, Any]) -> Optional[str]:
             STATE.needs_summary = True
             reason = (f"训练进程减少({base['proc_total']}→{cur_total}),"
                       f"{('['+dropped+'] ' ) if dropped else ''}run 结束—先总结再决策")
+            try:
+                reason += _watcher_campaign_selfheal(cfg)
+            except Exception:  # noqa: BLE001
+                pass
         base["proc_total"] = cur_total
         base["dp"] = cur_dp
         base["pe"] = cur_pe

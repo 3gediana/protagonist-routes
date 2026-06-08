@@ -17,3 +17,6 @@ panel.out.log
 panel_smoke.log
 panel_smoke.err
 _check_import.py
+agent_campaigns.json
+agent_tunes.json
+agent_curriculum_state.json
