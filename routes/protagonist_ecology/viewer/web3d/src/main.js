@@ -43,6 +43,7 @@ const OBJECT = [
 // ----------------------------------------------------------------------------- state
 let renderer, scene, camera, controls, clock;
 let world, frames, nFrames = 0;
+let maxAgents = 0, maxObjects = 0;   // upper bounds across all frames (births grow the population)
 let heightGrid, gridX, gridY, hMin = 0;
 let cursor = 0;            // fractional frame index
 let playing = true, speed = 1;
@@ -97,6 +98,7 @@ async function init() {
     setLoad(30, 'loading frames…');
     const fr = await fetchJSON('./data/frames.json');
     frames = fr.frames; nFrames = frames.length;
+    normalizeFrames();
     setLoad(70, 'loading models…');
     await Promise.all([loadSpeciesModels(), loadTreeModels()]);
     setLoad(80, 'building scene…');
@@ -113,12 +115,38 @@ async function init() {
   }
 }
 
+// The authoritative dump (TraceRecorder.cpp -> viewer_frames.jsonl, served
+// verbatim by the panel) stores every entity as a NAMED object. This viewer's
+// hot path reads compact positional arrays, so we adapt the data ONCE here
+// rather than in every per-frame accessor. Index layouts below are kept in sync
+// with the readers in buildEntities()/updateFrame():
+//   agent  A: [id, archetype, x, y, energy, lifecycle, alive]
+//   tree   T: [id, x, y, integrity, available]
+//   object O: [x, y, type, carried, vx, vy]
+//   site   W: [id, buildingType, x, y, progress, active, complete]
+//   fire   F: [x, y, intensity, active]
+function normalizeFrames() {
+  for (const f of frames) {
+    f.A = (f.agents    || []).map(a => [a.id|0, a.a|0, +a.x, +a.y, +a.e || 0, a.L|0, a.al|0]);
+    f.T = (f.trees     || []).map(t => [t.id|0, +t.x, +t.y, +t.iv || 0, t.av|0]);
+    f.O = (f.objects   || []).map(o => [+o.x, +o.y, o.t|0, o.c|0, +o.vx || 0, +o.vy || 0]);
+    f.W = (f.worksites || []).map(w => [w.id|0, w.bt|0, +w.x, +w.y, +w.p || 0, w.a|0, w.c|0]);
+    f.F = (f.fires     || []).map(fr => [+fr.x, +fr.y, +fr.i || 0, fr.a|0]);
+  }
+  maxAgents  = frames.reduce((m, f) => Math.max(m, f.A.length), 0);
+  maxObjects = frames.reduce((m, f) => Math.max(m, f.O.length), 0);
+}
 function fetchJSON(url) {
   return fetch(url).then(r => { if (!r.ok) throw new Error(url + ' ' + r.status); return r.json(); });
 }
 function setLoad(pct, msg) {
-  document.getElementById('loadbar').style.width = pct + '%';
-  if (msg) document.getElementById('loadpct').textContent = msg;
+  // Null-safe: this overlay only has a spinner + a text label (id="loadPct"),
+  // no progress bar. Referencing a missing #loadbar used to throw on the very
+  // first call and freeze the viewer permanently at "loading world…".
+  const bar = document.getElementById('loadbar');
+  if (bar) bar.style.width = pct + '%';
+  const txt = document.getElementById('loadPct') || document.getElementById('loadpct');
+  if (msg && txt) txt.textContent = msg;
 }
 
 // ----------------------------------------------------------------------------- terrain
@@ -640,16 +668,16 @@ function buildEntities() {
   const shGeo = new THREE.PlaneGeometry(1, 1); shGeo.rotateX(-Math.PI / 2);
   const shMat = new THREE.MeshBasicMaterial({ color: 0x0a0d08, map: softTex,
     transparent: true, opacity: 0.34, depthWrite: false });
-  inst.shadows = new THREE.InstancedMesh(shGeo, shMat, f0.A.length);
-  inst.shadows.count = f0.A.length; inst.shadows.frustumCulled = false;
+  inst.shadows = new THREE.InstancedMesh(shGeo, shMat, maxAgents);
+  inst.shadows.count = maxAgents; inst.shadows.frustumCulled = false;
   inst.shadows.renderOrder = -1;
   layers.shadows.add(inst.shadows);
 
   layers.agents = group('agents');
   inst.species = SPECIES.map((s, si) => {
     const m = new THREE.MeshStandardMaterial({ color: s.color, roughness: 0.7, metalness: 0.03 });
-    const im = new THREE.InstancedMesh(SPECIES_GEO[si] || SPECIES_GEO[0], m, f0.A.length);
-    im.count = f0.A.length; im.frustumCulled = false;
+    const im = new THREE.InstancedMesh(SPECIES_GEO[si] || SPECIES_GEO[0], m, maxAgents);
+    im.count = maxAgents; im.frustumCulled = false;
     layers.agents.add(im);
     return im;
   });
@@ -667,8 +695,8 @@ function buildEntities() {
   ];
   inst.objects = objGeo.map((g, ti) => {
     const m = new THREE.MeshStandardMaterial({ color: OBJECT[ti] ? OBJECT[ti].color : 0x999999, roughness: 0.7 });
-    const im = new THREE.InstancedMesh(g, m, f0.O.length);
-    im.count = f0.O.length; im.frustumCulled = false;
+    const im = new THREE.InstancedMesh(g, m, Math.max(1, maxObjects));
+    im.count = Math.max(1, maxObjects); im.frustumCulled = false;
     layers.objects.add(im);
     return im;
   });
@@ -913,6 +941,7 @@ function updateFrame(fi, alpha) {
   // ---- worksites: site pad always; posts->frame->walls->roof assemble with progress
   for (let i = 0; i < f.W.length; i++) {
     const w = f.W[i], node = worksiteNodes[i];
+    if (!node) continue;
     node.position.copy(place(w[2], w[3], 0));
     // prefer explicit progress (w[4]); a built flag (w[6]) forces a finished hut
     const prog = (w[6] === 1) ? 1 : THREE.MathUtils.clamp(w[4], 0, 1);
@@ -922,6 +951,7 @@ function updateFrame(fi, alpha) {
   // ---- fire: campfire sits on the ground; flame + glow + light flicker with intensity
   for (let i = 0; i < f.F.length; i++) {
     const fr = f.F[i], cf = fireSprites[i], lt = fireLights[i];
+    if (!cf || !lt) continue;
     const inten = fr[2];
     if (inten > 0.08) {
       const v = place(fr[0], fr[1], 0);
@@ -941,11 +971,16 @@ function updateFrame(fi, alpha) {
   updateWeather(f.w, light);
 
   // ---- HUD
-  document.getElementById('clock').textContent = todClock(tod);
-  setChip('seasonChip', SEASON[f.s] || '—');
-  setChip('weatherChip', WEATHER[f.w] || '—');
-  document.getElementById('aliveCount').textContent = alive;
-  document.getElementById('tickNum').textContent = f.tick ?? '—';
+  setText('clockTime', todClock(tod));
+  setText('phaseName', light < 0.3 ? 'night' : 'day');
+  setText('seasonV', SEASON[f.s] || '—');
+  setText('weatherV', WEATHER[f.w] || '—');
+  setText('popV', alive);
+  let nBld = 0; for (let i = 0; i < f.W.length; i++) if (f.W[i][6] === 1) nBld++;
+  setText('bldV', nBld);
+  let nFire = 0; for (let i = 0; i < f.F.length; i++) if (f.F[i][2] > 0.08) nFire++;
+  setText('fireV', nFire);
+  setText('tickV', f.tick ?? '—');
   pushEvents(f);
 }
 
@@ -1033,7 +1068,8 @@ function pushEvents(f) {
   if (night !== evState.night && evState.night !== -1) out.push(night ? 'Night falls' : 'Day breaks');
   evState.w = f.w; evState.night = night;
   if (!out.length) return;
-  const list = document.getElementById('evlist');
+  const list = document.getElementById('storyLog');
+  if (!list) return;
   for (const s of out) {
     const d = document.createElement('div'); d.className = 'ev';
     d.textContent = '· ' + s; list.prepend(d);
@@ -1053,19 +1089,22 @@ function setupUI() {
   // play/pause
   const pb = document.getElementById('playBtn');
   pb.onclick = () => { playing = !playing; pb.textContent = playing ? '⏸︎ Pause' : '► Play'; };
-  // seek
-  const seek = document.getElementById('seek');
+  // seek (range slider id is 'scrub' in the markup)
+  const seek = document.getElementById('scrub');
   seek.max = nFrames - 1;
   seek.oninput = () => { cursor = +seek.value; playing = false; pb.textContent = '► Play'; renderOnce(); };
-  // speeds
-  document.querySelectorAll('#speeds button').forEach(b => {
-    b.onclick = () => { speed = +b.dataset.spd;
-      document.querySelectorAll('#speeds button').forEach(x => x.classList.remove('on')); b.classList.add('on'); };
-  });
-  // layer toggles
-  document.querySelectorAll('#layers input').forEach(cb => {
-    cb.onchange = () => { const g = layers[cb.dataset.layer]; if (g) g.visible = cb.checked; };
-  });
+  // speed (a <select id="speed"> in the markup)
+  const spSel = document.getElementById('speed');
+  if (spSel) { speed = +spSel.value || 1; spSel.onchange = () => { speed = +spSel.value || 1; }; }
+  // layer toggles: checkbox id 't_<x>' maps to a layer group key
+  const TOGGLE_LAYER = { t_terrain: 'terrain', t_resources: 'resources', t_water: 'water',
+    t_trees: 'trees', t_agents: 'agents', t_objects: 'objects', t_worksites: 'worksites',
+    t_fires: 'fire', t_weather: 'weather' };
+  for (const [id, key] of Object.entries(TOGGLE_LAYER)) {
+    const cb = document.getElementById(id);
+    if (!cb) continue;
+    cb.onchange = () => { const g = layers[key]; if (g) g.visible = cb.checked; };
+  }
 }
 
 // ----------------------------------------------------------------------------- loop
@@ -1075,11 +1114,11 @@ function animate() {
   if (playing && nFrames > 1) {
     cursor += dt * BASE_FPS * speed;
     if (cursor >= nFrames - 1) cursor = 0;       // loop
-    document.getElementById('seek').value = Math.floor(cursor);
+    document.getElementById('scrub').value = Math.floor(cursor);
   }
   const fi = Math.floor(cursor), alpha = cursor - fi;
   updateFrame(fi, alpha);
-  document.getElementById('tlabel').textContent = (fi + 1) + ' / ' + nFrames;
+  document.getElementById('frameLbl').textContent = (fi + 1) + ' / ' + nFrames;
   controls.update();
   renderer.render(scene, camera);
 }
@@ -1094,7 +1133,7 @@ function todClock(tod) {
   const mins = Math.floor(tod * 24 * 60); const h = Math.floor(mins / 60) % 24, m = mins % 60;
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
-function setChip(id, val) { document.getElementById(id).querySelector('b').textContent = val; }
+function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
 function onResize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
 
 function makeGlowTexture() {

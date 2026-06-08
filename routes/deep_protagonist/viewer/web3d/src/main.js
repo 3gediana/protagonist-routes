@@ -153,22 +153,25 @@ function dispY(h) {
   return h * VEXAG + (e * e) * PEAK_BOOST;
 }
 
-// Water line: median height of the Swamp lowland (biome 4) — the world's natural
-// basin where water collects. Computed from the live H so it tracks the data; if
-// the world has no swamp, fall back to a low percentile of all heights. Used both
-// to build the lake surface AND to keep vegetation/props out of the water.
-const WATER_LEVEL = (() => {
-  const sw = [];
-  for (let k = 0; k < GX*GY; k++) if (BIO.charCodeAt(k) - 48 === 4) sw.push(H[k]);
-  if (sw.length) { sw.sort((a,b)=>a-b); return sw[(sw.length*0.65)|0]; }
-  const all = Array.from(H).sort((a,b)=>a-b); return all[(all.length*0.12)|0];
-})();
-// true if the cell at world (wx,wy) lies below the water line (i.e. submerged).
+// Water is a SEED RESOURCE, not a sea level. The authoritative native renderer
+// (WorldRenderer.cpp) draws water ONLY where the simulation marks it — River-biome
+// cells (and the carved river polyline) — and never floods the map to a height
+// threshold. We mirror that exactly: a cell is "underwater" iff it is an actual
+// River-biome cell, so vegetation/props are kept out of the riverbed but grow
+// normally across every other biome — including the Swamp lowlands, which are wet
+// GROUND (murky soil), not open water.
 function isUnderwater(wx, wy) {
   const i = Math.max(0, Math.min(GX-1, Math.round(wx / CS)));
   const j = Math.max(0, Math.min(GY-1, Math.round(wy / CS)));
-  return H[j*GX+i] < WATER_LEVEL;
+  return BIO.charCodeAt(j*GX+i) - 48 === 3;   // River biome only
 }
+// Low reference height used solely to seat fish near the riverbed (no flood plane).
+const WATER_LEVEL = (() => {
+  const riv = [];
+  for (let k = 0; k < GX*GY; k++) if (BIO.charCodeAt(k) - 48 === 3) riv.push(H[k]);
+  if (riv.length) { riv.sort((a, b) => a - b); return riv[(riv.length * 0.5) | 0]; }
+  const all = Array.from(H).sort((a, b) => a - b); return all[(all.length * 0.05) | 0];
+})();
 
 // bilinear DISPLAY height at world (wx,wy) — interpolates the per-corner display
 // heights so props seat exactly on the (non-linearly) exaggerated mesh.
@@ -300,44 +303,16 @@ function buildTerrain() {
 }
 buildTerrain();
 
-// water: real water is a FLAT horizontal surface, not tiles draped over the bumpy
-// ground. We flood every cell whose terrain sits below a data-derived water level
-// (the median height of the Swamp biome — the world's natural lowland) so the low
-// ground turns into lakes/wetland with proper, automatic shorelines where the
-// terrain crosses the water plane. The mountain stream (WORLD.rivers) is kept as a
-// separate carved ribbon up in the hills.
+// water: drawn ONLY where the seed marks it, mirroring the native WorldRenderer —
+// the carved river polyline (WORLD.rivers) up in the hills plus the River-biome
+// cells. There is deliberately NO sea-level flood: inventing a water plane from a
+// height threshold drowned most of the map into a fake ocean (and hid all the
+// vegetation), which is not what the simulation generates. Swamp lowlands stay as
+// wet GROUND coloured by the terrain pass, not open water.
 function buildWater() {
   const grp = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.80,
     roughness: 0.12, metalness: 0.45, side: THREE.DoubleSide });
-
-  // ---- lowland lakes: flat surface at the swamp-median water line --------------
-  // water level = median terrain height over Swamp cells (biome 4); falls back to a
-  // low percentile of all heights if the world has no swamp. Computed from the live
-  // (ruggedised/carved) H so it tracks the actual terrain the mesh is built from.
-  (function buildLakes() {
-    const level = WATER_LEVEL;               // shared swamp-lowland water line
-    const wlMat = new THREE.MeshStandardMaterial({ color: 0x2c6fbf, transparent: true,
-      opacity: 0.82, roughness: 0.08, metalness: 0.55, side: THREE.DoubleSide });
-    const y = dispY(level) + 0.05;           // flat water plane height (three.js up)
-    const verts = [], idxs = []; let base = 0;
-    for (let j = 0; j < GY-1; j++) for (let i = 0; i < GX-1; i++) {
-      // flood a quad if ANY corner sits below the water line, so neighbouring low
-      // cells merge into continuous lakes/wetland instead of fragmenting into specks.
-      const h00=H[j*GX+i], h10=H[j*GX+i+1], h01=H[(j+1)*GX+i], h11=H[(j+1)*GX+i+1];
-      if (h00>level && h10>level && h01>level && h11>level) continue;
-      const x0=i*CS, x1=(i+1)*CS, z0=j*CS, z1=(j+1)*CS;
-      verts.push(x0,y,z0, x1,y,z0, x0,y,z1, x1,y,z1);
-      idxs.push(base,base+2,base+1, base+1,base+2,base+3);
-      base += 4;
-    }
-    if (base) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-      geo.setIndex(idxs); geo.computeVertexNormals();
-      const mesh = new THREE.Mesh(geo, wlMat); mesh.renderOrder = 1; grp.add(mesh);
-    }
-  })();
 
   const segs = WORLD.rivers || [];
   if (segs.length) {
