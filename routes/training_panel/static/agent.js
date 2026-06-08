@@ -829,7 +829,7 @@
     });
     A("#agChatClear").addEventListener("click", () => A("#agChat").innerHTML = "");
     A("#agCtxClear").addEventListener("click", async () => {
-      if (!confirm("清空上下文：丢弃滚动对话历史与摘要。\n系统提示词 / 常驻 spec / 知识库 / 台账 全部保留，agent 仍认识这个项目。\n确定？")) return;
+      if (!(await confirmModal("清空上下文：丢弃滚动对话历史与摘要。\n系统提示词 / 常驻 spec / 知识库 / 台账 全部保留，agent 仍认识这个项目。\n确定？", "清空"))) return;
       try { const r = await apost("/api/agent/clear_context", {});
         tnote(`已清空上下文（丢弃 ${r.dropped} 条）`);
         lastChatSig = ""; refreshState(); refreshTimeline();
