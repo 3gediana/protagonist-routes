@@ -181,3 +181,104 @@ def test_summarize_runs():
     line = S.summarize(spec)
     assert "DP谱" in line
     assert S.summarize({"ok": False}) == "(谱不可用)"
+
+
+# --------------------------------------------------------------------------- #
+# enriched composites, trends, narration (the agent-facing layer)
+# --------------------------------------------------------------------------- #
+def test_trend_helper():
+    assert S._trend([1, 2])["verdict"] == "too_short"
+    assert S._trend([1, 2, 3, 4, 5, 6])["verdict"] == "improving"
+    assert S._trend([6, 5, 4, 3, 2, 1])["verdict"] == "declining"
+    assert S._trend([3, 3, 3, 3, 3, 3])["verdict"] == "plateau"
+
+
+def test_geomean_floor():
+    # a single zero drags toward floor, not exactly zero
+    g = S._geomean([0.1, 0.1, 0.1, 0.0])
+    assert 0.0 < g < 0.1
+
+
+def test_dp_composites_present():
+    nA = len(S.ACTION_NAMES)
+    rows = [_dp_row([1] * nA, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0], score=float(i),
+                    deaths=(0 if i > 2 else 1), steps=100 + i)
+            for i in range(8)]
+    spec = S.dp_spectrum(rows)
+    for k in ("goodhart_gap", "focus_survival", "world_coherence",
+              "trends", "chain_conversion", "mean_steps", "r_milestone_share"):
+        assert k in spec
+    assert set(spec["trends"]) == {"milestone_depth", "survival",
+                                   "action_entropy", "score"}
+
+
+def test_dp_narrate_goodhart_redirect():
+    # high milestone reward, never survives -> redirect (gaming the score)
+    nA = len(S.ACTION_NAMES)
+    rows = [_dp_row([1] * nA, [1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+                    deaths=3, r_milestone=100.0, r_alive=1.0)]
+    spec = S.dp_spectrum(rows)
+    assert spec["goodhart_gap"] > 0.15
+    nar = S.narrate_dp(spec)
+    assert nar["ok"] and nar["scenes"]
+    assert nar["verdict_hint"][0] == "redirect"
+    assert "刷" in nar["story"] or "里程碑" in nar["story"]
+
+
+def _pe_beh(gen, surv, **kw):
+    base = {
+        "generation": gen, "total_protagonists": 48, "survived_protagonists": surv,
+        "chop_attempts": 1000, "chop_successes": 1,
+        "craft_attempts": 1000, "craft_successes": 1,
+        "throw_attempts": 1000, "throw_hits": 1,
+        "hunt_attempts": 1000, "hunt_successes": 0,
+        "deposits_total": 50, "completed_worksites": 1,
+        "worksite_completion_events": 1, "active_fires": 1,
+        "drank_water_events": 0, "signal_emits": 48,
+        "signal_response_events": 0, "signal_co_attendance": 0,
+        "cooperative_co_presence_seconds": 100, "dnc_usage_mean_avg": 0.3,
+    }
+    base.update(kw)
+    return base
+
+
+def test_pe_fake_diversity_detected():
+    # 6 niches occupied (looks diverse) but all mechanism rates ~0 -> fake
+    evo = {"generation": 5, "large_herbivore_best": 100, "small_forager_best": 90,
+           "apex_predator_best": 80, "pack_hunter_best": 70,
+           "ambush_predator_best": 60, "scavenger_best": 50, "omnivore_best": 40}
+    beh = [_pe_beh(5, 10)]
+    fit = [{"generation": 5, "avg_fitness": 100, "best_fitness": 200,
+            "me_coverage": 30, "me_qd_score": 3000, "min_fitness": 1}]
+    spec = S.pe_spectrum(beh, fit, [evo])
+    assert spec["niche_occupancy"] >= 5
+    assert spec["mechanism_competence"] < 1e-3
+    assert spec["diversity_real"] == "fake"
+    nar = S.narrate_pe(spec)
+    assert nar["verdict_hint"][0] == "redirect"
+    assert "虚假" in nar["story"] or "可达性" in nar["story"]
+
+
+def test_pe_extinction_reverts():
+    evo = [{"generation": g, "omnivore_best": 100} for g in range(7)]
+    beh = [_pe_beh(g, 6 - g) for g in range(7)]  # survivors 6..0 -> extinct
+    fit = [{"generation": g, "avg_fitness": 100, "best_fitness": 200,
+            "me_coverage": 20, "me_qd_score": 2000, "min_fitness": 0}
+           for g in range(7)]
+    spec = S.pe_spectrum(beh, fit, evo)
+    assert spec["extinction_risk"] == "extinct"
+    assert S.narrate_pe(spec)["verdict_hint"][0] == "revert"
+
+
+def test_pe_trends_present():
+    evo = [{"generation": g, "omnivore_best": 100} for g in range(8)]
+    beh = [_pe_beh(g, 12) for g in range(8)]
+    fit = [{"generation": g, "avg_fitness": 100 + g * 10, "best_fitness": 300,
+            "me_coverage": 20 + g, "me_qd_score": 2000, "min_fitness": 5}
+           for g in range(8)]
+    spec = S.pe_spectrum(beh, fit, evo)
+    assert set(spec["trends"]) == {"avg_fitness", "me_coverage",
+                                   "competence", "survivors"}
+    assert spec["trends"]["avg_fitness"]["verdict"] == "improving"
+    assert spec["mechanism_competence"] >= 0.0
+    assert "dnc_detail" in spec and "coop_per_survivor" in spec

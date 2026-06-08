@@ -746,6 +746,17 @@ def _attach_panorama(am: dict[str, Any], project: str, file: str,
     axes = spec.pop("axes", None)
     am["spectrum"] = spec
     am["panorama"] = spectrum.summarize(spec)
+    # scene narration — the agent reads the RUN'S STORY (画面) + a verdict hint,
+    # not just raw scalars: 末态/趋势/反刷分/总判 captions per metric.
+    try:
+        nar = spectrum.narrate_dp(spec) if project == "dp" else spectrum.narrate_pe(spec)
+        if nar.get("ok"):
+            am["story"] = nar["story"]
+            am["scenes"] = nar["scenes"]
+            am["verdict_hint"] = {"action": nar["verdict_hint"][0],
+                                  "reason": nar["verdict_hint"][1]}
+    except Exception as e:  # noqa: BLE001
+        am["narrate_error"] = str(e)
     if axes:
         am["axes_trend"] = {
             "progress": _trend(axes.get("progress", [])),

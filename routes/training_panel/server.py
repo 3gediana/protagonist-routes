@@ -1559,6 +1559,16 @@ def spectrum_endpoint(project: str, file: str, window: int = 0) -> dict[str, Any
         raise HTTPException(400, "project must be 'dp' or 'pe'")
     if not out.get("ok"):
         raise HTTPException(404, out.get("error", "spectrum unavailable"))
+    # attach scene narration (画面 captions + verdict hint) for panel + agent
+    try:
+        nar = spectrum.narrate_dp(out) if project == "dp" else spectrum.narrate_pe(out)
+        if nar.get("ok"):
+            out["narration"] = {"headline": nar["headline"], "scenes": nar["scenes"],
+                                "story": nar["story"],
+                                "verdict_hint": {"action": nar["verdict_hint"][0],
+                                                 "reason": nar["verdict_hint"][1]}}
+    except Exception as e:  # noqa: BLE001
+        out["narration_error"] = str(e)
     return out
 
 
