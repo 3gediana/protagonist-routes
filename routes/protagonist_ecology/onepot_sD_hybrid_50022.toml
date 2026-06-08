@@ -39,7 +39,7 @@ scenario_name = "onepot_sD_hybrid_50022"
 # (resume_generation=80). action_dim is grown 13 -> 16 on load (new outputs
 # zero-filled, behavior preserved) so phases D/E have reserved output slots
 # and this checkpoint is reused instead of retrained from scratch.
-resume_checkpoint_path = "D:/claude-code/c++/routes/protagonist_ecology/data/runs/onepot_sD_warm_50022/20260607-131545/checkpoint_gen349"
+resume_checkpoint_path = "D:/claude-code/c++/routes/protagonist_ecology/runs/onepot_sD_warm_50022/20260607-131545/checkpoint_gen349"
 
 # Stone bootstrap commit 1/2/3 end-to-end AB. Compared to
 # long_run_60gen_2d_throw.toml (which has throw_attempt=-0.05 and
@@ -95,7 +95,7 @@ borderland_mutate_reset_rate = 0.05
 extinction_rescue_top_k = 2
 
 [output]
-runs_dir = "data/runs/onepot_sD_warm_50023"
+runs_dir = "runs/onepot_sD_warm_50023"
 
 [world]
 size = [600.0, 600.0]

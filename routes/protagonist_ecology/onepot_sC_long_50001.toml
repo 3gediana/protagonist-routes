@@ -1,4 +1,4 @@
-# layer1.toml
+﻿# layer1.toml
 #
 # Layer 1 (Final Blueprint) integration smoke test - 30 gen.
 #
@@ -90,7 +90,7 @@ borderland_mutate_reset_rate = 0.05
 extinction_rescue_top_k = 2
 
 [output]
-runs_dir = "data/runs/onepot_sC_long_50001"
+runs_dir = "runs/onepot_sC_long_50001"
 
 [world]
 size = [600.0, 600.0]
