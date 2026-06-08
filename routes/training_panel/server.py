@@ -306,6 +306,112 @@ class PETrainReq(BaseModel):
     purpose: Optional[str] = None        # what this run is meant to achieve
 
 
+# --------------------------------------------------------------------------- #
+# DP pipeline request models — teacher rollout -> BC -> DAgger -> PPO finetune.
+# Every flag below mirrors an EXISTING CLI switch in main_train.cpp; these
+# endpoints only orchestrate the binary (no source / dimension changes).
+# Authoritative invocations taken from handoff/scripts/{bc_then_ppo,train_hunt,
+# train_repertoire}.ps1 (the human-run pipeline that grew kills off 0).
+# --------------------------------------------------------------------------- #
+class DPDemosReq(BaseModel):
+    """Teacher/oracle rollout that records (obs,action) demos for BC.
+    Mirrors bc_then_ppo.ps1 'record' stage:
+      --policy settler --weather --allow-cook --n-envs 1 --steps 2e6 --seed 24
+      --record-demos traces\\demos_<tag>_s<seed>.bin --metrics metrics\\rec_<tag>.jsonl
+    with env DP_SPAWN_RANDOM=1 DP_ORACLE_HUNT=1 DP_PREY_PRIORITY=1 DP_HUNT_V2=1."""
+    teacher: str = "settler"            # settler|scripted|wander|noop (oracle policy)
+    seed: int = 24
+    steps: Optional[int] = 2_000_000
+    episodes: Optional[int] = None      # alt bound; adds --episodes if set
+    tag: str = "agent"
+    weather: bool = True
+    allow_cook: bool = True
+    oracle_hunt: bool = True            # env DP_ORACLE_HUNT=1 (oracle actually hunts)
+    demo_no_regen: bool = False         # --demo-no-regen
+    oracle_no_fire: bool = False        # --oracle-no-fire (D-114 fire-free relabel)
+    extra_args: str = ""
+    reason: Optional[str] = None
+    purpose: Optional[str] = None
+    dry_run: bool = False               # build+return argv WITHOUT spawning
+
+
+class DPBCReq(BaseModel):
+    """Behavioral cloning from recorded demos. Mirrors 'bc' stage:
+      --policy bc --bc-demos <csv> --bc-out checkpoints\\bc_<tag>.pt
+      --bc-epochs 10 --bc-batch 16 --bc-bptt 64 --bc-lr 1e-3
+      --bc-trigger-weight 5 --bc-min-eplen 300 --bc-trigger-oversample 3"""
+    demos: str                          # comma-sep demo file names (traces/ or runs/)
+    tag: str = "agent"
+    epochs: int = 10
+    batch: int = 16
+    bptt: int = 64
+    lr: float = 1e-3
+    trigger_weight: float = 5.0
+    min_eplen: Optional[int] = 300
+    trigger_oversample: Optional[int] = 3
+    build_oversample: Optional[int] = None
+    max_eplen: Optional[int] = None
+    extra_args: str = ""
+    reason: Optional[str] = None
+    purpose: Optional[str] = None
+    dry_run: bool = False
+
+
+class DPDaggerReq(BaseModel):
+    """DAgger relabel (D-102): step env with the LOADED clone, label with the
+    ScriptedSettler oracle. Fixes a BC clone's covariate shift. Source-confirmed
+    invocation: --policy ppo --load <clone> --record-demos <out> --dagger."""
+    clone: str                          # clone checkpoint to step with (--load)
+    seed: int = 24
+    steps: Optional[int] = 2_000_000
+    episodes: Optional[int] = None
+    tag: str = "dagger"
+    weather: bool = True
+    allow_cook: bool = True
+    oracle_hunt: bool = True
+    oracle_no_fire: bool = False
+    extra_args: str = ""
+    reason: Optional[str] = None
+    purpose: Optional[str] = None
+    dry_run: bool = False
+
+
+class DPFinetuneReq(BaseModel):
+    """PPO finetune from a BC/PPO base with potential-based reward-shaping
+    coefficients (policy-invariant; the 'safe' reward levers). Mirrors
+    train_hunt.ps1 / train_repertoire.ps1:
+      --policy ppo --load <base> --weather --allow-cook --ent-coef 0.0015
+      --critic-warmup 32 --lr 1.5e-4 --ppo-target-kl 0.08 --ppo-hunt-shaping H
+      [--ppo-repertoire-shaping R --ppo-warmth-shaping W ...]"""
+    load: str                           # base checkpoint (e.g. checkpoints/bc_hv2.pt)
+    seed: int = 24
+    steps: int = 8_000_000
+    n_envs: int = 4
+    save_every: int = 25
+    tag: str = "agent"
+    # ppo knobs (handoff-proven defaults)
+    ent_coef: float = 0.0015
+    lr: float = 1.5e-4
+    critic_warmup: int = 32
+    target_kl: Optional[float] = 0.08
+    # potential-based reward-shaping coefficients (the safe reward levers)
+    hunt_shaping: Optional[float] = None
+    repertoire_shaping: Optional[float] = None
+    warmth_shaping: Optional[float] = None
+    night_shaping: Optional[float] = None
+    day_shaping: Optional[float] = None
+    # mechanism toggles / env params (CLI-exposed, no source change)
+    weather: bool = True
+    allow_cook: bool = True
+    leanto: bool = False                # env DP_LEANTO=1
+    thirst_decay: Optional[float] = None
+    trigger_cost: Optional[float] = None
+    extra_args: str = ""
+    reason: Optional[str] = None
+    purpose: Optional[str] = None
+    dry_run: bool = False
+
+
 @app.post("/api/dp/train")
 def dp_train(req: DPTrainReq) -> dict[str, Any]:
     exe = _resolve(DP_TRAIN_EXE)
@@ -346,6 +452,251 @@ def dp_train(req: DPTrainReq) -> dict[str, Any]:
                        "reason": req.reason, "purpose": req.purpose})
     return {"ok": True, "run_id": run_id, "pid": run.proc.pid, "cmd": run.cmd,
             "log": str(log_path), "metrics": f"{tag}.jsonl"}
+
+
+# --------------------------------------------------------------------------- #
+# DP pipeline: teacher-rollout -> BC -> DAgger -> PPO finetune.
+# argv builders are PURE (no spawn) so they are unit-testable and feed dry_run.
+# All paths are emitted relative to DP_ROOT (the spawn cwd), matching dp_train.
+# --------------------------------------------------------------------------- #
+def _argnum(v: Any) -> str:
+    """Format a scalar for the CLI. str() keeps floats parseable by std::stof
+    (e.g. 1.5e-4 -> '0.00015', 0.0015 -> '0.0015')."""
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    return str(v)
+
+
+def _dp_env(*, spawn_random: bool = True, hunt_v2: bool = True,
+            prey_priority: bool = True, oracle_hunt: bool = False,
+            leanto: bool = False) -> dict[str, str]:
+    """Build the DP env block. The four DP_* toggles match what the handoff
+    scripts export; oracle_hunt/leanto are opt-in for specific stages."""
+    env = dict(os.environ)
+    env["DP_SPAWN_RANDOM"] = "1" if spawn_random else "0"
+    env["DP_HUNT_V2"] = "1" if hunt_v2 else "0"
+    env["DP_PREY_PRIORITY"] = "1" if prey_priority else "0"
+    if oracle_hunt:
+        env["DP_ORACLE_HUNT"] = "1"
+    if leanto:
+        env["DP_LEANTO"] = "1"
+    return env
+
+
+def _dp_demo_rel(name: str) -> str:
+    """Resolve a demo file name to a DP_ROOT-relative path the binary can read;
+    pass the raw name through if it isn't on disk yet (binary will validate)."""
+    p = _dp_resolve(name)
+    if p.exists():
+        try:
+            return str(p.relative_to(DP_ROOT))
+        except ValueError:
+            return str(p)
+    return name
+
+
+def _dp_demos_argv(exe: Path, req: "DPDemosReq") -> tuple[list[str], str, str]:
+    demo_rel = str(Path("traces") / f"demos_{req.tag}_s{req.seed}.bin")
+    metrics_rel = str(Path("metrics") / f"rec_{req.tag}.jsonl")
+    argv = [str(exe), "--policy", req.teacher]
+    if req.weather:
+        argv.append("--weather")
+    if req.allow_cook:
+        argv.append("--allow-cook")
+    argv += ["--n-envs", "1", "--record-demos", demo_rel,
+             "--metrics", metrics_rel, "--seed", str(req.seed)]
+    if req.steps is not None:
+        argv += ["--steps", str(req.steps)]
+    if req.episodes is not None:
+        argv += ["--episodes", str(req.episodes)]
+    if req.demo_no_regen:
+        argv.append("--demo-no-regen")
+    if req.oracle_no_fire:
+        argv.append("--oracle-no-fire")
+    if req.extra_args.strip():
+        argv += req.extra_args.split()
+    return argv, demo_rel, metrics_rel
+
+
+def _dp_bc_argv(exe: Path, req: "DPBCReq") -> tuple[list[str], str]:
+    demos = ",".join(_dp_demo_rel(d.strip())
+                     for d in req.demos.split(",") if d.strip())
+    bc_out = str(Path("checkpoints") / f"bc_{req.tag}.pt")
+    argv = [str(exe), "--policy", "bc",
+            "--bc-demos", demos,
+            "--bc-out", bc_out,
+            "--bc-epochs", str(req.epochs),
+            "--bc-batch", str(req.batch),
+            "--bc-bptt", str(req.bptt),
+            "--bc-lr", _argnum(req.lr),
+            "--bc-trigger-weight", _argnum(req.trigger_weight)]
+    if req.min_eplen is not None:
+        argv += ["--bc-min-eplen", str(req.min_eplen)]
+    if req.trigger_oversample is not None:
+        argv += ["--bc-trigger-oversample", str(req.trigger_oversample)]
+    if req.build_oversample is not None:
+        argv += ["--bc-build-oversample", str(req.build_oversample)]
+    if req.max_eplen is not None:
+        argv += ["--bc-max-eplen", str(req.max_eplen)]
+    if req.extra_args.strip():
+        argv += req.extra_args.split()
+    return argv, bc_out
+
+
+def _dp_dagger_argv(exe: Path, req: "DPDaggerReq") -> tuple[list[str], str]:
+    load_rel = _dp_demo_rel(req.clone)
+    demo_rel = str(Path("traces") / f"dagger_{req.tag}_s{req.seed}.bin")
+    argv = [str(exe), "--policy", "ppo", "--load", load_rel,
+            "--dagger", "--record-demos", demo_rel]
+    if req.weather:
+        argv.append("--weather")
+    if req.allow_cook:
+        argv.append("--allow-cook")
+    argv += ["--n-envs", "1", "--seed", str(req.seed)]
+    if req.steps is not None:
+        argv += ["--steps", str(req.steps)]
+    if req.episodes is not None:
+        argv += ["--episodes", str(req.episodes)]
+    if req.oracle_no_fire:
+        argv.append("--oracle-no-fire")
+    if req.extra_args.strip():
+        argv += req.extra_args.split()
+    return argv, demo_rel
+
+
+def _dp_finetune_argv(exe: Path, req: "DPFinetuneReq",
+                      tag: str) -> tuple[list[str], str, str]:
+    load_rel = _dp_demo_rel(req.load)
+    save_rel = str(Path("checkpoints") / f"ft_{tag}.pt")
+    metrics_rel = str(Path("metrics") / f"ft_{tag}.jsonl")
+    argv = [str(exe), "--policy", "ppo", "--load", load_rel]
+    if req.weather:
+        argv.append("--weather")
+    if req.allow_cook:
+        argv.append("--allow-cook")
+    argv += ["--ent-coef", _argnum(req.ent_coef),
+             "--critic-warmup", str(req.critic_warmup),
+             "--lr", _argnum(req.lr)]
+    if req.target_kl is not None:
+        argv += ["--ppo-target-kl", _argnum(req.target_kl)]
+    for flag, val in (("--ppo-hunt-shaping", req.hunt_shaping),
+                      ("--ppo-repertoire-shaping", req.repertoire_shaping),
+                      ("--ppo-warmth-shaping", req.warmth_shaping),
+                      ("--ppo-night-shaping", req.night_shaping),
+                      ("--ppo-day-shaping", req.day_shaping),
+                      ("--thirst-decay", req.thirst_decay),
+                      ("--trigger-cost", req.trigger_cost)):
+        if val is not None:
+            argv += [flag, _argnum(val)]
+    argv += ["--n-envs", str(req.n_envs), "--steps", str(req.steps),
+             "--save-path", save_rel, "--save-every", str(req.save_every),
+             "--metrics", metrics_rel, "--seed", str(req.seed)]
+    if req.extra_args.strip():
+        argv += req.extra_args.split()
+    return argv, save_rel, metrics_rel
+
+
+@app.post("/api/dp/record_demos")
+def dp_record_demos(req: DPDemosReq) -> dict[str, Any]:
+    """Stage 1: a scripted teacher/oracle plays the world and records
+    (obs,action) demos for behavioral cloning."""
+    exe = _resolve(DP_TRAIN_EXE)
+    if not exe:
+        raise HTTPException(500, "deep_protagonist_train.exe not found (build DP first)")
+    DP_TRACES.mkdir(parents=True, exist_ok=True)
+    DP_METRICS.mkdir(parents=True, exist_ok=True)
+    argv, demo_rel, metrics_rel = _dp_demos_argv(exe, req)
+    if req.dry_run:
+        return {"ok": True, "dry_run": True, "cmd": " ".join(argv),
+                "demos": demo_rel, "metrics": metrics_rel}
+    env = _dp_env(oracle_hunt=req.oracle_hunt)
+    run_id = _new_run_id("dp")
+    tag = f"rec_{req.tag}"
+    log_path = DP_LOGS / f"{tag}.stdout.log"
+    run = _spawn(run_id, "dp", argv, DP_ROOT, env, log_path, kind="record",
+                 meta={"tag": tag, "stage": "record_demos", "teacher": req.teacher,
+                       "seed": req.seed, "demos": demo_rel, "metrics": metrics_rel,
+                       "reason": req.reason, "purpose": req.purpose})
+    return {"ok": True, "run_id": run_id, "pid": run.proc.pid, "cmd": run.cmd,
+            "log": str(log_path), "demos": demo_rel, "metrics": metrics_rel}
+
+
+@app.post("/api/dp/train_bc")
+def dp_train_bc(req: DPBCReq) -> dict[str, Any]:
+    """Stage 2: behavioral cloning from recorded demos -> checkpoints/bc_<tag>.pt."""
+    exe = _resolve(DP_TRAIN_EXE)
+    if not exe:
+        raise HTTPException(500, "deep_protagonist_train.exe not found (build DP first)")
+    if not req.demos.strip():
+        raise HTTPException(400, "need at least one demo file (demos=...)")
+    DP_CKPT.mkdir(parents=True, exist_ok=True)
+    argv, bc_out = _dp_bc_argv(exe, req)
+    if req.dry_run:
+        return {"ok": True, "dry_run": True, "cmd": " ".join(argv), "bc_out": bc_out}
+    env = _dp_env()
+    run_id = _new_run_id("dp")
+    tag = f"bc_{req.tag}"
+    log_path = DP_LOGS / f"{tag}.stdout.log"
+    run = _spawn(run_id, "dp", argv, DP_ROOT, env, log_path, kind="bc",
+                 meta={"tag": tag, "stage": "train_bc", "demos": req.demos,
+                       "bc_out": bc_out, "epochs": req.epochs,
+                       "reason": req.reason, "purpose": req.purpose})
+    return {"ok": True, "run_id": run_id, "pid": run.proc.pid, "cmd": run.cmd,
+            "log": str(log_path), "bc_out": bc_out}
+
+
+@app.post("/api/dp/dagger")
+def dp_dagger(req: DPDaggerReq) -> dict[str, Any]:
+    """Stage 2b (D-102): step env with a loaded clone, label with the oracle, to
+    fix the clone's covariate shift -> traces/dagger_<tag>_s<seed>.bin."""
+    exe = _resolve(DP_TRAIN_EXE)
+    if not exe:
+        raise HTTPException(500, "deep_protagonist_train.exe not found (build DP first)")
+    if not req.clone.strip():
+        raise HTTPException(400, "need a clone checkpoint to step with (clone=...)")
+    DP_TRACES.mkdir(parents=True, exist_ok=True)
+    argv, demo_rel = _dp_dagger_argv(exe, req)
+    if req.dry_run:
+        return {"ok": True, "dry_run": True, "cmd": " ".join(argv), "demos": demo_rel}
+    env = _dp_env(oracle_hunt=req.oracle_hunt)
+    run_id = _new_run_id("dp")
+    tag = f"dagger_{req.tag}"
+    log_path = DP_LOGS / f"{tag}.stdout.log"
+    run = _spawn(run_id, "dp", argv, DP_ROOT, env, log_path, kind="dagger",
+                 meta={"tag": tag, "stage": "dagger", "clone": req.clone,
+                       "seed": req.seed, "demos": demo_rel,
+                       "reason": req.reason, "purpose": req.purpose})
+    return {"ok": True, "run_id": run_id, "pid": run.proc.pid, "cmd": run.cmd,
+            "log": str(log_path), "demos": demo_rel}
+
+
+@app.post("/api/dp/finetune")
+def dp_finetune(req: DPFinetuneReq) -> dict[str, Any]:
+    """Stage 3: PPO finetune from a BC/PPO base with reward-shaping PBRS
+    coefficients -> checkpoints/ft_<tag>.pt."""
+    exe = _resolve(DP_TRAIN_EXE)
+    if not exe:
+        raise HTTPException(500, "deep_protagonist_train.exe not found (build DP first)")
+    if not req.load.strip():
+        raise HTTPException(400, "finetune needs a base checkpoint (load=...)")
+    DP_CKPT.mkdir(parents=True, exist_ok=True)
+    DP_METRICS.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    tag = f"{req.tag}_{ts}"
+    argv, save_rel, metrics_rel = _dp_finetune_argv(exe, req, tag)
+    if req.dry_run:
+        return {"ok": True, "dry_run": True, "cmd": " ".join(argv),
+                "save_path": save_rel, "metrics": metrics_rel}
+    env = _dp_env(leanto=req.leanto)
+    run_id = _new_run_id("dp")
+    log_path = DP_LOGS / f"ft_{tag}.stdout.log"
+    run = _spawn(run_id, "dp", argv, DP_ROOT, env, log_path, kind="finetune",
+                 meta={"tag": tag, "stage": "finetune", "load": req.load,
+                       "seed": req.seed, "steps": req.steps, "n_envs": req.n_envs,
+                       "save_path": save_rel, "metrics": f"ft_{tag}.jsonl",
+                       "reason": req.reason, "purpose": req.purpose})
+    return {"ok": True, "run_id": run_id, "pid": run.proc.pid, "cmd": run.cmd,
+            "log": str(log_path), "save_path": save_rel, "metrics": f"ft_{tag}.jsonl"}
 
 
 def _clone_pe_config(base: Path, *, seed: Optional[int],
@@ -475,6 +826,75 @@ def make_config_variant(base_name: str, knob: str, value: Any) -> dict[str, Any]
     return {"ok": True, "variant": dst.name, "base": base_name, "knob": knob,
             "old_value": old, "new_value": literal,
             "note": "已生成单旋钮对照配置(scenario/runs_dir 已隔离),用 start_pe_training 启动它与基线对照。"}
+
+
+def _num_or_none(s: Optional[str]) -> Optional[float]:
+    """Parse a TOML literal as float for delta math; None if non-numeric."""
+    if s is None:
+        return None
+    try:
+        return float(str(s).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _knob_delta(old: Optional[str], new: Any) -> dict[str, Any]:
+    """Numeric delta summary used by the UI + as a cross-check for the agent's
+    tier-C gate (sign flip / magnitude). Non-numeric edits report numeric=False."""
+    o, n = _num_or_none(old), _num_or_none(new)
+    if o is None or n is None:
+        return {"numeric": False}
+    sign_flip = (o > 0 > n) or (o < 0 < n) or (o == 0) != (n == 0)
+    pct = (abs(n - o) / abs(o)) if o != 0 else (float("inf") if n != 0 else 0.0)
+    return {"numeric": True, "old": o, "new": n, "sign_flip": sign_flip,
+            "abs_pct_change": (None if pct == float("inf") else round(pct, 4))}
+
+
+class PETuneReq(BaseModel):
+    """Apply one-or-more knob edits to a PE TOML, producing ONE isolated variant
+    (scenario_name/runs_dir suffixed so it never overwrites the baseline). Used
+    by pe_reward_tune / pe_archive_geometry / approved pe_curriculum_edit. The
+    server only edits TOML — it does not classify risk (the agent's tier-C gate
+    decides autonomy); the returned per-knob deltas let it cross-check."""
+    config: str                          # base *.toml under PE_ROOT
+    edits: dict[str, Any]                # {dotted_knob: value}, e.g. {"reward.food_weight": 1.2}
+    label: str = "tune"                  # variant name hint
+    dry_run: bool = False
+
+
+@app.post("/api/pe/tune")
+def pe_tune(req: PETuneReq) -> dict[str, Any]:
+    if not req.config or not req.edits:
+        raise HTTPException(400, "need config and at least one knob edit")
+    try:
+        base = _safe_join(PE_ROOT, req.config)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+    if not base.exists():
+        raise HTTPException(404, f"config not found: {req.config}")
+    text = base.read_text(encoding="utf-8", errors="ignore")
+    applied: list[dict[str, Any]] = []
+    for knob, value in req.edits.items():
+        if value is None:
+            return {"ok": False, "error": f"knob {knob} has no value"}
+        literal = _toml_literal(value)
+        text, old, changed = _toml_set_knob(text, knob, literal)
+        if not changed:
+            return {"ok": False, "error": f"knob not found in config: {knob}"}
+        applied.append({"knob": knob, "old_value": old, "new_value": literal,
+                        "delta": _knob_delta(old, value)})
+    safe = re.sub(r"[^0-9A-Za-z]+", "_", req.label).strip("_") or "tune"
+    text = re.sub(r'scenario_name\s*=\s*"([^"]*)"',
+                  lambda m: f'scenario_name = "{m.group(1)}_{safe}"', text, count=1)
+    text = re.sub(r'runs_dir\s*=\s*"([^"]*)"',
+                  lambda m: f'runs_dir = "{m.group(1)}_{safe}"', text, count=1)
+    if req.dry_run:
+        return {"ok": True, "dry_run": True, "base": req.config,
+                "would_write": f"panel_{base.stem}_{safe}.toml", "applied": applied}
+    dst = PE_ROOT / f"panel_{base.stem}_{safe}.toml"
+    dst.write_text(text, encoding="utf-8")
+    return {"ok": True, "variant": dst.name, "base": req.config, "applied": applied,
+            "note": "已生成多旋钮变体(scenario/runs_dir 已隔离),用 start_pe_training 启动。"}
 
 
 @app.post("/api/pe/train")

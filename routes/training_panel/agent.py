@@ -219,6 +219,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "keep_recent_msgs": 14,           # always keep this many newest msgs verbatim
     "pinned_specs": [],               # agent-extracted specs; NEVER compressed
     "rolling_summary": "",            # rolling summary of compressed-out history
+    # --- tier-C autonomy (project-partitioned, hybrid tool network) ---
+    # The expanded action space (teacher->BC->DAgger->PPO finetune + reward/
+    # archive/curriculum tuning) is risk-classified IN CODE, not left to the LLM:
+    #   * low-risk  (reward-SHAPING coeffs, seed, archive geometry, BC/DAgger/PPO
+    #     off existing teachers, small PE reward-weight tweaks) -> autonomous.
+    #   * high-risk (curriculum/task_templates edits, structural reward changes
+    #     = sign flip / >reward_pct_limit / add-remove keys, NEW bloodlines) ->
+    #     queue for human approval EVEN IN AUTO MODE.
+    "tier_c": {
+        "reward_pct_limit": 0.25,        # |Δ|/old above this = structural -> approval
+        "dp_smoke_steps": 200000,        # start_dp without a base + steps> this = new bloodline
+        "pe_smoke_generations": 4,       # start_pe without resume + gens> this = new bloodline
+    },
     # --- deep thinking ---
     # multi-round guided deliberation BEFORE deciding. 0 = off (use the model's
     # own single-call reasoning only). >0 = spend that many extra API calls, each
@@ -285,6 +298,18 @@ class AgentState:
                       "prompt_tokens": 0, "completion_tokens": 0}
         self.last_obs_snapshot: dict[str, Any] = {}
         self._watch_baseline: dict[str, Any] = {}
+        # --- project partitioning (one decision = one project) ---
+        # focus_project gates which project's action tools are even visible in
+        # the schema; cross-project actions are refused at the code level so the
+        # agent must serialize (focus dp -> act -> focus pe -> act).
+        self.focus_project: Optional[str] = None     # "dp" | "pe" | None
+        # long-tail tool packs activated via find_tools for the CURRENT focus;
+        # cleared whenever focus changes (packs are project-scoped).
+        self.active_packs: set[str] = set()
+        # set when a run just ended (watcher) -> the agent must record_gen +
+        # kb_write a summary before it is allowed to sleep again.
+        self.needs_summary: bool = False
+        self._recorded_since_wake: bool = False
         # live streaming buffer (for the web UI to show thinking + reply as it streams)
         self.live: dict[str, Any] = {"active": False, "phase": "", "reasoning": "",
                                      "content": "", "seq": 0, "deliberation": []}
@@ -330,6 +355,12 @@ class AgentState:
             "max_procs": cfg.get("max_procs"),
             "disk_low_gb": cfg.get("disk_low_gb"),
             "objective": cfg.get("objective"),
+            # project partition + hybrid tool network (for the UI)
+            "focus_project": self.focus_project,
+            "active_packs": sorted(self.active_packs),
+            "needs_summary": self.needs_summary,
+            "tier_c": cfg.get("tier_c"),
+            "tool_network": _tool_network_view(self.focus_project, self.active_packs),
             "active_strategy": cfg.get("active_strategy"),
             "active_strategy_name": (STRATEGIES.get(cfg.get("active_strategy") or "")
                                      or {}).get("name"),
@@ -954,8 +985,25 @@ def _fn(name: str, desc: str, props: dict[str, Any],
             "function": {"name": name, "description": desc, "parameters": params}}
 
 
-def _tool_schemas() -> list[dict[str, Any]]:
+def _all_tool_defs() -> list[dict[str, Any]]:
+    """The FULL tool catalog. `_tool_schemas()` filters this down per the current
+    project focus + activated long-tail packs (hybrid tool network)."""
     return [
+        _fn("focus_project",
+            "切换你的【项目焦点】(dp 或 pe)。一轮决策只针对一个项目:切到某项目后,只有该项目的动作工具可用,另一个项目的动作工具会从工具表里消失、调不出来。"
+            "即使要你『两个一起跑』,也必须串行:focus_project(dp)→决策执行→focus_project(pe)→决策执行。切换会清空已激活的长尾工具包(工具包按项目隔离)。",
+            {"project": {"type": "string", "enum": ["dp", "pe"],
+                         "description": "dp=单体生存PPO / pe=种群MAP-Elites进化"},
+             "reason": {"type": "string", "description": "为何切到这个项目(进历史)"}},
+            ["project"]),
+        _fn("find_tools",
+            "在【工具网络】里检索当前焦点项目的长尾工具(BC/老师录数据集/DAgger/PPO微调/奖励调参/档案几何/课程编辑等),按关键词或工具包匹配,"
+            "并把命中的工具【激活】——激活后它们的真·schema 会出现在下一轮工具表里,可直接像普通工具一样带类型化参数调用(不是通用 call_tool)。"
+            "凡涉及这些低频强力操作,先 find_tools 调出来再用。仅在当前焦点项目内检索。",
+            {"keyword": {"type": "string",
+                         "description": "关键词,如 bc/老师/demos/dagger/finetune/微调/reward/奖励/archive/档案/curriculum/课程"},
+             "pack": {"type": "string",
+                      "description": "可选:直接按工具包名激活(dp_pipeline/pe_reward/pe_evolution/pe_curriculum)"}}),
         _fn("get_status",
             "读取机器与训练现状:GPU/磁盘/进程数、各 PE run 的最新 gen/me_cov/qd、各 DP run 的 score/unlocks/kills。决策前先调。",
             {}),
@@ -1114,7 +1162,248 @@ def _tool_schemas() -> list[dict[str, Any]]:
             {"rounds": {"type": "integer", "default": 2,
                         "description": "推演轮数(1-上限):常规=1,关键决策=2-3"}},
             ["rounds"]),
+        # ---- DP long-tail pipeline (pack=dp_pipeline; via find_tools) -------- #
+        _fn("dp_record_demos",
+            "【DP·造老师→录数据集】用脚本老师/oracle(settler 七层反应式)跑环境,录 (obs,action) 示范数据集供 BC 用。"
+            "对应已有 CLI --policy settler --record-demos(不改源码/维度)。低风险,可自主。",
+            {"teacher": {"type": "string", "enum": ["settler", "scripted", "wander", "noop"],
+                         "default": "settler", "description": "老师策略(默认 settler oracle)"},
+             "seed": {"type": "integer", "default": 24},
+             "steps": {"type": "integer", "description": "录制步数(默认 2e6)"},
+             "tag": {"type": "string", "default": "agent", "description": "数据集标签→traces/demos_<tag>_s<seed>.bin"},
+             "oracle_hunt": {"type": "boolean", "default": True, "description": "老师是否真的狩猎(DP_ORACLE_HUNT=1)"},
+             "oracle_no_fire": {"type": "boolean", "default": False, "description": "无火重标(D-114)"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["reason"]),
+        _fn("dp_train_bc",
+            "【DP·行为克隆 BC】用录好的示范数据集克隆出一个网络 → checkpoints/bc_<tag>.pt。"
+            "对应 --policy bc --bc-demos/--bc-epochs/...(不改源码)。低风险,可自主。",
+            {"demos": {"type": "string", "description": "示范文件名(逗号分隔多个),来自 dp_record_demos"},
+             "tag": {"type": "string", "default": "agent"},
+             "epochs": {"type": "integer", "default": 10},
+             "batch": {"type": "integer", "default": 16},
+             "bptt": {"type": "integer", "default": 64},
+             "lr": {"type": "number", "default": 0.001},
+             "trigger_weight": {"type": "number", "default": 5,
+                                "description": "触发动作的损失加权(稀有动作别被淹没)"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["demos", "reason"]),
+        _fn("dp_dagger",
+            "【DP·DAgger 纠偏】用加载的克隆走、用老师(ScriptedSettler)贴正确标签,修克隆的协变量漂移(D-102)→ traces/dagger_<tag>_s<seed>.bin。"
+            "对应 --policy ppo --load <clone> --record-demos <out> --dagger(源码确认)。低风险,可自主。",
+            {"clone": {"type": "string", "description": "要纠偏的克隆 checkpoint(--load)"},
+             "seed": {"type": "integer", "default": 24},
+             "steps": {"type": "integer"},
+             "tag": {"type": "string", "default": "dagger"},
+             "oracle_hunt": {"type": "boolean", "default": True},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["clone", "reason"]),
+        _fn("dp_finetune",
+            "【DP·PPO 微调】从 BC/PPO 基线热启动接着 PPO,可带【势能塑形系数】(ppo-hunt/repertoire/warmth/night/day-shaping)——"
+            "这是 policy-invariant 的安全奖励杠杆(加速学习不改最优策略),不是改奖励结构。对应 --policy ppo --load <base> --ent-coef/--ppo-*-shaping(不改源码)。低风险,可自主。",
+            {"load": {"type": "string", "description": "基线 checkpoint(如 bc_hv2.pt),必填"},
+             "seed": {"type": "integer", "default": 24},
+             "steps": {"type": "integer", "default": 8000000},
+             "n_envs": {"type": "integer", "default": 4},
+             "tag": {"type": "string", "default": "agent"},
+             "ent_coef": {"type": "number", "default": 0.0015},
+             "lr": {"type": "number", "default": 0.00015},
+             "critic_warmup": {"type": "integer", "default": 32},
+             "hunt_shaping": {"type": "number", "description": "狩猎势能塑形系数(安全)"},
+             "repertoire_shaping": {"type": "number", "description": "技能谱势能塑形系数(安全)"},
+             "warmth_shaping": {"type": "number", "description": "保暖势能塑形系数(安全)"},
+             "thirst_decay": {"type": "number"}, "trigger_cost": {"type": "number"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["load", "reason"]),
+        # ---- PE long-tail tuning (packs pe_reward/pe_evolution/pe_curriculum) - #
+        _fn("pe_reward_tune",
+            "【PE·奖励/惩罚调参】调 [reward]/[reward.goal_completion]/[combat] 段的权重(food/survival/cooperation/各目标奖励/惩罚等),生成隔离变体。"
+            "小幅微调(同号、幅度≤tier_c.reward_pct_limit)可自主;变号/翻倍/增删奖励项=结构性改动→即使 auto 也挂待批。先 inspect_config 看现值。",
+            {"config": {"type": "string", "description": "基线 PE TOML"},
+             "edits": {"type": "object",
+                       "description": "{点分旋钮: 新值},如 {\"reward.food_weight\": 1.2, \"combat.kill_bonus\": 0.0}"},
+             "label": {"type": "string", "default": "reward", "description": "变体名后缀"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
+        _fn("pe_archive_geometry",
+            "【PE·档案几何】调 [evolution.me_neat] 的 CVT 质心数/各 bin 数/max_bins(决定行为格子多少)。"
+            "经验:格子开太多(如 8×8×3=192)→只填 0.5~3% 看起来像凭运气撞;2D(5×5=25)gen30 能填 20%。低风险,可自主。",
+            {"config": {"type": "string"},
+             "edits": {"type": "object",
+                       "description": "{点分旋钮: 新值},如 {\"evolution.me_neat.cvt_num_centroids\": 64, \"evolution.me_neat.hunt_max_bins\": 5}"},
+             "label": {"type": "string", "default": "archive"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
+        _fn("pe_evolution_tune",
+            "【PE·进化引擎调参】调 [evolution.neat]/[evolution.selection]/[evolution.mutation](加节点率/精英比/锦标赛/扰动 sigma 等)。"
+            "sigma 大=探索强但噪声大,小=稳但易早熟;一次只动一个方向。低风险,可自主。",
+            {"config": {"type": "string"},
+             "edits": {"type": "object", "description": "{点分旋钮: 新值}"},
+             "label": {"type": "string", "default": "evo"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
+        _fn("pe_curriculum_edit",
+            "【PE·课程编辑(高风险)】改 [[evolution.task_templates]] 课程(任务清单/权重/难度/must_build_to_survive 等)——这是改『选择压往哪个方向』,PE 最高杠杆但高风险。"
+            "无论什么模式都【只提议、等人工批准】。提交前先 inspect_config + kb_query 查既往课程结论。",
+            {"config": {"type": "string"},
+             "edits": {"type": "object",
+                       "description": "{点分旋钮: 新值}(task_templates 改动)"},
+             "label": {"type": "string", "default": "curriculum"},
+             "reason": {"type": "string", "description": "为何改课程、改成什么方向(必填,进历史+待批卡)"},
+             "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Tool network: project partition + hybrid resident-core / long-tail packs.
+#   project: "any"    -> resident, project-agnostic (perception/memory/meta)
+#            "shared" -> available once a focus is set, scoped to that focus
+#            "dp"/"pe"-> only visible under that focus
+#   pack in LONGTAIL_PACKS -> hidden until find_tools activates it (focus-scoped)
+# --------------------------------------------------------------------------- #
+LONGTAIL_PACKS = {"dp_pipeline", "pe_reward", "pe_evolution", "pe_curriculum"}
+
+TOOL_META: dict[str, dict[str, Any]] = {
+    # resident core (project-agnostic): perception + memory + meta + switches
+    "get_status": {"project": "any"},
+    "focus_project": {"project": "any"},
+    "find_tools": {"project": "any"},
+    "kb_query": {"project": "any"}, "kb_write": {"project": "any"},
+    "record_gen": {"project": "any"}, "query_gens": {"project": "any"},
+    "use_strategy": {"project": "any"}, "list_strategies": {"project": "any"},
+    "sleep": {"project": "any"}, "log_note": {"project": "any"},
+    "pin_spec": {"project": "any"}, "recall_timeline": {"project": "any"},
+    "list_docs": {"project": "any"}, "read_doc": {"project": "any"},
+    "deep_think": {"project": "any"},
+    # shared reads/controls — scoped to the current focus (project arg forced)
+    "analyze_metrics": {"project": "shared"}, "compare_runs": {"project": "shared"},
+    "read_log_tail": {"project": "shared"}, "cleanup_disk": {"project": "shared"},
+    "stop_training": {"project": "shared"}, "list_checkpoints": {"project": "shared"},
+    # DP focus — primary (auto-active) + long-tail pipeline (find_tools)
+    "start_dp_training": {"project": "dp"},
+    "delete_checkpoint": {"project": "dp"},
+    "dp_record_demos": {"project": "dp", "pack": "dp_pipeline"},
+    "dp_train_bc": {"project": "dp", "pack": "dp_pipeline"},
+    "dp_dagger": {"project": "dp", "pack": "dp_pipeline"},
+    "dp_finetune": {"project": "dp", "pack": "dp_pipeline"},
+    # PE focus — primary (auto-active) + long-tail tuning packs (find_tools)
+    "start_pe_training": {"project": "pe"},
+    "list_pe_configs": {"project": "pe"},
+    "inspect_config": {"project": "pe"},
+    "make_config_variant": {"project": "pe"},
+    "pe_reward_tune": {"project": "pe", "pack": "pe_reward"},
+    "pe_archive_geometry": {"project": "pe", "pack": "pe_evolution"},
+    "pe_evolution_tune": {"project": "pe", "pack": "pe_evolution"},
+    "pe_curriculum_edit": {"project": "pe", "pack": "pe_curriculum"},
+}
+
+# keyword -> pack, for find_tools discovery (focus-scoped at call time).
+_PACK_KEYWORDS: dict[str, list[str]] = {
+    "dp_pipeline": ["bc", "克隆", "clone", "老师", "teacher", "oracle", "demos",
+                    "数据集", "dataset", "record", "录", "dagger", "纠偏",
+                    "finetune", "微调", "ppo", "shaping", "塑形", "pipeline", "流水线"],
+    "pe_reward": ["reward", "奖励", "惩罚", "penalty", "权重", "weight", "combat"],
+    "pe_evolution": ["archive", "档案", "几何", "geometry", "cvt", "bin", "bins",
+                     "centroid", "质心", "evolution", "进化", "neat", "mutation",
+                     "sigma", "selection", "精英", "elite"],
+    "pe_curriculum": ["curriculum", "课程", "task", "任务", "template",
+                      "task_templates", "难度", "difficulty"],
+}
+
+
+def _tool_visible(name: str, focus: Optional[str], active_packs: set[str]) -> bool:
+    """Whether a tool should appear in the schema given the current focus +
+    activated long-tail packs. Pure -> unit-testable."""
+    meta = TOOL_META.get(name)
+    if meta is None:
+        return True                      # unknown -> default visible (safety)
+    proj = meta["project"]
+    if proj == "any":
+        return True
+    if focus is None:
+        return False                     # must focus_project first
+    if proj == "shared":
+        return True
+    if proj != focus:
+        return False
+    pack = meta.get("pack")
+    if pack in LONGTAIL_PACKS:
+        return pack in active_packs      # long-tail: only after find_tools
+    return True                          # focus's primary tool
+
+
+def _packs_for_focus(focus: Optional[str]) -> set[str]:
+    return {p for p in LONGTAIL_PACKS
+            if (p.startswith("dp_") and focus == "dp")
+            or (p.startswith("pe_") and focus == "pe")}
+
+
+def _find_tools(keyword: str, pack: str, focus: Optional[str]) -> dict[str, Any]:
+    """Search the focus project's long-tail packs by keyword/pack name and
+    ACTIVATE the matches (their real schemas appear next turn)."""
+    if focus is None:
+        return {"ok": False, "error": "请先 focus_project(dp|pe) 再检索工具网络。"}
+    allowed = _packs_for_focus(focus)
+    kw = (keyword or "").strip().lower()
+    matched: set[str] = set()
+    if pack:
+        p = pack.strip().lower()
+        if p in allowed:
+            matched.add(p)
+    for pk in allowed:
+        if pk in matched:
+            continue
+        if kw and any(term in kw or kw in term for term in _PACK_KEYWORDS.get(pk, [])):
+            matched.add(pk)
+    if not matched and not pack and kw:
+        # also match against tool names/descriptions directly
+        for nm, meta in TOOL_META.items():
+            pk = meta.get("pack")
+            if pk in allowed and kw in nm.lower():
+                matched.add(pk)
+    if not matched:
+        return {"ok": True, "activated": [], "tools": [],
+                "note": f"焦点[{focus}]下未匹配到长尾工具(可用包: {sorted(allowed)})。"
+                        "动作类工具大多已常驻,直接调用即可。"}
+    STATE.active_packs |= matched
+    defs = {d["function"]["name"]: d["function"]["description"]
+            for d in _all_tool_defs()}
+    tools = [{"name": nm, "pack": meta.get("pack"),
+              "desc": defs.get(nm, "")[:160]}
+             for nm, meta in TOOL_META.items()
+             if meta.get("pack") in matched]
+    _timeline("find_tools", keyword=keyword, pack=pack, focus=focus,
+              activated=sorted(matched), tools=[t["name"] for t in tools])
+    return {"ok": True, "activated": sorted(matched), "tools": tools,
+            "note": "已激活,下一轮可直接像普通工具一样带参数调用这些工具。"}
+
+
+def _tool_schemas() -> list[dict[str, Any]]:
+    focus = STATE.focus_project
+    packs = STATE.active_packs
+    return [d for d in _all_tool_defs()
+            if _tool_visible(d["function"]["name"], focus, packs)]
+
+
+def _tool_network_view(focus: Optional[str], packs: set[str]) -> dict[str, Any]:
+    """A UI-facing description of the partitioned tool network: every tool with
+    its project/pack and whether it is currently visible/activated."""
+    cat = {d["function"]["name"]: (d["function"]["description"] or "")[:90]
+           for d in _all_tool_defs()}
+    tools = []
+    for nm, meta in TOOL_META.items():
+        pk = meta.get("pack")
+        longtail = pk in LONGTAIL_PACKS
+        tools.append({
+            "name": nm, "project": meta["project"], "pack": pk,
+            "longtail": longtail,
+            "active": (pk in packs) if longtail else None,
+            "visible": _tool_visible(nm, focus, packs),
+            "desc": cat.get(nm, ""),
+        })
+    return {"focus": focus, "active_packs": sorted(packs),
+            "packs": sorted(LONGTAIL_PACKS), "tools": tools}
 
 
 READ_TOOLS = {"get_status", "list_pe_configs", "list_checkpoints", "read_log_tail",
@@ -1122,7 +1411,8 @@ READ_TOOLS = {"get_status", "list_pe_configs", "list_checkpoints", "read_log_tai
               "sleep", "log_note", "cleanup_disk", "pin_spec",
               "recall_timeline", "list_docs", "read_doc",
               "kb_write", "kb_query", "record_gen", "query_gens",
-              "use_strategy", "list_strategies", "deep_think"}
+              "use_strategy", "list_strategies", "deep_think",
+              "focus_project", "find_tools"}
 
 # Pure, side-effect-free reads that are safe to run concurrently (claude-code
 # `isConcurrencySafe`): the agent loop batches a run of consecutive such calls
@@ -1160,9 +1450,144 @@ def _guard_launch(cfg: dict[str, Any]) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Tier-C risk classification (in code, not left to the LLM). High-risk ops are
+# queued for human approval EVEN IN AUTO mode. Pure functions -> unit-testable.
+# --------------------------------------------------------------------------- #
+def _num(v: Any) -> Optional[float]:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _reward_edit_is_structural(edits: dict[str, Any], pct_limit: float) -> Optional[str]:
+    """A PE reward edit is STRUCTURAL (high-risk) if any knob flips sign, more
+    than doubles/halves (|Δ|/old > pct_limit), or zeroes/un-zeroes a term.
+    Returns a human reason string if structural, else None.
+    NOTE: we can only check magnitude against the *proposed* value here; the
+    server's pe_tune dry_run gives the authoritative old->new delta, which the
+    gate below uses. This is the value-only heuristic for when old is unknown."""
+    for knob, new in (edits or {}).items():
+        n = _num(new)
+        if n is None:
+            return f"{knob} 改成非数值(结构性改动)"
+    return None
+
+
+def _delta_is_structural(delta: dict[str, Any], pct_limit: float) -> bool:
+    """Given a server _knob_delta() dict, decide if it's structural."""
+    if not delta.get("numeric"):
+        return True                       # non-numeric / added / removed key
+    if delta.get("sign_flip"):
+        return True
+    pct = delta.get("abs_pct_change")
+    if pct is None:                       # old==0 and new!=0 -> infinite change
+        return True
+    return pct > pct_limit
+
+
+def _is_new_bloodline(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> Optional[str]:
+    """A training launch that starts a FRESH lineage (no base ckpt/resume) and
+    runs past smoke length = high-risk new bloodline -> approval even in auto."""
+    tc = cfg.get("tier_c", {})
+    if name == "start_dp_training":
+        if args.get("checkpoint"):
+            return None
+        steps = int(args.get("steps", 8_000_000) or 0)
+        if steps > int(tc.get("dp_smoke_steps", 200000)):
+            return f"无基线 checkpoint 且 steps={steps}(>smoke)= 起新 DP 血脉"
+    elif name == "start_pe_training":
+        if args.get("resume_checkpoint"):
+            return None
+        gens = args.get("generations")
+        gens = int(gens) if gens is not None else 10_000   # unset = long run
+        if gens > int(tc.get("pe_smoke_generations", 4)):
+            return f"无 resume 且 generations={gens}(>smoke)= 起新 PE 血脉"
+    return None
+
+
+def _needs_approval(name: str, args: dict[str, Any],
+                    cfg: dict[str, Any]) -> tuple[bool, str]:
+    """Tier-C gate: return (needs_approval, reason) for HIGH-risk ops that must
+    queue for a human EVEN IN AUTO mode. Low-risk ops return (False, "")."""
+    pct_limit = float(cfg.get("tier_c", {}).get("reward_pct_limit", 0.25))
+    if name == "pe_curriculum_edit":
+        return True, "改课程(task_templates)是 PE 最高杠杆,高风险——只提议、等人工批准。"
+    if name == "pe_reward_tune":
+        # authoritative: ask server pe_tune dry_run for old->new deltas
+        try:
+            import server
+            res = server.pe_tune(server.PETuneReq(
+                config=args.get("config", ""), edits=args.get("edits") or {},
+                label=args.get("label") or "reward", dry_run=True))
+            applied = res.get("applied") or []
+            risky = [a.get("knob") for a in applied
+                     if _delta_is_structural(a.get("delta") or {}, pct_limit)]
+            if risky:
+                return True, ("奖励【结构性】改动(变号/幅度>%.0f%%/增删项): %s —— 需人工批准。"
+                              % (pct_limit * 100, ", ".join(risky)))
+        except Exception:  # noqa: BLE001
+            # if we cannot verify, be conservative on non-numeric edits only
+            s = _reward_edit_is_structural(args.get("edits") or {}, pct_limit)
+            if s:
+                return True, s + " —— 需人工批准。"
+        return False, ""
+    if name in ("start_dp_training", "start_pe_training"):
+        nb = _is_new_bloodline(name, args, cfg)
+        if nb:
+            return True, nb + " —— 需人工批准(即使在自主模式)。"
+    return False, ""
+
+
+def _kb_query_in_recent(msgs: list[dict[str, Any]], lookback: int = 8) -> bool:
+    """True if kb_query was called within the last few messages — used to FORCE
+    a knowledge lookup before any high-leverage action."""
+    for m in reversed(msgs[-lookback:]):
+        for tc in (m.get("tool_calls") or []):
+            if (tc.get("function", {}) or {}).get("name") == "kb_query":
+                return True
+    return False
+
+
+# Action tools that MUST be preceded by a kb_query in the same wake cycle.
+_REQUIRE_KB_FIRST = {
+    "start_dp_training", "start_pe_training", "make_config_variant",
+    "dp_record_demos", "dp_train_bc", "dp_dagger", "dp_finetune",
+    "pe_reward_tune", "pe_archive_geometry", "pe_evolution_tune",
+    "pe_curriculum_edit",
+}
+
+
+# --------------------------------------------------------------------------- #
 # Tool execution. Returns a JSON-serializable dict (the tool result).
 # --------------------------------------------------------------------------- #
 def _execute_tool(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    # ---- project-partition guard (code level; not left to the LLM) --------- #
+    meta = TOOL_META.get(name, {})
+    proj = meta.get("project")
+    if name == "focus_project":
+        p = args.get("project")
+        if p not in ("dp", "pe"):
+            return {"ok": False, "error": "project 必须是 dp 或 pe"}
+        with STATE.lock:
+            STATE.focus_project = p
+            STATE.active_packs = set()       # packs are project-scoped
+        _timeline("focus_project", project=p, reason=args.get("reason", ""))
+        return {"ok": True, "focus_project": p,
+                "note": f"已聚焦 {p};现在只有 {p} 的动作工具可用,另一个项目的动作工具已从工具表移除。"
+                        "涉及 BC/老师/数据集/奖励/课程/档案 等长尾操作,先 find_tools 调出来。"}
+    if name == "find_tools":
+        return _find_tools(args.get("keyword", ""), args.get("pack", ""),
+                           STATE.focus_project)
+    if proj in ("dp", "pe") and STATE.focus_project != proj:
+        return {"ok": False, "refused": True, "focus_required": proj,
+                "error": f"拒绝执行:当前焦点={STATE.focus_project or '未设定'},而 {name} 属于 {proj} 项目。"
+                         f"请先 focus_project('{proj}') 再调用——一轮决策只针对一个项目,跨项目必须串行。"}
+    if proj == "shared":
+        if STATE.focus_project is None:
+            return {"ok": False, "refused": True,
+                    "error": f"拒绝执行:{name} 需要先 focus_project(dp|pe) 设定本轮焦点。"}
+        args = {**args, "project": STATE.focus_project}   # scope reads to focus
     import server
     try:
         if name == "get_status":
@@ -1208,6 +1633,83 @@ def _execute_tool(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> dict[
                 _timeline("config_variant", base=res.get("base"),
                           variant=res.get("variant"), knob=res.get("knob"),
                           old=res.get("old_value"), new=res.get("new_value"))
+            return res
+        # ---- DP long-tail pipeline (teacher -> BC -> DAgger -> PPO finetune) - #
+        if name == "dp_record_demos":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            kw: dict[str, Any] = {
+                "teacher": args.get("teacher", "settler"),
+                "seed": int(args.get("seed", 24)), "tag": args.get("tag", "agent"),
+                "oracle_hunt": bool(args.get("oracle_hunt", True)),
+                "oracle_no_fire": bool(args.get("oracle_no_fire", False)),
+                "reason": args.get("reason"), "purpose": args.get("purpose")}
+            if args.get("steps") is not None:
+                kw["steps"] = int(args["steps"])
+            res = server.dp_record_demos(server.DPDemosReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_record_demos", teacher=kw["teacher"], seed=kw["seed"],
+                      tag=kw["tag"])
+            return {"ok": True, **res}
+        if name == "dp_train_bc":
+            kw = {"demos": args["demos"], "tag": args.get("tag", "agent"),
+                  "epochs": int(args.get("epochs", 10)),
+                  "batch": int(args.get("batch", 16)),
+                  "bptt": int(args.get("bptt", 64)),
+                  "lr": float(args.get("lr", 1e-3)),
+                  "trigger_weight": float(args.get("trigger_weight", 5.0)),
+                  "reason": args.get("reason"), "purpose": args.get("purpose")}
+            res = server.dp_train_bc(server.DPBCReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_train_bc", demos=kw["demos"], tag=kw["tag"],
+                      epochs=kw["epochs"])
+            return {"ok": True, **res}
+        if name == "dp_dagger":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            kw = {"clone": args["clone"], "seed": int(args.get("seed", 24)),
+                  "tag": args.get("tag", "dagger"),
+                  "oracle_hunt": bool(args.get("oracle_hunt", True)),
+                  "reason": args.get("reason"), "purpose": args.get("purpose")}
+            if args.get("steps") is not None:
+                kw["steps"] = int(args["steps"])
+            res = server.dp_dagger(server.DPDaggerReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_dagger", clone=kw["clone"], tag=kw["tag"])
+            return {"ok": True, **res}
+        if name == "dp_finetune":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            kw = {"load": args["load"], "seed": int(args.get("seed", 24)),
+                  "steps": int(args.get("steps", 8_000_000)),
+                  "n_envs": int(args.get("n_envs", 4)), "tag": args.get("tag", "agent"),
+                  "ent_coef": float(args.get("ent_coef", 0.0015)),
+                  "lr": float(args.get("lr", 1.5e-4)),
+                  "critic_warmup": int(args.get("critic_warmup", 32)),
+                  "reason": args.get("reason"), "purpose": args.get("purpose")}
+            for k in ("hunt_shaping", "repertoire_shaping", "warmth_shaping",
+                      "night_shaping", "day_shaping", "thirst_decay", "trigger_cost"):
+                if args.get(k) is not None:
+                    kw[k] = float(args[k])
+            res = server.dp_finetune(server.DPFinetuneReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_finetune", load=kw["load"], tag=kw["tag"],
+                      shaping={k: kw[k] for k in kw if k.endswith("shaping")})
+            return {"ok": True, **res}
+        # ---- PE long-tail tuning (reward / archive / evolution / curriculum) - #
+        if name in ("pe_reward_tune", "pe_archive_geometry",
+                    "pe_evolution_tune", "pe_curriculum_edit"):
+            label = args.get("label") or name.replace("pe_", "")
+            res = server.pe_tune(server.PETuneReq(
+                config=args.get("config", ""), edits=args.get("edits") or {},
+                label=label))
+            if res.get("ok"):
+                STATE.stats["actions"] += 1
+                _timeline("pe_tune", tool=name, base=res.get("base"),
+                          variant=res.get("variant"), applied=res.get("applied"))
             return res
         if name == "start_pe_training":
             refusal = _guard_launch(cfg)
@@ -1278,6 +1780,8 @@ def _execute_tool(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> dict[
         if name == "kb_query":
             return _kb_query(args)
         if name == "record_gen":
+            STATE.needs_summary = False
+            STATE._recorded_since_wake = True
             return _record_gen(args)
         if name == "query_gens":
             return _query_gens(args)
@@ -1442,6 +1946,50 @@ def _chat(cfg: dict[str, Any], messages: list[dict[str, Any]]) -> dict[str, Any]
     return msg
 
 
+def _cognition_block(cfg: dict[str, Any]) -> str:
+    """PROJECT / TOOL / SELF / BEHAVIOR cognition — gives the agent an explicit
+    model of the two projects, its own partitioned tool network, the one-project
+    -per-decision rule, and the forced kb_query / record_gen behavior. Dynamic
+    parts (current focus + activated packs) reflect live STATE."""
+    focus = STATE.focus_project
+    packs = sorted(STATE.active_packs)
+    pct = int(float(cfg.get("tier_c", {}).get("reward_pct_limit", 0.25)) * 100)
+    focus_line = (f"当前焦点: 【{focus}】(只有 {focus} 的动作工具在工具表里)"
+                  if focus else "当前焦点: 【未设定】——动作前必须先 focus_project(dp|pe)")
+    pack_line = (f"已激活长尾工具包: {packs}" if packs
+                 else "尚未激活任何长尾工具包(需要时 find_tools 调出)")
+    return f"""
+# 项目认知 (两个项目是两种完全不同的范式,别混)
+- **DP (deep_protagonist)**: 单体生存,梯度训练(PPO)。奖励涨=变好,直观。
+  能力链(全是已有 CLI,不改源码/维度):造老师(settler oracle)→录数据集(dp_record_demos)
+  →行为克隆(dp_train_bc)→DAgger 纠偏(dp_dagger)→PPO 微调(dp_finetune,可带势能塑形系数)。
+  红线:不加击杀赏金这类改奖励【结构】的(D-064 实测狩猎崩到 0,Goodhart)。势能塑形(*-shaping)是 policy-invariant 的安全杠杆,可调。
+- **PE (protagonist_ecology)**: 种群进化,MAP-Elites 质量多样性(不是梯度)。维护一个"行为格子档案",
+  进步=填满更多格子+每格精英更强,不是单一分数爬升。几乎一切都在 TOML:奖励/惩罚、进化引擎、课程、档案几何。
+  关键坑(务必记住):**档案几何决定它像"有章法"还是"凭运气撞"**——格子开太多(如 8×8×3=192)只填 0.5~3%(维度灾难);
+  2D(5×5=25)gen30 能填 20%。改参难突破多半是撞了振幅平台期,要换杠杆别死磕单旋钮。
+
+# 工具认知 (混合工具网络:常驻核心 + 长尾工具网络)
+- 常驻核心(项目无关,永远可用):get_status(全局感知两边)、focus_project、find_tools、
+  kb_query/kb_write、record_gen/query_gens、use_strategy、sleep、log_note、pin_spec、recall_timeline、deep_think、读文档。
+- 项目专属动作工具只在对应焦点下出现;长尾强力工具(BC/老师/DAgger/微调/奖励/档案/进化/课程)默认【藏起来】,
+  用 find_tools(关键词或 pack) 把它们【激活】——激活后它们带类型化参数出现在下一轮工具表,直接调用(不是通用 call_tool)。
+  例:要做 BC,先 find_tools("bc") → 下一轮就能调 dp_record_demos/dp_train_bc 等。
+- {pack_line}
+
+# 自我认知 (一轮决策 = 一个项目,代码强制串行)
+- {focus_line}
+- 切项目必须显式 focus_project();切换会清空已激活的长尾包。错误焦点下调另一个项目的动作工具会被代码【拒绝】。
+- 即使用户要"两个一起跑",也必须串行:focus_project(dp)→决策执行→focus_project(pe)→决策执行,绝不在同一轮混着处理两个项目。
+
+# 行为认知 (硬规范,代码强制,不靠自觉)
+- 任何高杠杆动作(启训/录数据集/BC/DAgger/微调/奖励/档案/进化/课程/做变体)前,**必须先 kb_query** 查既往坑与结论,否则被拦截。
+- run 结束被唤醒后,**先 kb_query 回顾 → record_gen 记台账 → kb_write 沉淀结论**,没 record_gen 不允许 sleep。
+- C 分级:低风险(势能塑形系数、seed、档案几何、用现成老师跑 BC/DAgger/微调、PE 奖励权重同号且幅度≤{pct}%)可自主跑;
+  高风险(改奖励【结构】=变号/幅度>{pct}%/增删项、动课程 task_templates、起新血脉)无论什么模式都【只提议、挂待批】。
+"""
+
+
 def _system_prompt(cfg: dict[str, Any]) -> dict[str, Any]:
     """The foundation — ALWAYS present, NEVER compressed: role + red lines +
     decision tree + objective/settings + agent-pinned specs + rolling summary
@@ -1453,6 +2001,7 @@ def _system_prompt(cfg: dict[str, Any]) -> dict[str, Any]:
     extra = (f"\n# 当前设置\n模式: {mode_note}\n并发进程上限: {cfg['max_procs']}。"
              f"磁盘低于 {cfg['disk_low_gb']}G 会强制先清理。\n"
              f"用户目标: {cfg.get('objective','')}\n")
+    extra += _cognition_block(cfg)
     specs = cfg.get("pinned_specs") or []
     if specs:
         extra += ("\n# 常驻记忆 / 你提取的关键 spec (始终有效,务必遵守)\n"
@@ -1888,19 +2437,52 @@ def _do_step(cfg: dict[str, Any]) -> None:
 
         name, args, tcid = _parse_tc(tool_calls[i])
 
-        # REQUEST mode: gated tool -> queue for human approval, pause stepping.
-        if cfg.get("mode") == "request" and name in gated:
+        # FORCED BEHAVIOR 1: must kb_query before any high-leverage action.
+        if name in _REQUIRE_KB_FIRST and not _kb_query_in_recent(STATE.messages):
+            STATE.messages.append({"role": "tool", "tool_call_id": tcid,
+                "content": f"BLOCKED:执行 {name} 前必须先 kb_query 查既往坑/结论(行为规范,代码强制)。"
+                           "请先调用 kb_query(关于本项目/本动作的关键词),再重试该动作。"})
+            _fill_tool_results(tool_calls[i + 1:],
+                "SKIPPED:前序动作被 kb_query 前置规则拦截,本调用未执行。")
+            _timeline("kb_gate", tool=name,
+                      reason="决策前未 kb_query,已拦截并要求先查知识库")
+            if STATE.running:
+                STATE.status = "active"
+            return
+
+        # FORCED BEHAVIOR 2: after a run ended, must record_gen before sleeping.
+        if name == "sleep" and STATE.needs_summary and not STATE._recorded_since_wake:
+            STATE.messages.append({"role": "tool", "tool_call_id": tcid,
+                "content": "BLOCKED:刚有 run 结束,休眠前必须先 record_gen 记一笔台账"
+                           "(并按需 kb_write 沉淀结论),再 sleep。"})
+            _fill_tool_results(tool_calls[i + 1:],
+                "SKIPPED:run 结束总结未完成,后续调用未执行。")
+            _timeline("summary_gate", reason="run 结束未 record_gen,拦截 sleep")
+            if STATE.running:
+                STATE.status = "active"
+            return
+
+        # TIER-C gate: high-risk ops queue for human approval EVEN IN AUTO mode;
+        # request mode additionally queues any tool in gated_tools.
+        need_appr, appr_reason = _needs_approval(name, args, cfg)
+        request_gated = cfg.get("mode") == "request" and name in gated
+        if need_appr or request_gated:
+            why = appr_reason or "请求模式:该动作需人工批准。"
             pend = {"id": f"act-{int(time.time()*1000)}-{len(STATE.pending)}",
                     "tool": name, "args": args, "reason": args.get("reason", ""),
-                    "tool_call_id": tcid, "proposed_at": time.time()}
+                    "tool_call_id": tcid, "proposed_at": time.time(),
+                    "risk": "high" if need_appr else "gated",
+                    "approval_reason": why, "project": STATE.focus_project}
             STATE.pending.append(pend)
             STATE.messages.append({"role": "tool", "tool_call_id": tcid,
-                                   "content": "QUEUED:已生成请求卡,等待人工批准;你已暂停。"})
+                                   "content": f"QUEUED[{'高风险' if need_appr else '请求模式'}]:"
+                                              f"{why} 已生成待批卡,你已暂停。"})
             # any remaining calls this turn can't run until approval -> close them
             _fill_tool_results(tool_calls[i + 1:],
                 "SKIPPED:前序动作待人工批准,本调用未执行。")
             _timeline("request", tool=name, args=args, reason=args.get("reason", ""),
-                      action_id=pend["id"])
+                      action_id=pend["id"], risk=pend["risk"], approval_reason=why,
+                      project=pend.get("project"))
             STATE.status = "waiting_approval"
             return  # stop stepping until approval
 
@@ -1953,9 +2535,25 @@ def _critical_wake(cfg: dict[str, Any]) -> Optional[str]:
         procs = server.processes()
         base = STATE._watch_baseline
         cur_total = procs.get("total", 0)
+        cur_dp = procs.get("dp_count", 0)
+        cur_pe = procs.get("pe_count", 0)
         if "proc_total" in base and cur_total < base["proc_total"]:
-            reason = f"训练进程减少({base['proc_total']}→{cur_total}),可能 run 结束"
+            # a run ended -> which project's count dropped? pre-set focus there
+            # so the woken agent acts on the right project, and require a summary.
+            dropped = None
+            if cur_dp < base.get("dp", cur_dp):
+                dropped = "dp"
+            elif cur_pe < base.get("pe", cur_pe):
+                dropped = "pe"
+            if dropped:
+                STATE.focus_project = dropped
+                STATE.active_packs = set()
+            STATE.needs_summary = True
+            reason = (f"训练进程减少({base['proc_total']}→{cur_total}),"
+                      f"{('['+dropped+'] ' ) if dropped else ''}run 结束—先总结再决策")
         base["proc_total"] = cur_total
+        base["dp"] = cur_dp
+        base["pe"] = cur_pe
         # extinction / error scan on the freshest PE log
         for p in sorted(server.PE_PANEL_LOGS.glob("onepot_sD_*.log"),
                         key=lambda x: x.stat().st_mtime, reverse=True)[:3]:
@@ -1964,7 +2562,9 @@ def _critical_wake(cfg: dict[str, Any]) -> Optional[str]:
             except Exception:  # noqa: BLE001
                 continue
             if any("extinct" in ln.lower() for ln in tail):
-                return f"检测到灭绝事件:{p.name}"
+                STATE.focus_project = "pe"      # extinction is always PE
+                STATE.active_packs = set()
+                return f"检测到灭绝事件(PE):{p.name}"
     except Exception:  # noqa: BLE001
         pass
     return reason
@@ -1988,13 +2588,25 @@ def _runner() -> None:
                 STATE.wake_event.clear()
                 # disk emergency: auto-cleanup before handing back to the model
                 if crit and "磁盘" in crit:
-                    res = _execute_tool("cleanup_disk", {"project": "pe",
+                    # system-initiated cleanup; ensure a focus so the shared-tool
+                    # guard passes (defaults to pe, where the big traces live).
+                    if STATE.focus_project is None:
+                        STATE.focus_project = "pe"
+                    res = _execute_tool("cleanup_disk", {"project": STATE.focus_project,
                                         "reason": "磁盘告警自动清理"}, cfg)
                     _timeline("auto_cleanup", trigger=crit, result=res)
-                _timeline("wake", reason=why)
+                _timeline("wake", reason=why,
+                          focus=STATE.focus_project, needs_summary=STATE.needs_summary)
+                focus_hint = (f" 本轮焦点已预设为 [{STATE.focus_project}]。"
+                              if STATE.focus_project else
+                              " 请先 focus_project(dp|pe) 设定本轮焦点。")
+                summ_hint = (" 有 run 刚结束:先 kb_query 回顾→record_gen 记台账→"
+                             "kb_write 沉淀结论,再决定下一步。"
+                             if STATE.needs_summary else "")
                 STATE.messages.append({"role": "user",
-                                       "content": f"[唤醒] 原因: {why}"})
+                                       "content": f"[唤醒] 原因: {why}。{focus_hint}{summ_hint}"})
                 STATE.status = "active"
+                STATE._recorded_since_wake = False
                 STATE._deliberated_this_wake = False
                 STATE._last_deliberation = []
                 with STATE.lock:
@@ -2049,6 +2661,7 @@ class ConfigReq(BaseModel):
     gated_tools: Optional[list[str]] = None
     deep_think_rounds: Optional[int] = None
     active_strategy: Optional[str] = None
+    tier_c: Optional[dict[str, Any]] = None
 
 
 class StartReq(BaseModel):
@@ -2061,6 +2674,11 @@ class MessageReq(BaseModel):
 
 class ApprovalReq(BaseModel):
     id: str
+    reason: Optional[str] = ""
+
+
+class FocusReq(BaseModel):
+    project: str            # "dp" | "pe"
     reason: Optional[str] = ""
 
 
@@ -2146,6 +2764,19 @@ def register_agent(app: Any) -> None:
         _timeline("mode", mode=req.mode)
         return {"ok": True, "mode": req.mode}
 
+    @app.post("/api/agent/focus")
+    def agent_set_focus(req: FocusReq) -> dict[str, Any]:
+        """Manually set the project focus from the UI (one decision = one
+        project). Switching clears any activated long-tail tool packs."""
+        if req.project not in ("dp", "pe"):
+            raise HTTPException(400, "project must be 'dp' or 'pe'")
+        with STATE.lock:
+            STATE.focus_project = req.project
+            STATE.active_packs = set()
+        _timeline("focus_project", project=req.project,
+                  reason=req.reason or "(UI 手动切换)")
+        return {"ok": True, "focus_project": req.project, "active_packs": []}
+
     @app.post("/api/agent/config")
     def agent_set_config(req: ConfigReq) -> dict[str, Any]:
         cfg = _load_config()
@@ -2159,10 +2790,14 @@ def register_agent(app: Any) -> None:
             if sid and sid not in STRATEGIES:
                 raise HTTPException(400, f"unknown strategy: {sid}")
             cfg["active_strategy"] = sid
+        if req.tier_c is not None:
+            tc = dict(cfg.get("tier_c") or {})
+            tc.update({k: v for k, v in req.tier_c.items() if v is not None})
+            cfg["tier_c"] = tc
         _save_config(cfg)
         return {"ok": True, "config": {k: cfg[k] for k in
                 ("max_procs", "disk_low_gb", "default_sleep_min", "objective",
-                 "gated_tools", "deep_think_rounds", "active_strategy")}}
+                 "gated_tools", "deep_think_rounds", "active_strategy", "tier_c")}}
 
     @app.post("/api/agent/start")
     def agent_start(req: StartReq) -> dict[str, Any]:
@@ -2220,6 +2855,10 @@ def register_agent(app: Any) -> None:
         if not pend:
             raise HTTPException(404, "no such pending action")
         STATE.pending = [p for p in STATE.pending if p["id"] != req.id]
+        # restore the focus that was active when this action was queued so the
+        # project-partition guard inside _execute_tool lets it through.
+        if pend.get("project") in ("dp", "pe"):
+            STATE.focus_project = pend["project"]
         _timeline("decision", tool=pend["tool"], args=pend["args"],
                   reason=pend.get("reason", ""), approved=True)
         result = _execute_tool(pend["tool"], pend["args"], cfg)

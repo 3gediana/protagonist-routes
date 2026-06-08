@@ -52,6 +52,13 @@
     parts.push(`<span class="st-seg"><span class="st-dot ${dotCls}"></span>` +
       `<span class="st-v">${esc(map[s.status] || s.status)}</span></span>`);
     parts.push(seg("模式", s.mode === "auto" ? "全自动" : "请求"));
+    // project focus (one decision = one project) + activated long-tail packs
+    const fp = s.focus_project;
+    parts.push(seg("焦点", fp ? fp.toUpperCase() : "未设",
+                   fp ? ("st-focus st-focus-" + fp) : "st-err"));
+    const aps = s.active_packs || [];
+    if (aps.length) parts.push(seg("工具包", aps.join("·"), "st-pack"));
+    if (s.needs_summary) parts.push(seg("待总结", "run结束", "st-err"));
     parts.push(seg("模型", esc(s.active_model || "—")));
     if (s.status === "sleeping" && s.sleep_until) {
       const left = Math.max(0, Math.round((s.sleep_until - s.now) / 60));
@@ -92,6 +99,20 @@
     AA("#agModeSeg .seg-btn").forEach((b) =>
       b.classList.toggle("active", b.dataset.mode === s.mode));
 
+    // focus segmented active (one decision = one project)
+    AA("#agFocusSeg .seg-btn").forEach((b) =>
+      b.classList.toggle("active", b.dataset.focus === s.focus_project));
+
+    // tier-C reward-pct input (don't fight while editing)
+    const rpct = A("#agRewardPct");
+    if (rpct && document.activeElement !== rpct) {
+      const lim = (s.tier_c || {}).reward_pct_limit;
+      if (lim != null) rpct.value = String(lim);
+    }
+
+    // hybrid tool network panel
+    renderToolNet(s.tool_network, s.focus_project);
+
     // pending approvals are now rendered INLINE in the chat (see approvalCard);
     // keep the legacy standalone card hidden, and just track which request
     // action_ids are still actionable so the chat can show live cards.
@@ -106,10 +127,115 @@
     if (changed) lastChatSig = "";  // force chat rebuild so cards appear/clear
   }
 
+  /* ------------------------- tool network --------------------------- */
+  function renderToolNet(tn, focus) {
+    const box = A("#agToolNet"); if (!box) return;
+    if (!tn || !tn.tools) { box.innerHTML = ""; return; }
+    const sub = A("#agToolNetSub");
+    if (sub) sub.textContent = focus
+      ? `（焦点 ${focus.toUpperCase()} · 已激活 ${(tn.active_packs || []).join("·") || "无"}）`
+      : "（未设焦点 · 动作工具全部隐藏）";
+    // group: resident(any) / shared / dp / pe, long-tail flagged by pack
+    const groups = { any: [], shared: [], dp: [], pe: [] };
+    tn.tools.forEach((t) => (groups[t.project] || (groups[t.project] = [])).push(t));
+    const chip = (t) => {
+      const mark = t.visible ? "✓" : (t.active ? "○" : "·");
+      const cls = t.visible ? "tn-on" : (t.longtail ? "tn-lt" : "tn-off");
+      const pk = t.pack ? ` <span class="tn-pk">[${esc(t.pack)}]</span>` : "";
+      return `<span class="tn-chip ${cls}" title="${esc(t.desc || "")}">` +
+             `<span class="tn-mk">${mark}</span>${esc(t.name)}${pk}</span>`;
+    };
+    const sect = (title, arr) => arr.length
+      ? `<div class="tn-sect"><div class="tn-h">${title}</div>` +
+        `<div class="tn-row">${arr.map(chip).join("")}</div></div>` : "";
+    box.innerHTML =
+      sect("常驻核心（项目无关）", groups.any) +
+      sect("共享读/控（按焦点）", groups.shared) +
+      sect("DP 工具", groups.dp) +
+      sect("PE 工具", groups.pe);
+  }
+
   /* --------------------------- timeline/chat ------------------------ */
   function metaRow(who, ts) {
     return `<div class="cb-meta"><span class="cb-who">${esc(who)}</span>` +
            `<span class="cb-time">${fmtClock(ts)}</span></div>`;
+  }
+  // minimal, dependency-free Markdown -> safe HTML. Escapes first, then builds
+  // markup so model output can never inject raw HTML. Supports GFM pipe tables,
+  // headings, bold/italic/code, links, ordered/unordered lists, hr, fenced code.
+  function mdInline(t) {
+    t = esc(t);
+    t = t.replace(/`([^`]+)`/g, (m, c) => `<code>${c}</code>`);
+    t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    t = t.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+    t = t.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
+      (m, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`);
+    return t;
+  }
+  function mdToHtml(src) {
+    if (src == null || src === "") return "";
+    const lines = String(src).replace(/\r\n?/g, "\n").split("\n");
+    const isSep = (s) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(s);
+    const isHr = (s) => /^\s*([-*_])\1{2,}\s*$/.test(s);
+    const isUl = (s) => /^\s*[-*+]\s+/.test(s);
+    const isOl = (s) => /^\s*\d+[.)]\s+/.test(s);
+    const isH = (s) => /^\s{0,3}#{1,6}\s+/.test(s);
+    const splitRow = (s) => {
+      let r = s.trim();
+      if (r.startsWith("|")) r = r.slice(1);
+      if (r.endsWith("|")) r = r.slice(0, -1);
+      return r.split("|").map((c) => c.trim());
+    };
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { i++; continue; }
+      if (/^\s*```/.test(line)) {                       // fenced code block
+        i++; const code = [];
+        while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
+        if (i < lines.length) i++;
+        out.push(`<pre class="md-pre"><code>${esc(code.join("\n"))}</code></pre>`);
+        continue;
+      }
+      if (isHr(line)) { out.push("<hr/>"); i++; continue; }
+      const hm = /^\s{0,3}(#{1,6})\s+(.*)$/.exec(line);
+      if (hm) { const lv = hm[1].length; out.push(`<h${lv}>${mdInline(hm[2].trim())}</h${lv}>`); i++; continue; }
+      if (line.indexOf("|") !== -1 && i + 1 < lines.length && isSep(lines[i + 1])) {  // GFM table
+        const headers = splitRow(line);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") !== -1 && !isSep(lines[i])) {
+          rows.push(splitRow(lines[i])); i++;
+        }
+        let html = `<table class="md-table"><thead><tr>` +
+          headers.map((h) => `<th>${mdInline(h)}</th>`).join("") + `</tr></thead><tbody>`;
+        html += rows.map((row) => `<tr>` +
+          headers.map((_, ci) => `<td>${mdInline(row[ci] != null ? row[ci] : "")}</td>`).join("") +
+          `</tr>`).join("");
+        out.push(html + `</tbody></table>`);
+        continue;
+      }
+      if (isUl(line)) {
+        const items = [];
+        while (i < lines.length && isUl(lines[i])) { items.push(`<li>${mdInline(lines[i].replace(/^\s*[-*+]\s+/, ""))}</li>`); i++; }
+        out.push(`<ul>${items.join("")}</ul>`); continue;
+      }
+      if (isOl(line)) {
+        const items = [];
+        while (i < lines.length && isOl(lines[i])) { items.push(`<li>${mdInline(lines[i].replace(/^\s*\d+[.)]\s+/, ""))}</li>`); i++; }
+        out.push(`<ol>${items.join("")}</ol>`); continue;
+      }
+      const para = [];                                  // paragraph (soft line breaks)
+      while (i < lines.length && lines[i].trim() && !isHr(lines[i]) && !isH(lines[i]) &&
+             !isUl(lines[i]) && !isOl(lines[i]) && !/^\s*```/.test(lines[i]) &&
+             !(lines[i].indexOf("|") !== -1 && i + 1 < lines.length && isSep(lines[i + 1]))) {
+        para.push(mdInline(lines[i])); i++;
+      }
+      out.push(`<p>${para.join("<br/>")}</p>`);
+    }
+    return out.join("");
   }
   // render deep-think rounds as collapsed sections (history: folded by default)
   function delibBlock(rounds, openAll) {
@@ -117,7 +243,7 @@
     const op = openAll ? " open" : "";
     return rounds.map((d) =>
       `<details class="cb-think cb-delib"${op}><summary>深度推演 ${d.round}/${d.total}·${esc(d.label || "")}</summary>
-       <div class="cb-think-body">${esc(d.text || "")}</div></details>`).join("");
+       <div class="cb-think-body md">${mdToHtml(d.text || "")}</div></details>`).join("");
   }
   // brief one-line arg preview for a tool chip (config/file/seed/reason…)
   function argBrief(a) {
@@ -153,9 +279,18 @@
       .map(([k, lab]) => `<span class="ac-kv"><i>${esc(lab)}</i>${esc(String(a[k]))}</span>`)
       .join("");
     const purpose = a.purpose || "";
-    return `<div class="approve-card ac-inline" data-id="${esc(ev.action_id)}">
-      <div class="ac-head"><span class="ac-badge">待确认</span><b>${esc(ev.tool)}</b>
+    const highRisk = ev.risk === "high";
+    const badge = highRisk
+      ? `<span class="ac-badge ac-high">高风险·待批</span>`
+      : `<span class="ac-badge">待确认</span>`;
+    const proj = ev.project || a.project;
+    const projTag = proj ? `<span class="ac-proj ac-proj-${esc(proj)}">${esc(proj.toUpperCase())}</span>` : "";
+    const why = ev.approval_reason
+      ? `<div class="ac-risk ${highRisk ? "ac-risk-high" : ""}"><i>分级</i>${esc(ev.approval_reason)}</div>` : "";
+    return `<div class="approve-card ac-inline${highRisk ? " ac-card-high" : ""}" data-id="${esc(ev.action_id)}">
+      <div class="ac-head">${badge}${projTag}<b>${esc(ev.tool)}</b>
         <span class="ac-time">${fmtClock(ev.ts)}</span></div>
+      ${why}
       ${params ? `<div class="ac-params">${params}</div>` : ""}
       <div class="ac-reason"><i>理由</i>${esc(ev.reason || a.reason || "(未填)")}</div>
       ${purpose ? `<div class="ac-purpose"><i>目标</i>${esc(purpose)}</div>` : ""}
@@ -199,10 +334,10 @@
       const delib = delibBlock(ev.deliberation, false);
       const think = (ev.reasoning || "").trim()
         ? `<details class="cb-think"><summary>💭 思考过程</summary>
-           <div class="cb-think-body">${esc(ev.reasoning)}</div></details>` : "";
+           <div class="cb-think-body md">${mdToHtml(ev.reasoning)}</div></details>` : "";
       const tools = toolCallChips(ev.tool_calls);
       const text = (ev.text || "").trim()
-        ? `<div class="cb-text">${esc(ev.text)}</div>` : "";
+        ? `<div class="cb-text md">${mdToHtml(ev.text)}</div>` : "";
       return `<div class="chat-bubble ab-assistant">${metaRow("Agent", ev.ts)}
         ${delib}${think}${text}${tools}</div>`;
     }
@@ -220,9 +355,9 @@
     const delib = delibBlock(live.deliberation, true);
     const think = live.reasoning
       ? `<details class="cb-think" open><summary>思考过程</summary>
-         <div class="cb-think-body">${esc(live.reasoning)}</div></details>` : "";
+         <div class="cb-think-body md">${mdToHtml(live.reasoning)}</div></details>` : "";
     const body = live.content
-      ? `<div class="cb-text cb-cursor">${esc(live.content)}</div>`
+      ? `<div class="cb-text md cb-cursor">${mdToHtml(live.content)}</div>`
       : (live.reasoning ? "" : `<div class="cb-phase cb-cursor"></div>`);
     return `<div class="chat-bubble ab-live" id="agLiveBubble">
       ${metaRow("Agent", Date.now() / 1000)}
@@ -607,6 +742,24 @@
         refreshState();
       } catch (e) { tnote("切换失败: " + e.message, true); }
     }));
+
+    // project focus (one decision = one project); switching clears active packs
+    AA("#agFocusSeg .seg-btn").forEach((b) => b.addEventListener("click", async () => {
+      try { await apost("/api/agent/focus", { project: b.dataset.focus, reason: "UI 手动切换" });
+        tnote("项目焦点 → " + b.dataset.focus.toUpperCase() + "（已清空激活工具包）");
+        refreshState();
+      } catch (e) { tnote("切换焦点失败: " + e.message, true); }
+    }));
+
+    // tier-C reward-pct threshold
+    const rpct = A("#agRewardPct");
+    if (rpct) rpct.addEventListener("change", async () => {
+      const v = parseFloat(rpct.value);
+      if (isNaN(v)) return;
+      try { await apost("/api/agent/config", { tier_c: { reward_pct_limit: v } });
+        tnote("奖励结构性阈值 = ±" + Math.round(v * 100) + "%"); refreshState(); }
+      catch (e) { tnote("设置失败: " + e.message, true); }
+    });
 
     // collapsible control bar
     const barT = A("#agBarToggle"), barB = A("#agBarBody");

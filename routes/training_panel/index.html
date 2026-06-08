@@ -275,6 +275,18 @@
               <span class="lbl">策略</span>
               <select id="agStrategy" style="min-width:150px"><option value="">（由 agent 自选）</option></select>
             </div>
+            <div class="agent-ctl">
+              <span class="lbl">项目焦点</span>
+              <div class="seg" id="agFocusSeg">
+                <button data-focus="dp" class="seg-btn">DP</button>
+                <button data-focus="pe" class="seg-btn">PE</button>
+              </div>
+            </div>
+            <div class="agent-ctl">
+              <span class="lbl" title="奖励改动幅度超过此比例(或变号/增删项)= 结构性,挂待批">奖励阈值</span>
+              <input id="agRewardPct" type="number" min="0" max="5" step="0.05"
+                     style="width:64px" />
+            </div>
           </div>
           <p class="hint">请求模式：开训/停训前生成请求卡，你点同意才执行。全自动：自动执行但每步参数+理由都进历史。
             深思上限 N：agent 自己判断复杂决策时才主动调 deep_think 工具做多轮推演（最多 N 轮，0=禁用；同一次唤醒最多深思一次；推演内容只在历史留痕，不占常驻上下文）。
@@ -288,6 +300,13 @@
         <h2>待批准动作</h2>
         <div id="agPending"></div>
       </div>
+
+      <!-- hybrid tool network: resident core + project long-tail packs -->
+      <details class="card agent-toolnet-card" id="agToolNetBox">
+        <summary>工具网络 <span class="tn-sub" id="agToolNetSub">（按项目分区 · find_tools 动态激活）</span></summary>
+        <div class="toolnet" id="agToolNet"></div>
+        <p class="hint">常驻核心工具项目无关、永远可用；项目专属动作工具只在对应焦点下出现；长尾强力工具（BC/老师/DAgger/微调/奖励/档案/进化/课程）默认隐藏，agent 用 find_tools 按需激活后才进入工具表。✓=当前可调用，○=已激活长尾，·=隐藏（需 find_tools / 切焦点）。</p>
+      </details>
 
       <div class="two-col agent-main">
         <!-- left: chat (primary) + tucked, collapsible decision history -->
