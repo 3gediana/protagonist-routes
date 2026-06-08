@@ -50,8 +50,9 @@ def test_record_demos_optional_flags():
 def test_train_bc_matches_handoff():
     argv, bc_out = _dp_bc_argv(EXE, DPBCReq(demos="demos_hv2_s24.bin", tag="hv2"))
     assert _kv(argv, "--policy") == "bc"
-    # demo file not on this box -> passthrough name preserved
-    assert _kv(argv, "--bc-demos") == "demos_hv2_s24.bin"
+    # demo name routed to the binary: bare passthrough when the file is absent,
+    # DP_ROOT-relative (traces/...) when it exists on the box -> assert basename.
+    assert os.path.basename(_kv(argv, "--bc-demos")) == "demos_hv2_s24.bin"
     assert _kv(argv, "--bc-out") == bc_out == os.path.join("checkpoints", "bc_hv2.pt")
     assert _kv(argv, "--bc-epochs") == "10"
     assert _kv(argv, "--bc-batch") == "16"
@@ -71,7 +72,7 @@ def test_dagger_invocation_is_source_confirmed():
     # source: --policy ppo --load <clone> --record-demos <out> --dagger
     argv, demos = _dp_dagger_argv(EXE, DPDaggerReq(clone="bc_hv2.pt", tag="d1", seed=24))
     assert _kv(argv, "--policy") == "ppo"
-    assert _kv(argv, "--load") == "bc_hv2.pt"
+    assert os.path.basename(_kv(argv, "--load")) == "bc_hv2.pt"
     assert "--dagger" in argv
     assert _kv(argv, "--record-demos") == demos == os.path.join("traces", "dagger_d1_s24.bin")
     # dagger is a record loop: must NOT carry a PPO save-path
@@ -82,7 +83,7 @@ def test_finetune_matches_train_hunt():
     argv, save, metrics = _dp_finetune_argv(
         EXE, DPFinetuneReq(load="bc_hv2.pt", tag="bc05", hunt_shaping=0.5), tag="bc05_T")
     assert _kv(argv, "--policy") == "ppo"
-    assert _kv(argv, "--load") == "bc_hv2.pt"
+    assert os.path.basename(_kv(argv, "--load")) == "bc_hv2.pt"
     assert "--weather" in argv and "--allow-cook" in argv
     assert _kv(argv, "--ent-coef") == "0.0015"
     assert _kv(argv, "--critic-warmup") == "32"
