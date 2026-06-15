@@ -1,0 +1,50 @@
+﻿{
+  "providers": [
+    {
+      "id": "mimo",
+      "name": "mimo",
+      "base_url": "https://api.xiaomimimo.com/v1",
+[REDACTED LOCAL SECRET]
+      "model": "mimo-v2.5"
+    }
+  ],
+  "active_provider": "mimo",
+  "mode": "auto",
+  "active_strategy": null,
+  "max_procs": 12,
+  "disk_low_gb": 190,
+  "poll_interval_s": 20,
+  "default_sleep_min": 20,
+  "max_sleep_min": 240,
+  "gated_tools": [
+    "start_pe_training",
+    "start_dp_training",
+    "stop_training"
+  ],
+  "temperature": 0.3,
+  "max_tokens": 2000,
+  "objective": "缁х画璁粌PE鍜孌P,鎸佺画浼樺寲銆傞噸瑕佽儗鏅?1.warm-resume bug宸蹭慨澶?2.鏂?6-bin閰嶇疆 3.鏈€浣砪heckpoint:gen379(me_cov=39/96,avg=2100,qd=146K) 4.hunt琛屼负宸蹭慨澶?hunt_radius=8,damageThreshold=9,episode_ticks=1800) 5.ME archive搴忓垪鍖栧凡淇",
+  "context_token_budget": 400000,
+  "keep_recent_msgs": 14,
+  "pinned_specs": [
+    "PE checkpoint缁娉ㄦ剰: config鐨別volution鍙傛暟(line_sigma/mutation_boost)蹇呴』涓巆heckpoint鍘焎onfig涓€鑷?鍚﹀垯杩涘寲浼氬揩閫熷穿婧冦€俫en379 checkpoint鏉ヨ嚜warm_50024 config(line_sigma=0.15,mutation_boost=2.0)",
+    "hunt琛屼负宸蹭慨澶? hunt_radius浠?鎻愬崌鍒?(TOML鍙皟), LargeHerbivore damageThreshold浠?2闄嶅埌9(C++), episode_ticks浠?00澧炲埌1800銆備笁绠￠綈涓嬩娇hunt_successes鎻愬崌30鍊?,
+    "璧勬簮瀵嗗害鑷姩缂╂斁: world.density_auto_scale=true鏃?璧勬簮count鎸墂orld_area/reference_area鑷姩缂╂斁,spawn_radius鎸塻qrt(ratio)缂╂斁",
+    "PE resume閾佸緥: gen379 checkpoint闇€瑕?6-bin archive銆倃arm_50024 config榛樿25-bin(hunt_bin_size=0,hunt_max_bins=1),蹇呴』鏀逛负hunt_bin_size=1,hunt_max_bins=5鎵嶈兘鍖归厤銆備笉鍖归厤=5浠ｄ互鍐呭叏宕╂簝",
+    "DP checkpoint offload闂: 澶т簬1MB鐨刾t鏂囦欢浼氳绯荤粺鑷姩offload鍒癎:/claude_offload/,瀵艰嚧璺緞璇诲彇澶辫触銆傞渶鍔犻噸璇曢€昏緫銆傝缁冪粨鏋滀笉瑕佸瓨澶",
+    "DP v5 checkpoint ft_dp_ppo_v5_20260610-082720.pt 鏈湴瀛樺湪(48.8MB),璺緞 D:\\claude-code\\c++\\routes\\deep_protagonist\\checkpoints\\. 鑻?v7(from-scratch) 鏃╂湡鏇茬嚎宸?2-3M姝core杩滀綆浜?.2),鍙仠v7鏀圭敤 --load v5 warm-resume,鏂版満鍒?ember buff+dead-action floor)涓巚5鍏煎銆?,
+    "PE coop_weight=18鏄巻鍙叉渶寮哄彉浣? gen21 best=10144(棣栨鐮翠竾), avg=2478, qd=48.8K, me_cov=13/96銆俶e_cov澶╄姳鏉?3/96鍦ㄦ墍鏈夊彉浣撲腑涓€鑷?鏄満鍒剁摱棰堥潪濂栧姳闂銆?,
+    "姹囨姤绾㈢嚎(2026-06-10 Devin): 浠讳綍\"绐佺牬/杩涙\"缁撹蹇呴』鍏堣皟 GET /api/behavior?project=dp|pe 鎺ュ彛骞跺紩鐢ㄥ叾鏁板€间笌 flags銆俧lags 闈炵┖=绂佹瀹ｇО绐佺牬銆俼d/score 鍗曠嫭涓婃定涓嶇畻璇佹嵁銆傛帴鍙ｅ彲閫?file= 鎸囧畾 jsonl/run 鐩綍銆傝繑鍥? 鍔ㄤ綔鐔点€佸崟鍔ㄤ綔鍗犳瘮銆佹湁鏁堝姩浣滅巼(chop/craft/hunt/throw鎴愬姛婕忔枟)銆佸瓨娲荤巼銆佽建杩圭洿绾垮害銆佹牸瀛愯鐩栥€佽嚜鍔╢lags(鍒峰垎/姝昏缁冪棁鐘?銆?
+  ],
+  "rolling_summary": "",
+  "tier_c": {
+    "reward_pct_limit": 0.25,
+    "dp_smoke_steps": 200000,
+    "pe_smoke_generations": 4,
+    "auto_approve": true,
+    "reward_pct_hard_cap": 3.0,
+    "dp_steps_hard_cap": 12000000,
+    "pe_gens_hard_cap": 120
+  },
+  "deep_think_rounds": 2
+}

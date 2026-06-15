@@ -1,0 +1,530 @@
+{
+  "seq": 8,
+  "nodes": [
+    {
+      "id": "blueprint",
+      "kind": "blueprint",
+      "title": "项目北极星:永续世界里长出真智能",
+      "body": "DP(deep_protagonist):单体生存 RL(PPO+BC),程序化 3D 世界里活下去、解锁里程碑。PE(protagonist_ecology):种群 MAP-Elites 进化,多智能体在共享 C++ 引擎里跨代演化出协作/分工/社会行为。终极:把一个训练好的脑放进一个永不 reset 的实时世界长期演化(出生/死亡/繁衍持续推进),而非孤立 episode。追求:千体规模、视觉=3D 地形+物种色点。",
+      "tags": [
+        "目标",
+        "蓝图",
+        "DP",
+        "PE"
+      ],
+      "links": [
+        "redlines",
+        "stages",
+        "ledger_pe",
+        "ledger_dp"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "redlines",
+      "kind": "redline",
+      "title": "五条红线(违反=严重事故)",
+      "body": "1) 不改训练核心逻辑/不动 routes/deep_protagonist 源码/不改数据流与输入维度,只调 TOML 超参与生命周期。2) 绝不为刷指标加直接奖励(Goodhart);指标长期低→疑 bug/算法,给诊断,绝不调小参数刷分。3) 检查点:受保护清单永不可删(代码硬拦);其余 .pt 可决策删(走回收站)。日志/trace 用 cleanup_disk。4) 单卡 8G:最多 10 进程;DP 优先级高于 PE,GPU 被 DP 占满时不抢。5) 机制级 C++ 改动+重编译不自动做,只发现+建议,执行交给人(Layer-3)。",
+      "tags": [
+        "红线",
+        "安全",
+        "Goodhart",
+        "layer"
+      ],
+      "links": [
+        "blueprint",
+        "protected_ckpts",
+        "warm_bug"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "protected_ckpts",
+      "kind": "finding",
+      "title": "受保护检查点清单(硬拦不可删)",
+      "body": "DP_PROTECTED: ft_gen.pt / bc_gen.pt / bc_hv2.pt。模式匹配(大小写不敏感): ^ppo_d(061|065|076)_ (gold)、^r1_cook_s24 (血脉经验记录)、任何含 _red / _final / _champ / _keep / _gold / .bak 的名字。其余 .pt 由 agent 用 delete_checkpoint 决策删除,走回收站可恢复。",
+      "tags": [
+        "检查点",
+        ".pt",
+        "保护",
+        "delete_checkpoint"
+      ],
+      "links": [
+        "redlines"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "warm_bug",
+      "kind": "pitfall",
+      "title": "[已知坑·Layer-3] PE warm-resume 续跑失效",
+      "body": "onepot_sD_warm_50025.toml 等 warm 配置:checkpoint 能加载,但 sim_time=0 / tick_calls=0 / 0 alive agents,等于没真正续跑。属 C++ 机制 bug(Layer-3),需人改源码+重编译,agent 不自动改。规避:验证系统时改用非 warm 配置(explore/huntwide/hybrid 正常,可达 gen 380-413)。",
+      "tags": [
+        "坑",
+        "warm",
+        "resume",
+        "Layer-3",
+        "PE"
+      ],
+      "links": [
+        "redlines",
+        "mapelites_fix",
+        "ledger_pe"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "mapelites_fix",
+      "kind": "mechanism",
+      "title": "PE lifetime MAP-Elites archive 修复(已提交已编译)",
+      "body": "旧设计每代从当前代重建 archive,导致 coverage 填满又消失(破坏性震荡)。6/7 提交 6294a85 改为跨代保存精英基因副本,新候选仅在 fitness 更优时覆盖该格。源文件: src_pe/runtime/QualityDiversityArchive.{h,cpp}。这是最后一次机制改动,之后只动 viewer/文档。",
+      "tags": [
+        "机制",
+        "MAP-Elites",
+        "QD",
+        "稳定"
+      ],
+      "links": [
+        "warm_bug",
+        "harmony"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "goldilocks",
+      "kind": "finding",
+      "title": "压力档 Goldilocks: dmg=0.25 / cold_thr=30",
+      "body": "经验:伤害档 dmg=0.25 是甜点(Goldilocks),0.5 太狠会全灭。冷夜阈值 cold_thr=30。全灭(alive=0)时压力回退一档重跑 smoke。",
+      "tags": [
+        "压力",
+        "dmg",
+        "cold_thr",
+        "调参",
+        "决策树"
+      ],
+      "links": [
+        "harmony",
+        "warm_bug"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "harmony",
+      "kind": "finding",
+      "title": "harmony 7/7 判据 + 阶段流程",
+      "body": "阶段: smoke(2-4代)→short(10-20代)→long(60-80代,≤8h)→harmony 7/7 不破→收尾(记录+清trace)。harmony 破读法: C7 灭绝=压力太狠回退; C6 多样性低=多半没收敛,跑满代再判; C1-C5 行为破=回退+根因诊断。改输入维后旧 checkpoint 不兼容是正常的→起新血脉从 gen0 跑,不接力。",
+      "tags": [
+        "harmony",
+        "阶段",
+        "smoke",
+        "判据"
+      ],
+      "links": [
+        "goldilocks",
+        "mapelites_fix"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "metrics_read",
+      "kind": "mechanism",
+      "title": "关键指标读法(PE/DP)",
+      "body": "PE 日志行: Gen N | protagonist avg=.. best=.. | ..各 archetype.. | builds=.. chops=.. hunts=.. | me_cov=X/64 qd=..。看 avg/best 趋势、me_cov(多样性格子数)是否增长、是否 extinct。DP jsonl: 每行一局,看 score、unlocks(里程碑)、prey_kills(真击杀,非 reward 里的 kills=)、deaths_* 死因。",
+      "tags": [
+        "指标",
+        "me_cov",
+        "qd",
+        "score",
+        "unlocks"
+      ],
+      "links": [
+        "ledger_pe",
+        "ledger_dp"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "disk_policy",
+      "kind": "finding",
+      "title": "磁盘策略: 保持 >190GB 空闲",
+      "body": "用户要求 D: 剩余空间保持在 190GB 以上(disk_low_gb=190)。低于阈值硬拦截拒绝开训并触发清日志/trace。6/8 清理后从 142.67GB 提到 ~205GB(删 PE trace ~15.86GB + 中间 checkpoint_gen*,保留每个 run 最新 checkpoint)。",
+      "tags": [
+        "磁盘",
+        "190",
+        "清理",
+        "trace"
+      ],
+      "links": [
+        "protected_ckpts",
+        "redlines"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "ledger_pe",
+      "kind": "lineage",
+      "title": "PE 当前血脉状态",
+      "body": "活跃基线: onepot_sD_warm_50021..50025 系列, me_cov 约 10-41/64。warm-resume 当前有 Layer-3 bug 无法真续跑。非 warm 配置(explore/huntwide/hybrid)正常,可推进到 gen 380-413。PE exe: build_ninja_cuda/bin/neural-eco-protagonist-batched.exe。",
+      "tags": [
+        "PE",
+        "血脉",
+        "onepot_sD",
+        "状态"
+      ],
+      "links": [
+        "warm_bug",
+        "blueprint"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "ledger_dp",
+      "kind": "lineage",
+      "title": "DP 当前血脉状态",
+      "body": "活跃基线 ft_gen.pt(最新),600 帧已导出 web3d(:8082)。bc_gen.pt 为 BC 基线。DP exe: build_d122_v2/bin/deep_protagonist_train.exe,运行于 runs/。模型约 50MB,一轮训练两三天,GPU 大头,优先于 PE。",
+      "tags": [
+        "DP",
+        "ft_gen",
+        "基线",
+        "状态"
+      ],
+      "links": [
+        "protected_ckpts",
+        "blueprint"
+      ],
+      "created": "2026-06-08T01:40:00",
+      "updated": "2026-06-08T01:40:00"
+    },
+    {
+      "id": "k1",
+      "created": "2026-06-08T23:07:40",
+      "kind": "pitfall",
+      "title": "PE start_pe_training generations参数是总目标非增量",
+      "body": "generations=N 表示\"跑到第N代\"，不是\"再跑N代\"。如果 checkpoint 已在 gen380，传 generations=20 会导致 380>20 直接退出（tick_calls=0）。正确做法：generations = checkpoint_gen + 想跑的增量（如 380+20=400）。",
+      "tags": [
+        "pe",
+        "start_pe_training",
+        "generations",
+        "resume",
+        "pitfall"
+      ],
+      "updated": "2026-06-08T23:07:40"
+    },
+    {
+      "id": "k2",
+      "created": "2026-06-08T23:09:55",
+      "kind": "finding",
+      "title": "PE smoke 4-way A/B probe on hybrid_50024 baseline (gen379→399)",
+      "body": "时间: 2026-06-08 23:09\n基线: hybrid_50024 (seed=50024, line_sigma=0.08, mutation_boost=1.25, dmg=0.4/0.4/0.3, cold=25)\n基线gen379指标: avg≈2100, best≈6507, me_cov=39/96(40%), qd≈146K\n\n4组变体(每组只动一个旋钮):\nA) dmg=0.25 (Goldilocks) → pid 45968 → 假设:降伤害→更多存活→me_cov突破40%\nB) line_sigma=0.12 (+50%) → pid 26728 → 假设:更强NEAT变异→更多行为格子被探索\nC) mutation_boost=1.5 (+20%) → pid 30764 → 假设:更高突变增益→跳出局部最优\nD) cold_temp_threshold=30 (+5) → pid 2740 → 假设:减少冻死→更长生存→更多行为格子\n\n全部从同一个checkpoint_gen379出发,generations=399(跑20代)。\n关注:me_cov是否突破40%,avg是否维持或提升,QD是否增长。",
+      "tags": [
+        "pe",
+        "smoke",
+        "ab_probe",
+        "hybrid_50024",
+        "fast_iter"
+      ],
+      "links": [
+        "k1"
+      ],
+      "updated": "2026-06-08T23:09:55"
+    },
+    {
+      "id": "k3",
+      "created": "2026-06-09T14:03:06",
+      "kind": "pitfall",
+      "title": "PE smoke 启动坑: 带 resume 路径的配置 + generations 小于当前代数 = 立即退出",
+      "body": "onepot_sD_warm_50025.toml 内嵌 resume_checkpoint_path 指向 gen159。若 generations < 159，引擎从 gen160 起步发现已超额→秒退。解决: 用无 resume 路径的配置(如 panel_demo_fresh_50026.toml)从 gen0 冷启动。",
+      "tags": [
+        "pe",
+        "smoke",
+        "resume",
+        "pitfall"
+      ],
+      "updated": "2026-06-09T14:03:06"
+    },
+    {
+      "id": "k4",
+      "created": "2026-06-09T14:36:58",
+      "kind": "finding",
+      "title": "PE fresh_50026 30代smoke结论: me_cov停在6/64",
+      "body": "配置: panel_demo_fresh_50026 (64格, dense params: worksie=4, stones=3, trees=240)\n结果: gen0→29, avg 507→1456(波动大), best 1943→4706, me_cov 3→6/64, qd 3949→19035\n关键发现:\n1. me_cov在gen19后plateau(6/64=9.4%),连续10代不变\n2. 64格网(8x8)比hybrid的96格(8x12)小,但me_cov绝对值也很低\n3. 没有resume路径=每次都是gen0冷启动,浪费已训进度\n4. avg/best波动剧烈(587-1484),说明进化不稳定\n5. 1次extinction事件\n\n对比历史最优hybrid_50024(gen413): avg=2100, me_cov=39/96(40.6%), qd=146K\nfresh_50026在30代内远未追上,说明gen0冷启动效率极低",
+      "tags": [
+        "PE",
+        "smoke",
+        "fresh_50026",
+        "me_cov",
+        "plateau"
+      ],
+      "links": [
+        "warm_bug",
+        "k1",
+        "ledger_pe"
+      ],
+      "updated": "2026-06-09T14:36:58"
+    },
+    {
+      "id": "k5",
+      "created": "2026-06-09T17:01:40",
+      "kind": "finding",
+      "title": "PE partial resume: 世界状态继承但种群/archive 重置",
+      "body": "测试: fresh_50026 配置(无内嵌resume路径) + 外部传入 gen109 checkpoint\n结果: \n- 模拟正常运行(sim_time>0, tick_calls>0), 没有 warm bug 秒退\n- gen 计数器从 0 重新开始(不是从 109 续)\n- 累计世界统计从 checkpoint 继承(hunt_attempts=40000+, chop_attempts=38000+ at gen8)\n- 但 NEAT 种群/archive 从零重建, me_cov 从 0 开始\n\n结论: 外部 resume 对 PE 是\"半有效\"——继承世界状态(树木已砍、资源已消耗)但不继承进化进度。\n这意味着即使 resume 成功, coverage 仍需从 0 累积, 无法分段接力。\n\n影响: 要达到 me_cov≥60/96, 需要在单次连续训练中跑足够多代(>400)。\n但 PE 硬上限 120 代/次, 形成根本瓶颈。",
+      "tags": [
+        "PE",
+        "resume",
+        "warm_bug",
+        "partial",
+        "coverage",
+        "bottleneck"
+      ],
+      "links": [
+        "warm_bug",
+        "k1",
+        "k3"
+      ],
+      "updated": "2026-06-09T17:01:40"
+    },
+    {
+      "id": "k6",
+      "created": "2026-06-09T18:06:39",
+      "kind": "finding",
+      "title": "DP Oracle 录制验证：settler oracle 能力远超 PPO",
+      "body": "Settler oracle 2M steps 录制完成(103s, 271 episodes)。oracle 能做到：单局最高 10 prey_kills、4/10 unlocks、shelter+craft+collect 全开。PPO 在同样机制下 kills=0, unlocks=3-4/10。验证了 handoff 建议：纯 PPO 走到头了，必须走 oracle→BC→PPO 路线。数据集已写入 traces/demos_oracle_v1_s24.bin。",
+      "tags": [
+        "dp",
+        "oracle",
+        "bc",
+        "pipeline",
+        "finding"
+      ],
+      "links": [
+        "dp_oracle_pipeline"
+      ],
+      "updated": "2026-06-09T18:06:39"
+    },
+    {
+      "id": "k7",
+      "created": "2026-06-09T18:38:41",
+      "kind": "pitfall",
+      "title": "PE warm-resume 档案继承失败（确认）",
+      "body": "warm-resume bug 修复后(generations 相对值)，generations 能正确续跑。但 MAP-Elites 档案(QualityDiversityArchive)未从 checkpoint 恢复：gen379 checkpoint 有 me_cov=39/96, avg=2100, qd=146K，warm-resume 后 gen380→388 一直停在 me_cov=5/96, avg=323。说明 checkpoint 序列化/反序列化丢失了 archive 状态。结论：warm-resume 目前只能续跑时间线，不能续跑种群档案。要累积 coverage 必须连续跑完，不能分段。此为代码级问题，需维护者修复 archive 序列化。",
+      "tags": [
+        "pe",
+        "warm-resume",
+        "archive",
+        "pitfall",
+        "code-level"
+      ],
+      "updated": "2026-06-09T18:38:41"
+    },
+    {
+      "id": "k8",
+      "created": "2026-06-09T19:00:20",
+      "kind": "finding",
+      "title": "DP BC 克隆完成：oracle→BC pipeline 第一步成功",
+      "body": "BC 30 epochs on 2M oracle demos 训练完成(52min)。disc_ce=0.1677, cont_mse=1.3958, 模型 checkpoints/bc_oracle_v1.pt。Pipeline: oracle demos ✓ → BC ✓ → DAgger(下一步) → PPO finetune。BC 克隆的是 settler oracle 的行为，期望能覆盖狩猎/庇护/穿衣等 PPO 未学会的机制。",
+      "tags": [
+        "dp",
+        "bc",
+        "pipeline",
+        "finding"
+      ],
+      "links": [
+        "k6"
+      ],
+      "updated": "2026-06-09T19:00:20"
+    }
+  ],
+  "generations": [
+    {
+      "project": "pe",
+      "lineage": "onepot_sD_warm",
+      "gen": 50025,
+      "checkpoint": "onepot_sD_warm_50025",
+      "metrics": {
+        "me_cov": "41/64"
+      },
+      "note": "warm 基线;warm-resume 有 Layer-3 bug,加载后 0 alive、sim_time=0,无法真续跑。",
+      "ts": "2026-06-08T01:40:00"
+    },
+    {
+      "project": "pe",
+      "lineage": "explore",
+      "gen": 413,
+      "checkpoint": null,
+      "metrics": {},
+      "note": "非 warm 路径正常推进可达 gen ~380-413,用于验证系统。",
+      "ts": "2026-06-08T01:40:00"
+    },
+    {
+      "project": "dp",
+      "lineage": "ft_gen",
+      "gen": 0,
+      "checkpoint": "ft_gen.pt",
+      "metrics": {},
+      "note": "当前活跃 DP 基线,600 帧已导出 web3d viewer(:8082)。gen 占位,后续 record_gen 补真实指标。",
+      "ts": "2026-06-08T01:40:00"
+    },
+    {
+      "project": "pe",
+      "lineage": "dense_50025_s50030",
+      "gen": 0,
+      "checkpoint": null,
+      "metrics": {
+        "avg": 0,
+        "best": 0,
+        "me_cov": 0,
+        "qd": 0
+      },
+      "note": "PE-A cold-start smoke: 密集配置(树240/门槛4/石料3)新seed 50030从gen0冷启动，目标me_cov≥60/qd≥200K",
+      "ts": "2026-06-09T14:01:01"
+    },
+    {
+      "project": "pe",
+      "lineage": "hybrid_50024",
+      "gen": 413,
+      "checkpoint": "onepot_sD_hybrid_50024.log",
+      "metrics": {
+        "avg": 2100.7,
+        "best": 6507.47,
+        "me_cov": 39,
+        "qd": 146408.6
+      },
+      "note": "campaign 0609140724 smoke起点。从这里续跑20代推me_cov。",
+      "ts": "2026-06-09T14:07:45"
+    },
+    {
+      "project": "pe",
+      "lineage": "fresh_50026",
+      "gen": 0,
+      "checkpoint": "panel_panel_demo_fresh_50026_s50031.toml",
+      "metrics": {
+        "avg": 630.0,
+        "me_cov": 0,
+        "qd": 0
+      },
+      "note": "fresh_50026 seed=50031 从gen0冷启动30代。dense config (worksie=4, stones=3, trees=240)。前一轮seed=50030跑4代达到avg=642, best=1731, me_cov=4/64。",
+      "ts": "2026-06-09T14:10:01"
+    },
+    {
+      "project": "pe",
+      "lineage": "fresh_50026",
+      "gen": 29,
+      "checkpoint": "panel_panel_demo_fresh_50026_s50031_20260609-140944",
+      "metrics": {
+        "avg": 1455.98,
+        "best": 4705.75,
+        "me_cov": 6,
+        "me_cov_total": 64,
+        "qd": 19035.4,
+        "extinct_hits": 1
+      },
+      "note": "fresh_50026 seed=50031 完成30代。me_cov停在6/64 plateau(最后10代不变),avg波动大(587-1484),best涨到4706。qd缓慢增长+11%。结论:64格网30代不够铺开行为,p需要更长训练或更大格子。",
+      "ts": "2026-06-09T14:36:58"
+    },
+    {
+      "project": "pe",
+      "lineage": "fresh_50026",
+      "gen": 119,
+      "checkpoint": "panel_panel_panel_demo_fresh_50026_ab_evolution_me_neat_line_sigma_0.08_s50032",
+      "metrics": {
+        "avg": 762.93,
+        "best": 3304.48,
+        "me_cov": 7,
+        "me_cov_total": 64,
+        "qd": 22901.4
+      },
+      "note": "Run B (line_sigma=0.08) 最终结果。120代长跑me_cov卡在7/64(11%)。对比explore_50023达到31/64(48%)。fresh_50026配置对me_cov有根本瓶颈。",
+      "ts": "2026-06-09T16:52:14"
+    },
+    {
+      "project": "pe",
+      "lineage": "fresh_50026",
+      "gen": 113,
+      "checkpoint": "panel_panel_demo_fresh_50026_s50032",
+      "metrics": {
+        "avg": 903.93,
+        "best": 3403.51,
+        "me_cov": 7,
+        "me_cov_total": 64,
+        "qd": 53116.7
+      },
+      "note": "Run A (line_sigma=0.1) 进行中(gen113/120)。avg/best/qd均高于Run B，但me_cov同样卡在7/64。mutation参数对coverage无影响。",
+      "ts": "2026-06-09T16:52:14"
+    },
+    {
+      "project": "dp",
+      "lineage": "oracle_v1",
+      "gen": 0,
+      "checkpoint": "traces/demos_oracle_v1_s24.bin",
+      "metrics": {
+        "episodes": 271,
+        "wall_s": 103.58,
+        "steps_per_s": 19309,
+        "best_unlocks": 4,
+        "best_prey_kills": 10,
+        "avg_score": 0.134
+      },
+      "note": "Settler oracle 录制完成。271 episodes，最佳局: 10 kills + 4/10 unlocks + shelter + craft + collect。远超 PPO(kills=0, unlocks=3-4)。数据集 2M records。",
+      "ts": "2026-06-09T18:06:39"
+    },
+    {
+      "project": "pe",
+      "lineage": "hybrid_50024_warm",
+      "gen": 388,
+      "checkpoint": "panel_onepot_sD_hybrid_50024_warm_20260609-180119",
+      "metrics": {
+        "avg": 323.11,
+        "best": 1737.2,
+        "me_cov": 5,
+        "me_cov_max": 96,
+        "qd": 7149.3,
+        "extinct_hits": 0
+      },
+      "note": "warm-resume 从 gen379(me_cov=39/96)续跑,到 gen388 仍 me_cov=5/96。确认:档案未继承,等于从零重建。已手动停止。结论:warm-resume 无法累积 coverage,必须连续跑完。",
+      "ts": "2026-06-09T18:40:00"
+    },
+    {
+      "project": "dp",
+      "lineage": "bc_oracle_v1",
+      "gen": 0,
+      "checkpoint": "checkpoints/bc_oracle_v1.pt",
+      "metrics": {
+        "bc_epochs": 30,
+        "disc_ce": 0.1677,
+        "cont_mse": 1.3958,
+        "total_loss": 1.5635,
+        "groups": 4445,
+        "steps": 3406539
+      },
+      "note": "BC 克隆完成。30 epochs on 2M oracle demos。disc_ce=0.1677(离散动作交叉熵,越低越好)。下一步:DAgger 纠偏→PPO finetune。",
+      "ts": "2026-06-09T19:00:20"
+    },
+    {
+      "project": "dp",
+      "lineage": "dagger_oracle_v1",
+      "gen": 0,
+      "checkpoint": "traces/dagger_oracle_v1_s24.bin",
+      "metrics": {
+        "episodes": 372,
+        "wall_s": 2427.76,
+        "steps_per_s": 824,
+        "final_behaviors": "HUNT 37-51%, deposit 8-52%, wear 4-24%, furcloak 4-25%, spear 4-12%, NOOP 9-20%",
+        "best_unlocks": 3,
+        "best_score": 0.147,
+        "prey_kills": 0
+      },
+      "note": "DAgger 2M steps 完成。行为分布从 BC 的 99% NOOP 大幅改善:HUNT 37-51%, deposit/wear/furcloak/spear 都出现。但仍无 prey_kills。下一步 PPO finetune 应该能进一步提升。",
+      "ts": "2026-06-09T19:43:16"
+    }
+  ]
+}

@@ -1,0 +1,233 @@
+set(PROTAGONIST_ECOLOGY_ROUTE_SOURCES
+    capability/BackgroundMemoryWriteCapability.cpp
+    capability/CaveHideCapability.cpp
+    capability/ChooseBuildingTypeCapability.cpp
+    capability/ChopTreeCapability.cpp
+    capability/CraftSpearCapability.cpp
+    capability/IgniteFireCapability.cpp
+    capability/SocialActionCapability.cpp
+    capability/DrinkWaterCapability.cpp
+    capability/GoalActionAssistCapability.cpp
+    capability/GoalAwareDropCapability.cpp
+    capability/NurseryPickUpCapability.cpp
+    capability/ProtagonistHuntCapability.cpp
+    capability/StealthCapability.cpp
+    capability/ThermalTickCapability.cpp
+    capability/ThrowCarriedObjectCapability.cpp
+    brain/MemoryBank.cpp
+    brain/DNCMemory.cpp
+    brain/ProtagonistDenseGpu.cpp
+    brain/BatchedDenseGpu.cpp
+    brain/ProtagonistBrainV3Components.cpp
+    brain/SpatialMemoryBank.cpp
+    brain/EpisodicMemoryBank.cpp
+    brain/SocialMemoryBank.cpp
+    brain/GoalMemory.cpp
+    brain/ProtagonistBrain.cpp
+    brain/ProtagonistGenome.cpp
+    perception/AgentSocialPerception.cpp
+    perception/BackgroundMemoryReadPerception.cpp
+    perception/BasePerception.cpp
+    perception/BorderPerception.cpp
+    perception/CarriedObjectPerception.cpp
+    perception/CavePerception.cpp
+    perception/DangerPerception.cpp
+    perception/MemoryCognitionPerception.cpp
+    perception/MemoryTrialPerception.cpp
+    perception/ObjectLogisticsPerception.cpp
+    perception/GoalContextPerception.cpp
+    perception/ProtagonistRhythmPerception.cpp
+    perception/ProtagonistWarmthDrivePerception.cpp
+    perception/SelfHeadingPerception.cpp
+    perception/KinPerception.cpp
+    perception/TerritorySocialPerception.cpp
+    perception/WorldHistoryPerception.cpp
+    perception/StockpilePerception.cpp
+    perception/SurvivalStatePerception.cpp
+    perception/TaskContextPerception.cpp
+    perception/TreePerception.cpp
+    perception/WaterPerception.cpp
+    perception/WeaponPerception.cpp
+    perception/WorksitePerception.cpp
+    runtime/BootstrapPopulation.cpp
+    runtime/CommunicationMetrics.cpp
+    runtime/CreditLedger.cpp
+    runtime/GoalManager.cpp
+    runtime/MemoryAblationEval.cpp
+    runtime/ProtagonistBatchedDenseRunner.cpp
+    runtime/ProtagonistEcologyConfig.cpp
+    runtime/ProtagonistEvolution.cpp
+    runtime/ProtagonistEcologyRuntime.cpp
+    runtime/ProtagonistWorldFactory.cpp
+    runtime/BorderlandEvaluator.cpp
+    runtime/MainWorldHost.cpp
+    runtime/MainWorldPersistence.cpp
+    runtime/MigrationScheduler.cpp
+    runtime/QualityDiversityArchive.cpp
+    runtime/TraceRecorder.cpp
+    runtime/TripleWorldRuntime.cpp
+    world/BackgroundMemoryLayer.cpp
+    world/BaseLayer.cpp
+    world/CampfireLayer.cpp
+    world/TerritoryMarkLayer.cpp
+    world/InterventionDirectorLayer.cpp
+    world/MemoryTrialLayer.cpp
+    world/NurseryLogisticsLayer.cpp
+    world/NurseryProgressionLayer.cpp
+    world/NurserySupplyLayer.cpp
+    world/PopulationLayer.cpp
+    world/SandboxStatusLayer.cpp
+    world/SurvivalStatusLayer.cpp
+    world/TreeLayer.cpp
+    world/WaterLayer.cpp
+    world/WorksiteLayer.cpp
+)
+
+set(PROTAGONIST_ECOLOGY_ROUTE_HEADERS
+    capability/CaveHideCapability.h
+    capability/ChopTreeCapability.h
+    capability/CraftSpearCapability.h
+    capability/DrinkWaterCapability.h
+    capability/GoalActionAssistCapability.h
+    capability/GoalAwareDropCapability.h
+    capability/NurseryPickUpCapability.h
+    capability/ProtagonistHuntCapability.h
+    capability/StealthCapability.h
+    capability/ThermalTickCapability.h
+    capability/ThrowCarriedObjectCapability.h
+    brain/MemoryBank.h
+    brain/DNCMemory.h
+    brain/ProtagonistDenseGpu.h
+    brain/BatchedDenseGpu.h
+    brain/ProtagonistBrainV3Components.h
+    brain/SpatialMemoryBank.h
+    brain/EpisodicMemoryBank.h
+    brain/SocialMemoryBank.h
+    brain/GoalMemory.h
+    brain/ProtagonistBrain.h
+    brain/ProtagonistGenome.h
+    perception/AgentSocialPerception.h
+    perception/BasePerception.h
+    perception/CarriedObjectPerception.h
+    perception/DangerPerception.h
+    perception/MemoryCognitionPerception.h
+    perception/MemoryTrialPerception.h
+    perception/ObjectLogisticsPerception.h
+    perception/ProtagonistRhythmPerception.h
+    perception/ProtagonistWarmthDrivePerception.h
+    perception/SelfHeadingPerception.h
+    perception/FovGate.h
+    perception/KinPerception.h
+    perception/TerritorySocialPerception.h
+    perception/WorldHistoryPerception.h
+    perception/StockpilePerception.h
+    perception/SurvivalStatePerception.h
+    perception/TreePerception.h
+    perception/WaterPerception.h
+    perception/WeaponPerception.h
+    perception/WorksitePerception.h
+    runtime/BootstrapPopulation.h
+    runtime/CommunicationMetrics.h
+    runtime/CreditLedger.h
+    runtime/GoalManager.h
+    runtime/MemoryAblationEval.h
+    runtime/ProtagonistBatchedDenseRunner.h
+    runtime/ProtagonistEcologyConfig.h
+    runtime/ProtagonistEvolution.h
+    runtime/ProtagonistEcologyRuntime.h
+    runtime/ProtagonistWorldFactory.h
+    runtime/BorderlandEvaluator.h
+    runtime/MainWorldHost.h
+    runtime/MainWorldPersistence.h
+    runtime/MigrationScheduler.h
+    runtime/QualityDiversityArchive.h
+    runtime/TraceRecorder.h
+    runtime/TripleWorldRuntime.h
+    world/BaseLayer.h
+    world/CampfireLayer.h
+    world/InterventionDirectorLayer.h
+    world/MemoryTrialLayer.h
+    world/NurseryLogisticsLayer.h
+    world/NurseryProgressionLayer.h
+    world/NurserySupplyLayer.h
+    world/PopulationLayer.h
+    world/SandboxStatusLayer.h
+    world/SurvivalStatusLayer.h
+    world/TreeLayer.h
+    world/WaterLayer.h
+    world/WorksiteLayer.h
+)
+
+add_library(neural_eco_route_protagonist STATIC
+    ${PROTAGONIST_ECOLOGY_ROUTE_SOURCES}
+    ${PROTAGONIST_ECOLOGY_ROUTE_HEADERS}
+)
+
+if(NEURAL_ECO_HAS_PROTAGONIST_CUDA)
+    target_sources(neural_eco_route_protagonist PRIVATE
+        brain/ProtagonistDenseGpu.cu
+        brain/BatchedDenseGpu.cu
+    )
+endif()
+
+add_library(neural_eco::route_protagonist ALIAS neural_eco_route_protagonist)
+
+target_include_directories(neural_eco_route_protagonist
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+)
+
+target_link_libraries(neural_eco_route_protagonist
+    PUBLIC
+        neural_eco::core
+        neural_eco::runtime_headless
+)
+
+if(NEURAL_ECO_HAS_PROTAGONIST_CUDA)
+    target_link_libraries(neural_eco_route_protagonist PRIVATE CUDA::cudart)
+    target_compile_definitions(neural_eco_route_protagonist PRIVATE NEURAL_ECO_HAS_PROTAGONIST_CUDA=1)
+    set_target_properties(neural_eco_route_protagonist PROPERTIES CUDA_ARCHITECTURES native)
+endif()
+
+target_compile_features(neural_eco_route_protagonist PUBLIC cxx_std_20)
+
+add_executable(neural-eco-protagonist main.cpp)
+target_link_libraries(neural-eco-protagonist PRIVATE neural_eco::route_protagonist)
+
+set_target_properties(neural-eco-protagonist PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Separate executable for batched-dense determinism validation. Identical code
+# to neural-eco-protagonist (the batched path is runtime flag-gated and default
+# OFF), but built under a distinct name so the locked production binary is never
+# clobbered while validating bit-identity of the batched forward.
+add_executable(neural-eco-protagonist-batched main.cpp)
+target_link_libraries(neural-eco-protagonist-batched PRIVATE neural_eco::route_protagonist)
+
+set_target_properties(neural-eco-protagonist-batched PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Candidate-1 (decision_round_9) experiment executable. Identical code to
+# neural-eco-protagonist (the new ProtagonistRhythmPerception is runtime
+# flag-gated, protagonist_rhythm_perception_enabled default OFF), but built
+# under a distinct name so the locked production binary is never clobbered while
+# the new "sharpen perceptual encoding" bloodline is validated.
+add_executable(neural-eco-protagonist-rhythm main.cpp)
+target_link_libraries(neural-eco-protagonist-rhythm PRIVATE neural_eco::route_protagonist)
+
+set_target_properties(neural-eco-protagonist-rhythm PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Cohort-resident GPU inference parity + traffic test (2026-06-01 GPU-arch
+# refactor). Validates uploadCohort()/forwardResident() numerics == legacy
+# forward() == forwardCpu(), and reports H2D byte savings. Builds without a GPU
+# (CPU reference + analytical traffic only); full parity runs on the CUDA box.
+add_executable(neural-eco-resident-parity runtime/test_resident_parity.cpp)
+target_link_libraries(neural-eco-resident-parity PRIVATE neural_eco::route_protagonist)
+set_target_properties(neural-eco-resident-parity PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+

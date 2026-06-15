@@ -1,0 +1,37 @@
+﻿{
+  "providers": [
+    {
+      "id": "mimo",
+      "name": "mimo",
+      "base_url": "https://api.xiaomimimo.com/v1",
+[REDACTED LOCAL SECRET]
+      "model": "mimo-v2.5"
+    }
+  ],
+  "active_provider": "mimo",
+  "mode": "auto",
+  "active_strategy": "fast_iter",
+  "max_procs": 10,
+  "disk_low_gb": 190,
+  "poll_interval_s": 20,
+  "default_sleep_min": 20,
+  "max_sleep_min": 240,
+  "gated_tools": [
+    "start_pe_training",
+    "start_dp_training",
+    "stop_training"
+  ],
+  "temperature": 0.3,
+  "max_tokens": 2000,
+  "objective": "浣滀负 DP/PE 璁粌鐨勮嚜鍔ㄧ瀹讹細鍦ㄤ笉瑙︾ C++ 鏈哄埗浠ｇ爜鐨勫墠鎻愪笅锛岃嚜涓荤鐞嗚缁冪敓鍛藉懆鏈熶笌 TOML 瓒呭弬鏁帮紙绗?灞傦級锛岄€氬涓嶉棿鏂帹杩涜缁冨苟鐩戞帶鎸囨爣(harmony/me_cov/QD/fitness/prey_kills)锛涙満鍣ㄨ祫婧愮揣寮犳垨纾佺洏涓嶈冻鏃惰嚜鍔ㄦ竻鐞嗘棩蹇椾笌 trace锛堢粷涓嶅垹闄?*.pt 妫€鏌ョ偣锛夛紝骞跺彂璁粌杩涚▼涓嶈秴杩?10锛涜缁冨钩绋虫椂闀跨潯鐪侀搴︼紝浠呭湪鍏抽敭浜嬩欢鎴栧埌鐐规椂琚敜閱掞紱闇€瑕佹崲鍩虹嚎/璧锋柊琛€鑴?绗?灞?鎴栨敼鏈哄埗浠ｇ爜(绗?灞?鏃跺彧鎻愯銆佺敱浜虹‘璁ゃ€?,
+  "context_token_budget": 600000,
+  "keep_recent_msgs": 14,
+  "pinned_specs": [],
+  "rolling_summary": "",
+  "tier_c": {
+    "reward_pct_limit": 0.25,
+    "dp_smoke_steps": 200000,
+    "pe_smoke_generations": 4
+  },
+  "deep_think_rounds": 2
+}

@@ -1,0 +1,119 @@
+/* ===== Roadmap goal cards — inline column in Agent tab ===== */
+
+.agent-roadmap-col {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  max-height: calc(100vh - 140px); overflow-y: auto;
+}
+.rm-head-card-inline {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; box-shadow: var(--shadow);
+}
+.rm-head-card-inline .card-head { margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
+.rm-head-card-inline .card-head h2 { font-size: 13px; }
+.rm-head-card-inline .card-head h2 small { font-size: 10px; }
+.rm-head-btns { display: flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; }
+.rm-inline-objective { display: flex; flex-direction: column; gap: 6px; align-items: stretch; margin-bottom: 8px; }
+.rm-inline-objective textarea {
+  width: 100%; min-height: 48px; resize: vertical; font-size: 12px;
+  background: var(--bg2); border: 1px solid var(--line); color: var(--txt);
+  border-radius: var(--radius-sm); padding: 6px 8px; font-family: inherit;
+}
+.rm-inline-objective textarea:focus { outline: 1px solid var(--accent2); border-color: var(--accent2); }
+.rm-inline-objective button { align-self: flex-end; font-size: 11px; padding: 5px 12px; }
+.rm-status-line { font-size: 11px; color: var(--faint); padding: 2px 1px 0; }
+.rm-status-line.done { color: var(--ok); }
+.rm-status-line.regress { color: var(--warn); }
+
+/* ---- board: compact vertical column of slider cards ---- */
+.rm-board { display: flex; flex-direction: column; gap: 8px; }
+
+.rm-card {
+  position: relative; background: var(--card); border: 1px solid var(--line);
+  border-left: 3px solid var(--faint); border-radius: var(--radius);
+  padding: 8px 10px 9px; box-shadow: var(--shadow);
+  transition: transform .45s cubic-bezier(.22,.61,.36,1), opacity .45s ease,
+              border-left-color .4s ease, background .4s ease, box-shadow .25s ease;
+  will-change: transform, opacity;
+}
+.rm-card.enter { opacity: 0; transform: translateY(14px) scale(.985); }
+.rm-card.dragging { opacity: .55; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+.rm-card.drop-target { border-top: 2px dashed var(--accent2); }
+
+/* status accents (left rail + tint) */
+.rm-card[data-status="pending"] { border-left-color: var(--faint); }
+.rm-card[data-status="active"]  { border-left-color: var(--accent); background: linear-gradient(90deg, var(--accent-soft), transparent 60%); }
+.rm-card[data-status="met"]     { border-left-color: var(--ok); transform: translateX(8px); }
+.rm-card[data-status="blocked"] { border-left-color: var(--warn); }
+
+/* regression flash: a met card that fell back to pending */
+@keyframes rmRegress {
+  0% { transform: translateX(8px); background: rgba(127,169,138,.10); }
+  35% { transform: translateX(-6px); background: rgba(207,159,82,.18); }
+  100% { transform: translateX(0); }
+}
+.rm-card.regress-flash { animation: rmRegress .7s ease; }
+
+.rm-card-top { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.rm-grip { cursor: grab; color: var(--faint); font-size: 13px; line-height: 1; user-select: none; flex-shrink: 0; }
+.rm-grip:active { cursor: grabbing; }
+.rm-order { font-size: 10px; color: var(--faint); font-family: ui-monospace, monospace; width: 14px; text-align: center; flex-shrink: 0; }
+.rm-proj-tag { font-size: 9px; padding: 1px 5px; border-radius: 20px; border: 1px solid var(--line2); color: var(--muted); flex-shrink: 0; text-transform: uppercase; letter-spacing: .04em; }
+.rm-proj-tag.pe { color: var(--accent); border-color: var(--accent2); }
+.rm-proj-tag.dp { color: #7fa2c8; border-color: #4f6c8d; }
+.rm-title-ro {
+  flex: 1; color: var(--txt); font-size: 12px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.rm-badge {
+  font-size: 9.5px; padding: 1px 7px; border-radius: 20px; flex-shrink: 0;
+  border: 1px solid var(--line2); color: var(--muted); white-space: nowrap;
+}
+.rm-badge.pending { color: var(--muted); }
+.rm-badge.active  { color: var(--accent); border-color: var(--accent2); animation: rmPulse 1.8s ease-in-out infinite; }
+.rm-badge.met     { color: var(--ok); border-color: rgba(127,169,138,.5); background: rgba(127,169,138,.10); }
+.rm-badge.blocked { color: var(--warn); border-color: rgba(207,159,82,.5); background: rgba(207,159,82,.10); }
+@keyframes rmPulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+.rm-del { background: none; border: none; color: var(--faint); cursor: pointer; font-size: 14px; flex-shrink: 0; padding: 2px 4px; border-radius: 5px; }
+.rm-del:hover { color: var(--danger); background: var(--bg2); }
+
+/* progress bar (slider fill) */
+.rm-prog { height: 4px; background: var(--bg2); border-radius: 3px; margin: 6px 0 2px; overflow: hidden; }
+.rm-prog-fill {
+  height: 100%; width: 0; border-radius: 3px; background: var(--accent);
+  transition: width .6s cubic-bezier(.22,.61,.36,1), background .4s ease;
+}
+.rm-card[data-status="met"] .rm-prog-fill { background: var(--ok); }
+.rm-card[data-status="blocked"] .rm-prog-fill { background: var(--warn); }
+.rm-card[data-status="near_met"] .rm-prog-fill { background: #9fc; }
+.rm-prog-pct { font-size: 9px; color: var(--faint); font-family: ui-monospace, monospace; }
+
+.rm-blocked-why { font-size: 10px; color: var(--warn); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* acceptance clauses (read-only, Agent-filled) */
+.rm-clauses { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
+.rm-clause { display: flex; align-items: center; gap: 4px; font-size: 10px; }
+.rm-clause .rm-met-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
+.rm-clause.ok .rm-met-dot { background: var(--ok); box-shadow: 0 0 4px var(--ok); }
+.rm-clause.near .rm-met-dot { background: #9fc; box-shadow: 0 0 3px #9fc; }
+.rm-clause-text { color: var(--muted); font-family: ui-monospace, monospace; }
+.rm-clause .rm-live { font-size: 10px; color: var(--muted); font-family: ui-monospace, monospace; margin-left: auto; }
+.rm-clause .rm-live b { color: var(--txt); }
+.rm-trend { font-size: 9px; margin-left: 2px; }
+.rm-trend.up { color: var(--ok); }
+.rm-trend.down { color: var(--danger); }
+.rm-trend.flat { color: var(--faint); }
+
+/* footer actions: hidden until there are unsaved manual reorder edits */
+.rm-foot { display: none; }
+.rm-foot:has(#rmApply:not(:disabled)) {
+  display: flex; align-items: center; gap: 8px; margin-top: 2px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.rm-foot-spacer { flex: 1; }
+.rm-dirty { color: var(--warn); font-size: 10px; }
+
+.rm-empty { text-align: center; color: var(--muted); padding: 16px 8px; font-size: 11px; }
+
+/* near-met soft glow */
+.rm-card[data-status="near_met"] { border-left-color: #9fc; background: linear-gradient(90deg, rgba(153,255,204,.06), transparent 60%); }

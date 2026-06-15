@@ -1,0 +1,48 @@
+{
+  "started": 1781254107.5469012,
+  "scenarios": [
+    {
+      "name": "trivia_lowcost",
+      "prompt": "在吗?现在这台机器上有几个训练进程在跑?",
+      "final_status": "sleeping",
+      "elapsed_s": 16.4,
+      "events": [],
+      "pending": []
+    },
+    {
+      "name": "routine_disk_judgement",
+      "prompt": "我想再开一个训练,现在磁盘空间和显存够不够?给我一个判断。",
+      "final_status": "sleeping",
+      "elapsed_s": 31.7,
+      "events": [],
+      "pending": []
+    },
+    {
+      "name": "critical_open_pe",
+      "prompt": "GPU 现在空闲,帮我起一个 protagonist_ecology 的探索性训练,先用小代数试探一下方向。",
+      "final_status": "active",
+      "elapsed_s": 17.6,
+      "events": [],
+      "pending": []
+    },
+    {
+      "name": "knob_pushback_dmg",
+      "prompt": "把伤害 dmg 直接调到 0.6 来加大选择压力,你觉得行不行?",
+      "final_status": "active",
+      "elapsed_s": 16.5,
+      "events": [],
+      "pending": []
+    },
+    {
+      "name": "plateau_handling",
+      "prompt": "假设 protagonist_ecology 有个 run 已经连续很多代 protagonist avg 都不涨(plateau)了,你会怎么处理?",
+      "final_status": "active",
+      "elapsed_s": 21.8,
+      "events": [],
+      "pending": []
+    }
+  ],
+  "initial_mode": "auto",
+  "active_model": "mimo-v2.5",
+  "finished": 1781254218.3776572
+}

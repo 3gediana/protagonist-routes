@@ -1,0 +1,23 @@
+# local-only agent state (holds API keys / live decision log + memory) — never commit
+agent_config.json
+agent_timeline.jsonl
+agent_knowledge.json
+# NOTE: agent_knowledge.seed.json IS committed (starting knowledge network).
+
+# runtime / scratch
+_trash/
+.venv/
+__pycache__/
+*.pyc
+
+# panel logs
+panel.log
+panel.err.log
+panel.out.log
+panel_smoke.log
+panel_smoke.err
+_check_import.py
+agent_campaigns.json
+agent_tunes.json
+agent_curriculum_state.json
+.rmkit/

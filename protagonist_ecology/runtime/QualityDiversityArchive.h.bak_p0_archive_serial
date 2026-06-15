@@ -1,0 +1,172 @@
+#pragma once
+//
+// routes/protagonist_ecology/runtime/QualityDiversityArchive.h
+//
+// L2.8 v14 ME-NEAT (MAP-Elites + NEAT). The single-fitness NEAT we used
+// in v8-v13 collapses long-chain compositional behaviour: middle-of-chain
+// stepping stones (e.g. "chop a lot + build 1 worksite") get out-fitnessed
+// by lazy specialists ("chop only", "throw spam") and disappear. The
+// literature (Mouret&Clune 2015 MAP-Elites; InstaDeep 2023 ICLR spotlight
+// "Neuroevolution is a Competitive Alternative to RL for Skill Discovery";
+// Cully 2018) shows quality-diversity preserves these stepping stones by
+// binning the population by behaviour-descriptor cells and keeping one
+// elite per cell. Each cell elite is a different "way to play", so the
+// next generation can mutate from any cell - the chain chop -> deposit ->
+// build -> craft is reachable as a sequence of cell-to-cell jumps.
+//
+// We use the 2D-or-3D conservative descriptor:
+//   P1 (v14/v15/v16):
+//     x = chop count (GoalType::ChopTree)
+//     y = build+craft count (GoalType::BuildWorksite + GoalType::CraftWeapon)
+//   P2 (v17, optional 3rd dim, opt-in via hunt_max_bins > 1):
+//     z = hunt count (GoalType::Hunt)
+//
+// Default 5x5 (25 cells); v15/v16 use 8x8 (64 cells); v17 P2 default
+// 8x8x3=192 cells. Backward-compat: hunt_max_bins=1 collapses 3rd dim
+// to z=0 always, identical to the 2D archive.
+//
+// signal_emits is still deferred (near-zero at this stage would leave
+// 100+ empty cells).
+//
+// This archive is rebuilt every generation from the freshly evaluated
+// population (per-generation MAP-Elites, not lifetime). It does not
+// serialise across checkpoints; the goal is to shape the next-gen breed
+// selection, not to persist a long-running QD run.
+
+#include "core/types/Aliases.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <random>
+#include <unordered_set>
+#include <vector>
+
+namespace neuro::routes::protagonist {
+
+// One agent-genome's behavioural descriptor, accumulated across all
+// episodes in a generation. Sourced from Agent::goalCompletionTotal(int).
+struct BehaviorDescriptor {
+    int chop_count = 0;          // GoalType::ChopTree     (idx 5)
+    int build_count = 0;         // GoalType::BuildWorksite (idx 6)
+    int craft_count = 0;         // GoalType::CraftWeapon   (idx 7)
+    int hunt_count = 0;          // GoalType::Hunt          (idx 8)
+    int signal_emits = 0;        // GoalType::EmitSignal    (idx 11)
+    // A1 (v18 BD expansion): three extra behaviour axes so the blueprint's
+    // social / spatial-exploration / mainline-provisioning emergence becomes
+    // VISIBLE to the QD archive (and thus to the agent reading me_cov/qd).
+    // All sourced from Agent::goalCompletionTotal at episode end, exactly like
+    // the 5 fields above, so they sum cleanly across episodes. These axes
+    // ONLY contribute in CVT mode (initCvt); legacy grid mode keeps the 2D/3D
+    // chop x (build+craft) x hunt geometry untouched for backward-compat.
+    int respond_signals = 0;     // GoalType::RespondSignal (idx 10) -> social
+    int explore_count = 0;       // GoalType::Explore       (idx 0)  -> spatial
+    int find_water_count = 0;    // GoalType::FindWater     (idx 1)  -> provision
+    int find_food_count = 0;     // GoalType::FindFood      (idx 2)  -> provision
+    int rest_count = 0;          // GoalType::RestNearFire  (idx 12) -> provision
+};
+
+class QualityDiversityArchive {
+public:
+    // Cell index. In grid mode this is a packed (x, y, z) integer
+    // (x * max_bins * hunt_max_bins + y * hunt_max_bins + z); in CVT
+    // mode it's the index of the nearest centroid. The same downstream
+    // code (eliteIds / pickParent / submit) works for both.
+    using CellKey = int;
+
+    // A1 (v18): behaviour-descriptor dimensionality used by CVT mode. The
+    // first 3 axes are the legacy (chop, build+craft, hunt) features; axes
+    // 3..5 are the v18 social / explore / provision expansion. Grid mode
+    // ignores axes >= 3. Bump this + normaliseBd together to add axes.
+    static constexpr int kBdDims = 6;
+    using Feature = std::array<float, kBdDims>;
+
+    struct Cell {
+        GenomeId elite_id{kInvalidGenomeId};
+        double elite_fitness = -std::numeric_limits<double>::infinity();
+    };
+
+    // Default ctor: legacy grid mode. chops_bin_size + workcraft_bin_size
+    // + max_bins define the 2D N x N grid; hunt_bin_size + hunt_max_bins
+    // extend to a 3D N x N x M grid (v17). Backward-compat with
+    // v14/v15/v16 callers that don't pass hunt_* (default 0/1 collapses
+    // 3rd axis).
+    //
+    // To switch to CVT mode (v18, Vassiliades 2017), call initCvt after
+    // construction. CVT mode replaces the grid with k Voronoi cells
+    // around k centroids placed by Lloyd's k-means - selective pressure
+    // is constant (k cells) regardless of BD dimensionality, fixing the
+    // "curse of dimensionality" that hits 3D+ grid MAP-Elites.
+    QualityDiversityArchive(int chops_bin_size = 20,
+                            int workcraft_bin_size = 2,
+                            int max_bins = 5,
+                            int hunt_bin_size = 0,
+                            int hunt_max_bins = 1);
+
+    // Switch to CVT mode. Generates num_centroids x samples_per_centroid
+    // uniform-random points in the (chops, workcraft, hunt) feature
+    // space (range determined by bin_size * max_bins per axis), then
+    // runs Lloyd's k-means for kmeans_iters iterations to obtain the
+    // final centroids. Subsequent cellOf() calls find argmin distance
+    // to a centroid rather than discretising into bins. Calling this
+    // clears the existing archive.
+    void initCvt(int num_centroids,
+                 int samples_per_centroid,
+                 int kmeans_iters,
+                 std::uint32_t seed);
+
+    void clear();
+
+    // Submit one (genome, fitness, descriptor). If the cell is empty,
+    // this becomes the cell elite; otherwise the higher-fitness one wins.
+    void submit(GenomeId id, double fitness, const BehaviorDescriptor& bd);
+
+    CellKey cellKeyFor(const BehaviorDescriptor& bd) const { return cellOf(bd); }
+
+    // For breeding selection: ids of all current cell elites (one per
+    // filled cell).
+    std::vector<GenomeId> eliteIds() const;
+    std::unordered_set<GenomeId> eliteIdSet() const;
+
+    // Uniformly sample one elite genome id (returns kInvalidGenomeId if
+    // archive is empty).
+    GenomeId uniformPickElite(std::mt19937& rng) const;
+
+    // QD metrics for csv logging.
+    std::size_t coverage() const { return cells_.size(); }   // # filled cells
+    std::size_t maxCells() const {
+        if (cvt_enabled_) return static_cast<std::size_t>(centroids_.size());
+        return static_cast<std::size_t>(max_bins_)
+             * static_cast<std::size_t>(max_bins_)
+             * static_cast<std::size_t>(hunt_max_bins_);
+    }
+    double qdScore() const;       // sum of all cell elite fitnesses
+    double maxFitness() const;    // single best fitness across all cells
+    double meanCellFitness() const;
+
+    bool cvtEnabled() const { return cvt_enabled_; }
+    std::size_t numCentroids() const { return centroids_.size(); }
+
+    // Read access (mainly for debug / metrics export).
+    const std::map<CellKey, Cell>& cells() const { return cells_; }
+
+private:
+    CellKey cellOf(const BehaviorDescriptor& bd) const;
+    // Normalise raw BD (ints) to [0, 1]^kBdDims. Axes 0..2 use
+    // bin_size * max_bins per axis (matches grid mode); axes 3..5 (social /
+    // explore / provision) use the fixed ranges below. Used by CVT mode for
+    // distance computation.
+    Feature normaliseBd(const BehaviorDescriptor& bd) const;
+
+    int chops_bin_size_;
+    int workcraft_bin_size_;
+    int max_bins_;
+    int hunt_bin_size_;
+    int hunt_max_bins_;
+    bool cvt_enabled_{false};
+    std::vector<Feature> centroids_;
+    std::map<CellKey, Cell> cells_;
+};
+
+}  // namespace neuro::routes::protagonist

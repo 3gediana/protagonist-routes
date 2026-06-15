@@ -1,0 +1,633 @@
+# boot = survival bootstrap (Devin 2026-06-11). Derived from curr0_stage0 with:
+#   resources 540->720 regen 0.20->0.30; hydration_decay 0.035->0.022; dehydration_dmg 0.10->0.06;
+#   trees 240->320 closer(36) softer(integrity 10); predators apex 2->1 pack 6->3 ambush 3->1; rabbits 20->28;
+#   reward: survival 0.3->1.0 food 3->6, cooperation 12->6 communication 8->4 (social emphasis deferred).
+# Purpose: break the "survival=0/240 -> degenerate selection" deadlock before entering stage0.
+# Exit gate (roadmap g_boot): survival_rate>=0.05 AND chop_rate>=0.004, replicated on a 2nd seed.
+# layer1.toml
+#
+# Layer 1 (Final Blueprint) integration smoke test - 30 gen.
+#
+# Changes vs v17_hunt_bd.toml baseline:
+#   - World 200x200 -> 600x600 (9x area, per user 2026-05-23 hard constraint)
+#   - Resources 84 -> 540, trees 14 -> 80, worksites 2 -> 8,
+#     campfires 2 -> 8, water sources 2 -> 8 (scaled with area, but
+#     density slightly reduced to keep total entity count manageable)
+#   - Background species pop scaled 1.5x (45 -> 65)
+#   - DayNightLayer (TimeOfDayLayer) enabled - already default but
+#     made explicit
+#   - SurvivalStatusLayer track_all_living=true (R-001) - uses default
+#     ctor args, no toml override needed since SurvivalConfig doesn't
+#     expose these yet (Layer 3 will add toml hooks if needed).
+#
+# Inherits reward block from v17 (intentional - Layer 1 is about
+# environment realism, not reward paradigm. Reward paradigm shift is
+# Layer 5).
+#
+# Hypothesis (validation criteria):
+#   1. Binary runs to completion (no crash from Layer 1 additions)
+#   2. core_temperature_ stays bounded (no NaN, mostly 25-45 deg C
+#      under default coefficients)
+#   3. Hunger damage and thermal damage trigger occasionally
+#      (visible in SurvivalStatus log: extra deaths from these paths)
+#   4. Background species don't all die in episode 0 (hydration_decay
+#      = 0 for them by default, so they should survive normally)
+#   5. World 600x600 doesn't slow training to a crawl (target: similar
+#      or slightly slower per-gen time vs v17 200x200)
+
+[runtime]
+random_seed = 50028
+log_level = "info"
+preview_ticks = 1
+world_role = "train"
+scenario_name = "onepot_sD_fresh96_selfadapt_50028_boot"
+# One-pot bloodline switch: warmstart from the completed sC 80-gen champion
+# (resume_generation=80). action_dim is grown 13 -> 16 on load (new outputs
+# zero-filled, behavior preserved) so phases D/E have reserved output slots
+# and this checkpoint is reused instead of retrained from scratch.
+# DISABLED-FOR-DEMO resume_checkpoint_path = "D:/claude-code/c++/routes/protagonist_ecology/runs/onepot_sD_warm_50024/20260607-131545/checkpoint_gen379"
+
+# Stone bootstrap commit 1/2/3 end-to-end AB. Compared to
+# long_run_60gen_2d_throw.toml (which has throw_attempt=-0.05 and
+# curriculum=off), this run additionally turns on the curriculum
+# persistence gate so the protagonist's NurseryProgressionLayer
+# unlock flags (first_fire / worksite / stone / heavy / second_fire)
+# survive across episode resets. Expected delta: stone deposit /
+# completion events per gen should rise once the first protagonist
+# crosses the 6-deposit threshold in episode 0, because subsequent
+# episodes inherit "stone_unlocked=true" and start with stones
+# already on the map.
+
+[runtime.curriculum]
+archetype_progression_persistence_enabled = true
+
+# L6 R3 stage 3 commits A-K: full graduation pipeline.
+# - triple_world.enabled: turn on the three-world topology
+# - borderland_to_main_period_gens: every 10 gen, promote top-K out
+#   of borderland into main world
+# - borderland_max_pool_per_archetype: cap each archetype's
+#   borderland pool to 32
+# - borderland_eval_period_gens: every gen, mini-tick eval the
+#   archetype's pool to refresh fitness
+# - borderland_min_continuity_gens: require 5 eval rounds before
+#   a genome can graduate to main world
+# - borderland_mutate_sigma + rates: sandbox-NEAT-aligned weight
+#   mutation between eval rounds so the pool actually evolves
+# - extinction_rescue_top_k: if main_world archetype goes extinct,
+#   pull top-2 from borderland to reseed
+[runtime.triple_world]
+# L6 R3 stage 4: persistent main-world host (PRODUCTION_WORLD_LIFECYCLE_SPEC
+# invariant #1, "MainWorld bu reset dan nei cun zhong"). The host owns one
+# World2D that is NEVER recreated across generations. Each generation tail
+# the runtime ticks it by ticks_per_generation * tick_dt_seconds of sim time.
+# Disk persistence of the host's World2D state is OUT of scope (spec sec 6
+# priority 3, deferred); only the in-memory world is exercised here.
+main_world_continuous_tick_enabled = true
+main_world_tick_dt_seconds = 1.0
+main_world_ticks_per_generation = 10
+enabled = true
+top_k_protagonist_per_gen = 4
+top_k_background_per_gen = 2
+borderland_to_main_period_gens = 10
+borderland_to_main_top_k_protagonist = 8
+borderland_to_main_top_k_background = 4
+borderland_max_pool_per_archetype = 32
+borderland_eval_period_gens = 1
+borderland_eval_aging_factor = 1.0
+borderland_min_continuity_gens = 5
+borderland_mutate_sigma = 0.01
+borderland_mutate_perturb_rate = 0.8
+borderland_mutate_reset_rate = 0.05
+extinction_rescue_top_k = 2
+
+[output]
+runs_dir = "runs/panel_fresh96_selfadapt_50028_boot"
+
+[world]
+size = [600.0, 600.0]
+density_auto_scale = false
+density_reference_size = [600.0, 600.0]
+
+[world.resources]
+count = 720
+amount = 18.0
+respawn_ticks = 14
+dynamic = true
+regen_rate = 0.30
+terrain_adjustment_enabled = true
+
+[world.terrain]
+enabled = true
+height_scale = 30.0
+slope_resistance = 0.38
+cave_density = 0.04
+cave_shelter_factor = 0.50
+min_velocity_factor = 0.18
+seed = 91
+grid_resolution = 256
+perlin_frequency = 3.8
+perlin_persistence = 0.48
+perlin_octaves = 4
+
+[world.signal]
+enabled = true
+channels = 2
+grid_resolution = 128
+decay_rate = 0.05
+diffusion_rate = 0.08
+
+[world.objects]
+enabled = true
+count = 200
+damping = 0.9
+
+[world.base]
+enabled = true
+center_x = 180.0
+center_y = 300.0
+radius = 36.0
+stockpile_radius = 24.0
+nest_radius = 20.0
+stockpile_offset = 28.0
+nest_offset = -24.0
+
+[world.nursery]
+enabled = true
+deposit_energy_bonus = 8.0
+deposit_fitness_bonus = 3.0
+stockpile_snap_radius = 6.0
+
+[world.nursery_supply]
+enabled = true
+min_nearby_sticks = 8
+replenish_batch = 4
+near_radius = 32.0
+spawn_radius = 20.0
+cooldown_ticks = 22
+
+[world.campfire]
+enabled = true
+count = 8
+spawn_radius = 48.0
+warmth_radius = 14.0
+danger_radius = 4.0
+warmth_energy_bonus = 0.05
+danger_damage = 0.40
+
+[world.water]
+enabled = true
+source_count = 16          # 2x density vs first attempt - distance to nearest water mattered
+spawn_radius_min = 30.0    # closer to base than first attempt (was 54)
+spawn_radius_max = 90.0    # was 108
+source_radius = 7.0
+drink_radius = 4.0
+drink_rate = 26.0
+
+[world.survival]
+enabled = true
+max_health = 100.0
+max_hydration = 100.0
+initial_health_ratio = 1.0
+initial_hydration_ratio = 0.85           # was 0.68, give more starting buffer
+hydration_decay_per_tick = 0.022         # was 0.060, halved for 600x600 (water further)
+dehydration_threshold_ratio = 0.32
+dehydration_damage_per_tick = 0.06       # was 0.14, slightly milder
+fire_health_damage_per_tick = 0.40
+warmth_recovery_per_tick = 0.06
+nest_recovery_per_tick = 0.10
+injured_threshold_ratio = 0.45
+# Realism Phase B #2b (2026-05-30): re-introduce winter COLD pressure that was
+# softened to a non-lethal floor on 2026-05-24. Isolating cold this pass
+# (hunger/heat left at defaults) to find a level that bites without extinction.
+# Trace shows core_temperature avg ~24.6C (clamp floor 20), so threshold 30
+# puts agents meaningfully below it during cold phases.
+cold_temp_threshold = 25.0
+hot_temp_threshold = 45.0
+thermal_damage_per_second = 0.3  # onepot S0 cold25 Goldilocks
+
+[world.tree]
+enabled = true
+count = 320
+spawn_radius_min = 36.0
+spawn_radius_max = 114.0
+trunk_radius = 2.5
+max_integrity = 10.0
+wood_yield = 3
+regrow_ticks = 220
+
+[world.worksite]
+enabled = true
+count = 8
+spawn_radius = 36.0
+interaction_radius = 12.0
+required_sticks = 4
+required_stones = 1
+assembly_rate = 0.20
+shelter_energy_bonus = 0.03
+# Layer 5 R2: 50% Wall, 25% Shelter, 15% Storage, 10% Lookout.
+type_dist_wall    = 0.5
+type_dist_shelter = 0.25
+type_dist_storage = 0.15
+type_dist_lookout = 0.10
+
+[world.intervention]
+enabled = true
+initial_budget = 1.3
+max_budget = 2.6
+recharge_per_tick = 0.020
+stress_decay_per_tick = 0.01
+max_stress = 0.80
+cooldown_ticks = 20
+
+[world.progression]
+enabled = true
+first_fire_stick_threshold = 4
+worksite_unlock_deposit_threshold = 4
+worksite_unlock_stone_threshold = 1
+stone_unlock_deposit_threshold = 3
+heavy_unlock_deposit_threshold = 16
+second_fire_deposit_threshold = 20
+heavy_unlock_stone_threshold = 2
+second_fire_stone_threshold = 3
+stone_unlock_count = 10
+heavy_unlock_count = 4
+unlock_radius_min = 60.0
+unlock_radius_max = 126.0
+event_min_interval_ticks = 20
+event_max_interval_ticks = 80
+
+# Layer 1: explicit day-night cycle (was default but now visible).
+# Reference: TimeOfDayLayer + Layer 1 extensions (phaseSin/Cos /
+# visibilityFactor / ambientTemperatureDelta). DayNightLayer wiring
+# already exists in ProtagonistWorldFactory (line 303-307).
+[world.day_night]
+enabled = true
+day_length_seconds = 200.0
+initial_time = 0.25
+
+# Layer 1: season already enabled, default 2400s = 40min per season.
+# Per FINAL_BLUEPRINT decision D2 (80min/year = 20min/season for fast
+# iteration), set to 1200s. ThermalTickCapability uses ambient_spring
+# / summer / autumn / winter directly (18/28/15/5 deg C).
+[world.season]
+enabled = true
+season_length_seconds = 150.0
+start_time_seconds = 0.0
+
+[world.weather]
+enabled = true
+seed = 0
+average_duration_seconds = 120.0
+min_duration_seconds = 120.0
+max_duration_seconds = 1200.0
+base_prob_clear = 0.70
+base_prob_cloudy = 0.15
+base_prob_rain = 0.10
+base_prob_storm = 0.03
+base_prob_highwind = 0.015
+base_prob_typhoon = 0.005
+
+# Layer 4 (FINAL_BLUEPRINT): in-world reproduction + lifecycle.
+# ENABLED for the 60-gen long run: this is the first run that lets in-world
+# births accumulate and feed the cross-episode NEAT pool via PopulationLayer
+# drainBornChildren() (added in commit bd07564).
+[world.population]
+enabled = true
+reproduction_check_interval = 10.0  # check every 10 sim sec to amortize spawn cost
+reproduction_radius = 8.0
+reproduction_min_energy = 60.0
+reproduction_energy_cost = 25.0
+juvenile_initial_energy = 30.0
+reproduction_cooldown_sec = 90.0
+juvenile_initial_cooldown_sec = 200.0
+elder_extra_mortality_per_sec = 0.0005
+max_living_agents = 200  # founders 89 + headroom for ~110 in-world children
+max_age_protagonist     = 2400.0
+max_age_large_herbivore = 1800.0
+max_age_small_forager   = 900.0
+max_age_apex_predator   = 2400.0
+max_age_pack_hunter     = 1500.0
+max_age_ambush_predator = 1500.0
+max_age_scavenger       = 1200.0
+max_age_omnivore        = 1500.0
+max_age_rabbit          = 600.0
+
+[population.protagonist]
+chop_radius = 12.0
+chop_damage = 30.0
+count = 24
+hidden_dim = 512
+memory_cells = 48
+action_dim = 17
+hunt_radius = 10.0
+hunt_damage = 25.0
+hunt_energy_gain = 6.0
+hunt_cost = 0.02
+[population.background]
+# 7-species ecosystem 1.5x scaled vs v17 baseline.
+# Total background = 65, total agents = 89.
+hidden_dim = 32
+
+[[population.background.species]]
+archetype = "large_herbivore"
+count = 15
+
+[[population.background.species]]
+archetype = "small_forager"
+count = 12
+
+[[population.background.species]]
+archetype = "apex_predator"
+count = 1
+
+[[population.background.species]]
+archetype = "pack_hunter"
+count = 3
+
+[[population.background.species]]
+archetype = "ambush_predator"
+count = 1
+
+[[population.background.species]]
+archetype = "scavenger"
+count = 6
+
+[[population.background.species]]
+archetype = "omnivore"
+count = 12
+
+# Layer 3 (FINAL_BLUEPRINT.md decision D3): rabbit as food-chain bottom.
+# 20 rabbits provide a stable prey base for all predators (apex/pack/
+# ambush/scavenger via meat efficiency).
+[[population.background.species]]
+archetype = "rabbit"
+count = 28
+
+[evolution]
+generations = 20
+episode_ticks = 1800
+episodes_per_generation = 2
+num_threads = 2
+task_template_stable_within_generation = true
+task_context_perception_enabled = true
+protagonist_environment_perception_enabled = true
+protagonist_rhythm_perception_enabled = true
+protagonist_warmth_drive_enabled = true
+# One-pot Phase C (2026-06-01): lock unified A-F bloodline (+11 reserved dims)
+# and enable annealed limited FOV on fire perception.
+protagonist_unified_encoding_enabled = true
+protagonist_fov_enabled = true
+fov_anneal_start_gen = 0.0
+fov_anneal_end_gen = 45.0
+fov_start_half_angle_deg = 180.0
+fov_end_half_angle_deg = 70.0
+fov_occlusion_enabled = true
+task_template_dynamic_weight = false
+task_template_hard_first_generations = 4
+checkpoint_every = 10
+
+# Layer 8 R1 (FINAL_BLUEPRINT.md ?8.1): Lamarckian Hebbian online weight
+# adaptation for background NeatBrain. Off by default; smoke test = on.
+[evolution.lamarckian]
+enabled = true
+learning_rate = 0.0008
+reward_threshold = 0.05
+
+[evolution.neat]
+add_node_rate = 0.04
+add_connection_rate = 0.10
+toggle_connection_rate = 0.02
+add_modulatory_rate = 0.005
+# P1 self-adaptive species threshold: compatibility_threshold is no longer a
+# hand-tuned knob. The background-species NEAT auto-adjusts it every generation
+# toward target_species_count (bounded by the min/max below). The 3.0 initial
+# seed comes from the binary's built-in default; agents should NOT tune it.
+target_species_count = 10
+compatibility_threshold_adjustment_rate = 0.1
+compatibility_threshold_min = 0.5
+compatibility_threshold_max = 10.0
+
+[evolution.selection]
+elite_ratio = 0.20
+tournament_size = 3
+
+[evolution.mutation]
+# P0 self-adaptive mutation: each protagonist genome carries its own mutation
+# step-size (sigma) that co-evolves with its weights (Schwefel/Beyer
+# self-adaptive ES). This replaces the old hand-tuned weight_perturb_sigma /
+# weight_perturb_rate / weight_reset_rate (here) and line_sigma / mutation_boost
+# (under [evolution.me_neat]); agents no longer tune any of them.
+self_adaptive = true
+initial_sigma = 0.10
+sigma_learning_rate = 0.05
+sigma_min = 0.001
+sigma_max = 2.0
+
+[trace]
+enabled = true
+events_enabled = false
+agents_enabled = true
+world_enabled = true
+agent_interval = 20            # was 10; halved sample rate to control 60-gen disk
+world_interval = 20            # was 10; halved sample rate
+# 2026-05-28 disk-budget rollback: was 60 which produced ~90 GB
+# event_trace.jsonl per run (60 gen x 2 ep x ~750 MB each). harmony_check
+# only reads CSVs, not event_trace, so dropping back to 4 gens of trace
+# preserves diagnostic value while staying within the D-044 budget.
+max_generations = 20
+tail_generations = 20
+max_episodes_per_generation = 1
+# 2026-05-28 disk-budget per-file cap (parity with D-044 CSV 200 MB caps).
+# TraceRecorder will close streams that cross this threshold and emit a
+# single LOG_WARN. Safety net against future runs that re-introduce a
+# large `max_generations` value.
+max_bytes_per_file = 209715200  # 200 MB
+# Layer 7 R1: viewer frame JSON dumper for Godot/raylib viewer.
+viewer_frames_enabled = true
+viewer_frame_interval = 80     # was 40; halve frame rate, 60-gen still ~7300 frames
+
+# Layer 5 reward paradigm shift (FINAL_BLUEPRINT.md ?5.4):
+# - drop generic survival_weight 1.0 -> 0.3 (don't reward "didn't die" by itself)
+# - drop food_weight 10.0 -> 3.0 (food only gets meaningful reward via drive penalty)
+# - keep drive_weight=5.0 (homeostatic deltas remain primary signal)
+# - boost worksite_completion_reward 60 -> 150 (build is a high-tier achievement)
+# - boost cooperation/communication (joint_hunt 8 -> 18, signal_co 0.6 -> 1.5)
+# Net effect: agents that "miracle survive" (idle alive) get less reward than
+# those who actually build/reproduce/cooperate.
+[reward]
+drive_weight = 5.0
+outcome_weight = 0.20
+drive_thirst_from_hydration = true
+survival_weight = 1.0                    # was 1.0 (Layer 5 shift)
+food_weight = 6.0                        # was 10.0
+intrinsic_weight = 4.0
+combat_weight = 1.0
+cooperation_weight = 6.0                # was 6.0
+communication_weight = 4.0               # was 4.0
+worksite_proximity_reward = 0.10         # was 0.05
+worksite_completion_reward = 150.0       # was 60.0 (Layer 5: building is core achievement)
+storage_deposit_reward = 1.5             # NEW: paid per resource deposited into completed Storage building
+social_proximity_reward = 0.02
+social_proximity_radius = 6.0
+signal_emit_reward = 0.04
+signal_emit_companion_radius = 12.0
+signal_co_attendance_reward = 1.5        # was 0.6
+signal_co_attendance_radius = 8.0
+signal_co_attendance_window = 40
+joint_hunt_reward = 18.0                 # was 8.0
+joint_hunt_radius = 10.0
+
+[reward.goal_completion]
+chop_tree      = 4.0
+gather_stick   = 1.0
+gather_stone   = 1.0
+build_worksite = 20.0
+craft_weapon   = 8.0
+hunt           = 10.0
+find_water     = 3.0
+find_food      = 2.0
+# L6 R3 throw penalty AB: long_run #10 / 2D BD baseline showed 8-22k
+# throws/gen at 14% accuracy = network spamming throws. -0.05/throw on
+# average attempts ~10000 = -500 fitness/agent/episode is comparable to
+# the worksite_completion reward of 60. Strong enough to teach "be
+# selective".
+throw_attempt  = -0.05
+
+[combat]
+attack_reward = 1.5
+kill_bonus = 8.0
+death_penalty = 4.0
+
+[world.resources.plant_weights]
+grass = 0.5
+browse = 0.3
+fruit = 0.2
+
+# Task templates from v17 (proactive_build, wave_attack, etc.)
+[[evolution.task_templates]]
+name = "solo_hunt_easy"
+weight = 1.0
+difficulty = 1.0
+protagonist_count = 1
+[[evolution.task_templates.background]]
+archetype = "small_forager"
+count = 1
+
+[[evolution.task_templates]]
+name = "solo_hunt_predator"
+weight = 1.0
+difficulty = 1.5
+protagonist_count = 1
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 1
+
+[[evolution.task_templates]]
+name = "group_vs_pack"
+weight = 1.0
+difficulty = 1.5
+protagonist_count = 4
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 3
+
+[[evolution.task_templates]]
+name = "proactive_build"
+weight = 0.7
+difficulty = 2.0
+protagonist_count = 4
+worksite_count = 1
+tree_count = 4
+worksite_completion_reward = 80.0
+must_build_to_survive = true              # NEW: 0 builds at episode end -> penalty
+must_build_penalty = 25.0
+
+[[evolution.task_templates]]
+name = "wave_attack"
+weight = 0.7
+difficulty = 1.8
+protagonist_count = 4
+worksite_count = 1
+worksite_preactivate = true
+shelter_camp_reward = 0.10
+must_build_to_survive = true              # NEW
+must_build_penalty = 20.0
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 5
+
+[[evolution.task_templates]]
+name = "mixed_ecology"
+weight = 1.5
+difficulty = 2.0
+protagonist_count = 8
+[[evolution.task_templates.background]]
+archetype = "small_forager"
+count = 8
+[[evolution.task_templates.background]]
+archetype = "pack_hunter"
+count = 6
+[[evolution.task_templates.background]]
+archetype = "apex_predator"
+count = 2
+[[evolution.task_templates.background]]
+archetype = "ambush_predator"
+count = 2
+[[evolution.task_templates.background]]
+archetype = "scavenger"
+count = 4
+[[evolution.task_templates.background]]
+archetype = "omnivore"
+count = 4
+[[evolution.task_templates.background]]
+archetype = "large_herbivore"
+count = 4
+
+# ME-NEAT 3D BD from v17.
+[evolution.me_neat]
+# 2D BD AB: revert v17 hunt axis to verify 3D BD (8x8x3=192 cells) caused
+# the curse-of-dimensionality coverage collapse seen in long_run_60gen
+# (`tmp/layer1/long_run_60gen.toml`, me_cov 0.5-3% / 192). v16 ran 25
+# cells (5x5x1) and reached me_cov 20% = 5 cells by gen 30. This config
+# matches v16's archive geometry (chops_bin=5, workcraft_bin=1, max_bins=5)
+# while keeping reproduction + Lamarckian + must_build all-on.
+enabled = true
+chops_bin_size = 5
+workcraft_bin_size = 1
+max_bins = 5
+hunt_bin_size = 1
+hunt_max_bins = 5
+cvt_enabled = true
+cvt_num_centroids = 96
+cvt_samples_per_centroid = 100
+cvt_kmeans_iters = 32
+lifetime_archive_enabled = true
+non_elite_weight = 0.05
+archive_breeding = true
+init_generations = 4
+# line_sigma / mutation_boost removed: under [evolution.mutation].self_adaptive
+# the line-crossover spread and per-genome step-size are driven by each genome's
+# own evolved sigma, so these knobs no longer apply.
+
+
+[compute]
+agent_decision_threads = 1
+protagonist_batched_dense_enabled = true
+protagonist_dense_gpu_enabled = true
+
+
+
+
+
+
+
+
+
+
+
+
+[world.craft]
+require_stone = false
+require_in_base = false
+respect_worksite_reservation = false
+activation_threshold = 0.3

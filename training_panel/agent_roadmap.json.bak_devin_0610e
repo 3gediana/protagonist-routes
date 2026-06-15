@@ -1,0 +1,347 @@
+{
+  "version": 1,
+  "active": false,
+  "objective": "把 PE 和 DP 推向蓝图终态：PE 种群在永续世界涌现多样真实行为（me_cov≥77,qd≥250K）；DP 原始人理解世界、因果链连贯使用（unlocks≥8,score≥0.4,understanding≥0.15）。",
+  "goals": [
+    {
+      "id": "g1",
+      "title": "PE-1: 多样性扩展 (me_cov)",
+      "detail": "从 gen379 基线 me_cov=39/96(41%) 提升到 ≥48/96(50%)。当前 pe-004743-5 warm-resume 续跑中。",
+      "project": "pe",
+      "order": 0,
+      "owner": "agent",
+      "status": "blocked",
+      "progress": 0.268,
+      "acceptance": [
+        {
+          "metric": "me_cov",
+          "op": ">=",
+          "target": 48
+        }
+      ],
+      "stall": {
+        "checks": 8,
+        "best": 0.083
+      },
+      "baseline": {
+        "me_cov": null
+      },
+      "last_clauses": [
+        {
+          "metric": "me_cov",
+          "op": ">=",
+          "target": 48.0,
+          "value": 12.867,
+          "ok": false,
+          "near": false,
+          "detail": "panel_panel_panel_fresh96_selfadapt_50028_ab_reward_worksite_proximity_reward_1.0_142038_20260610-142038.stdout.log:me_cov.recent=12.867 (最优/8个run)",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "me_cov": [
+          12.867,
+          12.867,
+          12.867,
+          12.867,
+          12.867,
+          12.867,
+          12.867,
+          12.867,
+          12.867,
+          12.867
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "g2",
+      "title": "PE-2: 质量多样性 (qd)",
+      "detail": "从 gen379 基线 qd=146K 提升到 ≥180K，每格精英更强。",
+      "project": "pe",
+      "order": 1,
+      "owner": "agent",
+      "status": "blocked",
+      "progress": 0.263,
+      "acceptance": [
+        {
+          "metric": "qd",
+          "op": ">=",
+          "target": 180000
+        }
+      ],
+      "stall": {
+        "checks": 8,
+        "best": 0.01
+      },
+      "baseline": {
+        "qd": null
+      },
+      "last_clauses": [
+        {
+          "metric": "qd",
+          "op": ">=",
+          "target": 180000.0,
+          "value": 47344.562,
+          "ok": false,
+          "near": false,
+          "detail": "panel_panel_panel_panel_fresh96_selfadapt_50028_ab_reward_worksite_proximity_reward_1.0_ab_reward_cooperation_weight_18_180859_20260610-180859.stdout.log:qd.recent=47344.562 (最优/8个run)",
+          "trend": "up"
+        }
+      ],
+      "value_history": {
+        "qd": [
+          37741.45,
+          37741.45,
+          40021.08,
+          40021.08,
+          40518.282,
+          40518.282,
+          42554.991,
+          42554.991,
+          47344.562,
+          47344.562
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "g3",
+      "title": "PE-3: 平均适应度 (avg)",
+      "detail": "从 gen379 基线 avg=2100 提升到 ≥2800，种群整体变强。",
+      "project": "pe",
+      "order": 2,
+      "owner": "agent",
+      "status": "blocked",
+      "progress": 0.654,
+      "acceptance": [
+        {
+          "metric": "avg",
+          "op": ">=",
+          "target": 2800
+        }
+      ],
+      "stall": {
+        "checks": 8,
+        "best": 0.068
+      },
+      "baseline": {
+        "avg": null
+      },
+      "last_clauses": [
+        {
+          "metric": "avg",
+          "op": ">=",
+          "target": 2800.0,
+          "value": 1830.465,
+          "ok": false,
+          "near": false,
+          "detail": "panel_panel_panel_panel_fresh96_selfadapt_50028_ab_reward_worksite_proximity_reward_1.0_ab_reward_cooperation_weight_18_180859_20260610-180859.stdout.log:avg.recent=1830.465 (最优/8个run)",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "avg": [
+          1756.845,
+          1745.938,
+          1745.938,
+          1745.938,
+          1716.462,
+          1716.462,
+          1827.031,
+          1827.031,
+          1830.465,
+          1830.465
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "g4",
+      "title": "PE-4: 最佳个体 (best)",
+      "detail": "从 gen379 基线 best=6368 提升到 ≥7500。",
+      "project": "pe",
+      "order": 3,
+      "owner": "agent",
+      "status": "met",
+      "progress": 1.0,
+      "acceptance": [
+        {
+          "metric": "best",
+          "op": ">=",
+          "target": 7500
+        }
+      ],
+      "stall": {
+        "checks": 0,
+        "best": 1.0
+      },
+      "baseline": {
+        "best": null
+      },
+      "last_clauses": [
+        {
+          "metric": "best",
+          "op": ">=",
+          "target": 7500.0,
+          "value": 7770.655,
+          "ok": true,
+          "near": false,
+          "detail": "panel_panel_panel_panel_fresh96_selfadapt_50028_ab_reward_worksite_proximity_reward_1.0_ab_reward_cooperation_weight_18_180859_20260610-180859.stdout.log:best.recent=7770.655 (最优/8个run)",
+          "trend": "up"
+        }
+      ],
+      "value_history": {
+        "best": [
+          6616.979,
+          6688.624,
+          6688.624,
+          6688.624,
+          6496.448,
+          6496.448,
+          7020.049,
+          7020.049,
+          7770.655,
+          7770.655
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "g5",
+      "title": "DP-1: 综合表现 (score+unlocks)",
+      "detail": "从 best score=0.32/unlocks=4 提升到 score≥0.4/unlocks≥6。需启动新 DP PPO 训练。",
+      "project": "dp",
+      "order": 4,
+      "owner": "agent",
+      "status": "blocked",
+      "progress": 0.783,
+      "acceptance": [
+        {
+          "metric": "score",
+          "op": ">=",
+          "target": 0.4
+        },
+        {
+          "metric": "unlocks",
+          "op": ">=",
+          "target": 6
+        }
+      ],
+      "stall": {
+        "checks": 8,
+        "best": 0.754
+      },
+      "baseline": {
+        "score": 0.335,
+        "unlocks": 4.019
+      },
+      "last_clauses": [
+        {
+          "metric": "score",
+          "op": ">=",
+          "target": 0.4,
+          "value": 0.348,
+          "ok": false,
+          "near": false,
+          "detail": "v5_seed7_20260610-163329.jsonl:score.recent=0.348 (最优/8个run)",
+          "trend": "flat"
+        },
+        {
+          "metric": "unlocks",
+          "op": ">=",
+          "target": 6.0,
+          "value": 4.181,
+          "ok": false,
+          "near": false,
+          "detail": "v5resume_seed99_20260610-182007.jsonl:unlocks.recent=4.181 (最优/8个run)",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "score": [
+          0.348,
+          0.348,
+          0.348,
+          0.348,
+          0.348,
+          0.348,
+          0.348,
+          0.348,
+          0.348,
+          0.348
+        ],
+        "unlocks": [
+          4.181,
+          4.181,
+          4.181,
+          4.181,
+          4.181,
+          4.181,
+          4.181,
+          4.181,
+          4.181,
+          4.181
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "g6",
+      "title": "DP-2: 世界理解验证 (understanding)",
+      "detail": "反事实感知消融验证真理解。当前 understanding_dp≈0.06，需提升到 ≥0.15。",
+      "project": "dp",
+      "order": 5,
+      "owner": "agent",
+      "status": "blocked",
+      "progress": 0.407,
+      "acceptance": [
+        {
+          "metric": "understanding_dp",
+          "op": ">=",
+          "target": 0.15
+        }
+      ],
+      "stall": {
+        "checks": 8,
+        "best": 0.407
+      },
+      "baseline": {
+        "understanding_dp": 0.061
+      },
+      "last_clauses": [
+        {
+          "metric": "understanding_dp",
+          "op": ">=",
+          "target": 0.15,
+          "value": 0.061,
+          "ok": false,
+          "near": false,
+          "detail": "dp_cf_cf_20260609-114144:understanding=0.061",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "understanding_dp": [
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    }
+  ],
+  "hold_window": 2,
+  "stall_after": 8,
+  "stall_policy": "skip",
+  "all_met_streak": 2,
+  "completed_at": 1781096831.9138446,
+  "updated_at": 1781096831.9138446
+}

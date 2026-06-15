@@ -1,0 +1,478 @@
+#include "core/config/Config.h"
+#include "core/logging/Logger.h"
+#include "runtime/ProtagonistEcologyRuntime.h"
+
+#include "brain/ProtagonistGenome.h"
+#include "brain/ProtagonistBrain.h"
+#include "core/types/Aliases.h"
+#include "core/types/Vec2.h"
+#include "core/agent/Agent.h"
+#include "core/world/World2D.h"
+#include "core/world/layers/AgentLayer.h"
+#include "world/BaseLayer.h"
+#include "world/CampfireLayer.h"
+#include "perception/TerritorySocialPerception.h"
+#include "perception/WorldHistoryPerception.h"
+#include "capability/SocialActionCapability.h"
+
+#include <array>
+#include <cmath>
+#include <memory>
+#include <cstddef>
+#include <exception>
+#include <iostream>
+#include <random>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+
+namespace {
+
+struct CliArgs {
+    std::string config_path = "configs/protagonist_ecology_bootstrap.toml";
+    bool help = false;
+    bool kin_selftest = false;
+    bool social_selftest = false;
+    bool action_selftest = false;
+};
+
+CliArgs parseArgs(int argc, char** argv) {
+    CliArgs args;
+    for (int i = 1; i < argc; ++i) {
+        std::string_view a = argv[i];
+        if ((a == "-h" || a == "--help")) {
+            args.help = true;
+        } else if (a == "--config" && i + 1 < argc) {
+            args.config_path = argv[++i];
+        } else if (a == "--kin-selftest") {
+            args.kin_selftest = true;
+        } else if (a == "--social-selftest") {
+            args.social_selftest = true;
+        } else if (a == "--action-selftest") {
+            args.action_selftest = true;
+        } else {
+            std::cerr << "Unknown argument: " << a << "\n";
+            args.help = true;
+        }
+    }
+    return args;
+}
+
+void printUsage(std::ostream& os) {
+    os << "Usage:\n"
+       << "  neural-eco-protagonist [--config <path>]\n"
+       << "  neural-eco-protagonist --kin-selftest\n"
+       << "  neural-eco-protagonist --social-selftest\n"
+       << "  neural-eco-protagonist --action-selftest\n";
+}
+
+// Phase D Kin self-test: verifies the genetic-relatedness measure used by
+// KinPerception. A near-clone of a parent genome must read as highly related;
+// an independent random genome must read as ~unrelated. No world, no CUDA.
+int runKinSelftest() {
+    using neuro::GenomeId;
+    using neuro::routes::protagonist::ProtagonistBrain;
+    using neuro::routes::protagonist::ProtagonistGenome;
+
+    std::mt19937 rng(12345u);
+    constexpr std::size_t kIn = 40, kHid = 24, kCells = 8, kSlots = 16, kHeads = 2, kAct = 17;
+
+    auto parent = ProtagonistGenome::random(GenomeId{1}, kIn, kHid, kCells, kSlots, kHeads, kAct, rng);
+
+    // near-clone = parent + one tiny mutation step (mirrors reproduce()).
+    ProtagonistGenome near_clone(*parent);
+    near_clone.setId(GenomeId{2});
+    {
+        std::normal_distribution<float> jitter(0.0f, 0.01f);
+        for (float& w : near_clone.inputHiddenWeights()) {
+            w += jitter(rng);
+        }
+    }
+
+    // unrelated = an independent random genome.
+    auto unrelated = ProtagonistGenome::random(GenomeId{3}, kIn, kHid, kCells, kSlots, kHeads, kAct, rng);
+
+    ProtagonistBrain brain_parent(*parent);
+    ProtagonistBrain brain_clone(near_clone);
+    ProtagonistBrain brain_unrelated(*unrelated);
+
+    auto cosine = [](std::span<const float> a, std::span<const float> b) {
+        float dot = 0.0f, na = 0.0f, nb = 0.0f;
+        const std::size_t n = std::min(a.size(), b.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            dot += a[i] * b[i];
+            na += a[i] * a[i];
+            nb += b[i] * b[i];
+        }
+        if (na <= 1.0e-12f || nb <= 1.0e-12f) {
+            return 0.0f;
+        }
+        return dot / std::sqrt(na * nb);
+    };
+
+    const float self_sim = cosine(brain_parent.geneticFingerprint(), brain_parent.geneticFingerprint());
+    const float kin = cosine(brain_parent.geneticFingerprint(), brain_clone.geneticFingerprint());
+    const float stranger = cosine(brain_parent.geneticFingerprint(), brain_unrelated.geneticFingerprint());
+
+    std::cout << "[kin-selftest] fingerprint dim       = " << brain_parent.geneticFingerprint().size() << "\n";
+    std::cout << "[kin-selftest] self-similarity       = " << self_sim << "  (expect ~1.0)\n";
+    std::cout << "[kin-selftest] near-clone relatedness = " << kin << "  (expect > 0.9)\n";
+    std::cout << "[kin-selftest] unrelated relatedness  = " << stranger << "  (expect |.| < 0.3)\n";
+
+    const bool pass = self_sim > 0.99f && kin > 0.9f && std::fabs(stranger) < 0.3f;
+    std::cout << (pass ? "[kin-selftest] OVERALL PASS\n" : "[kin-selftest] OVERALL FAIL\n");
+    return pass ? 0 : 1;
+}
+
+// Helper: build a real Agent backed by a ProtagonistBrain from `genome`.
+std::unique_ptr<neuro::Agent> makeSocialAgent(
+        neuro::AgentId id, const neuro::routes::protagonist::ProtagonistGenome& genome,
+        neuro::Vec2 pos, float energy) {
+    using neuro::routes::protagonist::ProtagonistBrain;
+    auto brain = std::make_unique<ProtagonistBrain>(genome);
+    auto agent = std::make_unique<neuro::Agent>(id, genome.id(), std::move(brain), pos, energy);
+    agent->setSpeciesId(neuro::SpeciesId{1});
+    agent->setPredator(false);
+    return agent;
+}
+
+// Phase E/F social self-test: drives the REAL TerritorySocialPerception and
+// WorldHistoryPerception against a real World2D with real layers + agents.
+// Proves the channels read real sim state (not zeros): territory membership,
+// dominance rank, kin-affinity vs rival-threat, structure-development and a
+// rising world-age clock.
+int runSocialSelftest() {
+    using namespace neuro;
+    using namespace neuro::routes::protagonist;
+
+    std::mt19937 rng(2026u);
+    constexpr std::size_t kIn = 40, kHid = 24, kCells = 8, kSlots = 16, kHeads = 2, kAct = 17;
+    constexpr float kSenseRadius = 24.0f;
+    const Vec2 kBaseCenter{50.0f, 50.0f};
+
+    // Genomes: parent (self), near-clone (kin), unrelated (rival).
+    auto parent = ProtagonistGenome::random(GenomeId{1}, kIn, kHid, kCells, kSlots, kHeads, kAct, rng);
+    ProtagonistGenome kin(*parent);
+    kin.setId(GenomeId{2});
+    {
+        std::normal_distribution<float> jitter(0.0f, 0.01f);
+        for (float& w : kin.inputHiddenWeights()) w += jitter(rng);
+    }
+    auto unrelated = ProtagonistGenome::random(GenomeId{3}, kIn, kHid, kCells, kSlots, kHeads, kAct, rng);
+
+    bool pass = true;
+
+    // ---- Phase E: Territory / dominance / ally / rival --------------------
+    {
+        World2D world(WorldId{1}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+
+        // self high-energy at base center; weaker kin nearby; weaker non-kin (rival) nearby.
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, kBaseCenter, 100.0f), world);
+        agents->addAgent(makeSocialAgent(AgentId{2}, kin, Vec2{53.0f, 50.0f}, 40.0f), world);
+        agents->addAgent(makeSocialAgent(AgentId{3}, *unrelated, Vec2{50.0f, 54.0f}, 60.0f), world);
+        const Agent* self = agents->agents().front();  // first added = self
+
+        std::array<float, TerritorySocialPerception::kDim> e{};
+        TerritorySocialPerception(kSenseRadius).sense(*self, world, e);
+
+        std::cout << "[social-selftest] E in_base        = " << e[0] << "  (expect 1)\n";
+        std::cout << "[social-selftest] E dominance_rank = " << e[1] << "  (expect ~1, self strongest)\n";
+        std::cout << "[social-selftest] E ally_affinity  = " << e[2] << "  (expect >0.9, nearest is kin)\n";
+        std::cout << "[social-selftest] E rival_threat   = " << e[3] << "  (expect 0<t<0.6 from non-kin)\n";
+        const bool e_ok = e[0] > 0.99f && e[1] > 0.99f && e[2] > 0.9f && e[3] > 0.02f && e[3] < 0.6f;
+        pass = pass && e_ok;
+        std::cout << (e_ok ? "[social-selftest] E PASS\n" : "[social-selftest] E FAIL\n");
+    }
+
+    // ---- Phase F.dev: development density rises with nearby structures ----
+    float dev_base_only = 0.0f;
+    float dev_with_fire = 0.0f;
+    {
+        // base-only world: self in base -> development from base footprint alone.
+        World2D w0(WorldId{2}, Vec2{100.0f, 100.0f});
+        w0.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto self0 = makeSocialAgent(AgentId{9}, *parent, kBaseCenter, 100.0f);
+        std::array<float, WorldHistoryPerception::kDim> f0{};
+        WorldHistoryPerception(kSenseRadius).sense(*self0, w0, f0);
+        dev_base_only = f0[0];
+
+        // base + campfires near self -> strictly more development.
+        World2D w1(WorldId{3}, Vec2{100.0f, 100.0f});
+        w1.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        w1.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        w1.addLayer(std::make_unique<CampfireLayer>(2, 8.0f, 6.0f, 4.0f, 8.0f, -8.0f, 7u));
+        auto self1 = makeSocialAgent(AgentId{10}, *parent, kBaseCenter, 100.0f);
+        std::array<float, WorldHistoryPerception::kDim> f1{};
+        WorldHistoryPerception(kSenseRadius).sense(*self1, w1, f1);
+        dev_with_fire = f1[0];
+
+        std::cout << "[social-selftest] F dev base-only  = " << dev_base_only << "  (expect >0)\n";
+        std::cout << "[social-selftest] F dev base+fires = " << dev_with_fire << "  (expect > base-only)\n";
+    }
+    const bool dev_ok = dev_base_only > 0.0f && dev_with_fire > dev_base_only && dev_with_fire <= 1.0f;
+    pass = pass && dev_ok;
+    std::cout << (dev_ok ? "[social-selftest] F.dev PASS\n" : "[social-selftest] F.dev FAIL\n");
+
+    // ---- Phase F.age: world-age signal rises monotonically with the clock --
+    {
+        World2D wa(WorldId{4}, Vec2{100.0f, 100.0f});
+        wa.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto selfa = makeSocialAgent(AgentId{11}, *parent, kBaseCenter, 100.0f);
+        WorldHistoryPerception wh(kSenseRadius);
+
+        std::array<float, WorldHistoryPerception::kDim> fa0{};
+        wh.sense(*selfa, wa, fa0);                     // t = 0
+        for (int i = 0; i < 6; ++i) wa.tick(100.0f);   // advance clock ~600s
+        std::array<float, WorldHistoryPerception::kDim> fa1{};
+        wh.sense(*selfa, wa, fa1);                     // t > 0
+
+        std::cout << "[social-selftest] F age t=0        = " << fa0[1] << "  (expect ~0)\n";
+        std::cout << "[social-selftest] F age t>0        = " << fa1[1] << "  (expect >0, <1)\n";
+        const bool age_ok = fa0[1] < 0.05f && fa1[1] > fa0[1] && fa1[1] < 1.0f;
+        pass = pass && age_ok;
+        std::cout << (age_ok ? "[social-selftest] F.age PASS\n" : "[social-selftest] F.age FAIL\n");
+    }
+
+    std::cout << (pass ? "[social-selftest] OVERALL PASS\n" : "[social-selftest] OVERALL FAIL\n");
+    return pass ? 0 : 1;
+}
+
+// Phase D/E action self-test: drives the REAL SocialActionCapability end-to-end
+// against a real World2D + agents. Proves the reserved action ports apply real
+// effects (energy transfer to kin, displacement of intruders) with proper
+// causal gates, and that mark-territory is an honest no-op.
+int runActionSelftest() {
+    using namespace neuro;
+    using namespace neuro::routes::protagonist;
+
+    std::mt19937 rng(4242u);
+    constexpr std::size_t kIn = 40, kHid = 24, kCells = 8, kSlots = 16, kHeads = 2, kAct = 17;
+    constexpr float kSenseRadius = 24.0f;
+    const Vec2 kBaseCenter{50.0f, 50.0f};
+    constexpr float kEps = 1.0e-3f;
+
+    auto parent = ProtagonistGenome::random(GenomeId{1}, kIn, kHid, kCells, kSlots, kHeads, kAct, rng);
+    ProtagonistGenome kin(*parent);
+    kin.setId(GenomeId{2});
+    {
+        std::normal_distribution<float> jitter(0.0f, 0.01f);
+        for (float& w : kin.inputHiddenWeights()) w += jitter(rng);
+    }
+    auto unrelated = ProtagonistGenome::random(GenomeId{3}, kIn, kHid, kCells, kSlots, kHeads, kAct, rng);
+
+    // outputs layout: [0]=feed, [1]=mark, [2]=evict.
+    const std::array<float, 3> kFeedOn{1.0f, 0.0f, 0.0f};
+    const std::array<float, 3> kMarkOn{0.0f, 1.0f, 0.0f};
+    const std::array<float, 3> kEvictOn{0.0f, 0.0f, 1.0f};
+    auto runStep = [](SocialActionCapability& cap, AgentLayer& agents, World2D& world,
+                      const std::array<float, 3>& out) {
+        Agent* self = agents.agents().front();  // first added = self
+        cap.apply(*self, world, std::span<const float>(out.data(), out.size()), 1.0f);
+    };
+
+    bool pass = true;
+
+    // ---- D.feed: well-fed self shares energy with the nearest kin ----------
+    {
+        SocialActionCapability::resetCounters();
+        World2D world(WorldId{1}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, kBaseCenter, 100.0f), world);
+        agents->addAgent(makeSocialAgent(AgentId{2}, kin, Vec2{53.0f, 50.0f}, 40.0f), world);
+        SocialActionCapability cap(3, kSenseRadius);
+        const float self_before = agents->agents()[0]->energy();
+        const float kin_before = agents->agents()[1]->energy();
+        runStep(cap, *agents, world, kFeedOn);
+        const float self_after = agents->agents()[0]->energy();
+        const float kin_after = agents->agents()[1]->energy();
+        const float moved = self_before - self_after;
+        std::cout << "[action-selftest] D.feed self " << self_before << "->" << self_after
+                  << ", kin " << kin_before << "->" << kin_after
+                  << "  (expect self down, kin up by same)\n";
+        const bool ok = SocialActionCapability::feed_successes.load() == 1 && moved > kEps &&
+                        std::fabs((kin_after - kin_before) - moved) < kEps;
+        pass = pass && ok;
+        std::cout << (ok ? "[action-selftest] D.feed PASS\n" : "[action-selftest] D.feed FAIL\n");
+    }
+
+    // ---- D.feed negative: too little surplus -> no transfer ----------------
+    {
+        SocialActionCapability::resetCounters();
+        World2D world(WorldId{2}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, kBaseCenter, 30.0f), world);  // < min surplus
+        agents->addAgent(makeSocialAgent(AgentId{2}, kin, Vec2{53.0f, 50.0f}, 40.0f), world);
+        SocialActionCapability cap(3, kSenseRadius);
+        const float self_before = agents->agents()[0]->energy();
+        const float kin_before = agents->agents()[1]->energy();
+        runStep(cap, *agents, world, kFeedOn);
+        const bool ok = SocialActionCapability::feed_successes.load() == 0 &&
+                        std::fabs(agents->agents()[0]->energy() - self_before) < kEps &&
+                        std::fabs(agents->agents()[1]->energy() - kin_before) < kEps;
+        pass = pass && ok;
+        std::cout << "[action-selftest] D.feed (low surplus) successes="
+                  << SocialActionCapability::feed_successes.load() << "  (expect 0)\n";
+        std::cout << (ok ? "[action-selftest] D.feed-neg PASS\n" : "[action-selftest] D.feed-neg FAIL\n");
+    }
+
+    // ---- D.feed negative: only a non-kin nearby -> no transfer -------------
+    {
+        SocialActionCapability::resetCounters();
+        World2D world(WorldId{3}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, kBaseCenter, 100.0f), world);
+        agents->addAgent(makeSocialAgent(AgentId{2}, *unrelated, Vec2{53.0f, 50.0f}, 40.0f), world);
+        SocialActionCapability cap(3, kSenseRadius);
+        const float other_before = agents->agents()[1]->energy();
+        runStep(cap, *agents, world, kFeedOn);
+        const bool ok = SocialActionCapability::feed_successes.load() == 0 &&
+                        std::fabs(agents->agents()[1]->energy() - other_before) < kEps;
+        pass = pass && ok;
+        std::cout << "[action-selftest] D.feed (non-kin only) successes="
+                  << SocialActionCapability::feed_successes.load() << "  (expect 0)\n";
+        std::cout << (ok ? "[action-selftest] D.feed-nonkin PASS\n" : "[action-selftest] D.feed-nonkin FAIL\n");
+    }
+
+    // ---- E.evict: non-kin intruder inside my base gets pushed outward ------
+    {
+        SocialActionCapability::resetCounters();
+        World2D world(WorldId{4}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, kBaseCenter, 100.0f), world);
+        agents->addAgent(makeSocialAgent(AgentId{2}, *unrelated, Vec2{52.0f, 50.0f}, 60.0f), world);
+        SocialActionCapability cap(3, kSenseRadius);
+        const float d_before = Vec2::distance(agents->agents()[1]->position(), kBaseCenter);
+        runStep(cap, *agents, world, kEvictOn);
+        const float d_after = Vec2::distance(agents->agents()[1]->position(), kBaseCenter);
+        std::cout << "[action-selftest] E.evict intruder dist " << d_before << "->" << d_after
+                  << "  (expect pushed outward)\n";
+        const bool ok = SocialActionCapability::evict_successes.load() == 1 && d_after > d_before + kEps;
+        pass = pass && ok;
+        std::cout << (ok ? "[action-selftest] E.evict PASS\n" : "[action-selftest] E.evict FAIL\n");
+    }
+
+    // ---- E.evict negative: a kin inside the base is NOT evicted ------------
+    {
+        SocialActionCapability::resetCounters();
+        World2D world(WorldId{5}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, kBaseCenter, 100.0f), world);
+        agents->addAgent(makeSocialAgent(AgentId{2}, kin, Vec2{52.0f, 50.0f}, 60.0f), world);
+        const Vec2 before = agents->agents()[1]->position();
+        SocialActionCapability cap(3, kSenseRadius);
+        runStep(cap, *agents, world, kEvictOn);
+        const Vec2 after = agents->agents()[1]->position();
+        const bool ok = SocialActionCapability::evict_successes.load() == 0 &&
+                        Vec2::distanceSquared(before, after) < kEps;
+        pass = pass && ok;
+        std::cout << "[action-selftest] E.evict (kin) successes="
+                  << SocialActionCapability::evict_successes.load() << "  (expect 0, kin spared)\n";
+        std::cout << (ok ? "[action-selftest] E.evict-kin PASS\n" : "[action-selftest] E.evict-kin FAIL\n");
+    }
+
+    // ---- E.evict negative: self outside its base cannot evict --------------
+    {
+        SocialActionCapability::resetCounters();
+        World2D world(WorldId{6}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, Vec2{90.0f, 90.0f}, 100.0f), world);  // far outside base
+        agents->addAgent(makeSocialAgent(AgentId{2}, *unrelated, Vec2{52.0f, 50.0f}, 60.0f), world);
+        const Vec2 before = agents->agents()[1]->position();
+        SocialActionCapability cap(3, kSenseRadius);
+        runStep(cap, *agents, world, kEvictOn);
+        const bool ok = SocialActionCapability::evict_successes.load() == 0 &&
+                        Vec2::distanceSquared(before, agents->agents()[1]->position()) < kEps;
+        pass = pass && ok;
+        std::cout << "[action-selftest] E.evict (self outside base) successes="
+                  << SocialActionCapability::evict_successes.load() << "  (expect 0)\n";
+        std::cout << (ok ? "[action-selftest] E.evict-outside PASS\n" : "[action-selftest] E.evict-outside FAIL\n");
+    }
+
+    // ---- E.mark: honest no-op (no persistent territory store) --------------
+    {
+        SocialActionCapability::resetCounters();
+        World2D world(WorldId{7}, Vec2{100.0f, 100.0f});
+        world.addLayer(std::make_unique<AgentLayer>(0.0f, 0.0f, 1));
+        world.addLayer(std::make_unique<BaseLayer>(kBaseCenter, 20.0f, 6.0f, 6.0f, 8.0f, -8.0f));
+        auto* agents = world.getLayer<AgentLayer>();
+        agents->addAgent(makeSocialAgent(AgentId{1}, *parent, kBaseCenter, 100.0f), world);
+        agents->addAgent(makeSocialAgent(AgentId{2}, kin, Vec2{53.0f, 50.0f}, 40.0f), world);
+        const float self_before = agents->agents()[0]->energy();
+        const float other_before = agents->agents()[1]->energy();
+        const Vec2 other_pos_before = agents->agents()[1]->position();
+        SocialActionCapability cap(3, kSenseRadius);
+        runStep(cap, *agents, world, kMarkOn);
+        const bool ok = std::fabs(agents->agents()[0]->energy() - self_before) < kEps &&
+                        std::fabs(agents->agents()[1]->energy() - other_before) < kEps &&
+                        Vec2::distanceSquared(other_pos_before, agents->agents()[1]->position()) < kEps &&
+                        SocialActionCapability::feed_successes.load() == 0 &&
+                        SocialActionCapability::evict_successes.load() == 0;
+        pass = pass && ok;
+        std::cout << "[action-selftest] E.mark is an HONEST no-op (no territory store): nothing changed\n";
+        std::cout << (ok ? "[action-selftest] E.mark PASS\n" : "[action-selftest] E.mark FAIL\n");
+    }
+
+    std::cout << (pass ? "[action-selftest] OVERALL PASS\n" : "[action-selftest] OVERALL FAIL\n");
+    return pass ? 0 : 1;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    const CliArgs args = parseArgs(argc, argv);
+    if (args.help) {
+        printUsage(std::cout);
+        return 0;
+    }
+    if (args.kin_selftest) {
+        return runKinSelftest();
+    }
+    if (args.social_selftest) {
+        return runSocialSelftest();
+    }
+    if (args.action_selftest) {
+        return runActionSelftest();
+    }
+
+    neuro::config::Config config;
+    try {
+        config = neuro::config::Config::loadFromFile(args.config_path);
+    } catch (const std::exception& e) {
+        std::cerr << "Config error: " << e.what() << "\n";
+        return 2;
+    }
+
+    neuro::log::Options log_opts;
+    log_opts.level = config.getOr<std::string>("runtime.log_level", "info");
+    log_opts.console = true;
+    neuro::log::initialize(log_opts);
+
+    int rc = 0;
+    try {
+        neuro::routes::protagonist::ProtagonistEcologyRuntime runtime(std::move(config));
+        runtime.initialize();
+        rc = runtime.run();
+    } catch (const std::exception& e) {
+        LOG_CRITICAL("Unhandled exception: {}", e.what());
+        rc = 1;
+    }
+
+    neuro::log::shutdown();
+    return rc;
+}

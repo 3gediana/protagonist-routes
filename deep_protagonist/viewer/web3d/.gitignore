@@ -1,0 +1,8 @@
+# 3D model asset packs (Quaternius/Kenney). Large binaries kept out of git, same
+# as the source packs they are copied from. Repopulate before serving the viewer:
+#   res_nature\*     -> assets\nature\        (protagonist_ecology\viewer\godot_demo)
+#   res_animals\*    -> assets\animals\        (protagonist_ecology\viewer\godot_demo)
+#   res_characters\* -> assets\characters\     (protagonist_ecology\viewer\godot_demo)
+#   third_party\assets\quaternius\Animated_Men_Pack\DLptRuewTn_DLptRuewTn.glb
+#     -> assets\Animated_Men_Pack\   (the protagonist base-human model)
+assets/

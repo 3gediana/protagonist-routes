@@ -1,0 +1,71 @@
+# deep_protagonist · default config
+#
+# Stage S0 - only resource budget and bookkeeping live here.
+# Training / world / model parameters are added in later stages.
+
+[project]
+name        = "deep_protagonist"
+version     = "0.0.1"
+stage       = "S0"
+description = "Single super-agent trained with PPO in a real 3D world"
+
+# ----------------------------------------------------------------------------
+# Resource budget (locked by user 2026-05-24)
+# ----------------------------------------------------------------------------
+[cpu]
+parallel_envs    = 28      # how many worlds simulate in parallel
+usage_target_pct = 80      # cap CPU utilization
+
+[gpu]
+device_index     = 0
+vram_budget_mb   = 5120    # what training should aim to use
+vram_max_mb      = 7168    # hard ceiling, alert above this
+allow_mixed_precision = true
+
+[ram]
+usage_target_gb  = 26
+
+# ----------------------------------------------------------------------------
+# Checkpoint policy
+# ----------------------------------------------------------------------------
+[checkpoint]
+interval_minutes      = 5
+interval_steps        = 100000
+keep_recent           = 10
+keep_best             = 3
+save_on_signal        = true       # Ctrl+C triggers a final save
+output_dir            = "checkpoints"
+
+# ----------------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------------
+[logging]
+level                 = "info"    # trace / debug / info / warn / error
+log_dir               = "logs"
+keep_recent_logs      = 20
+
+# ----------------------------------------------------------------------------
+# Training (filled in starting from S2)
+# ----------------------------------------------------------------------------
+[train]
+# placeholders - S0 does not train
+enabled = false
+
+# ----------------------------------------------------------------------------
+# World (S2.1: 1024m heightmap + 6 biomes + rivers + caves)
+# ----------------------------------------------------------------------------
+[world]
+enabled              = true
+seed                 = 12345
+# 256x256 cells * 4m/cell = 1024m x 1024m world (mesh complexity stays small)
+heightmap_cells_x    = 256
+heightmap_cells_y    = 256
+cell_scale           = 4.0     # world meters per heightmap cell
+# Terrain shape (fractal noise)
+max_height           = 120.0   # meters - real relief: ~90m summits over a 1km world (S5 world overhaul)
+terrain_frequency    = 0.0015  # smaller = bigger features
+terrain_octaves      = 6
+terrain_persistence  = 0.5
+# Caves and rivers
+cave_count           = 6
+river_count          = 3

@@ -1,0 +1,2321 @@
+﻿#include "env/Environment.hpp"
+
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+namespace dp::env {
+
+namespace {
+
+// Cheap deterministic 0..99 from three uint64s. Matches the inline RNG
+// used in main.cpp for mushroom poison + seed drop chance, so behaviour
+// is identical between viewer and headless mode.
+unsigned hash01(uint64_t a, uint64_t b, uint64_t c) {
+    uint64_t r = a * 7919ULL ^ b * 31337ULL ^ c;
+    return static_cast<unsigned>(r);
+}
+
+}  // namespace
+
+Environment::Environment(const EnvConfig& cfg)
+    : cfg_(cfg),
+      world_(cfg.world),
+      day_(600.0f, 0.30f),
+      agent_(cfg.world.seed ^ cfg.instance_seed_xor),
+      vitals_([&]() {
+          dp::agent::VitalConfig vc;
+          vc.thirst_decay_per_min = cfg.thirst_decay_per_min;
+          // decision_blueprint_nutrition (round_21): plumb CLI nutrition knobs.
+          vc.nutrition_enabled     = cfg.nutrition_enabled;
+          vc.protein_decay_per_min = cfg.protein_decay_per_min;
+          vc.vitamin_decay_per_min = cfg.vitamin_decay_per_min;
+          vc.nutri_debuff_thresh   = cfg.nutri_debuff_thresh;
+          vc.nutri_death_grace_s   = cfg.nutri_death_grace_s;
+          return vc;
+      }())
+{
+    // Match main.cpp's deterministic init order so we get the exact same
+    // world layout for given seed.
+    decorations_.generate(cfg_.world.seed ^ 0xDEC0ULL, world_);
+    plants_.initialize(cfg_.world.seed     ^ 0xF00DULL, world_, decorations_);
+    // D-067: revert D-066 prey density bump. D-066 measured: drink
+    // dropped 90 -> 0%, col 95 -> 0%, score 0.296 -> 0.134, R near 0.
+    // Doubling/tripling prey density disrupted PPO's line-21 policy
+    // (probably observation churn near agent). Back to defaults; D-067
+    // tests pure step-deficit hypothesis from D-065 ckpt (no code change).
+    animals_.initialize(cfg_.world.seed    ^ 0xA11AULL, world_);
+    resources_.initialize(cfg_.world.seed  ^ 0xC011ULL, world_);
+
+    // Stage W1 world coherence: plumb the CLI weather knobs into the global
+    // sky. Default disabled => always clear, so the old world is unchanged.
+    {
+        dp::world::WeatherSystem::Config wc;
+        wc.enabled         = cfg_.weather_enabled;
+        wc.rain_prob_per_min = cfg_.weather_rain_prob;
+        wc.rain_dur_s      = cfg_.weather_rain_dur_s;
+        weather_.configure(wc);
+        weather_.reset(cfg_.world.seed ^ 0x5A11ULL);
+    }
+
+    float wx_max = world_.heightmap().world_size_x();
+    float wy_max = world_.heightmap().world_size_y();
+
+    // D-050: blueprint line 9-10 demands "楗夸簡鎵鹃鐗╋紝娓翠簡鎵炬按" be
+    // *learnable*. Pre D-050 spawn was hard-pinned at the world centre
+    // (512, 512); for the default 1024 m world with 3 procedural rivers
+    // the centre often sits >60 m from any River|Swamp cell, which means
+    // the agent's nearest_water obs is "no water in sight" from frame 0
+    // and the only way to drink is to randomly walk into a river. PPO
+    // never learns the link "Q on river -> r_water > 0" because the
+    // first such event hardly ever happens in 9000 steps. (D-049's
+    // SpatialMemory vision-write fixes "see -> remember", but only after
+    // the agent has been in vision range of water at least once.)
+    //
+    // Now we choose a spawn within the central region but require that
+    // a River or Swamp cell exists inside VISION_RANGE = 60 m. Search:
+    //   1. try the centre first (cheap, reproduces old layout when there
+    //      is already water nearby);
+    //   2. if dry, spiral outwards in 32 m steps over 16 angular slots
+    //      until a candidate is found;
+    //   3. fall back to centre if the world has no water at all (should
+    //      never trigger with the default 3-river config).
+    auto biome_at = [&](float x, float y) {
+        if (x < 0.0f || y < 0.0f || x >= wx_max || y >= wy_max) {
+            return dp::world::Biome::Plain;
+        }
+        return world_.biome_at(x, y);
+    };
+    auto has_water_in_vision = [&](float cx, float cy) {
+        const float R = dp::agent::ObservationBuilder::VISION_RANGE;
+        const float step = 8.0f;
+        const float R2 = R * R;
+        for (float dy = -R; dy <= R; dy += step) {
+            for (float dx = -R; dx <= R; dx += step) {
+                if (dx*dx + dy*dy > R2) continue;
+                auto b = biome_at(cx + dx, cy + dy);
+                if (b == dp::world::Biome::River
+                 || b == dp::world::Biome::Swamp) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    auto in_dry_land = [&](float x, float y) {
+        auto b = biome_at(x, y);
+        return b != dp::world::Biome::River
+            && b != dp::world::Biome::Swamp;
+    };
+    // D-050 P3: also require ripe food within vision range. The first
+    // P2 spawn (632.5, 214.4) had water in sight but zero plants nearby
+    // in the wander 100k smoke -> food=0 across the whole episode, so
+    // PPO never sampled a successful eat() either. Blueprint line 21
+    // bundles "楗夸簡鎵鹃鐗╋紝娓翠簡鎵炬按" as one early-stage loop, so the
+    // spawn must satisfy *both* preconditions to be learnable.
+    auto food_in_vision = [&](float cx, float cy) {
+        const float R = dp::agent::ObservationBuilder::VISION_RANGE;
+        const float R2 = R * R;
+        for (const auto& pl : plants_.plants()) {
+            if (!pl.ripe) continue;
+            float dx = pl.x - cx, dy = pl.y - cy;
+            if (dx*dx + dy*dy <= R2) return true;
+        }
+        return false;
+    };
+
+    spawn_x_ = wx_max * 0.5f;
+    spawn_y_ = wy_max * 0.5f;
+    auto candidate_ok = [&](float x, float y) {
+        return has_water_in_vision(x, y)
+            && food_in_vision(x, y)
+            && in_dry_land(x, y);
+    };
+    if (!candidate_ok(spawn_x_, spawn_y_)) {
+        bool found = false;
+        for (float r = 32.0f; r <= 400.0f && !found; r += 32.0f) {
+            for (int a = 0; a < 24 && !found; ++a) {
+                float ang = a * 6.2831853f / 24.0f;
+                float cx = wx_max * 0.5f + r * std::cos(ang);
+                float cy = wy_max * 0.5f + r * std::sin(ang);
+                if (cx < 16.0f || cy < 16.0f
+                 || cx >= wx_max - 16.0f
+                 || cy >= wy_max - 16.0f) continue;
+                if (candidate_ok(cx, cy)) {
+                    spawn_x_ = cx;
+                    spawn_y_ = cy;
+                    found = true;
+                }
+            }
+        }
+        if (!found) {
+            // Relax: water-only fallback (still better than the old
+            // dead-centre spawn).
+            for (float r = 32.0f; r <= 400.0f && !found; r += 32.0f) {
+                for (int a = 0; a < 24 && !found; ++a) {
+                    float ang = a * 6.2831853f / 24.0f;
+                    float cx = wx_max * 0.5f + r * std::cos(ang);
+                    float cy = wy_max * 0.5f + r * std::sin(ang);
+                    if (cx < 16.0f || cy < 16.0f
+                     || cx >= wx_max - 16.0f
+                     || cy >= wy_max - 16.0f) continue;
+                    if (has_water_in_vision(cx, cy)
+                     && in_dry_land(cx, cy)) {
+                        spawn_x_ = cx;
+                        spawn_y_ = cy;
+                        found = true;
+                    }
+                }
+            }
+            spdlog::warn("Environment D-050: no spawn satisfies "
+                         "water+food within 400 m - relaxed to water-only");
+        }
+    }
+    spawn_z_ = world_.surface_height(spawn_x_, spawn_y_) + 5.0f;
+    spdlog::info("Environment D-050: spawn=({:.1f},{:.1f},{:.1f}), "
+                 "water_in_vision={} food_in_vision={}",
+                 spawn_x_, spawn_y_, spawn_z_,
+                 has_water_in_vision(spawn_x_, spawn_y_) ? "yes" : "no",
+                 food_in_vision(spawn_x_, spawn_y_) ? "yes" : "no");
+
+    // decision_blueprint_world_coherence §4: cluster a few fish into the
+    // River/Swamp water nearest spawn so spearfishing (drink->catch->protein)
+    // is a DEPENDABLE protein source, mirroring how foraging dependably feeds
+    // vitamin. Without this the 30 world fish scatter across a ~1 km river
+    // network and the bank the agent settles at usually has none, so protein
+    // can never be refilled. Fish are excluded from the agent observation
+    // (see k_nearest "fish/eagle out of scope"), so unlike a prey-density bump
+    // (cf. D-067) this does NOT perturb the PPO obs near the agent. Land prey
+    // (rabbit/deer, 6-7 m/s, flee) stay untouched.
+    {
+        // Scan out to the vision range (the spawn is only guaranteed water
+        // *in vision*, typically ~40-60 m away, not adjacent) and keep the
+        // River/Swamp cells closest to spawn -- that bank is where the agent
+        // will walk to drink/fish.
+        std::vector<std::pair<float,std::pair<float,float>>> water_cells;
+        const float R = 70.0f;
+        for (float dy = -R; dy <= R; dy += 4.0f) {
+            for (float dx = -R; dx <= R; dx += 4.0f) {
+                float wx = spawn_x_ + dx, wy = spawn_y_ + dy;
+                auto b = world_.biome_at(wx, wy);
+                if (b == dp::world::Biome::River
+                 || b == dp::world::Biome::Swamp) {
+                    water_cells.emplace_back(dx*dx + dy*dy,
+                                             std::make_pair(wx, wy));
+                }
+            }
+        }
+        std::sort(water_cells.begin(), water_cells.end(),
+                  [](const auto& a, const auto& b){ return a.first < b.first; });
+        int placed = 0;
+        if (!water_cells.empty()) {
+            auto& al = animals_.animals_mut();
+            // spread the fish over the nearest few bank cells
+            const size_t span = std::min<size_t>(water_cells.size(), 6);
+            for (auto& a : al) {
+                if (a.kind != dp::world::AnimalKind::Fish) continue;
+                const auto& wc = water_cells[placed % span].second;
+                a.pos_x  = wc.first;
+                a.pos_y  = wc.second;
+                a.pos_z  = world_.surface_height(wc.first, wc.second);
+                a.health = 100.0f;
+                a.state  = dp::world::AnimalState::Wander;
+                // S6 forced-hunting: relocate only a FEW fish to the spawn bank
+                // (was 10). Combined with the spear-gate + P_CATCH + wolf-alert
+                // frictions in the fishing branch, this makes camp-fishing a
+                // finite, noisy, risky protein source -- enough to bootstrap,
+                // not enough to live on forever without hunting.
+                if (++placed >= 4) break;
+            }
+        }
+        float nearest_m = water_cells.empty()
+            ? -1.0f : std::sqrt(water_cells.front().first);
+        spdlog::info("Environment S4: relocated {} fish near spawn "
+                     "({} water cells within {:.0f}m, nearest {:.1f}m)",
+                     placed, water_cells.size(), R, nearest_m);
+    }
+
+    // Debug: closest plant by kind
+    for (auto kind : {dp::world::PlantKind::Berry,
+                      dp::world::PlantKind::Fruit}) {
+        float best_d = 1e9f, best_x = 0, best_y = 0;
+        for (const auto& p : plants_.plants()) {
+            if (p.kind != kind) continue;
+            float dx = p.x - spawn_x_, dy = p.y - spawn_y_;
+            float d  = std::sqrt(dx*dx + dy*dy);
+            if (d < best_d) { best_d = d; best_x = p.x; best_y = p.y; }
+        }
+        const char* knm = (kind == dp::world::PlantKind::Berry)
+                          ? "berry" : "fruit";
+        if (best_d < 1e9f) {
+            spdlog::info("Environment D-050: closest {} at ({:.1f},{:.1f}) "
+                         "dist={:.1f} m",
+                         knm, best_x, best_y, best_d);
+        }
+    }
+
+    dp::agent::EpisodeManager::Config ecfg;
+    ecfg.spawn_x          = spawn_x_;
+    ecfg.spawn_y          = spawn_y_;
+    ecfg.spawn_clearance  = 5.0f;
+    ecfg.max_seconds      = cfg_.max_episode_seconds;
+    ecfg.animal_seed_base = cfg_.world.seed ^ 0xA11AULL;
+    episodes_.configure(ecfg);
+
+    spatial_.configure(0.0f, 0.0f);
+}
+
+void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
+    // First-time reset (episode_id == -1) or post-done reset both go
+    // through here.
+    if (episodes_.episode_id() < 0) {
+        agent_.reset(spawn_x_, spawn_y_, spawn_z_);
+        // Initialise vital state to full / neutral.
+        vital_state_ = dp::agent::VitalState{};
+        episodes_.begin_episode();
+    } else {
+        episodes_.reset(world_, agent_, vitals_, vital_state_,
+                        reward_, animals_, inventory_, shelter_,
+                        buildings_);
+        wardrobe_.clear();
+        fires_.clear();     // D-112: campfires are per-life, like buildings.
+        farming_.clear();
+        tame_.clear();
+    }
+
+    // Stage W1 world coherence: fresh sky each episode (deterministic per
+    // episode id), and the body starts dry. weather_ is disabled => stays
+    // clear, so old-world episodes are unchanged.
+    weather_.reset((cfg_.world.seed ^ 0x5A11ULL)
+                   + static_cast<uint64_t>(episodes_.episode_id() + 2) * 0x9E3779B9ULL);
+    vital_state_.wetness = 0.0f;
+
+    was_alive_  = true;
+    step_index_ = 0;
+    selected_building_ = dp::world::BuildingType::Shed;
+    last_seed_kind_    = dp::world::PlantKind::Berry;
+    spatial_.clear();   // cognitive map is per-life (one episode)
+    // D-091: settlement counters reset per episode.
+    building_ticks_        = 0;
+    night_ticks_total_     = 0;
+    night_ticks_sheltered_ = 0;
+
+    // D-041: reset all first_X milestone flags PER episode (not per
+    // training run as before). This is the core fix for v6's "milestone
+    // mean=0" plateau: the agent had used up all milestones in episode 0
+    // and had no carrot to chase in subsequent episodes. Per-episode
+    // milestones turn the main line into a recurring +20*N reward signal
+    // worth competing with drink density.
+    first_drink_fired_          = false;
+    first_eat_fired_            = false;
+    first_collect_fired_        = false;
+    first_spear_fired_          = false;
+    first_shelter_fired_        = false;
+    first_clothing_fired_       = false;
+    first_hunt_fired_           = false;
+    first_seed_planted_fired_   = false;
+    first_house_built_fired_    = false;
+    first_crop_harvested_fired_ = false;
+    first_follower_fired_       = false;
+    predator_alert_timer_       = 0.0f;   // S6 forced-hunting
+    // D-122 RUNG 1: cook economy is per-life like the fires/buildings it
+    // depends on. No-op carryover when cook_enabled is off (always 0 anyway).
+    raw_meat_                   = 0;
+    cooked_meat_                = 0;
+    first_cook_fired_           = false;
+    // D-122 RUNG 2: cave mining is per-life like the cook economy above. The
+    // ore counter resets and ore nodes are re-scattered inside the persistent
+    // caves (a no-op clear when mine_enabled is off).
+    ore_                        = 0;
+    first_mine_fired_           = false;
+    scatter_ore_nodes_();
+    // D-122 RUNG 3: stone tools are per-life (re-craft each episode). No-op
+    // carryover when tools_enabled is off (the flags stay false forever).
+    has_axe_                    = false;
+    has_pickaxe_                = false;
+    first_axe_fired_            = false;
+    first_pickaxe_fired_        = false;
+    // D-122 RUNG 5: capstone monument + boss ordeal reset per-life. The site is
+    // (re)placed near spawn; place_monument_site_ is a no-op when monument is
+    // off, leaving monument_progress_/boss state inert (always 0/false).
+    monument_progress_          = 0;
+    monument_built_             = false;
+    first_monument_fired_       = false;
+    boss_timer_                 = 0.0f;
+    boss_started_               = false;
+    boss_active_                = false;
+    boss_survived_              = false;
+    first_boss_survived_fired_  = false;
+    place_monument_site_();
+
+    // D-063: starter kit. D-062 proved +5 critical alone can't make
+    // PPO explore the craft_spear -> hunt path in 2M steps (0% first_spear,
+    // 0% first_hunt in last 60 eps). Pre-place Wood+Stone so craft_spear
+    // succeeds on first attempt -> +5 critical fires -> agent learns the
+    // 'tool gives bonus' association, then with spear in hand attacks on
+    // rabbit/deer/fish (1-2 hits @ 50 dmg) become viable to discover.
+    // Third slot left empty for PPO to fill (grass/fur).
+    inventory_.add(dp::agent::ItemKind::Wood);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
+    inventory_.add(dp::agent::ItemKind::Stone);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
+    // D-065: add Grass to starter kit. D-063 proved structural change
+    // (pre-place Wood+Stone) unlocked craft_spear path -> 100% spear, 8% hunt
+    // without any new shaped reward. Same philosophy for line-23 clothing:
+    // pre-place Grass so first craft_grass_dress works step 0 -> +5 critical
+    // for first_clothing fires -> PPO associates "craft = good" for clothes,
+    // analogous to spear. No per-event reward, no metric chasing.
+    inventory_.add(dp::agent::ItemKind::Grass);  // D-074: restored starter (D-073 removal proved fatal, score 0.025 < 0.158)
+
+    // D-086+D-087: auto-seed Shed at spawn POSITION (not +8m N). The +8m
+    // version was tested in D-086 with 180 ep H=0 and D-087 with 115 ep
+    // H=0 -- even though obs[130..132] showed the site, PPO couldn't learn
+    // the 260-tick walk-then-deposit chain (PPO spammed deposit far from
+    // the site, never near enough for try_deposit's 2.5m gate to fire).
+    // ScriptedPolicy proved env works when agent gets to within 2m, so the
+    // bottleneck is "find the site at all". Spawning the site ON TOP of
+    // the agent collapses the chain to *one tick*: at step 0 the agent
+    // is within 2.5m of an active Shed with 1W+1S+1G starter inv ->
+    // a single deposit_to_site action succeeds and gives +1 reward.
+    // PPO has to learn nothing but "fire deposit_to_site" -- a 1-step,
+    // gamma=1.0 chain. This is the curriculum stage-0 ("learn to use the
+    // build action at all"). Once PPO learns this reliably, future runs
+    // can move the site away and start adding navigation.
+    {
+        float sx = spawn_x_;
+        float sy = spawn_y_;
+        float sz = world_.surface_height(sx, sy);
+        buildings_.admin_place_site(dp::world::BuildingType::Shed, sx, sy, sz);
+    }
+
+    rebuild_observation_(obs_out);
+}
+
+// D-043 P1: drive function (Keramati & Gutkin 2014, Homeostatic RL).
+// Maps a vital reading in [0, 100] to a drive 鈭?[0, 1]. v=100 (sated) 鈫?0,
+// v=0 (depleted) 鈫?1. Quadratic so deviations near the setpoint matter less
+// than approaching depletion (matches biological appetite).
+//   drive(100) = 0.00   (no need)
+//   drive( 80) = 0.04   (mild need; eating gives small reward)
+//   drive( 50) = 0.25   (moderate)
+//   drive( 20) = 0.64   (strong)
+//   drive(  0) = 1.00   (about to die)
+// Reward = drive_before - drive_after, so eating to fullness gives a small
+// reward bump near 100 and a big one near 0. Auto-replaces the old hard-cap
+// satiation_scale_().
+static float drive_(float vital) {
+    const float gap = (100.0f - std::clamp(vital, 0.0f, 100.0f)) / 100.0f;
+    return gap * gap;
+}
+
+// D-043 P1: crisis scale (Keramati's "irrelevant drive inhibition"). When
+// any vital is in dangerous territory, milestone rewards are damped so the
+// agent prioritizes survival over progression. Three regimes:
+//   max_drive > 0.7  (any vital < ~17/100): crisis -> 0.3
+//   max_drive > 0.4  (any vital < ~37/100): alert  -> 0.7
+//   otherwise                              : healthy -> 1.0
+// Returns a scalar in [0, 1] passed to RewardSystem::event_milestone.
+static float crisis_scale_(const dp::agent::VitalState& v) {
+    float max_drive = drive_(v.hunger);
+    max_drive = std::max(max_drive, drive_(v.thirst));
+    max_drive = std::max(max_drive, drive_(v.stamina));
+    // Temperature is centered at 50; map deviation to drive-like scale.
+    const float temp_dev = std::abs(v.temperature - 50.0f) / 50.0f;
+    max_drive = std::max(max_drive, temp_dev * temp_dev);
+    if (max_drive > 0.7f) return 0.3f;
+    if (max_drive > 0.4f) return 0.7f;
+    return 1.0f;
+}
+
+float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
+    const auto& as = agent_.state();
+    const float dt = cfg_.fixed_dt;
+
+    reward_.begin_step();
+    reward_.event_alive(dt);
+
+    // D-041 / D-043: fire a per-episode milestone exactly once. The flag
+    // resets every episode (see Environment::reset). D-043 P1: crisis_scale_
+    // damps the +1 milestone when the agent is in vital crisis so it doesn't
+    // grab milestones while about to die of thirst.
+    const float crisis = crisis_scale_(vital_state_);
+    auto fire_once = [&](bool& flag) {
+        if (!flag) {
+            flag = true;
+            reward_.event_milestone(crisis);
+        }
+    };
+    // D-051: a single successful first_drink / first_eat is the moment
+    // the agent breaks out of "stand-still NOOP" and proves it can ride
+    // the find-water / find-food loop. Stack five milestones on top of
+    // the regular fire so the bonus is +5 instead of +1 the very first
+    // time the agent succeeds in an episode. Crisis scaling still
+    // applies (so a starving agent grabbing food gets the full reward,
+    // a fed agent grinding doesn't). Subsequent eats / drinks within
+    // the same episode follow the normal drive-reduction reward path.
+    auto fire_once_critical = [&](bool& flag) {
+        bool first = !flag;
+        if (first) {
+            flag = true;
+            for (int i = 0; i < 5; ++i) {
+                reward_.event_milestone(crisis);
+            }
+        }
+    };
+
+    // D-043 P1: eat/drink with drive-reduction reward (Keramati 2014).
+    // Replaces the old satiation_scale_ 脳 kcal scheme. drive(v=100)=0 so
+    // eating-when-full naturally yields zero reward; near-empty agents see
+    // a big drive_red. Returns the *actual* vital restored so callers can
+    // still detect "did the consumption happen" for first_X triggers.
+    auto eat_drive = [&](float kcal) -> float {
+        if (kcal <= 0.0f) return 0.0f;
+        const float drive_before = drive_(vital_state_.hunger);
+        const float ate          = vitals_.eat(vital_state_, kcal);
+        const float drive_after  = drive_(vital_state_.hunger);
+        reward_.event_eat(drive_before - drive_after);
+        return ate;
+    };
+    auto drink_drive = [&](float ml) -> float {
+        if (ml <= 0.0f) return 0.0f;
+        const float drive_before = drive_(vital_state_.thirst);
+        const float drunk        = vitals_.drink(vital_state_, ml);
+        const float drive_after  = drive_(vital_state_.thirst);
+        reward_.event_drink(drive_before - drive_after);
+        return drunk;
+    };
+
+    // D-039 v3: any discrete trigger pressed this tick pays a small fee.
+    // Breaks "cheap noop trigger" local optima where the policy collapses
+    // to e.g. always-pressing craft_spear (it's free when inventory is
+    // empty). NOOP (no trigger) avoids the fee, so the agent has to learn
+    // *when* to press each key. Fee << real reward signals (drink ~1.8/s,
+    // milestone +20) so successful triggers still net strongly positive.
+    if (action.eat || action.drink || action.attack || action.collect
+     || action.place_shelter || action.craft_spear || action.sleep
+     || action.craft_grass_dress || action.craft_fur_cloak
+     || action.wear_clothes || action.place_blueprint
+     || action.cycle_building_type || action.deposit_to_site
+     || action.plant_seed || action.water_plot || action.feed_tame
+     || action.tend_fire) {
+        reward_.event_action_cost(cfg_.trigger_cost);
+    }
+
+    // D-048 blueprint鍥炲綊: sleep is no longer a free NOOP. Pressing sleep
+    // burns extra hunger/thirst (浣犵潯瑙夌殑鏃跺€欎笉浼氬枬姘翠篃涓嶄細鍚冮キ) and
+    // does not regenerate stamina (the trigger is a fiction in this MVP -
+    // the agent doesn't actually pause time). Without this, ppo_d046_2M
+    // collapsed to "sleep 30%" as the dominant action because it was
+    // costless and never triggered death (钃濆浘 line 28 makes clear sleep
+    // is supposed to be 'find a shelter from the night', not idle).
+    if (action.sleep) {
+        const float burn = 4.0f * dt;  // 4 vital points per second of sleep
+        vital_state_.hunger = std::max(0.0f, vital_state_.hunger - burn);
+        vital_state_.thirst = std::max(0.0f, vital_state_.thirst - burn);
+    }
+
+    // Progression: every metre travelled while alive counts.
+    float step_speed = std::sqrt(as.vel_x * as.vel_x + as.vel_y * as.vel_y);
+    progress_.on_explore_step(step_speed * dt);
+
+    // Animals + shelter dampening (mirrors main.cpp).
+    // D-049 #1: blueprint line 26 says "澶╅粦鎵炬礊绌?鏋楀湴韬?. Pre D-049
+    // inside_cave_ was a render-only flag (color tint + don't-fly-out
+    // physics). Now caves count as a real shelter: wolves perceive the
+    // agent at 30% range and chase at 70% speed when underground, and
+    // body temperature trends back to neutral. This makes "run into the
+    // cave at night" a learnable strategy instead of a dead UI element.
+    float night_factor = std::max(0.0f, -day_.sun_height_normalized());
+    float perc_scale = 1.0f, spd_scale = 1.0f;
+    bool  in_building = buildings_.covers(as.pos_x, as.pos_y);
+    bool  sheltered = shelter_.covers(as.pos_x, as.pos_y)
+                   || in_building
+                   || agent_.inside_cave();
+    if (sheltered) {
+        perc_scale = 0.3f;
+        spd_scale  = 0.7f;
+    }
+    // S6 forced-hunting: while a fishing spot has recently betrayed the agent
+    // (predator_alert_timer_ set in the fishing branch), wolves perceive the
+    // agent from much farther regardless of cover -- camping a bank to fish is
+    // no longer safe. Overrides the sheltered damper for its short window.
+    if (predator_alert_timer_ > 0.0f) {
+        perc_scale = std::max(perc_scale, 2.5f);
+        predator_alert_timer_ = std::max(0.0f, predator_alert_timer_ - dt);
+    }
+    // D-099: per-tick alive bonus DOUBLES when inside a BUILDING (not just
+    // any shelter - caves don't count). The 5 prior settlement attempts
+    // (D-094..D-098) all failed because PPO's optimal policy is to wander
+    // and gather - sheltering only avoids penalties. Even with shelter
+    // regen +15/min (D-098), per-tick foraging (+5 r_food/min) beats
+    // sheltered regen (+3 r_food/min). D-099 closes that gap by doubling
+    // r_alive when inside a finished building: 0.05/s base + 0.05/s
+    // building bonus = +6/min vs +3/min wandering. Combined with regen
+    // (+15/min hunger/thirst), sheltering in a building nets ~+12/min
+    // total vs wandering ~+8/min. Gating on `in_building` not `sheltered`
+    // matters because caves and lean-tos would otherwise let PPO collect
+    // the bonus without ever building anything, defeating the blueprint
+    // (build a house then live in it). Smoke 50k showed random PPO would
+    // happily camp in a cave for the bonus if gated on `sheltered`.
+    if (in_building && !cfg_.demo_no_regen) {
+        reward_.event_alive(dt);
+    }
+    // D-091: count settlement ticks. building_ticks_ is "inside a finished
+    // building"; night_ticks counts the dark half of the day cycle; the
+    // sheltered subset tells us whether the agent retreated indoors at
+    // night. These feed the jsonl so analyses can chart 定居 / settlement
+    // emergence per episode.
+    if (in_building) ++building_ticks_;
+    bool is_night_now = day_.sun_height_normalized() < 0.0f;
+    if (is_night_now) {
+        ++night_ticks_total_;
+        if (sheltered) ++night_ticks_sheltered_;
+    }
+    animals_.tick(world_, as.pos_x, as.pos_y, as.pos_z,
+                  dt, night_factor, perc_scale, spd_scale);
+    if (progress_.can_tame()) {
+        tame_.apply_follow(animals_, as.pos_x, as.pos_y, dt);
+    }
+
+    plants_.tick(dt);
+    resources_.tick(dt);
+    farming_.tick(dt, &buildings_);  // D-091: pass buildings so plots near home grow faster.
+
+    // ---- Stage W1 world coherence: advance the sky + apply the rain
+    //      coupling chain. All no-ops when weather is disabled (intensity 0),
+    //      so the old world is byte-identical.
+    weather_.tick(dt);
+    const float rain_inten = weather_.intensity();
+    // A spot gets rain iff the sky is raining AND it isn't desert ("沙漠几乎
+    // 不雨"); swamp/river/plain/forest/mountain all receive it.
+    auto rain_reaches = [&](float bx, float by) -> bool {
+        if (rain_inten <= 0.0f) return false;
+        return world_.biome_at(bx, by) != dp::world::Biome::Desert;
+    };
+    // (1) Rain douses any LIT fire that is exposed (rained-on biome AND not
+    //     roofed by a finished building or a lean-to). Before fires_.tick so
+    //     tick() then removes anything doused to 0. "下雨要能浇灭火".
+    if (rain_inten > 0.0f && cfg_.rain_fire_douse_rate > 0.0f) {
+        fires_.apply_rain(dt, cfg_.rain_fire_douse_rate * rain_inten,
+            [&](float fx, float fy) -> bool {
+                if (!rain_reaches(fx, fy)) return false;
+                bool roofed = buildings_.covers(fx, fy)
+                           || shelter_.covers(fx, fy);
+                return !roofed;
+            });
+    }
+    // (2) Rain tops up every farm plot's water_level ("雨补水").
+    if (rain_inten > 0.0f && cfg_.rain_farm_water_per_s > 0.0f) {
+        farming_.rain(dt, cfg_.rain_farm_water_per_s * rain_inten);
+    }
+    // (3) Agent wetness: rises while standing in exposed rain, dries under
+    //     cover / over time. Shelter (building / lean-to / cave) keeps the
+    //     body dry, coupling weather <-> shelter <-> temperature.
+    const bool agent_in_rain = !sheltered && rain_reaches(as.pos_x, as.pos_y);
+    {
+        float target = agent_in_rain ? rain_inten : 0.0f;
+        float rate   = agent_in_rain ? cfg_.wet_gain_per_s : cfg_.wet_dry_per_s;
+        float w = vital_state_.wetness;
+        if (w < target)      w = std::min(target, w + rate * dt);
+        else if (w > target) w = std::max(target, w - rate * dt);
+        vital_state_.wetness = w;
+    }
+    // (4) Catch a little rainwater while exposed (modest thirst recovery) —
+    //     the wet-vs-warm tradeoff: stand in the rain to drink but get cold.
+    //     Kept small so rivers are still needed (anti-Goodhart).
+    if (agent_in_rain && cfg_.rain_thirst_per_min > 0.0f && vital_state_.alive) {
+        vital_state_.thirst = std::min(100.0f,
+            vital_state_.thirst
+          + cfg_.rain_thirst_per_min * (dt / 60.0f) * rain_inten);
+    }
+    // Soaked body sheds heat faster: cold drain *= (1 + gain*wetness).
+    float wet_cold_mult = 1.0f + cfg_.wet_cold_gain * vital_state_.wetness;
+
+    fires_.tick(dt);                 // D-112: burn campfire fuel down, extinguish at 0.
+
+    // D-112: a lit campfire within radius warms the agent (heat-source term),
+    // passed into VitalSystem::tick alongside the Wardrobe cold-resist damper.
+    float fire_warmth = fires_.warm_rate_at(as.pos_x, as.pos_y);
+    // D-122 RUNG 5: a BUILT capstone monument radiates warmth like a giant
+    // hearth; fold it into the same heat-source term the fire uses so that
+    // sheltering at the monument is precisely what lets the agent ride out
+    // the boss cold-snap. 0 unless the monument is built AND the agent is
+    // within its aura (and monument_enabled), so this is inert otherwise.
+    fire_warmth += monument_warm_at_(as.pos_x, as.pos_y);
+
+    float speed = std::sqrt(as.vel_x * as.vel_x + as.vel_y * as.vel_y);
+    // S5 world realism: terrain slope under the feet (|grad h|, rise/run)
+    // drives extra stamina spend when moving (uphill is tiring). Capped at
+    // 1.0 (~45 deg) before being handed to VitalSystem as slope01.
+    float dh_dx = 0.0f, dh_dy = 0.0f;
+    world_.heightmap().sample_gradient(as.pos_x, as.pos_y, dh_dx, dh_dy);
+    float slope_mag = std::sqrt(dh_dx * dh_dx + dh_dy * dh_dy);
+    float slope01 = slope_mag > 1.0f ? 1.0f : slope_mag;
+    vitals_.tick(vital_state_, world_, as.pos_x, as.pos_y, speed, day_,
+                 dt, wardrobe_.cold_resist(), fire_warmth, slope01,
+                 wet_cold_mult);
+    if (sheltered) {
+        vital_state_.temperature += (50.0f - vital_state_.temperature)
+                                  * 0.3f * dt;
+    }
+    // D-122 RUNG 5: capstone boss ordeal state machine. The boss is a
+    // FIXED-SCHEDULE event: at episode time BOSS_ARRIVAL_S the cold-snap
+    // arrives no matter what, and runs ACTIVE for BOSS_DURATION_S piling an
+    // extra cold drain on the agent and keeping predators agitated. The
+    // monument is the DEFENSE, not the trigger -> its warmth aura (folded into
+    // fire_warmth above) is what makes the cold-snap survivable, so the agent
+    // must finish the great work BEFORE the deadline ("先建大工程，再用它扛过
+    // Boss"); failing that it must ride out the ordeal on a strong fire +
+    // shelter. Surviving to the end alive fires a one-shot endgame milestone
+    // (paid 2x as the capstone). Fully inert unless monument_enabled.
+    if (cfg_.monument_enabled) {
+        const float ep_time_s = static_cast<float>(step_index_) * dt;
+        if (!boss_started_ && ep_time_s >= BOSS_ARRIVAL_S) {
+            boss_started_ = true;
+            boss_active_  = true;
+            boss_timer_   = 0.0f;
+            spdlog::info("D-122 BOSS arrived on schedule (t={}s): cold-snap ordeal begins",
+                         BOSS_ARRIVAL_S);
+        } else if (boss_active_) {
+            boss_timer_ += dt;
+            // Extra cold drain (pts/min -> pts/tick), applied AFTER any shelter
+            // recovery so the ordeal is real: lethal out in the open, offset
+            // only by standing in the monument's warmth aura.
+            vital_state_.temperature -= BOSS_COLD_DRAIN * (dt / 60.0f);
+            if (vital_state_.temperature < 0.0f) vital_state_.temperature = 0.0f;
+            // Keep predators on the hunt for the whole ordeal (reuse the S6
+            // alert channel; horde pressure = existing wolves hunting harder,
+            // no new entity spawns -> stays within the locked world).
+            predator_alert_timer_ = std::max(predator_alert_timer_, 2.0f);
+            if (boss_timer_ >= BOSS_DURATION_S) {
+                boss_active_ = false;
+                if (vital_state_.alive && !boss_survived_) {
+                    boss_survived_ = true;
+                    if (!first_boss_survived_fired_) {
+                        reward_.event_milestone();
+                        reward_.event_milestone();   // endgame capstone = 2x
+                        first_boss_survived_fired_ = true;
+                        spdlog::info("D-122 BOSS survived: capstone ordeal complete");
+                    }
+                }
+            }
+        }
+    }
+    // D-095: night outside shelter drains hunger / thirst 3x faster.
+    // D-097: sheltered REGENERATES hunger / thirst slowly (~3/min each).
+    // The asymmetric biology gives PPO a positive reason to be home: not
+    // just to avoid the night penalty (avoidance), but to actively bank
+    // vitals while resting (approach). D-094/D-095/D-096 all showed PPO
+    // learning shelter early then unlearning it, because avoidance alone
+    // is dominated by the per-tick food/water/collect/spear rewards
+    // available while wandering. The +3/min regen flips that math:
+    // sheltering for 60s gains +3 hunger +3 thirst, equivalent to one
+    // light meal, with zero risk and zero action cost. This matches the
+    // blueprint "build a house then LIVE in it" requirement - the agent
+    // gets food/water savings AND vital regeneration AND temperature
+    // recovery AND wolf threat reduction, all bundled in the home zone.
+    // Daytime sheltering: normal decay continues (agent should still
+    // forage during the day), but regen kicks in to offset some loss
+    // (net ~ -9/min instead of -12/min). Net incentive ordering:
+    //   night outside : -36/min (fatal in 3min)
+    //   day outside   : -12/min  (normal)
+    //   day sheltered : -9/min   (regen offsets some decay)
+    //   night sheltered: -9/min  (regen offsets temp+sleep cost)
+    {
+        bool is_night = day_.sun_height_normalized() < -0.1f;
+        const float dt_min = dt / 60.0f;
+        // D-112 fire-as-camp: a lit campfire within radius (fire_warmth>0)
+        // also shields from the 3x night starvation penalty. Guardrails:
+        //   (1) fire does NOT grant the in-building +15/min regen (below)
+        //   (2) fire is NOT counted as `sheltered` → never inflates nShel
+        //       or 達標 (night_in_house≥80%): building remains the only
+        //       way to pass; fire is an emergency night-survival floor.
+        const bool near_fire = fire_warmth > 0.0f;
+        if (is_night && !sheltered && !near_fire && vital_state_.alive) {
+            const float extra_mult = 2.0f;  // total = base + 2*base = 3x
+            float h_extra = vitals_.config().hunger_decay_per_min
+                          * dt_min * extra_mult;
+            float t_extra = vitals_.config().thirst_decay_per_min
+                          * dt_min * extra_mult;
+            vital_state_.hunger = std::max(0.0f,
+                                           vital_state_.hunger - h_extra);
+            vital_state_.thirst = std::max(0.0f,
+                                           vital_state_.thirst - t_extra);
+            if (vital_state_.hunger <= 0.0f || vital_state_.thirst <= 0.0f) {
+                if (vital_state_.alive) {
+                    vital_state_.alive = false;
+                    vital_state_.deaths += 1;
+                    vital_state_.deaths_food += 1;  // D-112 diag: night-unsheltered hunger/thirst
+                }
+            }
+        } else if (in_building && vital_state_.alive && !cfg_.demo_no_regen) {
+            // D-098: bumped 3 -> 15 per minute. D-097's +3 was too small to
+            // beat the per-tick foraging reward (food_coef=6.0 * 0.2 drive
+            // per berry ~= +1.2 reward / eat, several per minute), so PPO
+            // still preferred wandering after the first 50 eps. 15/min
+            // hunger restoration translates to ~+3 r_food / min via the
+            // food_coef shaping, comparable to active foraging - giving
+            // sheltering a competitive per-tick value.
+            // D-099: gated on `in_building` not `sheltered` so caves and
+            // lean-tos can't substitute. Blueprint says LIVE IN THE HOUSE,
+            // not LIVE IN ANY SHELTER.
+            const float regen_per_min = 15.0f;
+            vital_state_.hunger = std::min(100.0f,
+                                           vital_state_.hunger
+                                           + regen_per_min * dt_min);
+            vital_state_.thirst = std::min(100.0f,
+                                           vital_state_.thirst
+                                           + regen_per_min * dt_min);
+        }
+    }
+    reward_.event_vital_pressure(vital_state_, dt);
+
+    // E -> action.eat
+    if (action.eat) {
+        // D-092: at night wild plants don't yield - 夜里采不到野果.
+        // farming_.harvest_at below is unaffected (your own crops are
+        // always pickable since you tended them), giving 定居 + 种田 a
+        // food-supply advantage over wilderness foraging at night.
+        bool is_night_eat = day_.sun_height_normalized() < 0.0f;
+        // D-122 RUNG 1 照明: a LIT campfire within warm radius gives light, so
+        // the agent can forage at night beside its own fire (wild plants
+        // otherwise yield nothing after dark, see is_night_eat below). Gated
+        // by cook_enabled so the old world is unchanged. Causal: the light is
+        // only there because the agent built+fuelled a fire (Wood cost).
+        if (cfg_.cook_enabled && is_night_eat
+            && fires_.warm_rate_at(as.pos_x, as.pos_y) > 0.0f) {
+            is_night_eat = false;
+        }
+        // D-122 RUNG 1: eat a stored CookedMeat first (cook-now-eat-later food
+        // security). Cooked meat is more satiating + more protein than a fresh
+        // kill — the payoff for the hunt->fire->cook detour. One unit per eat
+        // action; no reward attached (only a vital refill, anti-Goodhart).
+        if (cfg_.cook_enabled && cooked_meat_ > 0) {
+            --cooked_meat_;
+            const float ate = eat_drive(45.0f);              // > deer raw (40)
+            if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+            vitals_.eat_protein(vital_state_,
+                                vitals_.config().protein_per_meat * 1.3f);
+        }
+        auto got = plants_.try_harvest(as.pos_x, as.pos_y,
+                                       as.pos_z + as.height * 0.5f, 2.5f,
+                                       is_night_eat);
+        if (progress_.can_farm()) {
+            auto farm_got = farming_.harvest_at(as.pos_x, as.pos_y, 2.0f);
+            for (auto k : farm_got) got.push_back(k);
+            if (!farm_got.empty() && !first_crop_harvested_fired_) {
+                reward_.event_milestone();
+                first_crop_harvested_fired_ = true;
+            }
+        }
+        for (auto k : got) {
+            float kcal = 0.0f, ml = 0.0f;
+            switch (k) {
+                case dp::world::PlantKind::Berry:    kcal = 12.0f; break;
+                case dp::world::PlantKind::Fruit:    kcal = 25.0f; break;
+                case dp::world::PlantKind::Cactus:   kcal =  8.0f; ml = 30.0f; break;
+                case dp::world::PlantKind::Mushroom: kcal = 18.0f; break;
+            }
+            bool poisoned = false;
+            if (k == dp::world::PlantKind::Mushroom) {
+                unsigned r = hash01(
+                    static_cast<uint64_t>(as.pos_x * 1000.0f),
+                    static_cast<uint64_t>(step_index_ + 1),
+                    static_cast<uint64_t>(episodes_.episode_id() + 1));
+                if ((r % 100u) < 30u) poisoned = true;
+            }
+            if (poisoned) {
+                vital_state_.hunger  = std::max(0.0f, vital_state_.hunger  - 12.0f);
+                vital_state_.stamina = std::max(0.0f, vital_state_.stamina - 25.0f);
+                // D-043: poison = inverse drive reduction (eat made things
+                // worse). -0.2 drive 鈮?-0.6 reward at food_coef=3.0,
+                // similar magnitude to old -15kcal 脳 0.04 = -0.6.
+                reward_.event_eat(-0.2f);
+            } else {
+                const float ate   = eat_drive(kcal);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                const float drunk = drink_drive(ml);
+                if (drunk > 0.5f) fire_once_critical(first_drink_fired_);
+                // decision_blueprint_nutrition (round_21): foraged plants/crops
+                // refill the VITAMIN bar (no-op when nutrition disabled). No
+                // reward attached - the bar only restores a vital.
+                vitals_.eat_vitamin(vital_state_,
+                                    vitals_.config().vitamin_per_forage);
+            }
+            // 30% chance Fruit/Berry drops a Seed for late-stage farming.
+            if (k == dp::world::PlantKind::Fruit
+                || k == dp::world::PlantKind::Berry) {
+                unsigned r = hash01(
+                    static_cast<uint64_t>(as.pos_x * 991.0f),
+                    static_cast<uint64_t>(step_index_ + 7),
+                    static_cast<uint64_t>(episodes_.episode_id() + 13));
+                if ((r % 100u) < 30u) {
+                    inventory_.add(dp::agent::ItemKind::Seed);
+                    last_seed_kind_ = k;
+                }
+            }
+        }
+    }
+
+    // Q -> action.drink (+ try fish)
+    // D-050 P6: drink fires if the agent is ON or *next to* a River|Swamp
+    // cell (within 2 m). The original gate required biome_at(agent) to be
+    // exactly water; in practice that meant the agent had to physically
+    // step into the river - which CapsuleAgent's gravity makes unreliable
+    // and which the blueprint never demanded ("娓翠簡鎵炬按" is "find water",
+    // not "swim"). The looser gate matches "stand at the bank, drink".
+    if (action.drink) {
+        auto biome_here = world_.biome_at(as.pos_x, as.pos_y);
+        bool on_water = (biome_here == dp::world::Biome::River
+                      || biome_here == dp::world::Biome::Swamp);
+        bool near_water = on_water;
+        if (!on_water) {
+            // decision_blueprint_world_coherence §4: terrain (steep banks /
+            // elevation drop at the water's edge) keeps the CapsuleAgent ~5-6 m
+            // from the nearest water-cell centre, so a 2 m gate made drinking --
+            // and therefore spearfishing, the only dependable protein source --
+            // physically unreachable. 6 m lets the agent drink from the bank.
+            const float r = 6.0f;
+            for (float dy = -r; dy <= r && !near_water; dy += 1.0f) {
+                for (float dx = -r; dx <= r && !near_water; dx += 1.0f) {
+                    auto nb = world_.biome_at(as.pos_x + dx,
+                                              as.pos_y + dy);
+                    if (nb == dp::world::Biome::River
+                     || nb == dp::world::Biome::Swamp) {
+                        near_water = true;
+                    }
+                }
+            }
+        }
+        if (near_water) {
+            const float drunk = drink_drive(35.0f);
+            if (drunk > 0.5f) fire_once_critical(first_drink_fired_);
+            // S6 forced-hunting: spearfishing is no longer a free, guaranteed
+            // protein faucet. Three frictions, per owner spec:
+            //  (1) the spear (crafted from wood+stone, the line-4 milestone)
+            //      doubles as the fishing tool -- no spear, no catch. This
+            //      gates ALL protein behind collect->spear, pushing the agent
+            //      up the main line instead of camping a bank from t=0.
+            //  (2) a cast only lands a fish with probability P_CATCH; a miss
+            //      still spends the turn, so protein supply is noisy and the
+            //      agent must keep land-hunting / stored meat as a backstop.
+            //  (3) the splashing has a per-tick chance to betray the agent's
+            //      position to nearby wolves (predator_alert), so sitting at
+            //      the water to fish carries real predation risk.
+            // Land prey (rabbit/deer) refill protein with no such cap, so the
+            // world now structurally rewards hunting over camp-fishing.
+            const bool  has_rod      = inventory_.num_of(dp::agent::ItemKind::Spear) > 0;
+            constexpr float P_CATCH       = 0.55f;  // chance a cast lands a fish
+            constexpr float P_WOLF_ALERT  = 0.08f;  // per fishing tick
+            if (has_rod) {
+                if (frand01() < P_WOLF_ALERT) predator_alert_timer_ = 4.0f;
+                if (frand01() < P_CATCH) {
+                    auto fish = animals_.agent_attack(as.pos_x, as.pos_y,
+                                                      agent_.yaw(), 6.0f, 100.0f);
+                    if (fish.killed
+                        && animals_.animals()[fish.index].kind
+                            == dp::world::AnimalKind::Fish) {
+                        const float ate = eat_drive(20.0f);
+                        if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                        // decision_blueprint_nutrition (round_21): fish is meat.
+                        vitals_.eat_protein(vital_state_,
+                                            vitals_.config().protein_per_meat);
+                    }
+                }
+            }
+        }
+    }
+
+    // R -> deposit_to_site (priority) or collect (fallback)
+    if (action.deposit_to_site || action.collect) {
+        bool deposited = false;
+        // D-087: auto-placed Shed (admin_place_site in reset) exists regardless
+        // of stage; gating deposit on Mid stage created a chicken/egg loop because
+        // Mid requires collect>=5+explore>=50m but those don't fire until the
+        // agent has reason to act (which is the site). Removing the can_build()
+        // guard here lets deposit work whenever a valid site is in reach. The
+        // try_deposit() call still requires an active site within 2.5m.
+        if (action.deposit_to_site) {
+            for (int slot = 0; slot < inventory_.size(); ++slot) {
+                auto k = inventory_.at(slot);
+                if (k != dp::agent::ItemKind::Wood
+                 && k != dp::agent::ItemKind::Stone
+                 && k != dp::agent::ItemKind::Grass) continue;
+                int site_idx = buildings_.try_deposit(as.pos_x, as.pos_y,
+                                                     as.pos_z, 2.5f, k);
+                if (site_idx >= 0) {
+                    inventory_.remove_one(k);
+                    // D-055: deposit gets its own bigger reward (+1.0 vs
+                    // collect +0.5) so PPO can finally see the gradient
+                    // from "wander around picking stuff up" to "carry it
+                    // back to the construction site".
+                    reward_.event_deposited_material();
+                    // D-057's deposit milestone shaping reverted in D-059:
+                    // any reward landscape change on top of D-055 ckpt
+                    // collapsed PPO. Only the world simplification (Shed
+                    // recipe down to 1 wood + 1 grass) survives.
+                    fire_once(first_collect_fired_);
+                    deposited = true;
+                    break;
+                }
+            }
+        }
+        if (!deposited && action.collect) {
+            auto picked = resources_.try_collect(as.pos_x, as.pos_y,
+                                                 as.pos_z + as.height * 0.5f,
+                                                 2.0f);
+            for (auto rk : picked) {
+                if (inventory_.add(dp::agent::item_from_resource(rk))) {
+                    reward_.event_collected_resource();
+                    progress_.on_collect();
+                    fire_once(first_collect_fired_);
+                    // D-122 RUNG 3: a stone axe makes wood-chopping more
+                    // productive -> each log gathered yields a bonus log if
+                    // there is room. Inert without an axe, so the v7 champion
+                    // is unchanged.
+                    if (has_axe_ && rk == dp::world::ResourceKind::Wood) {
+                        inventory_.add(dp::agent::ItemKind::Wood);
+                    }
+                }
+            }
+        }
+    }
+
+    // P -> place_blueprint
+    // D-055: a failed place_blueprint (stage-locked, or another site is
+    // already in progress per the new single-site rule) now pays an extra
+    // cost on top of the normal trigger_cost. D-053 eval showed PPO mashing
+    // place_blueprint at 14.3% of all triggers (981 over 33 ep) because the
+    // first 30 sites were free and the 31st-981st were near-free. The extra
+    // failure cost gives gradient feedback "this didn't do anything".
+    if (action.place_blueprint) {
+        // D-122 RUNG 4: when the tier gate is on, advanced building tiers need
+        // stone-age tooling -> StoneHouse needs a pickaxe, BigHouse needs both
+        // axe + pickaxe. The basic Shed/WoodHouse stay free, so an agent
+        // without tools is never worse off than the v7 champion. Inert unless
+        // tier_gate_enabled.
+        const bool tier_ok = building_tier_allowed_(selected_building_);
+        if (!tier_ok) {
+            reward_.event_action_cost(0.05f);   // gated: same nudge as a failed place
+        } else {
+            int site_id = buildings_.place_site(selected_building_,
+                                                as.pos_x, as.pos_y, as.pos_z,
+                                                progress_);
+            if (site_id < 0) {
+                reward_.event_action_cost(0.05f);
+            }
+        }
+    }
+
+    // Tab -> cycle_building_type
+    if (action.cycle_building_type) {
+        int t = static_cast<int>(selected_building_);
+        t = (t + 1) % 4;
+        selected_building_ = static_cast<dp::world::BuildingType>(t);
+    }
+
+    // G -> tend_fire (D-112 Stage3 Level-2): build a campfire at the agent's
+    // feet, or refuel the nearest existing one. Costs exactly 1 Wood, and
+    // ONLY when the fire system actually accepted it (new fire, or a fire
+    // that still had fuel headroom) so a full / capped fire wastes nothing.
+    // Deliberately NO reward event (decision_round_10 Goodhart redline): the
+    // only payoff is the temperature recovery the agent banks by staying near
+    // a fire it chose to build. The behaviour is taught via oracle demo +
+    // DAgger, not a carrot.
+    if (action.tend_fire) {
+        if (inventory_.num_of(dp::agent::ItemKind::Wood) >= 1) {
+            if (fires_.tend(as.pos_x, as.pos_y)) {
+                inventory_.remove_one(dp::agent::ItemKind::Wood);
+            }
+        }
+    }
+
+    // D-122 RUNG 1 (cook, categorical idx 18). Causally closed, never free:
+    //   needs (1) a LIT fire within warm radius  (built + fuelled with Wood),
+    //         (2) at least one stored RawMeat     (won by hunting prey),
+    //         (3) spare fuel to burn              (COOK_FUEL_COST seconds).
+    // Effect: 1 RawMeat -> 1 CookedMeat (a storable, more-nourishing ration);
+    // the actual hunger/protein payoff is banked later when the agent EATs the
+    // cooked meat (see eat handler). No direct reward except a one-shot
+    // milestone the first time it cooks in an episode (curriculum carrot).
+    // Whole block is inert unless cook_enabled, and the class is masked in PPO
+    // until the RUNG 1 stage flips allow_cook -> so the v7 champion is
+    // unaffected.
+    if (action.cook && cfg_.cook_enabled) {
+        constexpr float COOK_FUEL_COST = 15.0f;   // seconds of fire fuel / cook
+        const float reach = fires_.config().warm_radius;
+        if (raw_meat_ > 0 && cooked_meat_ < COOKED_MEAT_CAP
+            && fires_.warm_rate_at(as.pos_x, as.pos_y) > 0.0f) {
+            if (fires_.consume_fuel_near(as.pos_x, as.pos_y, reach,
+                                         COOK_FUEL_COST)) {
+                --raw_meat_;
+                ++cooked_meat_;
+                if (!first_cook_fired_) {
+                    reward_.event_milestone();
+                    first_cook_fired_ = true;
+                    // D-122 RUNG 1 smoke diagnostic (once per life): proves the
+                    // cook loop fired with all preconditions satisfied (lit
+                    // fire in reach + RawMeat on hand + fuel charged).
+                    spdlog::info("D-122 cook OK: raw->cooked at lit fire "
+                                 "(raw_left={} cooked={})",
+                                 raw_meat_, cooked_meat_);
+                }
+            }
+        }
+    }
+
+    // D-122 RUNG 2 (mine, categorical idx 19). Causally closed, never free:
+    //   needs (1) the agent INSIDE a cave (it had to find + enter underground),
+    //         (2) a non-empty ore node within MINE_REACH metres,
+    //         (3) spare stamina (MINE_STAMINA_COST) - mining is hard labour,
+    //         (4) room under ORE_CAP.
+    // Effect: depletes the nearest in-reach node by 1 and banks +1 carried ore
+    // (feedstock for the stone-tool / monument rungs). No direct reward except a
+    // one-shot milestone the first time it mines in an episode. Whole block is
+    // inert unless mine_enabled, and idx19 is masked in PPO until allow_mine ->
+    // the v7 champion is unaffected.
+    if (action.mine && cfg_.mine_enabled) {
+        // D-122 RUNG 3 effect: a stone pickaxe makes mining cheaper (half the
+        // stamina) and richer (chips up to 2 ore from the node instead of 1).
+        // Bare-handed mining is unchanged, so this only ever helps once the
+        // tool rung is reached.
+        const float mine_cost = has_pickaxe_ ? MINE_STAMINA_COST * 0.5f
+                                             : MINE_STAMINA_COST;
+        if (agent_.inside_cave() && ore_ < ORE_CAP
+            && vital_state_.stamina >= mine_cost) {
+            int   best    = -1;
+            float best_d2 = MINE_REACH * MINE_REACH;
+            for (int i = 0; i < static_cast<int>(ore_nodes_.size()); ++i) {
+                if (ore_nodes_[i].remaining <= 0) continue;
+                const float dx = ore_nodes_[i].x - as.pos_x;
+                const float dy = ore_nodes_[i].y - as.pos_y;
+                const float d2 = dx * dx + dy * dy;
+                if (d2 <= best_d2) { best_d2 = d2; best = i; }
+            }
+            if (best >= 0) {
+                vital_state_.stamina -= mine_cost;
+                if (vital_state_.stamina < 0.0f) vital_state_.stamina = 0.0f;
+                const int yield = has_pickaxe_ ? 2 : 1;
+                for (int k = 0; k < yield && ore_ < ORE_CAP
+                                && ore_nodes_[best].remaining > 0; ++k) {
+                    --ore_nodes_[best].remaining;
+                    ++ore_;
+                }
+                if (!first_mine_fired_) {
+                    reward_.event_milestone();
+                    first_mine_fired_ = true;
+                    // One-shot smoke diagnostic: proves the mine loop fired with
+                    // all preconditions satisfied (underground + node in reach +
+                    // stamina charged).
+                    spdlog::info("D-122 mine OK: ore chipped underground "
+                                 "(ore={} node_left={})",
+                                 ore_, ore_nodes_[best].remaining);
+                }
+            }
+        }
+    }
+
+    // D-122 RUNG 3 (craft_axe, categorical idx 20). Causally chained to RUNG 2:
+    //   needs (1) tools enabled, (2) no axe yet (one per life),
+    //         (3) >=1 Wood in inventory, (4) >=1 carried ore (the RUNG-2 yield).
+    // Effect: consumes 1 Wood + 1 ore, sets has_axe_ (wood gathering then
+    // yields a bonus log). One-shot milestone the first time. Inert unless
+    // tools_enabled; idx20 stays masked until allow_craft_axe -> the v7
+    // champion is byte-identical.
+    if (action.craft_axe && cfg_.tools_enabled) {
+        if (!has_axe_
+            && inventory_.num_of(dp::agent::ItemKind::Wood) >= TOOL_WOOD_COST
+            && ore_ >= TOOL_ORE_COST) {
+            inventory_.remove_one(dp::agent::ItemKind::Wood);
+            ore_ -= TOOL_ORE_COST;
+            has_axe_ = true;
+            reward_.event_crafted_tool();
+            if (!first_axe_fired_) {
+                reward_.event_milestone();
+                first_axe_fired_ = true;
+                spdlog::info("D-122 axe OK: stone axe crafted "
+                             "(wood-1 ore-1, ore_left={})", ore_);
+            }
+        }
+    }
+
+    // D-122 RUNG 3 (craft_pickaxe, categorical idx 21). Same recipe as the axe
+    // (1 Wood + 1 ore); sets has_pickaxe_, which makes mining cheaper + richer
+    // (see the mine handler above). One-shot milestone. Inert unless
+    // tools_enabled; idx21 masked until allow_craft_pickaxe.
+    if (action.craft_pickaxe && cfg_.tools_enabled) {
+        if (!has_pickaxe_
+            && inventory_.num_of(dp::agent::ItemKind::Wood) >= TOOL_WOOD_COST
+            && ore_ >= TOOL_ORE_COST) {
+            inventory_.remove_one(dp::agent::ItemKind::Wood);
+            ore_ -= TOOL_ORE_COST;
+            has_pickaxe_ = true;
+            reward_.event_crafted_tool();
+            if (!first_pickaxe_fired_) {
+                reward_.event_milestone();
+                first_pickaxe_fired_ = true;
+                spdlog::info("D-122 pickaxe OK: stone pickaxe crafted "
+                             "(wood-1 ore-1, ore_left={})", ore_);
+            }
+        }
+    }
+
+    // D-122 RUNG 5 (build_monument, categorical idx 22). The capstone "great
+    // furnace". Causally chained to RUNG 3:
+    //   needs (1) monument enabled, (2) not already built,
+    //         (3) a tool in hand (axe or pickaxe) - the great work needs
+    //             stone-age tooling, tying it to the tool rung,
+    //         (4) >=1 carried ore to haul in,
+    //         (5) being within MONUMENT_REACH of the site.
+    // Effect: consumes 1 ore, advances monument_progress_ by 1; at
+    // MONUMENT_GOAL the monument is BUILT -> it radiates warmth and ARMS the
+    // boss ordeal. One-shot milestone on the first haul, +2 more when complete.
+    // Inert unless monument_enabled; idx22 masked until allow_monument.
+    if (action.build_monument && cfg_.monument_enabled) {
+        const float dx = monument_x_ - as.pos_x;
+        const float dy = monument_y_ - as.pos_y;
+        const bool  at_site  = (dx * dx + dy * dy)
+                               <= MONUMENT_REACH * MONUMENT_REACH;
+        const bool  has_tool = has_axe_ || has_pickaxe_;
+        if (!monument_built_ && has_tool && ore_ >= 1 && at_site) {
+            --ore_;
+            ++monument_progress_;
+            if (!first_monument_fired_) {
+                reward_.event_milestone();
+                first_monument_fired_ = true;
+                spdlog::info("D-122 monument haul OK: ore hauled to capstone "
+                             "(progress={}/{})",
+                             monument_progress_, MONUMENT_GOAL);
+            }
+            if (monument_progress_ >= MONUMENT_GOAL) {
+                monument_built_ = true;
+                reward_.event_milestone();
+                reward_.event_milestone();   // great work complete = 2x
+                spdlog::info("D-122 MONUMENT BUILT: great furnace complete, "
+                             "boss arming");
+            }
+        }
+    }
+
+    // Promote any sites that just got their last material this tick.
+    int finished = buildings_.tick_finalize();
+    for (int i = 0; i < finished; ++i) {
+        reward_.event_built_shelter();
+        progress_.on_house_built();
+        // D-094: removed the D-089 auto-respawn-at-spawn block. Previously
+        // each completion immediately spawned a fresh Shed site at
+        // (spawn_x, spawn_y), which converged PPO to "build, walk, build,
+        // walk" because every build was instantly replaced. The blueprint
+        // wants the agent to TREAT the one Shed as home, not produce an
+        // endless stream of throwaway shelters. After D-094 the agent must
+        // explicitly choose to build more (place_blueprint + deposits) if
+        // it wants a second shelter, and ONE auto-placed site at spawn
+        // (in reset()) is the only freebie.
+        if (!first_house_built_fired_) {
+            reward_.event_milestone();
+            first_house_built_fired_ = true;
+        }
+    }
+
+    // D-094: removed the D-090 follow-agent Shed respawn entirely. The
+    // 6m "if no nearby site, drop one" rule was the main driver of the
+    // "hundreds of throwaway buildings, none of them inhabited" pattern
+    // (D-089 122, D-091 122, D-092 189, D-093 233). The agent must now
+    // commit to its single starter Shed as home OR, if it has wandered
+    // very far, manually place_blueprint a new site and build it with
+    // its own collected materials. No more conveyor belt of scaffolded
+    // sites following the agent around.
+
+    // Stage unlock bonus (Early->Mid, Mid->Late). +40 each (milestone x2).
+    if (progress_.poll_unlock()) {
+        reward_.event_milestone();
+        reward_.event_milestone();
+    }
+
+    if (action.craft_spear) {
+        if (inventory_.craft_spear()) {
+            reward_.event_crafted_tool();
+            // D-062: upgrade to critical (+5). Crafting the first spear is
+            // the key gateway to line 22 hunting; making the first one
+            // worth more than a routine craft helps PPO discover the
+            // wood+stone -> spear pipeline. Subsequent spears within the
+            // same episode follow the normal crafted_tool path.
+            fire_once_critical(first_spear_fired_);
+        }
+    }
+    // D-089: place_shelter (lean-to) disabled to force PPO toward Shed/house
+    // building. D-088 5M run showed PPO learned Shed in ep 0-100 (28 houses)
+    // then converged on lean-to (1 action, same +5 r_shelter, same 1W+1G cost)
+    // for the remaining 457 ep -> 1 house in 100+ ep. Removing lean-to as a
+    // reward path forces PPO to keep using the multi-step deposit chain
+    // (which it already proved learnable in ep 0-100). Action stays in the
+    // action space (PPO sees consistent action_dim) but does nothing.
+    if (action.place_shelter) {
+        // intentionally no-op
+    }
+    if (action.attack) {
+        bool has_spear = inventory_.num_of(dp::agent::ItemKind::Spear) > 0;
+        float reach  = has_spear ? 2.5f : 1.5f;
+        float damage = has_spear ? 50.0f : 20.0f;
+        auto hit = animals_.agent_attack(as.pos_x, as.pos_y,
+                                         agent_.yaw(), reach, damage);
+        // D-065: D-064 per-hit reward reverted. D-064 measured: hunt 8%->0%,
+        // col 68%->37%, drink 100%->90%, score 0.292->0.281. Confirmed user
+        // warning that direct per-hit shaping causes reward hacking. The
+        // kill-time first_hunt critical (+5) below stays; we rely on
+        // structural changes (D-063 starter kit + D-065 grass) to lower
+        // exploration cost without metric-driven shaped reward.
+        if (hit.killed) {
+            auto kind = animals_.animals()[hit.index].kind;
+            if (kind == dp::world::AnimalKind::Wolf) {
+                // Wolf: wolf_killed stays 0 (D-047 anti-鎾╃嫾). Eat reward
+                // only if hungry; NO first_hunt milestone for wolves -
+                // we don't want PPO to gamble against predators for the
+                // line-22 unlock.
+                reward_.event_wolf_killed();
+                const float ate = eat_drive(40.0f);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                inventory_.add(dp::agent::ItemKind::Fur);
+                reward_.event_collected_resource();  // D-062: fur is a resource
+            } else if (kind == dp::world::AnimalKind::Rabbit) {
+                const float ate = eat_drive(15.0f);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                inventory_.add(dp::agent::ItemKind::Fur);
+                reward_.event_collected_resource();  // D-062
+                fire_once_critical(first_hunt_fired_);  // D-062
+            } else if (kind == dp::world::AnimalKind::Deer) {
+                const float ate = eat_drive(40.0f);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                inventory_.add(dp::agent::ItemKind::Fur);
+                reward_.event_collected_resource();  // D-062
+                fire_once_critical(first_hunt_fired_);  // D-062
+            } else if (kind == dp::world::AnimalKind::Fish) {
+                const float ate = eat_drive(20.0f);
+                if (ate > 0.5f) fire_once_critical(first_eat_fired_);
+                fire_once_critical(first_hunt_fired_);  // D-062
+            }
+            // D-043: first_hunt removed. D-062: re-introduced but ONLY for
+            // prey (rabbit/deer/fish). Wolves still grant no kill bonus so
+            // the 鎾╃嫾 pathology cannot re-emerge.
+            // decision_blueprint_nutrition (round_21): any meat kill refills
+            // the PROTEIN bar (no-op when nutrition disabled). No reward is
+            // attached to the kill itself - the bar only restores a vital, so
+            // hunting is driven by survival, not a kill bounty (anti-Goodhart).
+            vitals_.eat_protein(vital_state_,
+                                vitals_.config().protein_per_meat);
+            // D-122 RUNG 1: a prey kill ALSO drops one storable RawMeat (the
+            // instant nutrition above is UNCHANGED, so survival/hunting is
+            // never nerfed). Wolves excluded (pure danger, no first_hunt).
+            // Capped so the agent can't hoard infinite rations. Inert unless
+            // cook_enabled -> the v7 champion's world is byte-identical.
+            if (cfg_.cook_enabled
+                && kind != dp::world::AnimalKind::Wolf
+                && raw_meat_ < RAW_MEAT_CAP) {
+                ++raw_meat_;
+            }
+        }
+    }
+
+    if (action.craft_grass_dress) {
+        if (inventory_.craft_grass_dress()) reward_.event_crafted_tool();
+    }
+    if (action.craft_fur_cloak) {
+        if (inventory_.craft_fur_cloak()) reward_.event_crafted_tool();
+    }
+    if (action.wear_clothes) {
+        bool worn = false;
+        if (inventory_.num_of(dp::agent::ItemKind::FurCloak) > 0) {
+            wardrobe_.wear(inventory_, dp::agent::ItemKind::FurCloak);
+            worn = true;
+        } else if (inventory_.num_of(dp::agent::ItemKind::GrassDress) > 0) {
+            wardrobe_.wear(inventory_, dp::agent::ItemKind::GrassDress);
+            worn = true;
+        }
+        // D-062: upgrade to critical (+5). First time the agent puts on
+        // any garment is the line-23 unlock; make it salient enough that
+        // PPO can connect craft_grass_dress/fur_cloak -> wear_clothes.
+        if (worn) fire_once_critical(first_clothing_fired_);
+    }
+
+    if (action.plant_seed && progress_.can_farm()) {
+        if (inventory_.num_of(dp::agent::ItemKind::Seed) > 0) {
+            inventory_.remove_one(dp::agent::ItemKind::Seed);
+            farming_.plant_seed(as.pos_x, as.pos_y, as.pos_z, last_seed_kind_);
+            reward_.event_collected_resource();
+            fire_once(first_seed_planted_fired_);
+        }
+    }
+    if (action.water_plot && progress_.can_farm()) {
+        if (farming_.water_at(as.pos_x, as.pos_y, 2.0f)) {
+            vital_state_.stamina = std::max(0.0f, vital_state_.stamina - 2.0f);
+        }
+    }
+    if (action.feed_tame && progress_.can_tame()) {
+        auto fr = tame_.try_feed(animals_, inventory_,
+                                 as.pos_x, as.pos_y, 3.0f);
+        if (fr.animal_idx >= 0) {
+            inventory_.remove_one(fr.consumed);
+            reward_.event_collected_resource();
+            if (fr.just_became_follower) {
+                reward_.event_crafted_tool();
+                if (!first_follower_fired_) {
+                    reward_.event_milestone();
+                    first_follower_fired_ = true;
+                }
+            }
+        }
+    }
+
+    // Wolves can bite the agent (passive damage)
+    for (size_t i = 0; i < animals_.animals().size(); ++i) {
+        if (animals_.wolf_attack_agent(static_cast<int>(i),
+                                       as.pos_x, as.pos_y)) {
+            vital_state_.hunger  = std::max(0.0f,
+                vital_state_.hunger  - 25.0f * dt);
+            vital_state_.stamina = std::max(0.0f,
+                vital_state_.stamina - 50.0f * dt);
+            reward_.event_wolf_bite(25.0f * dt);
+        }
+    }
+
+    // Death edge
+    if (was_alive_ && !vital_state_.alive) {
+        reward_.event_death();
+    }
+    was_alive_ = vital_state_.alive;
+
+    // D-043 P2: per-step state-based bonus (桅-style "what the agent has
+    // accumulated"). Awards a small ongoing payout for holding house +
+    // clothes + followers + inventory diversity, so the agent learns these
+    // as persistent values rather than one-shot first_X events.
+    {
+        float phi = 0.0f;
+        // has at least one completed building: +0.5
+        if (!buildings_.buildings().empty()) phi += 0.5f;
+        // wearing any clothing: +0.3
+        if (wardrobe_.worn() != dp::agent::ItemKind::Count) phi += 0.3f;
+        // followers: +0.1 each, capped at 5 followers (0.5)
+        phi += std::min(0.5f, 0.1f * static_cast<float>(tame_.follower_count()));
+        // inventory diversity: +0.05 per unique kind, capped at 10 unique (0.5)
+        int unique = 0;
+        for (int k = 0; k < static_cast<int>(dp::agent::ItemKind::Count); ++k) {
+            if (inventory_.num_of(static_cast<dp::agent::ItemKind>(k)) > 0) {
+                ++unique;
+            }
+        }
+        phi += std::min(0.5f, 0.05f * static_cast<float>(unique));
+        reward_.event_state_bonus(phi);
+    }
+
+    // D-044: return the CLIPPED per-step total. Pre D-044 the caller used
+    // reward_.last_step().total() which is the UNCLIPPED component sum,
+    // so the [-10,+10] safety clip declared by D-043 P1 never reached PPO.
+    return reward_.end_step();
+}
+
+StepResult Environment::step(const dp::agent::AgentAction& action) {
+    const float dt = cfg_.fixed_dt;
+    day_.advance(dt);
+
+    // D-049 #2: blueprint line 62 "浣撳姏浣庡氨璧版參". Pre D-049 stamina was a
+    // read-only number on the HUD - it decayed, but the agent's actual
+    // move_speed_ never changed, so there was no reason for PPO to rest.
+    // Now low stamina scales the move command before it reaches the body
+    // via stamina_speed_multiplier (see Environment.hpp for the curve).
+    dp::agent::AgentAction scaled = action;
+    {
+        float speed_mul = Environment::stamina_speed_multiplier(
+            vital_state_.stamina);
+        // decision_blueprint_nutrition (round_21): malnutrition weakens the
+        // agent (multiplies with the stamina curve). Returns 1.0 when
+        // nutrition is disabled, so the old world is unaffected.
+        speed_mul *= vitals_.nutrition_speed_mult(vital_state_);
+        // S5 world realism: rough terrain (steep slope + swamp/mountain
+        // footing) physically slows the body. Computed from the heightmap
+        // gradient and biome under the agent's current position; returns 1.0
+        // on flat plains so flat-world behaviour is unchanged.
+        const auto& as0 = agent_.state();
+        float mgx = 0.0f, mgy = 0.0f;
+        world_.heightmap().sample_gradient(as0.pos_x, as0.pos_y, mgx, mgy);
+        float mslope = std::sqrt(mgx * mgx + mgy * mgy);
+        speed_mul *= Environment::terrain_speed_multiplier(
+            mslope, world_.biome_at(as0.pos_x, as0.pos_y));
+        scaled.move_x *= speed_mul;
+        scaled.move_y *= speed_mul;
+    }
+
+    // Agent body update first (so vitals etc see the new position).
+    agent_.apply_action(scaled, world_, physics_, dt);
+
+    const float step_reward_clipped = apply_action_effects_(scaled);
+
+    // Cognitive map: write whatever the agent currently senses around it
+    // into the spatial grid cells *within VISION_RANGE*, not just under
+    // its feet. This is what gives PPO long-term spatial recall
+    // ("I saw water in the NW corner earlier").
+    //
+    // D-049 #3: before this change the loop below wrote a single cell per
+    // tick (the one under the agent's feet) and tagged it with whatever
+    // was visible in a 60 m circle. That made cognitive map essentially
+    // useless for navigation: the agent had to physically step ON each
+    // water cell to remember "this is water", which never happens in a
+    // 1024 m world. Blueprint line 24 says "鐭ラ亾瀹躲€佹按婧愩€佺嫾鍑烘病鍖哄湪鍝?,
+    // i.e. *seen* things should be remembered. We now mark every grid
+    // cell whose centre lies within VISION_RANGE of the agent with the
+    // observed feature, matching the "vision = memory write" semantics.
+    {
+        const auto& as = agent_.state();
+        const float R  = dp::agent::ObservationBuilder::VISION_RANGE;
+        const float R2 = R * R;
+        const float cell = dp::agent::SpatialMemory::CELL_SIZE_M;
+
+        // Visited cell under the feet (kept for compatibility with the
+        // visited channel; also writes danger/etc. for the immediate
+        // spot).
+        spatial_.write(as.pos_x, as.pos_y,
+                       /*water*/false, /*food*/false,
+                       /*resource*/false, /*danger*/false,
+                       /*building*/false);
+
+        // Stamp every water cell within vision range.
+        for (float dy = -R; dy <= R; dy += cell) {
+            for (float dx = -R; dx <= R; dx += cell) {
+                if (dx*dx + dy*dy > R2) continue;
+                float wx = as.pos_x + dx, wy = as.pos_y + dy;
+                auto b = world_.biome_at(wx, wy);
+                if (b == dp::world::Biome::River
+                 || b == dp::world::Biome::Swamp) {
+                    spatial_.write(wx, wy, /*water*/true, false, false,
+                                   false, false);
+                }
+            }
+        }
+
+        // Plants / resources: stamp the cell that actually contains the
+        // thing, as long as the agent can see it.
+        for (const auto& pl : plants_.plants()) {
+            if (!pl.ripe) continue;
+            float ddx = pl.x - as.pos_x, ddy = pl.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(pl.x, pl.y, false, /*food*/true, false,
+                               false, false);
+            }
+        }
+        for (const auto& rs : resources_.resources()) {
+            if (!rs.available) continue;
+            float ddx = rs.x - as.pos_x, ddy = rs.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(rs.x, rs.y, false, false,
+                               /*resource*/true, false, false);
+            }
+        }
+        // Wolves: where they currently are *plus* under the agent's own
+        // feet, so the danger map keeps track of "this region is risky".
+        bool saw_wolf_close = false;
+        for (const auto& an : animals_.animals()) {
+            if (an.state == dp::world::AnimalState::Dead) continue;
+            if (an.kind != dp::world::AnimalKind::Wolf) continue;
+            float ddx = an.pos_x - as.pos_x, ddy = an.pos_y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(an.pos_x, an.pos_y, false, false, false,
+                               /*danger*/true, false);
+                saw_wolf_close = true;
+            }
+        }
+        if (saw_wolf_close) {
+            spatial_.write(as.pos_x, as.pos_y, false, false, false,
+                           /*danger*/true, false);
+        }
+        for (const auto& bd : buildings_.buildings()) {
+            float ddx = bd.x - as.pos_x, ddy = bd.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(bd.x, bd.y, false, false, false, false,
+                               /*building*/true);
+            }
+        }
+        for (const auto& site : buildings_.sites()) {
+            if (site.completed) continue;
+            float ddx = site.x - as.pos_x, ddy = site.y - as.pos_y;
+            if (ddx*ddx + ddy*ddy <= R2) {
+                spatial_.write(site.x, site.y, false, false, false,
+                               false, /*building*/true);
+            }
+        }
+    }
+
+    episodes_.tick(dt);
+
+    bool done = episodes_.is_done(vital_state_);
+
+    StepResult out;
+    // D-044: feed PPO the CLIPPED reward (Weights::reward_clip_min/max).
+    // The unclipped breakdown stays available via reward_.last_step() and
+    // reward_.episode() for diagnostics / EpisodeStats logging.
+    out.reward       = step_reward_clipped;
+    out.done         = done;
+    out.episode_id   = episodes_.episode_id();
+    out.episode_step = episodes_.step_count();
+
+    if (done) {
+        last_ep_stats_ = reward_.episode();
+        ++episodes_completed_;
+    }
+
+    rebuild_observation_(out.obs);
+    ++step_index_;
+    return out;
+}
+
+void Environment::rebuild_observation_(
+    dp::agent::ObservationBuilder::Vector& out) const
+{
+    dp::agent::ObservationBuilder::compose(
+        world_, agent_, vital_state_, day_,
+        plants_, animals_, resources_,
+        inventory_, shelter_, episodes_, progress_,
+        buildings_, wardrobe_, farming_, tame_,
+        selected_building_, spatial_,
+        weather_.intensity(), vital_state_.wetness, out);
+
+    // D-122: fill the reserved tech-tree sense slots (compose already zeroed
+    // 573..581). Each rung's slots are only written when its master switch is
+    // on; otherwise they stay 0 and the warm-started champion's zero-init
+    // encoder columns ignore them (byte-identical). Layout 573..581:
+    //   573 near_cookfire 574 raw/cap 575 cooked/cap          (RUNG 1)
+    //   576 ore_in_reach  577 ore/cap                          (RUNG 2)
+    //   578 has_axe       579 has_pickaxe                       (RUNG 3)
+    //   580 monument_progress  581 boss_threat                 (RUNG 5)
+    if (cfg_.cook_enabled || cfg_.mine_enabled
+        || cfg_.tools_enabled || cfg_.monument_enabled) {
+        constexpr int B = dp::agent::ObservationBuilder::SIZE
+                        - dp::agent::ObservationBuilder::OBS_TECH_RESERVED; // 573
+        const auto& as = agent_.state();
+        if (cfg_.cook_enabled) {
+            out[B + 0] = fires_.warm_rate_at(as.pos_x, as.pos_y) > 0.0f ? 1.0f
+                                                                        : 0.0f; // 573 near_cookfire
+            out[B + 1] = float(raw_meat_)    / float(RAW_MEAT_CAP);             // 574 rawmeat/cap
+            out[B + 2] = float(cooked_meat_) / float(COOKED_MEAT_CAP);         // 575 cookedmeat/cap
+        }
+        if (cfg_.mine_enabled) {
+            // 576 ore_in_reach: proximity (1 - dist/reach) to the nearest
+            // non-empty ore node WHILE underground, else 0 - gives the policy a
+            // gradient to home in on a node once it is inside a cave.
+            float prox = 0.0f;
+            if (agent_.inside_cave()) {
+                float best_d2 = MINE_REACH * MINE_REACH;
+                bool  found   = false;
+                for (const auto& n : ore_nodes_) {
+                    if (n.remaining <= 0) continue;
+                    const float dx = n.x - as.pos_x;
+                    const float dy = n.y - as.pos_y;
+                    const float d2 = dx * dx + dy * dy;
+                    if (d2 <= best_d2) { best_d2 = d2; found = true; }
+                }
+                if (found) prox = 1.0f - std::sqrt(best_d2) / MINE_REACH;
+            }
+            out[B + 3] = prox;                                  // 576 ore_in_reach
+            out[B + 4] = float(ore_) / float(ORE_CAP);          // 577 ore/cap
+        }
+        if (cfg_.tools_enabled) {
+            out[B + 5] = has_axe_     ? 1.0f : 0.0f;            // 578 has_axe
+            out[B + 6] = has_pickaxe_ ? 1.0f : 0.0f;            // 579 has_pickaxe
+        }
+        if (cfg_.monument_enabled) {
+            // 580 monument_progress: fraction of ore hauls done (0..1).
+            float mp = float(monument_progress_) / float(MONUMENT_GOAL);
+            out[B + 7] = mp > 1.0f ? 1.0f : mp;                 // 580 monument_progress
+            // 581 boss_threat: normalized clock pressure [0,1] so the policy
+            // can learn the FIXED deadline. Before the boss it ramps 0->0.5
+            // across the life as episode time approaches BOSS_ARRIVAL_S (a
+            // ticking-clock "build the monument NOW" signal); during the active
+            // ordeal it ramps 0.5->1 as the cold-snap elapses.
+            const float ep_time_s = static_cast<float>(step_index_) * cfg_.fixed_dt;
+            float threat;
+            if (boss_active_) {
+                threat = 0.5f + 0.5f * std::min(1.0f, boss_timer_ / BOSS_DURATION_S);
+            } else if (boss_started_) {
+                threat = 1.0f;                                  // ordeal done this life
+            } else {
+                threat = 0.5f * std::min(1.0f, ep_time_s / BOSS_ARRIVAL_S);
+            }
+            out[B + 8] = threat;                                // 581 boss_threat
+        }
+    }
+}
+
+// D-049 #2: stamina-aware speed multiplier. See Environment.hpp.
+float Environment::stamina_speed_multiplier(float stamina) {
+    float clamped = stamina < 0.0f ? 0.0f
+                  : (stamina > 50.0f ? 50.0f : stamina);
+    return 0.5f + clamped * 0.01f;   // 50 -> 1.0, 0 -> 0.5
+}
+
+// S5 world realism: terrain footing speed multiplier (see Environment.hpp).
+float Environment::terrain_speed_multiplier(float slope_mag,
+                                            dp::world::Biome biome) {
+    if (slope_mag < 0.0f) slope_mag = 0.0f;
+    // 1/(1+k*slope): flat=1.0, ~26deg(0.5)=0.53, 45deg(1.0)=0.36.
+    float slope_mul = 1.0f / (1.0f + 1.8f * slope_mag);
+    float biome_mul = 1.0f;
+    switch (biome) {
+        case dp::world::Biome::Swamp:    biome_mul = 0.6f; break; // wading mud
+        case dp::world::Biome::Mountain: biome_mul = 0.8f; break; // rocky footing
+        default: break;
+    }
+    return slope_mul * biome_mul;
+}
+
+// D-043: snapshot the 10 first_X flags as a Crafter-style milestone vector.
+EpisodeMilestones Environment::milestones() const {
+    EpisodeMilestones m;
+    m.drink    = first_drink_fired_;
+    m.eat      = first_eat_fired_;
+    m.collect  = first_collect_fired_;
+    m.spear    = first_spear_fired_;
+    m.shelter  = first_shelter_fired_;
+    m.clothing = first_clothing_fired_;
+    m.seed     = first_seed_planted_fired_;
+    m.house    = first_house_built_fired_;
+    m.crop     = first_crop_harvested_fired_;
+    m.follower = first_follower_fired_;
+    return m;
+}
+
+// D-122 RUNG 1 cook+light END-TO-END self-test. Drives the REAL step() cook
+// handler through a deterministic scenario (see header doc). Causal closure is
+// proven by the two negative cases: cook does NOTHING without RawMeat, and
+// NOTHING without a lit fire — it is never a free button.
+bool Environment::cook_selftest() {
+    using dp::agent::AgentAction;
+    bool ok = true;
+    auto check = [&](const char* n, bool c) {
+        spdlog::info("[cook-selftest] [{}] {}", c ? "PASS" : "FAIL", n);
+        if (!c) ok = false;
+    };
+
+    // Fresh episode with the cook economy ON.
+    dp::agent::ObservationBuilder::Vector obs;
+    cfg_.cook_enabled = true;
+    reset(obs);
+
+    const auto& as = agent_.state();
+    const float px = as.pos_x, py = as.pos_y;
+
+    // Build a lit, fuelled campfire at the agent's feet (tend == build/refuel).
+    fires_.clear();
+    const bool built = fires_.tend(px, py);
+    check("setup: lit fire built at agent",
+          built && fires_.count_lit() == 1);
+    check("setup: warm/light signal present at fire",
+          fires_.warm_rate_at(px, py) > 0.0f);
+
+    // Hand the agent RawMeat (as if it had just hunted) and clear cooked.
+    raw_meat_         = 2;
+    cooked_meat_      = 0;
+    first_cook_fired_ = false;
+
+    // (1) cook with lit fire + RawMeat + fuel: 1 raw -> 1 cooked, fuel burned.
+    const float fuel_before = fires_.fires().empty() ? 0.0f
+                                                     : fires_.fires()[0].fuel;
+    AgentAction cook{};
+    cook.cook = true;
+    step(cook);
+    const float fuel_after = fires_.fires().empty() ? 0.0f
+                                                    : fires_.fires()[0].fuel;
+    check("cook(lit fire + raw meat): raw 2->1", raw_meat_ == 1);
+    check("cook: cooked 0->1",                   cooked_meat_ == 1);
+    check("cook: fire fuel decreased",           fuel_after < fuel_before);
+    check("cook: first_cook milestone fired",    first_cook_fired_);
+
+    // (2) cook with NO RawMeat -> no-op (cooked unchanged).
+    raw_meat_ = 0;
+    int cooked_snapshot = cooked_meat_;
+    AgentAction cook2{};
+    cook2.cook = true;
+    step(cook2);
+    check("cook(no raw meat): no-op",
+          cooked_meat_ == cooked_snapshot && raw_meat_ == 0);
+
+    // (3) cook with NO lit fire -> no-op (causal gate). Extinguish + give raw.
+    fires_.clear();
+    raw_meat_       = 1;
+    cooked_snapshot = cooked_meat_;
+    AgentAction cook3{};
+    cook3.cook = true;
+    step(cook3);
+    check("cook(no lit fire): no-op",
+          cooked_meat_ == cooked_snapshot && raw_meat_ == 1);
+
+    // (4) eating drains a stored CookedMeat ration (cook-now-eat-later payoff).
+    cooked_meat_ = 1;
+    AgentAction eat{};
+    eat.eat = true;
+    step(eat);
+    check("eat: cooked ration consumed", cooked_meat_ == 0);
+
+    spdlog::info("[cook-selftest] OVERALL {}", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// D-122 RUNG 2: (re)scatter ore nodes inside the caves at the start of each
+// life. Per-life like the cook economy, so the persistent world is not strip-
+// mined permanently. Clears the list (and places nothing) unless mining is
+// unlocked, so a champion run with mine_enabled off has an empty ore world.
+void Environment::scatter_ore_nodes_() {
+    ore_nodes_.clear();
+    if (!cfg_.mine_enabled) return;
+    const auto& boxes = world_.caves().caves();
+    for (const auto& c : boxes) {
+        // Two ore nodes per cave, placed on the cave floor within the central
+        // 60% of its footprint so they sit comfortably inside the cavity.
+        for (int k = 0; k < 2; ++k) {
+            OreNode n;
+            n.x = c.center_x + (frand01() * 2.0f - 1.0f) * c.half_x * 0.6f;
+            n.y = c.center_y + (frand01() * 2.0f - 1.0f) * c.half_y * 0.6f;
+            n.z = c.floor_z;
+            n.remaining = ORE_NODE_RICHNESS;
+            ore_nodes_.push_back(n);
+        }
+    }
+}
+
+// D-122 RUNG 2 cave-mining END-TO-END self-test. Drives the REAL step() mine
+// handler (via apply_action_effects_) through a deterministic scenario. Causal
+// closure is proven by the three negative cases: mine does NOTHING without a
+// node, NOTHING above ground, and NOTHING without stamina.
+bool Environment::mine_selftest() {
+    using dp::agent::AgentAction;
+    bool ok = true;
+    auto check = [&](const char* n, bool c) {
+        spdlog::info("[mine-selftest] [{}] {}", c ? "PASS" : "FAIL", n);
+        if (!c) ok = false;
+    };
+
+    dp::agent::ObservationBuilder::Vector obs;
+    cfg_.mine_enabled = true;
+    reset(obs);   // scatters ore nodes inside the caves
+
+    // Need at least one cave to stage the test in.
+    const auto& boxes = world_.caves().caves();
+    check("setup: world has at least one cave", !boxes.empty());
+    if (boxes.empty()) {
+        spdlog::info("[mine-selftest] OVERALL FAIL (no caves)");
+        return false;
+    }
+    const dp::world::CaveBox cave = boxes[0];
+    const float cx = cave.center_x;
+    const float cy = cave.center_y;
+    const float cz = cave.floor_z + 0.5f;   // just above the cave floor
+
+    auto put_in_cave = [&]() { agent_.reset(cx, cy, cz); };
+    auto one_node_at_feet = [&]() {
+        ore_nodes_.clear();
+        OreNode n; n.x = cx; n.y = cy; n.z = cave.floor_z;
+        n.remaining = ORE_NODE_RICHNESS;
+        ore_nodes_.push_back(n);
+    };
+
+    // (1) underground + node in reach + stamina: mine works.
+    put_in_cave();
+    one_node_at_feet();
+    vital_state_.stamina = 100.0f;
+    ore_              = 0;
+    first_mine_fired_ = false;
+    const int   node_before = ore_nodes_[0].remaining;
+    const float stam_before = vital_state_.stamina;
+    AgentAction mine{}; mine.mine = true;
+    step(mine);
+    check("setup: agent registered inside cave", agent_.inside_cave());
+    check("mine(underground+node+stamina): ore 0->1", ore_ == 1);
+    check("mine: node depleted by 1",
+          !ore_nodes_.empty() && ore_nodes_[0].remaining == node_before - 1);
+    check("mine: stamina spent", vital_state_.stamina < stam_before);
+    check("mine: first_mine milestone fired", first_mine_fired_);
+
+    // (2) underground + stamina but NO node in reach -> no-op.
+    put_in_cave();
+    ore_nodes_.clear();
+    vital_state_.stamina = 100.0f;
+    int ore_snapshot = ore_;
+    AgentAction mine2{}; mine2.mine = true;
+    step(mine2);
+    check("mine(no node in reach): no-op", ore_ == ore_snapshot);
+
+    // (3) node + stamina but NOT inside a cave -> no-op (causal gate). Teleport
+    // to the surface directly above the cave.
+    const float surf_z = world_.surface_height(cx, cy) + 1.0f;
+    agent_.reset(cx, cy, surf_z);
+    one_node_at_feet();
+    vital_state_.stamina = 100.0f;
+    ore_snapshot = ore_;
+    AgentAction mine3{}; mine3.mine = true;
+    step(mine3);
+    check("mine(not in cave): no-op",
+          !agent_.inside_cave() && ore_ == ore_snapshot);
+
+    // (4) underground + node but stamina too low -> no-op.
+    put_in_cave();
+    one_node_at_feet();
+    vital_state_.stamina = 1.0f;   // < MINE_STAMINA_COST
+    ore_snapshot = ore_;
+    AgentAction mine4{}; mine4.mine = true;
+    step(mine4);
+    check("mine(no stamina): no-op", ore_ == ore_snapshot);
+
+    spdlog::info("[mine-selftest] OVERALL {}", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// D-122 RUNG 5: place the single great-furnace monument site a short walk from
+// spawn, on the surface, so the agent can reliably find it and haul ore in.
+// No-op (leaves the site coords stale but unused) unless monument_enabled.
+void Environment::place_monument_site_() {
+    if (!cfg_.monument_enabled) return;
+    monument_x_ = spawn_x_ + 10.0f;
+    monument_y_ = spawn_y_;
+    monument_z_ = world_.surface_height(monument_x_, monument_y_);
+}
+
+// D-122 RUNG 5: warmth radiated by a BUILT monument at (px,py). 0 unless the
+// monument is enabled, built, and the point is within MONUMENT_WARM_RADIUS.
+// Added to the campfire warmth term so sheltering at the monument is what
+// lets the agent ride out the boss cold-snap.
+float Environment::monument_warm_at_(float px, float py) const {
+    if (!cfg_.monument_enabled || !monument_built_) return 0.0f;
+    const float dx = monument_x_ - px;
+    const float dy = monument_y_ - py;
+    if (dx * dx + dy * dy > MONUMENT_WARM_RADIUS * MONUMENT_WARM_RADIUS)
+        return 0.0f;
+    return MONUMENT_WARM_RATE;
+}
+
+// D-122 RUNG 4: may the agent place this building tier right now? The basic
+// Shed/WoodHouse are always free; the advanced StoneHouse/BigHouse cost
+// stone-age tools, but ONLY when cfg_.tier_gate_enabled (so a champion world
+// with the gate off behaves exactly like v7). This is the sole new logic in
+// RUNG 4 and is what the real place_blueprint handler consults.
+bool Environment::building_tier_allowed_(dp::world::BuildingType bt) const {
+    if (!cfg_.tier_gate_enabled) return true;
+    if (bt == dp::world::BuildingType::StoneHouse) return has_pickaxe_;
+    if (bt == dp::world::BuildingType::BigHouse)    return has_axe_ && has_pickaxe_;
+    return true;   // Shed / WoodHouse stay free
+}
+
+// D-122 RUNG 3 stone-tool END-TO-END self-test. Drives the REAL step() craft
+// handlers + tool effects deterministically. Causal closure is proven by the
+// negatives (no ore / no wood / already owned do NOTHING) and the effects are
+// proven against the bare-handed baseline (pickaxe mine richer+cheaper, axe
+// wood collect yields a bonus log).
+bool Environment::tools_selftest() {
+    using dp::agent::AgentAction;
+    using dp::agent::ItemKind;
+    bool ok = true;
+    auto check = [&](const char* n, bool c) {
+        spdlog::info("[tools-selftest] [{}] {}", c ? "PASS" : "FAIL", n);
+        if (!c) ok = false;
+    };
+
+    dp::agent::ObservationBuilder::Vector obs;
+    cfg_.tools_enabled = true;
+    cfg_.mine_enabled  = true;   // ore is the tool feedstock (RUNG-2 chain)
+    reset(obs);
+
+    // ---- RUNG 3 crafting causal closure ----------------------------------
+    // (1) Wood + ore in hand -> axe crafted, both consumed, milestone fired.
+    inventory_.clear();
+    inventory_.add(ItemKind::Wood);
+    ore_             = 1;
+    has_axe_         = false;
+    first_axe_fired_ = false;
+    AgentAction ca{}; ca.craft_axe = true;
+    step(ca);
+    check("craft_axe(wood+ore): has_axe set", has_axe_);
+    check("craft_axe: ore consumed (1->0)", ore_ == 0);
+    check("craft_axe: wood consumed", inventory_.num_of(ItemKind::Wood) == 0);
+    check("craft_axe: milestone fired", first_axe_fired_);
+
+    // (2) no ore -> no-op (causal chain to RUNG 2).
+    inventory_.clear();
+    inventory_.add(ItemKind::Wood);
+    ore_                 = 0;
+    has_pickaxe_         = false;
+    first_pickaxe_fired_ = false;
+    AgentAction cp{}; cp.craft_pickaxe = true;
+    step(cp);
+    check("craft_pickaxe(no ore): no-op",
+          !has_pickaxe_ && inventory_.num_of(ItemKind::Wood) == 1);
+
+    // (3) no wood -> no-op.
+    inventory_.clear();
+    ore_         = 5;
+    has_pickaxe_ = false;
+    AgentAction cp2{}; cp2.craft_pickaxe = true;
+    step(cp2);
+    check("craft_pickaxe(no wood): no-op", !has_pickaxe_ && ore_ == 5);
+
+    // (4) craft properly, then craft again -> second is a no-op (already owned;
+    //     ore must NOT be spent twice).
+    inventory_.clear();
+    inventory_.add(ItemKind::Wood);
+    inventory_.add(ItemKind::Wood);
+    ore_                 = 5;
+    has_pickaxe_         = false;
+    first_pickaxe_fired_ = false;
+    AgentAction cp3{}; cp3.craft_pickaxe = true;
+    step(cp3);
+    check("craft_pickaxe(wood+ore): crafted, 1 wood+1 ore spent",
+          has_pickaxe_ && ore_ == 4
+          && inventory_.num_of(ItemKind::Wood) == 1);
+    const int   ore_after  = ore_;
+    const int   wood_after = inventory_.num_of(ItemKind::Wood);
+    step(cp3);   // already owned
+    check("craft_pickaxe(already owned): no-op (no double spend)",
+          has_pickaxe_ && ore_ == ore_after
+          && inventory_.num_of(ItemKind::Wood) == wood_after);
+
+    // ---- RUNG 3 EFFECT proofs --------------------------------------------
+    // (5) pickaxe makes a mine richer (2 ore) + cheaper (half stamina) vs the
+    //     bare-handed baseline (1 ore, full stamina). Staged in a cave at a
+    //     node, exactly like mine_selftest.
+    const auto& boxes = world_.caves().caves();
+    check("setup: world has at least one cave", !boxes.empty());
+    if (!boxes.empty()) {
+        const dp::world::CaveBox cave = boxes[0];
+        const float cx = cave.center_x, cy = cave.center_y;
+        const float cz = cave.floor_z + 0.5f;
+        auto stage_node = [&]() {
+            agent_.reset(cx, cy, cz);
+            ore_nodes_.clear();
+            OreNode n; n.x = cx; n.y = cy; n.z = cave.floor_z;
+            n.remaining = ORE_NODE_RICHNESS;
+            ore_nodes_.push_back(n);
+        };
+        AgentAction m{}; m.mine = true;
+        // bare-handed baseline
+        stage_node();
+        has_pickaxe_         = false;
+        ore_                 = 0;
+        vital_state_.stamina = 100.0f;
+        float bare_stam0 = vital_state_.stamina;
+        step(m);
+        const int   bare_gain = ore_;
+        const float bare_cost = bare_stam0 - vital_state_.stamina;
+        check("mine(bare): +1 ore", bare_gain == 1);
+        // with pickaxe
+        stage_node();
+        has_pickaxe_         = true;
+        ore_                 = 0;
+        vital_state_.stamina = 100.0f;
+        float pick_stam0 = vital_state_.stamina;
+        step(m);
+        const int   pick_gain = ore_;
+        const float pick_cost = pick_stam0 - vital_state_.stamina;
+        check("mine(pickaxe): +2 ore (richer)", pick_gain == 2);
+        check("mine(pickaxe): cheaper stamina than bare-handed",
+              pick_cost < bare_cost);
+    }
+
+    // (6) axe makes wood-gathering yield a bonus log. Find two ISOLATED Wood
+    //     nodes (no other available resource within 3 m), collect bare-handed
+    //     (=> +1) then with an axe (=> +2).
+    auto find_isolated_wood = [&](int skip) -> int {
+        const auto& rs = resources_.resources();
+        int seen = 0;
+        for (int i = 0; i < static_cast<int>(rs.size()); ++i) {
+            if (!rs[i].available
+                || rs[i].kind != dp::world::ResourceKind::Wood) continue;
+            bool isolated = true;
+            for (int j = 0; j < static_cast<int>(rs.size()); ++j) {
+                if (j == i || !rs[j].available) continue;
+                const float dx = rs[j].x - rs[i].x;
+                const float dy = rs[j].y - rs[i].y;
+                if (dx * dx + dy * dy < 3.0f * 3.0f) { isolated = false; break; }
+            }
+            if (isolated && seen++ == skip) return i;
+        }
+        return -1;
+    };
+    const int wi0 = find_isolated_wood(0);
+    const int wi1 = find_isolated_wood(1);
+    check("setup: two isolated wood nodes found", wi0 >= 0 && wi1 >= 0);
+    if (wi0 >= 0 && wi1 >= 0) {
+        const auto& rs = resources_.resources();
+        AgentAction col{}; col.collect = true;
+        // bare-handed
+        agent_.reset(rs[wi0].x, rs[wi0].y, rs[wi0].z);
+        inventory_.clear();
+        has_axe_ = false;
+        step(col);
+        check("collect(bare): +1 wood",
+              inventory_.num_of(ItemKind::Wood) == 1);
+        // with axe
+        agent_.reset(rs[wi1].x, rs[wi1].y, rs[wi1].z);
+        inventory_.clear();
+        has_axe_ = true;
+        step(col);
+        check("collect(axe): +2 wood (bonus log)",
+              inventory_.num_of(ItemKind::Wood) == 2);
+    }
+
+    spdlog::info("[tools-selftest] OVERALL {}", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// D-122 RUNG 5 capstone monument + boss END-TO-END self-test. Drives the REAL
+// step() build_monument handler + boss state machine. Causal closure proven by
+// the negatives (no ore / no tool / far from site do NOTHING); the boss ordeal
+// proven real by showing the cold-snap drops temperature out in the open while
+// the monument warmth aura holds it.
+bool Environment::monument_selftest() {
+    using dp::agent::AgentAction;
+    bool ok = true;
+    auto check = [&](const char* n, bool c) {
+        spdlog::info("[monument-selftest] [{}] {}", c ? "PASS" : "FAIL", n);
+        if (!c) ok = false;
+    };
+
+    dp::agent::ObservationBuilder::Vector obs;
+    cfg_.monument_enabled = true;
+    cfg_.tools_enabled    = true;   // hauling needs a tool (RUNG-3 chain)
+    reset(obs);                     // places the monument site near spawn
+
+    auto at_monument = [&]() {
+        agent_.reset(monument_x_, monument_y_,
+                     world_.surface_height(monument_x_, monument_y_));
+    };
+    auto keep_alive = [&]() {       // pin survival vitals so a long loop never
+        vital_state_.hunger  = 100.0f;   // dies mid-test and resets the episode
+        vital_state_.thirst  = 100.0f;
+        vital_state_.stamina = 100.0f;
+        vital_state_.alive   = true;
+    };
+
+    AgentAction bm{}; bm.build_monument = true;
+
+    // (1) at site + ore + tool -> haul advances progress, consumes ore, fires
+    //     the first-haul milestone.
+    at_monument();
+    has_pickaxe_          = true;
+    ore_                  = 3;
+    monument_progress_    = 0;
+    first_monument_fired_ = false;
+    step(bm);
+    check("build(site+ore+tool): progress 0->1", monument_progress_ == 1);
+    check("build: ore consumed (3->2)", ore_ == 2);
+    check("build: first milestone fired", first_monument_fired_);
+
+    // (2) no ore -> no-op.
+    at_monument();
+    has_pickaxe_  = true;
+    ore_          = 0;
+    int prog_snap = monument_progress_;
+    step(bm);
+    check("build(no ore): no-op", monument_progress_ == prog_snap);
+
+    // (3) no tool -> no-op (causal chain to RUNG 3).
+    at_monument();
+    has_axe_     = false;
+    has_pickaxe_ = false;
+    ore_         = 5;
+    prog_snap    = monument_progress_;
+    step(bm);
+    check("build(no tool): no-op",
+          monument_progress_ == prog_snap && ore_ == 5);
+
+    // (3b) far from the site -> no-op even with ore + tool (spatial gate).
+    const float fx = monument_x_ + 50.0f, fy = monument_y_ + 50.0f;
+    agent_.reset(fx, fy, world_.surface_height(fx, fy));
+    has_pickaxe_ = true;
+    ore_         = 5;
+    prog_snap    = monument_progress_;
+    step(bm);
+    check("build(far from site): no-op",
+          monument_progress_ == prog_snap && ore_ == 5);
+
+    // (4) hauling to MONUMENT_GOAL completes the monument.
+    has_pickaxe_       = true;
+    monument_progress_ = 0;
+    monument_built_    = false;
+    boss_started_      = false;
+    boss_active_       = false;
+    for (int i = 0; i < MONUMENT_GOAL; ++i) {
+        at_monument();
+        keep_alive();
+        ore_ = 1;
+        step(bm);
+    }
+    check("build x GOAL: monument built", monument_built_);
+
+    AgentAction idle{};
+
+    // (5) completing the monument does NOT by itself summon the boss: with the
+    //     episode clock still early, the boss stays dormant (it is the FIXED
+    //     deadline, not the build, that triggers it).
+    for (int i = 0; i < 60; ++i) { at_monument(); keep_alive(); step(idle); }
+    check("monument built but clock early: boss still dormant",
+          !boss_started_ && !boss_active_);
+
+    // (6) FIXED schedule: at episode time BOSS_ARRIVAL_S the boss arrives even
+    //     when the monument was NEVER built (proves it is time-driven, not
+    //     monument-driven). Fast-forward the episode clock to the deadline.
+    monument_built_ = false;
+    monument_progress_ = 0;
+    boss_started_ = false;
+    boss_active_  = false;
+    step_index_   = static_cast<int>(BOSS_ARRIVAL_S / cfg_.fixed_dt) + 2;  // just past deadline (avoid float truncation)
+    at_monument();
+    keep_alive();
+    step(idle);
+    check("fixed deadline reached: boss arrives even with NO monument",
+          boss_active_ && !monument_built_);
+
+    // (7) the ordeal is real: AWAY from the monument the cold-snap drives
+    //     temperature DOWN; INSIDE the warmth aura it stays markedly warmer.
+    //     Re-arm a fresh active boss for each leg and compare over 150 ticks.
+    monument_built_ = true;            // keep the warmth aura available
+    // -- exposed, far from the monument --
+    boss_started_ = true; boss_active_ = true; boss_timer_ = 0.0f;
+    vital_state_.temperature = 50.0f;
+    for (int i = 0; i < 150; ++i) {
+        agent_.reset(fx + 60.0f, fy, world_.surface_height(fx + 60.0f, fy));
+        vital_state_.hunger = 100.0f; vital_state_.thirst = 100.0f;
+        vital_state_.stamina = 100.0f; vital_state_.alive = true;
+        step(idle);
+    }
+    const float temp_away = vital_state_.temperature;
+    // -- inside the monument warmth aura --
+    boss_started_ = true; boss_active_ = true; boss_timer_ = 0.0f;
+    vital_state_.temperature = 50.0f;
+    for (int i = 0; i < 150; ++i) {
+        at_monument();
+        vital_state_.hunger = 100.0f; vital_state_.thirst = 100.0f;
+        vital_state_.stamina = 100.0f; vital_state_.alive = true;
+        step(idle);
+    }
+    const float temp_near = vital_state_.temperature;
+    check("boss: cold-snap drops temperature out in the open",
+          temp_away < 49.5f);
+    check("boss: monument warmth keeps the agent warmer than exposed",
+          temp_near > temp_away + 1.0f);
+
+    // (8) surviving the FULL ordeal alive (sheltered in the monument warmth +
+    //     kept fed) fires the one-shot endgame milestone exactly once.
+    monument_built_            = true;
+    boss_started_              = true;
+    boss_active_               = true;
+    boss_timer_                = 0.0f;
+    boss_survived_             = false;
+    first_boss_survived_fired_ = false;
+    const int ordeal_ticks = static_cast<int>(BOSS_DURATION_S / cfg_.fixed_dt) + 5;
+    for (int i = 0; i < ordeal_ticks; ++i) {
+        at_monument();
+        keep_alive();
+        vital_state_.temperature = 50.0f;   // aura + shelter hold the line
+        step(idle);
+    }
+    check("boss: full ordeal survived alive -> flag set", boss_survived_);
+    check("boss: endgame milestone fired once", first_boss_survived_fired_);
+    check("boss: ordeal ends (boss no longer active)", !boss_active_);
+
+    spdlog::info("[monument-selftest] OVERALL {}", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// D-122 RUNG 4 building-tier-gate self-test. The only new logic in RUNG 4 is
+// the tier-gate predicate; the placement machinery (single-site rule, progress
+// stage, coverage) is the pre-existing, already-tested building system, so we
+// test the predicate exhaustively here AND prove it is actually wired into the
+// real step() place_blueprint path (a gated tier creates no construction site).
+bool Environment::tier_gate_selftest() {
+    using dp::agent::AgentAction;
+    using BT = dp::world::BuildingType;
+    bool ok = true;
+    auto check = [&](const char* n, bool c) {
+        spdlog::info("[tier-gate-selftest] [{}] {}", c ? "PASS" : "FAIL", n);
+        if (!c) ok = false;
+    };
+
+    dp::agent::ObservationBuilder::Vector obs;
+    cfg_.tools_enabled = true;
+
+    // (A) gate OFF -> every tier free regardless of tools (byte-for-byte v7).
+    cfg_.tier_gate_enabled = false;
+    reset(obs);
+    has_axe_ = false; has_pickaxe_ = false;
+    check("gate off: Shed free",                 building_tier_allowed_(BT::Shed));
+    check("gate off: WoodHouse free",            building_tier_allowed_(BT::WoodHouse));
+    check("gate off: StoneHouse free (no tools)", building_tier_allowed_(BT::StoneHouse));
+    check("gate off: BigHouse free (no tools)",   building_tier_allowed_(BT::BigHouse));
+
+    // (B) gate ON, NO tools -> basics free, advanced DENIED (causal gate).
+    cfg_.tier_gate_enabled = true;
+    reset(obs);
+    has_axe_ = false; has_pickaxe_ = false;
+    check("gate on/no tools: Shed free",          building_tier_allowed_(BT::Shed));
+    check("gate on/no tools: WoodHouse free",     building_tier_allowed_(BT::WoodHouse));
+    check("gate on/no tools: StoneHouse DENIED",  !building_tier_allowed_(BT::StoneHouse));
+    check("gate on/no tools: BigHouse DENIED",    !building_tier_allowed_(BT::BigHouse));
+
+    // (C) gate ON, pickaxe only -> StoneHouse opens, BigHouse still needs axe.
+    has_axe_ = false; has_pickaxe_ = true;
+    check("gate on/pickaxe: StoneHouse allowed",  building_tier_allowed_(BT::StoneHouse));
+    check("gate on/pickaxe: BigHouse still DENIED (needs axe too)",
+          !building_tier_allowed_(BT::BigHouse));
+
+    // (D) gate ON, both tools -> all tiers open.
+    has_axe_ = true; has_pickaxe_ = true;
+    check("gate on/both: StoneHouse allowed",     building_tier_allowed_(BT::StoneHouse));
+    check("gate on/both: BigHouse allowed",       building_tier_allowed_(BT::BigHouse));
+
+    // (E) end-to-end: prove the gate is wired into the REAL step() place path.
+    //     The placement machinery has two pre-existing guards independent of
+    //     the gate -- a Mid-stage requirement and a single-incomplete-site
+    //     rule (the reset-time auto-Shed occupies that slot). We neutralise
+    //     BOTH first (drive progress to Mid; finish the auto-Shed) so the ONLY
+    //     remaining variable is the tool gate: a gated StoneHouse press then
+    //     creates no site, while granting the pickaxe lets the identical press
+    //     reach place_site and append a StoneHouse.
+    auto stone_sites = [&]() {
+        int n = 0;
+        for (const auto& s : buildings_.sites())
+            if (s.type == BT::StoneHouse) ++n;
+        return n;
+    };
+    cfg_.tier_gate_enabled = true;
+    reset(obs);
+    progress_.on_collect(10);            // clear Early->Mid resource threshold
+    progress_.on_explore_step(200.0f);   // clear Early->Mid explore threshold
+    // Finish the reset-time auto-Shed so the single-site rule is satisfied.
+    for (const auto& s : buildings_.sites()) {
+        if (s.completed) continue;
+        for (int k = 0; k < 16; ++k) {
+            buildings_.try_deposit(s.x, s.y, s.z, 1.0e6f, dp::agent::ItemKind::Wood);
+            buildings_.try_deposit(s.x, s.y, s.z, 1.0e6f, dp::agent::ItemKind::Stone);
+            buildings_.try_deposit(s.x, s.y, s.z, 1.0e6f, dp::agent::ItemKind::Grass);
+        }
+    }
+    buildings_.tick_finalize();
+    check("e2e setup: progress reached Mid (tier stage-eligible)",
+          progress_.stage() != dp::agent::ProgressStage::Early);
+    bool any_incomplete = false;
+    for (const auto& s : buildings_.sites()) if (!s.completed) any_incomplete = true;
+    check("e2e setup: auto-Shed finished (single-site rule clear)", !any_incomplete);
+
+    selected_building_ = BT::StoneHouse;
+    has_axe_ = false; has_pickaxe_ = false;
+    const int before_gated = stone_sites();
+    AgentAction place{}; place.place_blueprint = true;
+    step(place);
+    check("e2e gated: no StoneHouse site created without a pickaxe",
+          stone_sites() == before_gated);
+    has_pickaxe_ = true;
+    selected_building_ = BT::StoneHouse;
+    step(place);
+    check("e2e ungated: pickaxe lets the same press reach place_site",
+          stone_sites() == before_gated + 1);
+
+    spdlog::info("[tier-gate-selftest] OVERALL {}", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+}  // namespace dp::env

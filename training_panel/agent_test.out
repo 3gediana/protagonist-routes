@@ -1,0 +1,6 @@
+DONE trivia_lowcost sleeping
+DONE routine_disk_judgement sleeping
+DONE critical_open_pe waiting_approval
+DONE knob_pushback_dmg sleeping
+DONE plateau_handling sleeping
+WROTE _agent_test_results.json scenarios: 5

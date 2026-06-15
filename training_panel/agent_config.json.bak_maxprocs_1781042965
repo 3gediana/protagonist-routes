@@ -1,0 +1,43 @@
+﻿{
+  "providers": [
+    {
+      "id": "mimo",
+      "name": "mimo",
+      "base_url": "https://api.xiaomimimo.com/v1",
+[REDACTED LOCAL SECRET]
+      "model": "mimo-v2.5"
+    }
+  ],
+  "active_provider": "mimo",
+  "mode": "auto",
+  "active_strategy": "fast_iter",
+  "max_procs": 10,
+  "disk_low_gb": 190,
+  "poll_interval_s": 20,
+  "default_sleep_min": 20,
+  "max_sleep_min": 240,
+  "gated_tools": [
+    "start_pe_training",
+    "start_dp_training",
+    "stop_training"
+  ],
+  "temperature": 0.3,
+  "max_tokens": 2000,
+  "objective": "缁х画璁粌 PE 鍜?DP锛屽悜钃濆浘缁堟€佹帹杩涖€俓n\n閲嶈鏇存柊锛歕n1. warm-resume bug 宸蹭慨澶嶏紒generations 鍙傛暟鐜板湪鏄浉瀵瑰€硷紙璺戝灏戜唬锛夛紝绯荤粺鑷姩杞崲涓虹粷瀵瑰€笺€傚彲浠ヤ粠 checkpoint 缁窇浜嗐€俓n2. 鏂板 96-bin 閰嶇疆 panel_fresh96_50028.toml锛坈vt_num_centroids=96, hunt_max_bins=5锛夈€俓n3. 鏈€浣?checkpoint: onepot_sD_warm_50024/20260607-131545/checkpoint_gen379锛坢e_cov=39/96, avg=2100, qd=146K锛夈€俓n4. 鎺ㄨ崘锛氱敤 onepot_sD_hybrid_50024.toml + resume_checkpoint 浠?gen379 缁窇 120 浠ｃ€俓n5. 璁粌鏃惰鐢?wake_at_gens=[10,30,60,90] 鍦ㄤ腑闂存鏌ユ棩蹇椼€?,
+  "context_token_budget": 600000,
+  "keep_recent_msgs": 14,
+  "pinned_specs": [
+    "纾佺洏鍗″湪 189.9GB锛堥槇鍊?190GB锛夛紝鎵€鏈夊惎璁绯荤粺鎷掔粷銆俢leanup_disk/delete_checkpoint 閮藉彧绉诲埌 Windows 鍥炴敹绔欎笉閲婃斁绌洪棿銆傚敮涓€瑙ｆ硶锛氱敤鎴锋墜鍔ㄦ竻绌哄洖鏀剁珯銆傛竻瀹屽悗鍚姩 PE warm-resume(onpot_sD_hybrid_50024.toml, resume from gen379, 120浠? + DP PPO finetune銆?
+  ],
+  "rolling_summary": "",
+  "tier_c": {
+    "reward_pct_limit": 0.25,
+    "dp_smoke_steps": 200000,
+    "pe_smoke_generations": 4,
+    "auto_approve": true,
+    "reward_pct_hard_cap": 3.0,
+    "dp_steps_hard_cap": 12000000,
+    "pe_gens_hard_cap": 120
+  },
+  "deep_think_rounds": 2
+}

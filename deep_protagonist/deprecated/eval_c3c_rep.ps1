@@ -1,0 +1,1 @@
+Set-Location "D:\claude-code\c++\routes\deep_protagonist"; .\eval_gate_mask.ps1 -ckpt runs\s4ppo_c3c.pt -tag c3crep -eps 30 -steps 240000; "REP $(Get-Date -Format o)" | Out-File runs\eval_v11\done_c3crep.txt -Encoding ASCII

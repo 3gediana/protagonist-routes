@@ -1,0 +1,5 @@
+﻿{
+  "note": "Copy to agent_config.json and fill in your API keys. Do not commit.",
+  "providers": [],
+  "projects": ["deep_protagonist", "protagonist_ecology"]
+}

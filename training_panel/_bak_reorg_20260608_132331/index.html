@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DP / PE 训练管理面板</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⬡</span>
+      <span>训练管理面板 <small>deep_protagonist · protagonist_ecology</small></span>
+    </div>
+    <div class="status-strip" id="statusStrip">
+      <span class="chip" id="chipGpu">GPU …</span>
+      <span class="chip" id="chipDisk">磁盘 …</span>
+      <span class="chip" id="chipDp">DP ×0</span>
+      <span class="chip" id="chipPe">PE ×0</span>
+      <button id="themeBtn" class="icon-btn" title="切换主题">◐</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="agent">Agent <span class="badge" id="agentBadge">·</span></button>
+    <div class="tab-tools">
+      <button class="tab tools-toggle" id="toolsToggle" aria-expanded="false">工具 ▾</button>
+      <div class="tools-menu" id="toolsMenu" hidden>
+        <button class="tab" data-tab="train">训练控制</button>
+        <button class="tab" data-tab="procs">运行中 <span class="badge" id="procBadge">0</span></button>
+        <button class="tab" data-tab="logs">日志</button>
+        <button class="tab" data-tab="ckpt">检查点</button>
+        <button class="tab" data-tab="metrics">数据面板</button>
+        <button class="tab" data-tab="replay">3D 回放</button>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <!-- ===================== TRAIN ===================== -->
+    <section class="panel" id="tab-train">
+      <div class="two-col">
+        <!-- DP -->
+        <div class="card">
+          <h2>Deep Protagonist <small>deep_protagonist_train.exe</small></h2>
+          <label>检查点 (--load)
+            <select id="dpCkpt"><option value="">（不加载，从头）</option></select>
+          </label>
+          <label>策略 (--policy)
+            <select id="dpPolicy"><option>ppo</option><option>bc</option></select>
+          </label>
+          <div class="row">
+            <label>种子 seed<input id="dpSeed" type="number" value="24" /></label>
+            <label>步数 steps<input id="dpSteps" type="number" value="8000000" /></label>
+          </div>
+          <div class="row">
+            <label>并行环境 n-envs<input id="dpNenvs" type="number" value="4" /></label>
+            <label>存盘间隔 save-every<input id="dpSaveEvery" type="number" value="25" /></label>
+          </div>
+          <div class="switches">
+            <label class="sw"><input type="checkbox" id="dpSpawn" checked /> SPAWN_RANDOM</label>
+            <label class="sw"><input type="checkbox" id="dpHunt" checked /> HUNT_V2</label>
+            <label class="sw"><input type="checkbox" id="dpPrey" checked /> PREY_PRIORITY</label>
+          </div>
+          <div class="row">
+            <label>输出前缀 tag<input id="dpTag" value="panel" /></label>
+            <label>额外参数<input id="dpExtra" placeholder="原样追加到命令行" /></label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="dpStart">▶ 启动 DP 训练</button>
+          </div>
+          <pre class="cmd" id="dpCmd"></pre>
+        </div>
+
+        <!-- PE -->
+        <div class="card">
+          <h2>Protagonist Ecology <small>neural-eco-protagonist-batched.exe</small></h2>
+          <label>配置 (TOML)
+            <select id="peCfg"><option value="">加载中…</option></select>
+          </label>
+          <div class="row">
+            <label>种子 seed<input id="peSeed" type="number" placeholder="覆盖→克隆配置" /></label>
+            <label>代数 generations<input id="peGen" type="number" placeholder="可选" /></label>
+          </div>
+          <label>resume_checkpoint_path（同模型跑新世界时填）
+            <input id="peResume" placeholder="留空=用配置里的；填路径=热启动该模型" />
+          </label>
+          <p class="hint">填了 seed / resume 任一项时，面板会<strong>克隆</strong>一份新 toml（前缀 <code>panel_</code>），绝不改你原配置。</p>
+          <div class="actions">
+            <button class="primary" id="peStart">▶ 启动 PE 训练</button>
+          </div>
+          <pre class="cmd" id="peCmd"></pre>
+        </div>
+      </div>
+
+      <!-- New world -->
+      <div class="card">
+        <h2>新世界 · 同模型（推理回放，不训练）</h2>
+        <p class="hint">选一个已训练的 checkpoint，给一个<strong>新种子</strong>（=新世界），只做一局推理 rollout 并产出可回放 trace。DP 用 <code>deep_protagonist_dump</code>；PE 等价于上面填 seed+resume 启动一局短训练。</p>
+        <div class="row">
+          <label>项目
+            <select id="nwProj"><option value="dp">DP</option><option value="pe">PE</option></select>
+          </label>
+          <label>checkpoint
+            <select id="nwCkpt"><option value="">选择…</option></select>
+          </label>
+          <label>新种子 seed<input id="nwSeed" type="number" value="3000000" /></label>
+          <label>步数 steps<input id="nwSteps" type="number" value="4000" /></label>
+        </div>
+        <div class="actions">
+          <button class="primary" id="nwRun">▶ 在新世界跑这个模型</button>
+        </div>
+        <pre class="cmd" id="nwMsg"></pre>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>实时输出</h2>
+          <div>
+            <select id="liveRun"><option value="">选择一个运行…</option></select>
+            <button class="ghost" id="liveClear">清屏</button>
+          </div>
+        </div>
+        <pre class="console" id="liveConsole">（启动训练后，从上面下拉里选一个 run 看实时 stdout/stderr）</pre>
+      </div>
+    </section>
+
+    <!-- ===================== PROCESSES ===================== -->
+    <section class="panel" id="tab-procs">
+      <div class="card">
+        <div class="card-head">
+          <h2>运行中的训练进程 <small>面板启动 + 外部启动，全部按可执行文件名发现</small></h2>
+          <div>
+            <label class="sw"><input type="checkbox" id="procAuto" checked /> 自动刷新(3s)</label>
+            <button class="ghost" id="procRefresh">刷新</button>
+          </div>
+        </div>
+        <p class="hint">支持<strong>真并行</strong>：这里会列出机器上所有 <code>deep_protagonist_train.exe</code> 与 <code>neural-eco-protagonist*</code> 进程（包括不是面板启动的）。停止默认走优雅停止（CTRL_BREAK→terminate）；两个训练都会周期性存盘，最多丢上次存盘以来的进度。</p>
+        <table class="ttable" id="procTable">
+          <thead><tr><th>项目</th><th>来源</th><th>PID</th><th>配置/检查点</th><th>运行时长</th><th>内存</th><th>操作</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================== LOGS ===================== -->
+    <section class="panel" id="tab-logs">
+      <div class="card">
+        <div class="card-head">
+          <h2>日志文件</h2>
+          <div>
+            <select id="logProj"><option value="dp">DP</option><option value="pe">PE</option></select>
+            <button class="ghost" id="logRefresh">刷新</button>
+            <button class="warn" id="logClearSafe">清理选中 (回收站)</button>
+            <button class="danger" id="logClearHard">彻底删除选中</button>
+          </div>
+        </div>
+        <p class="hint">默认勾选项可清理；<code>.jsonl</code> 训练指标默认<strong>不</strong>勾（受保护/血脉记录会锁定）。正在写入的日志受保护。</p>
+        <table class="ttable" id="logTable">
+          <thead><tr><th><input type="checkbox" id="logAll" /></th><th>文件</th><th>类型</th><th>大小</th><th>修改时间</th><th>状态</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================== CHECKPOINTS ===================== -->
+    <section class="panel" id="tab-ckpt">
+      <div class="card">
+        <div class="card-head">
+          <h2>DP 检查点 <small>runs/*.pt</small></h2>
+          <div>
+            <button class="ghost" id="ckptRefresh">刷新</button>
+            <button class="warn" id="ckptClearSafe">清理选中 (回收站)</button>
+            <button class="danger" id="ckptClearHard">彻底删除选中</button>
+          </div>
+        </div>
+        <p class="hint">🔒 红线资产（金标 ppo_d061/065/076、血脉 r1_cook_s24*、*_final/_champ/_keep/.bak 等）永远不可删除，已自动锁定。删除默认移到 <code>_trash/</code> 可恢复。</p>
+        <table class="ttable" id="ckptTable">
+          <thead><tr><th></th><th>文件</th><th>大小</th><th>修改时间</th><th>状态</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>PE 检查点 <small>data/runs/&lt;scenario&gt;/&lt;run&gt;/checkpoint_gen*</small></h2>
+        <table class="ttable" id="peCkptTable">
+          <thead><tr><th>场景</th><th>运行</th><th>代数数量</th><th>最新</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================== METRICS ===================== -->
+    <section class="panel" id="tab-metrics">
+      <div class="card">
+        <div class="card-head">
+          <h2>训练指标</h2>
+          <div>
+            <select id="mProj"><option value="dp">DP</option><option value="pe">PE</option></select>
+            <select id="mFile"><option value="">选择 .jsonl …</option></select>
+            <button class="ghost" id="mRefresh">刷新列表</button>
+            <button class="primary" id="mLoad">加载</button>
+            <label class="sw"><input type="checkbox" id="mAuto" /> 实时(5s)</label>
+          </div>
+        </div>
+        <div class="kpis" id="mKpis"></div>
+        <div class="charts">
+          <div class="chart-box"><canvas id="chReward"></canvas></div>
+          <div class="chart-box"><canvas id="chMilestone"></canvas></div>
+          <div class="chart-box"><canvas id="chAction"></canvas></div>
+          <div class="chart-box"><canvas id="chDeath"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== REPLAY ===================== -->
+    <section class="panel" id="tab-replay">
+      <div class="card">
+        <div class="card-head">
+          <h2>3D 回放 — 选 trace</h2>
+          <div>
+            <select id="rProj"><option value="pe">PE traces</option><option value="dp">DP dumps</option></select>
+            <label class="sw">降采样 1/<input id="rDown" type="number" value="1" style="width:54px" /></label>
+            <button class="ghost" id="rRefresh">刷新 trace</button>
+            <button class="warn" id="rClear">清理选中 trace (回收站)</button>
+          </div>
+        </div>
+        <p class="hint">回放性能：大 trace 会显示帧数/体积；设“降采样 1/N”隔帧抽样，加载时自动限制到上限 ~6000 帧避免前端卡顿。</p>
+        <div class="trace-wrap">
+          <table class="ttable" id="traceTable">
+            <thead><tr><th><input type="checkbox" id="trAll" /></th><th>trace</th><th>帧/大小</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="replay-info" id="replayInfo"></div>
+        <iframe id="viewerFrame" class="viewer-frame" src="about:blank"></iframe>
+      </div>
+    </section>
+
+    <!-- ===================== AGENT ===================== -->
+    <section class="panel active" id="tab-agent">
+      <div class="card agent-bar">
+        <div class="agent-bar-head">
+          <button class="ghost mini ag-cog" id="agBarToggle" aria-expanded="false"
+                  title="展开/收起控制">控制 ▾</button>
+          <div class="agent-status" id="agStatus">状态加载中…</div>
+          <div class="agent-quick">
+            <button class="primary" id="agStart">启动值守</button>
+            <button class="warn" id="agStop">停止</button>
+            <button class="ghost" id="agWake">唤醒</button>
+          </div>
+        </div>
+        <div class="agent-bar-body" id="agBarBody" hidden>
+          <div class="agent-bar-row">
+            <div class="agent-ctl">
+              <label>模型
+                <select id="agModel"><option value="">未注册</option></select>
+              </label>
+              <button class="ghost" id="agModelsBtn">管理模型</button>
+            </div>
+            <div class="agent-ctl">
+              <span class="lbl">模式</span>
+              <div class="seg" id="agModeSeg">
+                <button data-mode="request" class="seg-btn active">请求模式</button>
+                <button data-mode="auto" class="seg-btn">全自动</button>
+              </div>
+            </div>
+            <div class="agent-ctl">
+              <span class="lbl">深思上限</span>
+              <input id="agDeepThink" type="range" min="0" max="6" step="1" value="0"
+                     style="width:120px" />
+              <span id="agDeepThinkVal" class="lbl mono">关</span>
+            </div>
+            <div class="agent-ctl">
+              <span class="lbl">策略</span>
+              <select id="agStrategy" style="min-width:150px"><option value="">（由 agent 自选）</option></select>
+            </div>
+          </div>
+          <p class="hint">请求模式：开训/停训前生成请求卡，你点同意才执行。全自动：自动执行但每步参数+理由都进历史。
+            深思上限 N：agent 自己判断复杂决策时才主动调 deep_think 工具做多轮推演（最多 N 轮，0=禁用；同一次唤醒最多深思一次；推演内容只在历史留痕，不占常驻上下文）。
+            策略由 agent 按处境用 use_strategy 自选切换，这里也可手动固定一条。
+            硬限制：并发进程上限、磁盘低于阈值自动清日志/trace。检查点(.pt)由 agent 决策删除（受保护清单硬拦不可删，走回收站可恢复）。</p>
+        </div>
+      </div>
+
+      <!-- pending approvals -->
+      <div class="card" id="agPendingCard" hidden>
+        <h2>待批准动作</h2>
+        <div id="agPending"></div>
+      </div>
+
+      <div class="two-col agent-main">
+        <!-- left: chat (primary) + tucked, collapsible decision history -->
+        <div class="agent-left-col">
+          <div class="card agent-chat-card">
+            <div class="card-head"><h2>对话</h2>
+              <span class="chat-head-btns">
+                <button class="ghost" id="agCtxClear" title="丢弃滚动对话历史与摘要(保留系统提示/常驻spec/知识库),省上下文">清空上下文</button>
+                <button class="ghost" id="agChatClear" title="仅清当前显示,下次刷新会重新拉取">清屏</button>
+              </span></div>
+            <div class="agent-chat" id="agChat"></div>
+            <div class="agent-input">
+              <textarea id="agInput" rows="2" placeholder="给 agent 下指令 / 问它在干嘛…（Enter 发送，Shift+Enter 换行）"></textarea>
+              <button class="primary" id="agSend">发送</button>
+            </div>
+          </div>
+          <details class="card agent-hist-card" id="agHistBox">
+            <summary class="hist-summary"><span>决策历史 <small>点击展开 / 收起</small></span>
+              <button class="ghost mini" id="agHistRefresh">刷新</button></summary>
+            <div class="agent-timeline" id="agTimeline"></div>
+          </details>
+        </div>
+        <!-- right (big area): live training cards -->
+        <div class="card train-cards-card">
+          <div class="card-head">
+            <h2>正在训练 <small>点卡片看 3D / 曲线 / 参数·理由·目的</small></h2>
+            <div>
+              <label class="sw"><input type="checkbox" id="tcAuto" checked /> 自动刷新(4s)</label>
+              <button class="ghost" id="tcRefresh">刷新</button>
+            </div>
+          </div>
+          <div class="train-grid" id="agTrainGrid">
+            <div class="hint" style="padding:8px">还没有正在跑的训练。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- model registry (toggle) -->
+      <div class="card" id="agModelsCard" hidden>
+        <div class="card-head"><h2>模型管理 <small>OpenAI 兼容端点</small></h2>
+          <button class="ghost" id="agModelsClose">收起</button></div>
+        <p class="hint">key 只存在本机 <code>agent_config.json</code>（已 gitignore），不进 git。支持 OpenAI / DeepSeek / Kimi / MiMo / 本地 vLLM 等任意兼容端点。</p>
+        <table class="ttable" id="agModelTable">
+          <thead><tr><th>名称</th><th>模型</th><th>base_url</th><th>key</th><th>操作</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <h3 style="margin:14px 0 6px">添加 / 更新</h3>
+        <div class="row">
+          <label>名称<input id="mpName" placeholder="mimo" /></label>
+          <label>模型 model<input id="mpModel" placeholder="mimo-v2.5" /></label>
+        </div>
+        <label>base_url<input id="mpUrl" placeholder="https://api.xiaomimimo.com/v1" /></label>
+        <label>api_key<input id="mpKey" type="password" placeholder="sk-…" /></label>
+        <div class="actions">
+          <button class="primary" id="mpAdd">保存 provider</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- training detail modal (~80% of viewport): 3D · curves · params/reason -->
+  <div id="trainModal" class="tm-overlay" hidden>
+    <div class="tm-box" role="dialog" aria-modal="true">
+      <div class="tm-head">
+        <div class="tm-title" id="tmTitle">训练详情</div>
+        <div class="tm-head-meta" id="tmHeadMeta"></div>
+        <button class="tm-close" id="tmClose" title="关闭">✕</button>
+      </div>
+      <div class="tm-body">
+        <!-- 1. 3D live viz -->
+        <section class="tm-sec tm-3d">
+          <div class="tm-sec-head">
+            <h3>3D 实时可视化</h3>
+            <div class="tm-3d-ctl">
+              <label class="sw"><input type="checkbox" id="tm3dAuto" checked /> 实时刷新(15s)</label>
+              <button class="ghost mini" id="tm3dReload">载入最新世界</button>
+              <span class="hint mono" id="tm3dInfo"></span>
+            </div>
+          </div>
+          <iframe id="tm3dFrame" class="tm-3d-frame" src="about:blank"></iframe>
+        </section>
+        <!-- 2. live training curves -->
+        <section class="tm-sec tm-curves">
+          <div class="tm-sec-head"><h3>实时训练曲线</h3>
+            <span class="hint mono" id="tmCurveInfo"></span></div>
+          <div class="tm-charts" id="tmCharts">
+            <div class="chart-box"><canvas id="tmChartA"></canvas></div>
+            <div class="chart-box"><canvas id="tmChartB"></canvas></div>
+          </div>
+        </section>
+        <!-- 3. params / reason / purpose -->
+        <section class="tm-sec tm-params">
+          <div class="tm-sec-head"><h3>训练参数 · 理由 · 目的</h3></div>
+          <div class="tm-params-grid" id="tmParams"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal" class="modal-overlay" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <p id="modalMsg"></p>
+      <div class="modal-actions">
+        <button id="modalCancel" class="modal-btn">取消</button>
+        <button id="modalOk" class="modal-btn danger">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/agent.js"></script>
+</body>
+</html>

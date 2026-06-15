@@ -1,0 +1,18 @@
+third_party/libtorch/
+third_party/assets/
+build/
+*.exp
+*.lib
+*.pdb
+*.ilk
+.vs/
+out/
+runs/
+
+# one-shot build helper scripts (keep only ninja_all.bat)
+build_train_test.bat
+ninja_train.bat
+cl_err.txt
+cl_out.txt
+
+.rmkit/

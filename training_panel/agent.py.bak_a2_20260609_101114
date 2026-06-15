@@ -1,0 +1,3698 @@
+#!/usr/bin/env python3
+"""agent.py — LLM training orchestrator for the DP/PE training panel.
+
+This module bolts an autonomous, LLM-driven training manager onto the existing
+`server.py` panel. It does NOT replace any panel feature; it reuses the panel's
+endpoints as its "tools" (launch / stop / status / cleanup / metrics).
+
+Design goals (from the user):
+  * The brain is a REAL LLM reached over an OpenAI-compatible API. The user can
+    register/select multiple providers (name / base_url / api_key / model) in
+    the panel. Keys live in a local gitignored config, never in git.
+  * Two control modes:
+      - "request": every TRAINING-START is proposed as a request card (params +
+        reasoning); a human must approve before it runs.
+      - "auto": full authority, auto-approve — but every decision's params +
+        reasoning are still recorded to history.
+  * Long-horizon / overnight: a `sleep` tool lets the agent doze while training
+    runs, so it does not burn API credits. A cheap watcher wakes it on a timer
+    or on key events (run exited, error, extinction, disk low).
+  * Hard guards (enforced in code, not left to the LLM):
+      - at most `max_procs` (default 10) training processes; refuse + feed the
+        reason back to the model when exceeded;
+      - disk-low -> auto cleanup of logs/traces (NEVER *.pt checkpoints) and
+        refuse to launch new training;
+      - red lines from AUTONOMOUS_PLAYBOOK live in the system prompt.
+
+The module exposes `register_agent(app)` which the server calls to attach the
+`/api/agent/*` routes. It imports `server` lazily (inside functions) to avoid a
+circular import at module load.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+import time
+import urllib.error
+import urllib.request
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import HTTPException
+from pydantic import BaseModel
+
+import spectrum  # behavioural-panorama derivation (pure)
+
+AGENT_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = AGENT_DIR / "agent_config.json"
+TIMELINE_PATH = AGENT_DIR / "agent_timeline.jsonl"
+DOCS_DIR = AGENT_DIR / "docs"          # strategy/handoff KB, retrieved on demand
+KB_PATH = AGENT_DIR / "agent_knowledge.json"   # project knowledge network (persistent)
+_AUTOCONTINUE_MAX = 2   # max auto "execute now" nudges per wake when the model plans but emits no tool call
+
+# --------------------------------------------------------------------------- #
+# Strategy digest — distilled from AUTONOMOUS_PLAYBOOK.md + PITFALLS.md.
+# Injected verbatim into the system prompt so the LLM inherits the red lines and
+# the decision tree. Kept short and high-signal to save tokens.
+# --------------------------------------------------------------------------- #
+STRATEGY_DIGEST = """\
+# 角色
+你是 deep_protagonist(DP, 单体生存 RL) 与 protagonist_ecology(PE, 种群 MAP-Elites 进化) 两套训练的自动管家,
+运行在用户的 Windows 训练机(单张 RTX5060 8G, 32G 内存)。你通过工具操作训练,平稳时休眠省额度。
+
+# 铁律 / 红线 (违反 = 严重事故)
+1. 不改训练核心逻辑、不动 routes/deep_protagonist/ 源码、不改数据流/输入维度。你只调超参数和 TOML 旋钮、管生命周期。
+2. 绝不为刷某指标加直接奖励 (Goodhart)。指标长期低 -> 怀疑 bug/算法,给诊断建议,绝不调小参数刷分。
+3. 检查点清理:受保护清单(ft_gen/bc_gen/bc_hv2、ppo_d061/065/076_*、r1_cook_s24、任何 *_red/_final/_champ/_keep/_gold/*.bak)永不可删(代码硬拦,你删不掉)。其余 .pt 你可按重要性自行决策删除——用 delete_checkpoint(走回收站,可恢复)。日志/trace 仍用 cleanup_disk。
+4. 单卡 8G: 最多同时 10 个训练进程。DP 是大头(50MB 模型/两三天),优先级高于 PE;GPU 被 DP 占满时不与它抢,等空闲或做不占 GPU 的事。
+5. 机制级代码改动 (改 C++ + 重新编译) 不由你自动做 —— 你负责发现问题、在聊天里给代码级建议,执行交给人。
+
+# 决策树 (出问题怎么办,预先决策好,别干等)
+- 全灭(alive=0): 压力档回退一档(经验 dmg=0.25 是 Goldilocks, 0.5 太狠),重跑 smoke。
+- harmony 破: C7 灭绝=压力太狠回退; C6 多样性低=多半没收敛,跑满代再判; C1-C5 行为破=回退+根因诊断。
+- 改输入维后旧 checkpoint 不兼容: 正常,起新血脉从 gen0 跑,不接力。
+- trace 堆积/磁盘满: 跑完立刻清 trace,只留 .md/.json 小结。
+- GPU 被占: 等空闲,不抢。
+
+# 阶段流程
+smoke(2-4代) -> short(10-20代) -> long(60-80代,≤8h) -> harmony 7/7 不破 -> 收尾(记录+清 trace)。
+每个训练启动都必须写清"参数 + 为什么这么训"(reason 字段),无论哪种模式都要留历史。
+
+# 策略目录 (你自己判断当前该用哪条,用 use_strategy 工具切换;切换后系统会喂给你这条策略的【详细打法】——该用的工具/关注的参数/要避的坑)
+- fast_iter 快速迭代: 小步探路+并行多组+预测面板判好坏,留赢家杀输家。摸索新参数/不确定方向时用。
+- ab_knob 对照换旋钮: 一次只改一个旋钮做对照,把因果归到单一改动。验证某个旋钮影响时用。
+- hist_bench 历史对标: 决策前先 query_gens 对标历史最好代,不超它/不验假设就不开。决定要不要开新跑时用。
+- early_stop 早停回退: 发散/全灭/超时立即停+回退档位。run 变坏时用。
+- ckpt_hygiene 检查点卫生: 清劣代/冗余 .pt(受保护硬拦),保磁盘。磁盘紧张时用。
+- compute_yield 算力让路: DP 优先,GPU 被占就做不吃 GPU 的事(分析/记台账/沉淀)。资源紧张时用。
+决策一开始就该选一条最贴合当前处境的策略(use_strategy),需要时再切换;不确定就先用 fast_iter。
+
+# 关键指标读法
+- PE 日志行: `Gen N | protagonist avg=.. best=.. | ...各 archetype.. | builds=.. chops=.. hunts=.. | me_cov=X/64 qd=..`
+  me_cov=填充的行为格子数(多样性), qd=质量多样性总分。看 avg/best 趋势、me_cov 是否增长、是否 extinct。
+- DP jsonl: 每行一局, 看 score、unlocks(里程碑)、prey_kills(真击杀,不是 reward 里的 kills=)、deaths_* 死因。
+
+# 训练机制速记 (用于更聪明地调参,不是用来刷分)
+- 压力旋钮 dmg(伤害)是 Goldilocks:0.25 经验最优;0.5 太狠→易全灭(alive=0);太低→无选择压力,行为不分化、me_cov 上不去。
+- avg↑ 但 me_cov 不动 = 收敛到单一打法、多样性塌缩;me_cov↑ 但 avg 平 = 在探索还没提质。两者要一起看,别只盯一个。
+- mutation sigma 大=探索强但噪声大(趋势更抖,别凭一两点下结论);小=稳但易早熟。改它走 ab_knob 一次只动一个。
+- 改了输入维度/世界结构后,旧 checkpoint 不兼容→起新血脉从 gen0 跑,别 warm-resume 接力(已知坑:热续跑会读错维度)。
+- 平台期(analyze_metrics=plateau)别空耗算力:要么换旋钮(inspect_config 看能动啥),要么早停,要么对标历史(query_gens)看值不值得继续。
+
+# 接口/工具速查 (深入项目就靠这些读接口)
+- 看现状: get_status(机器+各 run 概览)。读某 run 细节: read_log_tail。
+- 判优劣: 单 run 用 analyze_metrics;【多组并行】一次性排名选赢家用 compare_runs(project, files=[...])。
+- 调参前: inspect_config(config) 看这条 TOML 能动哪些旋钮、现值多少,再决定改哪个(配 ab_knob)。
+- 沉淀/对标: kb_write/kb_query 记坑与结论, record_gen/query_gens 记台账查最佳代。
+
+# 工作风格 (按决策权重分档投入,把 token 花在刀刃上)
+- 简洁。先看 get_status 再决策。能一次想清就别频繁调用模型。
+- 【思考轮数按决策权重自适应,别一刀切】:
+  · 琐事/闲聊(如"在吗""几个进程""现在空闲吗"):直接一句话回答,不调工具、不 deep_think。
+  · 常规判断(单 run 判趋势、记台账、清日志):最多 analyze_metrics 看一眼直接定,deep_think 用 rounds=1 或不用。
+  · 关键决策(开训/换参/回退/多组取舍/动检查点):先 kb_query 查既往坑,inspect_config 看旋钮,再 deep_think rounds=2-3(到上限)推演;参数和理由要对标历史(query_gens)。
+  每轮唤醒最多调一次 deep_think;拿不准用得多,清楚就用得少——省额度。
+- 调参前必走 inspect_config:它会给出每个旋钮的 value/安全区间/作用方向,据此给【合理参数】,别拍脑袋。一次只改一个旋钮(ab_knob)。
+- 【规划必须当回合落地为工具调用】想清要做什么后,就在同一次唤醒里直接发出对应工具调用(use_strategy→inspect_config→make_config_variant→start_pe_training 一气呐成),别只在思考里规划完却不发任何工具调用——那样这一轮等于空转。确实无事可做时才显式调用 sleep。
+- 决定开训前想清参数和理由。开完训就 sleep,把唤醒交给 watcher(到点/run 结束/报错/灭绝/磁盘告警才醒)。
+- 拿不准、或要动机制代码/换基线这种大动作,用 log_note 写建议,别擅自做。
+- 历史与大块资料【不预载进上下文】:要回顾自己过去的决策/执行,用 recall_timeline;要看训练策略与交接资料(playbook/handoff/知识笔记),用 list_docs 再 read_doc 按需取。需要时才拉,保持上下文精简省额度。
+
+# 你是这个项目的【活知识库 / 状态存查点】
+你不只是开训的操作工,更是整个项目状态的持有者和查询入口,要主动维护一张持久的知识网络(跨会话不丢):
+- kb_write/kb_query:沉淀并检索知识节点——蓝图目标、红线、踩过的坑、机制结论、各血脉状态;节点间用 links 关联成网。**决策前先 kb_query 查既往的坑和结论**,别重复踩坑。有新发现(尤其是坑/负结果)就 kb_write 记下,并 link 到相关节点。
+- record_gen/query_gens:把每代/每血脉的模型表现(checkpoint+指标)记进台账;想知道"哪代最好、趋势如何"就 query_gens。run 出现里程碑或结束时应 record_gen。
+- 已预置一批种子知识(蓝图/红线/已知坑/受保护检查点),开局先 kb_query 一遍熟悉项目,再补充你的新理解。
+"""
+
+# ------------------------------------------------------------------------- #
+# Selectable strategies. The model switches between these with `use_strategy`.
+# Only the compact catalog lives in the system prompt; the ACTIVE strategy's
+# full playbook (`guide`) is injected into the system prompt while it's active,
+# so guidance changes as the agent switches strategies — and is never lost to
+# compression. Each guide names the tools to use, params to watch, pitfalls.
+# ------------------------------------------------------------------------- #
+STRATEGIES: dict[str, dict[str, str]] = {
+    "fast_iter": {
+        "name": "快速迭代",
+        "when": "摸索新参数、方向不确定时。",
+        "guide": (
+            "打法:① 先用最小代数/步数起 smoke 探路(start_pe_training generations=2-4 / start_dp_training steps 设小);"
+            "② 在进程上限(max_procs)内【并行】起多组不同参数(A/B/C 各换一个方向),不要一组跑到底;"
+            "③ 每组刚出几代/几集就用 analyze_metrics(project,file,window=最近若干点)判趋势——improving 的留, plateau/declining 的立刻 stop_training 杀掉,把算力让给赢家;"
+            "④ 用赢家的参数+结论开下一轮更长的跑,并 record_gen 记台账。"
+            "关注:每组 reason 写清在试什么假设;并行别超 max_procs;赢家选出后及时停掉对照组省算力。"
+            "坑:不要并行太多把显存/磁盘挤爆;不要凭一两点就下结论(window 太小=too_short 再等等)。"),
+    },
+    "ab_knob": {
+        "name": "对照换旋钮",
+        "when": "想验证某一个旋钮(dmg/cold_thr/树密度/sigma/archetype 权重)的影响时。",
+        "guide": (
+            "打法:① 选定基线(上一代或某 checkpoint);② 用 make_config_variant(base,knob,value) 只改【一个】旋钮生成对照配置(scenario/runs_dir 自动隔离),再 start_pe_training 启动该变体,其余参数与基线完全一致(reason 写明改了哪个旋钮、从X→Y);"
+            "③ 跑到可比阶段后 analyze_metrics 对比对照组与基线的同名指标,把差异归因到这一个改动;④ kb_write 记下这个旋钮的因果结论并 link。"
+            "关注:务必一次只动一个变量;seed 尽量与基线一致以可比。"
+            "坑:同时改多个旋钮会搅浑因果——禁止;经验值 dmg=0.25 是 Goldilocks,0.5 太狠易全灭。"),
+    },
+    "hist_bench": {
+        "name": "历史对标",
+        "when": "决定要不要开一个新跑、值不值得花算力时。",
+        "guide": (
+            "打法:① 先 query_gens(project,lineage) 看该血脉历史各代表现与最好代;② 明确新跑的目标——要么指标超过历史最好代,要么验证一个写得出来的假设;"
+            "③ 两者都不满足就【不开】(用 log_note 说明为何不值得),省算力省额度;④ 要开就把对标基准写进 reason。"
+            "关注:对标 avg/best/me_cov/qd(PE)或 score/unlocks(DP)。坑:别重复跑已知结论的实验;别为了跑而跑。"),
+    },
+    "early_stop": {
+        "name": "早停回退",
+        "when": "run 出现发散/全灭(alive=0)/超时/指标持续下行时。",
+        "guide": (
+            "打法:① analyze_metrics 确认是 declining 还是噪声;② 确认变坏就立刻 stop_training(检查点自动保存,安全);"
+            "③ 按决策树回退一档(全灭→压力档回退,如 dmg 0.5→0.25;harmony C7 灭绝→回退);④ kb_write 记下这个失败配置(负结果也是知识),再用回退后的参数重起。"
+            "关注:超时(long run >8h)也要停。坑:不要干等空耗算力;回退是换参重起,不是接力坏 checkpoint。"),
+    },
+    "ckpt_hygiene": {
+        "name": "检查点卫生",
+        "when": "磁盘吃紧(接近 disk_low_gb)或劣代检查点堆积时。",
+        "guide": (
+            "打法:① list_checkpoints 看清都有哪些 .pt 及其对应代/表现(可配合 query_gens);② 先 cleanup_disk 清日志/trace(不动 .pt);"
+            "③ 仍紧张再 delete_checkpoint 删【劣代/被超越/冗余】的 .pt(受保护清单会被硬拦跳过,走回收站可恢复),reason 写清为何不重要;④ 始终保磁盘 > disk_low_gb。"
+            "关注:删前务必确认不是受保护或最佳代。坑:绝不删 ft_gen/bc_*/ppo_d06*/r1_cook_s24/*_red/_final/_champ/_keep/_gold/*.bak(代码也会硬拦)。"),
+    },
+    "compute_yield": {
+        "name": "算力让路",
+        "when": "GPU 被 DP 大任务占满、资源紧张时。",
+        "guide": (
+            "打法:① get_status 看 GPU 占用与进程;② DP(大模型/两三天)优先级高于 PE,GPU 满时【不抢】、不新开吃 GPU 的训练;"
+            "③ 转去做不吃 GPU 的活:analyze_metrics 分析在跑的 run、record_gen 记台账、kb_write 沉淀结论、读日志诊断、query_gens 复盘;④ 等 GPU 空闲再开训。"
+            "关注:单卡 8G,别和 DP 抢显存。坑:并发≤max_procs 仍要看显存余量,不是有空位就开。"),
+    },
+}
+
+
+def _strategy_block(cfg: dict[str, Any]) -> str:
+    sid = cfg.get("active_strategy")
+    s = STRATEGIES.get(sid or "")
+    if not s:
+        return ""
+    return (f"\n# 当前策略: {s['name']} ({sid})\n适用: {s['when']}\n打法: {s['guide']}\n"
+            "(随处境变化可用 use_strategy 切换到更合适的策略。)\n")
+
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "providers": [],            # [{id,name,base_url,api_key,model}]
+    "active_provider": None,
+    "mode": "request",          # "request" | "auto"
+    "active_strategy": None,    # current strategy id (model switches via use_strategy)
+    "max_procs": 10,            # hard cap on concurrent training processes
+    "disk_low_gb": 190.0,       # below this -> auto cleanup + refuse launches
+    "poll_interval_s": 20,      # watcher poll cadence while sleeping
+    "default_sleep_min": 20,    # fallback sleep if model forgets to set one
+    "max_sleep_min": 240,       # cap a single sleep
+    "gated_tools": ["start_pe_training", "start_dp_training", "stop_training",
+                     "delete_checkpoint"],
+    "temperature": 0.3,
+    "max_tokens": 2000,        # mimo-v2.5 is a reasoning model: needs headroom
+                               # for reasoning_content before it emits output
+    "objective": "维持 PE/DP 训练健康推进:平稳时休眠,出问题按决策树处理,防止磁盘/资源爆掉。",
+    # --- context management ---
+    "context_token_budget": 600000,   # keep the request under this (model is 1M)
+    "keep_recent_msgs": 14,           # always keep this many newest msgs verbatim
+    "pinned_specs": [],               # agent-extracted specs; NEVER compressed
+    "rolling_summary": "",            # rolling summary of compressed-out history
+    # --- tier-C autonomy (project-partitioned, hybrid tool network) ---
+    # The expanded action space (teacher->BC->DAgger->PPO finetune + reward/
+    # archive/curriculum tuning) is risk-classified IN CODE, not left to the LLM:
+    #   * low-risk  (reward-SHAPING coeffs, seed, archive geometry, BC/DAgger/PPO
+    #     off existing teachers, small PE reward-weight tweaks) -> autonomous.
+    #   * high-risk (curriculum/task_templates edits, structural reward changes
+    #     = sign flip / >reward_pct_limit / add-remove keys, NEW bloodlines) ->
+    #     queue for human approval EVEN IN AUTO MODE.
+    "tier_c": {
+        "reward_pct_limit": 0.25,        # |Δ|/old above this = structural -> approval
+        "dp_smoke_steps": 200000,        # start_dp without a base + steps> this = new bloodline
+        "pe_smoke_generations": 4,       # start_pe without resume + gens> this = new bloodline
+    },
+    # --- deep thinking ---
+    # multi-round guided deliberation BEFORE deciding. 0 = off (use the model's
+    # own single-call reasoning only). >0 = spend that many extra API calls, each
+    # with a different guiding prompt; the rounds are ephemeral (not kept in the
+    # rolling context, only logged to the timeline).
+    "deep_think_rounds": 0,
+}
+
+
+def _load_config() -> dict[str, Any]:
+    cfg = dict(DEFAULT_CONFIG)
+    if CONFIG_PATH.exists():
+        try:
+            cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+        except Exception:  # noqa: BLE001
+            pass
+    # ensure all default keys present
+    for k, v in DEFAULT_CONFIG.items():
+        cfg.setdefault(k, v)
+    return cfg
+
+
+def _save_config(cfg: dict[str, Any]) -> None:
+    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _redact_providers(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Provider list with api_key masked for the UI."""
+    out = []
+    for p in cfg.get("providers", []):
+        k = p.get("api_key") or ""
+        masked = (k[:6] + "…" + k[-4:]) if len(k) > 12 else ("set" if k else "")
+        out.append({"id": p.get("id"), "name": p.get("name"),
+                    "base_url": p.get("base_url"), "model": p.get("model"),
+                    "api_key_masked": masked, "has_key": bool(k)})
+    return out
+
+
+def _active_provider(cfg: dict[str, Any]) -> Optional[dict[str, Any]]:
+    pid = cfg.get("active_provider")
+    for p in cfg.get("providers", []):
+        if p.get("id") == pid:
+            return p
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Agent state (in-memory singleton).
+# --------------------------------------------------------------------------- #
+class AgentState:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.status = "stopped"          # stopped|active|sleeping|waiting_approval|error
+        self.messages: list[dict[str, Any]] = []   # chat history (after system)
+        self.pending: list[dict[str, Any]] = []     # approval queue
+        self.user_inbox: list[str] = []             # queued user chat messages
+        self.sleep_until = 0.0
+        self.sleep_reason = ""
+        self.wake_event = threading.Event()
+        self.last_error = ""
+        self.thread: Optional[threading.Thread] = None
+        self.running = False
+        self.stats = {"llm_calls": 0, "actions": 0, "wakes": 0,
+                      "prompt_tokens": 0, "completion_tokens": 0}
+        self.last_obs_snapshot: dict[str, Any] = {}
+        self._watch_baseline: dict[str, Any] = {}
+        # --- project partitioning (one decision = one project) ---
+        # focus_project gates which project's action tools are even visible in
+        # the schema; cross-project actions are refused at the code level so the
+        # agent must serialize (focus dp -> act -> focus pe -> act).
+        self.focus_project: Optional[str] = None     # "dp" | "pe" | None
+        # long-tail tool packs activated via find_tools for the CURRENT focus;
+        # cleared whenever focus changes (packs are project-scoped).
+        self.active_packs: set[str] = set()
+        # set when a run just ended (watcher) -> the agent must record_gen +
+        # kb_write a summary before it is allowed to sleep again.
+        self.needs_summary: bool = False
+        self._recorded_since_wake: bool = False
+        # live streaming buffer (for the web UI to show thinking + reply as it streams)
+        self.live: dict[str, Any] = {"active": False, "phase": "", "reasoning": "",
+                                     "content": "", "seq": 0, "deliberation": []}
+        self._deliberated_this_wake: bool = False
+        self._last_deliberation: list[dict[str, Any]] = []
+        self._autocontinue: int = 0
+
+    def stream_reset(self) -> None:
+        with self.lock:
+            delib = self.live.get("deliberation", [])
+            self.live = {"active": True, "phase": "thinking", "reasoning": "",
+                         "content": "", "seq": self.live.get("seq", 0) + 1,
+                         "deliberation": delib}
+
+    def stream_update(self, *, reasoning: str = "", content: str = "",
+                      phase: Optional[str] = None) -> None:
+        with self.lock:
+            if reasoning:
+                self.live["reasoning"] += reasoning
+            if content:
+                self.live["content"] += content
+            if phase:
+                self.live["phase"] = phase
+
+    def stream_done(self) -> None:
+        with self.lock:
+            self.live["active"] = False
+            self.live["phase"] = "done"
+
+    def snapshot(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        ap = _active_provider(cfg)
+        return {
+            "status": self.status,
+            "running": self.running,
+            "mode": cfg.get("mode"),
+            "active_model": (ap or {}).get("model"),
+            "active_provider": (ap or {}).get("name"),
+            "sleep_until": self.sleep_until,
+            "sleep_reason": self.sleep_reason,
+            "now": time.time(),
+            "pending": self.pending,
+            "last_error": self.last_error,
+            "stats": self.stats,
+            "max_procs": cfg.get("max_procs"),
+            "disk_low_gb": cfg.get("disk_low_gb"),
+            "objective": cfg.get("objective"),
+            # project partition + hybrid tool network (for the UI)
+            "focus_project": self.focus_project,
+            "active_packs": sorted(self.active_packs),
+            "needs_summary": self.needs_summary,
+            "tier_c": cfg.get("tier_c"),
+            "tool_network": _tool_network_view(self.focus_project, self.active_packs),
+            "active_strategy": cfg.get("active_strategy"),
+            "active_strategy_name": (STRATEGIES.get(cfg.get("active_strategy") or "")
+                                     or {}).get("name"),
+            "deep_think_rounds": cfg.get("deep_think_rounds", 0),
+            "strategies": [{"id": k, "name": v["name"], "when": v["when"]}
+                           for k, v in STRATEGIES.items()],
+            "context": {
+                "budget": cfg.get("context_token_budget"),
+                "used_est": sum(_msg_tokens(m) for m in self.messages)
+                            + _msg_tokens(_system_prompt(cfg)),
+                "msgs": len(self.messages),
+                "pinned_specs": len(cfg.get("pinned_specs") or []),
+                "has_summary": bool(cfg.get("rolling_summary")),
+            },
+            "live": self.live,
+        }
+
+
+STATE = AgentState()
+_TIMELINE_RING: deque[dict[str, Any]] = deque(maxlen=400)
+
+
+def _timeline(kind: str, **fields: Any) -> dict[str, Any]:
+    ev = {"ts": time.time(), "iso": datetime.now().isoformat(timespec="seconds"),
+          "kind": kind, **fields}
+    _TIMELINE_RING.append(ev)
+    try:
+        with open(TIMELINE_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+    return ev
+
+
+def _rehydrate() -> None:
+    """Restore the chat panel AND the agent's dialogue context after a service
+    restart. The timeline is the durable record on disk; the in-memory ring and
+    STATE.messages are rebuilt from it so reopening the page looks exactly like
+    before the restart. Config (mode/strategy/deep-think/providers) is already
+    persisted separately in agent_config.json."""
+    try:
+        lines = TIMELINE_PATH.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:  # noqa: BLE001
+        return
+    evs: list[dict[str, Any]] = []
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            evs.append(json.loads(ln))
+        except Exception:  # noqa: BLE001
+            continue
+    # rebuild the display ring (newest maxlen events)
+    _TIMELINE_RING.clear()
+    for ev in evs[-_TIMELINE_RING.maxlen:]:
+        _TIMELINE_RING.append(ev)
+    # rebuild a compact dialogue context (user + assistant text only — no tool
+    # call/result pairs, so the OpenAI message sequence stays valid). Keep the
+    # most recent exchanges; older ones can be pulled back via recall_timeline.
+    msgs: list[dict[str, Any]] = []
+    for ev in evs:
+        k = ev.get("kind")
+        if k in ("user_msg", "user_msg_queued"):
+            t = (ev.get("text") or "").strip()
+            if t:
+                msgs.append({"role": "user", "content": "[用户]: " + t})
+        elif k == "assistant":
+            t = (ev.get("text") or "").strip()
+            if t:
+                msgs.append({"role": "assistant", "content": t})
+    if msgs:
+        STATE.messages = msgs[-40:]
+
+
+# --------------------------------------------------------------------------- #
+# On-demand retrieval — history + docs are NOT preloaded into context; the
+# model pulls them through these tools only when it needs them.
+# --------------------------------------------------------------------------- #
+def _recall_timeline(limit: int, kind: Optional[str]) -> dict[str, Any]:
+    """Read the agent's own decision history on demand (newest first)."""
+    limit = max(1, min(limit, 200))
+    events: list[dict[str, Any]] = []
+    try:
+        lines = TIMELINE_PATH.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for ln in lines:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                ev = json.loads(ln)
+            except Exception:  # noqa: BLE001
+                continue
+            if kind and ev.get("kind") != kind:
+                continue
+            events.append({k: v for k, v in ev.items() if k != "ts"})
+    except FileNotFoundError:
+        pass
+    return {"events": events[-limit:][::-1], "returned": min(len(events), limit),
+            "total_matched": len(events)}
+
+
+def _list_docs() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if DOCS_DIR.exists():
+        for f in sorted(DOCS_DIR.glob("*.md")):
+            try:
+                txt = f.read_text(encoding="utf-8", errors="ignore")
+            except Exception:  # noqa: BLE001
+                txt = ""
+            first = next((l.strip("# ").strip() for l in txt.splitlines()
+                          if l.strip()), "")
+            out.append({"name": f.name, "chars": len(txt), "title": first[:120]})
+    return out
+
+
+def _read_doc(name: str, query: Optional[str], max_chars: int) -> dict[str, Any]:
+    if not name:
+        return {"ok": False, "error": "no doc name"}
+    # guard against path traversal — only files directly in DOCS_DIR
+    p = DOCS_DIR / Path(name).name
+    if not p.exists() or p.suffix.lower() != ".md":
+        return {"ok": False, "error": f"doc not found: {name}",
+                "available": [d["name"] for d in _list_docs()]}
+    text = p.read_text(encoding="utf-8", errors="ignore")
+    max_chars = max(500, min(max_chars, 20000))
+    if query:
+        # return only paragraphs containing the query (case-insensitive) plus
+        # neighbours, so the model can search a big doc cheaply.
+        paras = re.split(r"\n\s*\n", text)
+        q = query.lower()
+        hits = [i for i, para in enumerate(paras) if q in para.lower()]
+        if hits:
+            keep: list[int] = []
+            for i in hits:
+                for j in (i - 1, i, i + 1):
+                    if 0 <= j < len(paras) and j not in keep:
+                        keep.append(j)
+            chunk = "\n\n".join(paras[i] for i in sorted(keep))
+            truncated = len(chunk) > max_chars
+            return {"ok": True, "name": p.name, "query": query,
+                    "matches": len(hits), "content": chunk[:max_chars],
+                    "truncated": truncated}
+        return {"ok": True, "name": p.name, "query": query, "matches": 0,
+                "content": "", "note": "关键词未命中,可不带 query 再读或换关键词。"}
+    truncated = len(text) > max_chars
+    return {"ok": True, "name": p.name, "content": text[:max_chars],
+            "truncated": truncated, "total_chars": len(text)}
+
+
+# --------------------------------------------------------------------------- #
+# Project knowledge network — persistent nodes (with links) + per-generation
+# performance ledger. This is the agent's long-term project memory: queryable,
+# survives restarts, lets it stay fully aware of project state across sessions.
+# --------------------------------------------------------------------------- #
+_KB_LOCK = threading.RLock()
+
+
+def _load_kb() -> dict[str, Any]:
+    kb = {"seq": 0, "nodes": [], "generations": []}
+    src = KB_PATH if KB_PATH.exists() else (AGENT_DIR / "agent_knowledge.seed.json")
+    if src.exists():
+        try:
+            data = json.loads(src.read_text(encoding="utf-8"))
+            kb.update(data)
+        except Exception:  # noqa: BLE001
+            pass
+    return kb
+
+
+def _save_kb(kb: dict[str, Any]) -> None:
+    KB_PATH.write_text(json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _kb_write(args: dict[str, Any]) -> dict[str, Any]:
+    with _KB_LOCK:
+        kb = _load_kb()
+        now = datetime.now().isoformat(timespec="seconds")
+        nid = (args.get("id") or "").strip()
+        node = None
+        if nid:
+            node = next((n for n in kb["nodes"] if n.get("id") == nid), None)
+        if node is None:
+            kb["seq"] = int(kb.get("seq", 0)) + 1
+            nid = nid or f"k{kb['seq']}"
+            node = {"id": nid, "created": now}
+            kb["nodes"].append(node)
+        node["kind"] = args.get("kind", node.get("kind", "other"))
+        node["title"] = args.get("title", node.get("title", ""))
+        node["body"] = args.get("body", node.get("body", ""))
+        if args.get("tags") is not None:
+            node["tags"] = args.get("tags")
+        if args.get("links") is not None:
+            node["links"] = args.get("links")
+        node["updated"] = now
+        _save_kb(kb)
+        _timeline("kb_write", id=node["id"], node_kind=node["kind"], title=node["title"])
+        return {"ok": True, "id": node["id"], "node_count": len(kb["nodes"])}
+
+
+def _kb_query(args: dict[str, Any]) -> dict[str, Any]:
+    kb = _load_kb()
+    nodes = kb["nodes"]
+    nid = (args.get("id") or "").strip()
+    if nid:
+        node = next((n for n in nodes if n.get("id") == nid), None)
+        if not node:
+            return {"ok": False, "error": f"node not found: {nid}",
+                    "ids": [n["id"] for n in nodes]}
+        link_ids = set(node.get("links") or [])
+        # neighbours = its links + anything that links back to it (undirected view)
+        link_ids |= {n["id"] for n in nodes if nid in (n.get("links") or [])}
+        neighbours = [n for n in nodes if n["id"] in link_ids]
+        return {"ok": True, "node": node, "neighbours": neighbours}
+    q = (args.get("query") or "").lower()
+    kind = args.get("kind")
+    tag = args.get("tag")
+    limit = max(1, min(int(args.get("limit", 12) or 12), 60))
+    out = []
+    for n in nodes:
+        if kind and n.get("kind") != kind:
+            continue
+        if tag and tag not in (n.get("tags") or []):
+            continue
+        if q:
+            hay = (n.get("title", "") + " " + n.get("body", "") + " "
+                   + " ".join(n.get("tags") or [])).lower()
+            if q not in hay:
+                continue
+        out.append({"id": n["id"], "kind": n.get("kind"), "title": n.get("title"),
+                    "tags": n.get("tags") or [], "links": n.get("links") or [],
+                    "body": (n.get("body", "")[:280])})
+    return {"ok": True, "matches": len(out), "nodes": out[:limit],
+            "total_nodes": len(nodes)}
+
+
+def _record_gen(args: dict[str, Any]) -> dict[str, Any]:
+    with _KB_LOCK:
+        kb = _load_kb()
+        rec = {
+            "project": args.get("project"), "lineage": args.get("lineage"),
+            "gen": args.get("gen"), "checkpoint": args.get("checkpoint"),
+            "metrics": args.get("metrics") or {}, "note": args.get("note", ""),
+            "ts": datetime.now().isoformat(timespec="seconds"),
+        }
+        kb["generations"].append(rec)
+        _save_kb(kb)
+        _timeline("gen_recorded", project=rec["project"], lineage=rec["lineage"],
+                  gen=rec["gen"])
+        return {"ok": True, "recorded": rec, "total_records": len(kb["generations"])}
+
+
+def _query_gens(args: dict[str, Any]) -> dict[str, Any]:
+    kb = _load_kb()
+    recs = kb["generations"]
+    proj = args.get("project")
+    lin = args.get("lineage")
+    limit = max(1, min(int(args.get("limit", 40) or 40), 200))
+    sel = [r for r in recs
+           if (not proj or r.get("project") == proj)
+           and (not lin or r.get("lineage") == lin)]
+    sel.sort(key=lambda r: ((r.get("lineage") or ""), (r.get("gen") or 0)))
+    return {"ok": True, "count": len(sel), "records": sel[-limit:],
+            "lineages": sorted({r.get("lineage") for r in recs if r.get("lineage")})}
+
+
+# --------------------------------------------------------------------------- #
+# Observation — what we feed the model. Compact + deterministic.
+# --------------------------------------------------------------------------- #
+_PE_GEN_RE = re.compile(
+    r"Gen\s+(\d+)\s*\|\s*protagonist\s+avg=([\-\d.]+)\s+best=([\-\d.]+).*?"
+    r"me_cov=(\d+)/(\d+)\s+qd=([\-\d.]+)")
+
+
+def _cap_log_lines(lines, *, max_lines: int = 200, max_line_chars: int = 600,
+                   max_total_bytes: int = 16000):
+    """Cap a log tail so spammy per-tick logs can't blow up the LLM context.
+
+    Keeps only the most recent lines that fit a byte budget and truncates any
+    over-long line. Returns {"lines": [...], "truncated": bool, "note": str}.
+    """
+    lines = list(lines)[-max_lines:]
+    capped: list[str] = []
+    total = 0
+    truncated = False
+    for ln in reversed(lines):
+        if len(ln) > max_line_chars:
+            ln = ln[:max_line_chars] + "\u2026(truncated)"
+        b = len(ln.encode("utf-8", "ignore")) + 1
+        if total + b > max_total_bytes and capped:
+            truncated = True
+            break
+        capped.append(ln)
+        total += b
+    capped.reverse()
+    out = {"lines": capped}
+    if truncated or len(capped) < len(lines):
+        out["truncated"] = True
+        out["note"] = ("\u65e5\u5fd7\u8fc7\u5927\u5df2\u622a\u65ad\uff0c\u4ec5\u4fdd\u7559\u672b\u5c3e\u7247\u6bb5\u3002"
+                       "\u8981\u770b\u6307\u6807\u8d8b\u52bf\u8bf7\u7528 analyze_metrics / compare_runs"
+                       "\uff08\u53ea\u89e3\u6790 Gen \u6c47\u603b\u884c\uff0c\u4f53\u79ef\u5c0f\uff09\uff0c"
+                       "\u4e0d\u8981\u9760 read_log_tail \u62c9\u539f\u59cb\u65e5\u5fd7\u3002")
+    return out
+
+
+def _pe_log_summary(path: Path, tail_lines: int = 4000) -> Optional[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()[-tail_lines:]
+    except Exception:  # noqa: BLE001
+        return None
+    last = None
+    gens: list[tuple] = []
+    for ln in lines:
+        m = _PE_GEN_RE.search(ln)
+        if m:
+            gens.append(m.groups())
+    if not gens:
+        return None
+    g0, gl = gens[0], gens[-1]
+    extinct = sum(1 for ln in lines if "extinct" in ln.lower())
+    errs = sum(1 for ln in lines if "[error]" in ln.lower() or "[critical]" in ln.lower())
+    return {
+        "gen": int(gl[0]), "avg": float(gl[1]), "best": float(gl[2]),
+        "me_cov": f"{gl[3]}/{gl[4]}", "qd": float(gl[5]),
+        "gen_start": int(g0[0]), "avg_start": float(g0[1]),
+        "extinct_hits": extinct, "errors": errs,
+    }
+
+
+def _dp_jsonl_summary(path: Path, tail: int = 60) -> Optional[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()[-tail:]
+    except Exception:  # noqa: BLE001
+        return None
+    recs = []
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            recs.append(json.loads(ln))
+        except Exception:  # noqa: BLE001
+            pass
+    if not recs:
+        return None
+    last = recs[-1]
+    kills = sum(int(r.get("prey_kills", 0) or 0) for r in recs)
+    score = last.get("score")
+    unlocks = last.get("unlocks")
+    return {
+        "episode": last.get("episode"), "score": score, "unlocks": unlocks,
+        "kills_last%d" % len(recs): kills,
+        "reward": last.get("reward"), "deaths_cold": last.get("deaths_cold"),
+        "deaths_food": last.get("deaths_food"),
+    }
+
+
+def _trend(series: list[float]) -> dict[str, Any]:
+    """Early-vs-recent comparison + verdict for a numeric series."""
+    xs = [float(v) for v in series if isinstance(v, (int, float))]
+    if len(xs) < 4:
+        return {"n": len(xs), "verdict": "too_short"}
+    half = len(xs) // 2
+    early = sum(xs[:half]) / half
+    late = sum(xs[half:]) / (len(xs) - half)
+    delta = late - early
+    rel = delta / (abs(early) + 1e-9)
+    if rel > 0.08:
+        verdict = "improving"
+    elif rel < -0.08:
+        verdict = "declining"
+    else:
+        verdict = "plateau"
+    return {"n": len(xs), "first": round(early, 3), "recent": round(late, 3),
+            "delta": round(delta, 3), "rel": round(rel, 3),
+            "last": round(xs[-1], 3), "max": round(max(xs), 3),
+            "min": round(min(xs), 3), "verdict": verdict}
+
+
+def _viability_hint(trends: list[dict[str, Any]]) -> str:
+    """Coarse 'is this param worth continuing' signal from key-metric trends."""
+    verds = [t.get("verdict") for t in trends if t]
+    if not verds or all(v == "too_short" for v in verds):
+        return "样本太少,再观察几代/几集再判断"
+    if any(v == "improving" for v in verds) and not any(v == "declining" for v in verds):
+        return "指标上行,值得继续"
+    if all(v == "plateau" for v in verds):
+        return "已进入平台,考虑调旋钮/换参或早停,别空耗算力"
+    if any(v == "declining" for v in verds):
+        return "出现下行,建议早停并回退/换参(先查 knowledge 既往坑)"
+    return "涨跌互现,再观察一窗口确认趋势"
+
+
+def _attach_panorama(am: dict[str, Any], project: str, file: str,
+                     window: int = 0) -> dict[str, Any]:
+    """Enrich an analyze_metrics result with the full behavioural panorama and
+    the two-axis (progress / breadth) trends the multi-axis verdict reads. This
+    is what lets the agent see 'the direction' instead of 3-4 coarse scalars.
+    Best-effort: any failure leaves `am` untouched (panorama is additive)."""
+    import server  # lazy
+    try:
+        if project == "dp":
+            spec = server.dp_spectrum_payload(file, window)
+        else:
+            spec = server.pe_spectrum_payload(file)
+    except Exception as e:  # noqa: BLE001
+        am["panorama_error"] = str(e)
+        return am
+    if not spec.get("ok"):
+        am["panorama_error"] = spec.get("error", "spectrum unavailable")
+        return am
+    axes = spec.pop("axes", None)
+    am["spectrum"] = spec
+    am["panorama"] = spectrum.summarize(spec)
+    # scene narration — the agent reads the RUN'S STORY (画面) + a verdict hint,
+    # not just raw scalars: 末态/趋势/反刷分/总判 captions per metric.
+    try:
+        nar = spectrum.narrate_dp(spec) if project == "dp" else spectrum.narrate_pe(spec)
+        if nar.get("ok"):
+            am["story"] = nar["story"]
+            am["scenes"] = nar["scenes"]
+            am["verdict_hint"] = {"action": nar["verdict_hint"][0],
+                                  "reason": nar["verdict_hint"][1]}
+    except Exception as e:  # noqa: BLE001
+        am["narrate_error"] = str(e)
+    if axes:
+        am["axes_trend"] = {
+            "progress": _trend(axes.get("progress", [])),
+            "breadth": _trend(axes.get("breadth", [])),
+        }
+    return am
+
+
+def _analyze_metrics(project: str, file: str, window: int = 0) -> dict[str, Any]:
+    """Quick viability read of a run's metrics (reuses the panel's parsing).
+    PE: parse 'Gen N | avg/best/me_cov/qd' lines. DP: parse jsonl score/reward.
+    Returns per-metric trend + a coarse continue/early-stop hint, PLUS the full
+    behavioural panorama (spectrum) and two-axis trends for the agent."""
+    import server  # lazy
+    if project == "pe":
+        p = server.PE_ROOT / file
+        if not p.exists() and getattr(server, "PE_PANEL_LOGS", None) \
+                and server.PE_PANEL_LOGS.exists():
+            p = server.PE_PANEL_LOGS / file
+        if not p.exists():
+            return {"ok": False, "error": f"PE log not found: {file}"}
+        lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+        rows = [m.groups() for ln in lines if (m := _PE_GEN_RE.search(ln))]
+        if not rows:
+            return {"ok": False, "error": "no PE 'Gen N | avg=...' lines parsed"}
+        if window:
+            rows = rows[-int(window):]
+        gens = [int(r[0]) for r in rows]
+        avg = _trend([float(r[1]) for r in rows])
+        best = _trend([float(r[2]) for r in rows])
+        cov = _trend([float(r[3]) for r in rows])
+        qd = _trend([float(r[5]) for r in rows])
+        extinct = sum(1 for ln in lines if "extinct" in ln.lower())
+        am = {"ok": True, "project": "pe", "file": file,
+              "gen_range": [gens[0], gens[-1]], "points": len(rows),
+              "avg": avg, "best": best, "me_cov": cov, "qd": qd,
+              "extinct_hits": extinct,
+              "hint": _viability_hint([avg, qd, cov])}
+        return _attach_panorama(am, "pe", file, window)
+    # DP jsonl
+    p = server.DP_METRICS / file
+    if not p.exists():
+        return {"ok": False, "error": f"DP jsonl not found: {file}"}
+    recs = []
+    for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            recs.append(json.loads(ln))
+        except Exception:  # noqa: BLE001
+            pass
+    if not recs:
+        return {"ok": False, "error": "no jsonl rows parsed"}
+    if window:
+        recs = recs[-int(window):]
+    score = _trend([float(r.get("score", 0) or 0) for r in recs])
+    reward = _trend([float(r.get("reward", 0) or 0) for r in recs])
+    unlocks = _trend([float(sum(1 for x in r.get("unlocks", []) if x)) for r in recs])
+    am = {"ok": True, "project": "dp", "file": file, "points": len(recs),
+          "episode_last": recs[-1].get("episode"),
+          "score": score, "reward": reward, "unlocks": unlocks,
+          "hint": _viability_hint([score, reward, unlocks])}
+    return _attach_panorama(am, "dp", file, window)
+
+
+def _compare_runs(project: str, files: list[str], window: int = 0) -> dict[str, Any]:
+    """Compare several runs side by side on their key metrics so the agent can
+    pick winners / kill losers in one shot (instead of analyze_metrics per run).
+    Reuses _analyze_metrics; returns a compact per-run row + a ranking."""
+    if isinstance(files, str):
+        files = [files]
+    files = [f for f in files if f]
+    if len(files) < 2:
+        return {"ok": False, "error": "compare_runs 需要至少 2 个 file"}
+    rows: list[dict[str, Any]] = []
+    for f in files:
+        a = _analyze_metrics(project, f, window)
+        if not a.get("ok"):
+            rows.append({"file": f, "ok": False, "error": a.get("error")})
+            continue
+        if project == "pe":
+            rows.append({"file": f, "ok": True,
+                         "avg_recent": (a.get("avg") or {}).get("recent"),
+                         "best_max": (a.get("best") or {}).get("max"),
+                         "qd_recent": (a.get("qd") or {}).get("recent"),
+                         "me_cov_recent": (a.get("me_cov") or {}).get("recent"),
+                         "avg_verdict": (a.get("avg") or {}).get("verdict"),
+                         "extinct_hits": a.get("extinct_hits"),
+                         "hint": a.get("hint")})
+        else:
+            rows.append({"file": f, "ok": True,
+                         "score_recent": (a.get("score") or {}).get("recent"),
+                         "score_max": (a.get("score") or {}).get("max"),
+                         "reward_recent": (a.get("reward") or {}).get("recent"),
+                         "unlocks_recent": (a.get("unlocks") or {}).get("recent"),
+                         "score_verdict": (a.get("score") or {}).get("verdict"),
+                         "hint": a.get("hint")})
+    ok_rows = [r for r in rows if r.get("ok")]
+    rank_key = "avg_recent" if project == "pe" else "score_recent"
+    ranked = sorted(ok_rows, key=lambda r: (r.get(rank_key) is None, -(r.get(rank_key) or 0)))
+    return {"ok": True, "project": project, "window": window or "all",
+            "rank_by": rank_key, "rows": rows,
+            "leader": ranked[0]["file"] if ranked else None,
+            "ranking": [r["file"] for r in ranked]}
+
+
+def _analyze_memory_ablation(file: str = "", run_id: str = "") -> dict[str, Any]:
+    """Turn a finished memory-ablation eval (memory_ablation_results.csv: 7
+    cognitive tasks x 5 ablation variants) into a FAITHFUL '是否真的用了记忆/
+    世界模型' signal — not another proxy score.
+
+    PE 已内置 runMemoryAblation()（config memory_ablation.enabled=true 时跑一遍
+    eval，对已训练 brain 做 baseline / no_spatial / no_episodic / no_social /
+    no_goal 五种消融，输出 memory_ablation_results.csv）。但 Agent 之前看不到它。
+    本工具按任务比较 baseline 与每种消融的 primary_metric：去掉某记忆后的相对
+    跌幅 = 该任务对该记忆的真实依赖度。跌得多=真用内部模型解题；≈0=靠反射/即时
+    感知/环境线索（正是 avg/me_cov 看不出的失败模式）。
+    """
+    import csv as _csv
+    import server  # lazy
+    roots = [getattr(server, "PE_ROOT", None), getattr(server, "PE_PANEL_LOGS", None)]
+    raw = (file or run_id or "").strip()
+    cand: list[Path] = []
+    if raw:
+        p = Path(raw)
+        cand += [p, p / "memory_ablation_results.csv"]
+        for r in roots:
+            if r:
+                cand += [Path(r) / raw, Path(r) / raw / "memory_ablation_results.csv"]
+    found = next((c for c in cand if c.exists() and c.is_file()), None)
+    if found is None:  # best-effort: newest csv under PE roots
+        for r in roots:
+            if not r:
+                continue
+            try:
+                hits = sorted(Path(r).rglob("memory_ablation_results.csv"),
+                              key=lambda x: x.stat().st_mtime, reverse=True)
+            except Exception:  # noqa: BLE001
+                hits = []
+            if hits:
+                found = hits[0]
+                break
+    if found is None:
+        return {"ok": False, "error": "memory_ablation_results.csv 未找到。"
+                "给 file=run目录或csv路径;或先跑一次 memory_ablation.enabled=true 的 eval。"}
+    try:
+        with found.open("r", encoding="utf-8", errors="ignore", newline="") as fh:
+            rows = list(_csv.DictReader(fh))
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"read csv failed: {e}"}
+    if not rows:
+        return {"ok": False, "error": "csv empty"}
+    table: dict[str, dict[str, float]] = {}
+    for r in rows:
+        t = (r.get("task") or "").strip()
+        v = (r.get("variant") or "").strip()
+        try:
+            pm = float(r.get("primary_metric"))
+        except (TypeError, ValueError):
+            continue
+        if t and v:
+            table.setdefault(t, {})[v] = pm
+    mems = {"no_spatial": "spatial", "no_episodic": "episodic",
+            "no_social": "social", "no_goal": "goal"}
+    per_task: list[dict[str, Any]] = []
+    dep_acc: dict[str, list[float]] = {m: [] for m in mems.values()}
+    base_acc: list[float] = []
+    for t, vs in sorted(table.items()):
+        base = vs.get("baseline")
+        if base is None:
+            continue
+        base_acc.append(base)
+        drops: dict[str, Optional[float]] = {}
+        for vk, mk in mems.items():
+            ab = vs.get(vk)
+            if ab is None or abs(base) < 1e-9:
+                drops[mk] = None
+                continue
+            rel = (base - ab) / abs(base)
+            drops[mk] = round(rel, 3)
+            if rel > 0:
+                dep_acc[mk].append(rel)
+        per_task.append({"task": t, "baseline": round(base, 3), "drops": drops})
+    if not per_task:
+        return {"ok": False, "error": "csv 里没有可对照的 baseline 行"}
+
+    def _mean(xs: list[float]) -> float:
+        return round(sum(xs) / len(xs), 3) if xs else 0.0
+
+    mem_dep = {m: _mean(dep_acc[m]) for m in mems.values()}
+    dep_overall = _mean([v for v in mem_dep.values()])
+    capability = _mean(base_acc)
+    if dep_overall >= 0.20:
+        verdict = "记忆被真实使用(强依赖)——证据支持『真用了内部世界模型』"
+    elif dep_overall >= 0.08:
+        verdict = "记忆中等依赖——部分任务靠记忆、部分靠反射/环境线索"
+    else:
+        verdict = "弱依赖——多半靠反射/即时感知解题,而非记忆(理解信号弱,别只看 avg/me_cov)"
+    return {"ok": True, "csv": str(found),
+            "tasks": len(per_task), "variants": 5,
+            "capability_baseline": capability,
+            "memory_dependence": mem_dep,
+            "understanding_score": dep_overall,
+            "per_task": per_task,
+            "verdict": verdict,
+            "note": "drop=(baseline-ablated)/|baseline|;高=该任务真依赖此记忆(真用世界模型),"
+                    "<=0=去掉该记忆没变差→靠反射/环境线索。与 avg/best/me_cov 一起看:"
+                    "avg/me_cov 升但 understanding_score 不升=在刷代理分、没长出真理解。"}
+
+
+# Per-knob tuning guidance: matched by substring against a knob's name so the
+# agent gets the MEANING + safe range + effect direction of what it's about to
+# turn (distilled from the KB mechanics digest). This is what lets it propose
+# *sound* params instead of guessing. (sweet=经验甜点, range=安全区间, effect=方向)
+KNOB_GUIDE: list[tuple[tuple[str, ...], dict[str, str]]] = [
+    (("dmg", "damage"),
+     {"sweet": "0.25", "range": "0.15–0.35",
+      "effect": "选择压力主旋钮:↑分化更强但 >0.4 易全灭(alive=0);↓压力不足→行为不分化、me_cov 上不去。Goldilocks=0.25。"}),
+    (("cold", "freeze"),
+     {"sweet": "≈30", "range": "20–40",
+      "effect": "寒冷阈值:↓(更冷)冻死压力大;过低易全灭。配合 dmg 一起调,一次只动一个。"}),
+    (("food", "hunger", "starv"),
+     {"range": "按场景",
+      "effect": "觅食/饥饿压力:↑更易饿死→逼出采集/猎杀行为;过高全灭。"}),
+    (("mutation", "sigma"),
+     {"effect": "变异强度:↑探索强但趋势更抖(别凭一两点下结论);↓稳但易早熟收敛。改它走 ab_knob,一次只动一个。"}),
+    (("generation",),
+     {"range": "smoke 2–4 / short 10–20 / long 60–80",
+      "effect": "训练代数:阶段流程 smoke→short→long(≤8h)。先小代数探路再放长。"}),
+    (("seed",),
+     {"effect": "随机种子=换世界。同配置不同 seed 方差可达 3×;做对照(ab_knob)时固定 seed 以可比,验证泛化时才换 seed。"}),
+    (("pop", "population"),
+     {"effect": "种群规模:↑多样性容量大但每代更慢更吃显存;受 max_procs/8G 限制。"}),
+    (("archetype", "weight"),
+     {"effect": "原型权重:调不同打法(hunt/explore/build)的初始倾向;改这里是换探索方向,不是刷分。"}),
+    (("tree", "density", "spawn", "resource"),
+     {"effect": "资源/树密度:↑食物足→压力小;↓→觅食压力大。与 dmg/cold 共同决定生存难度。"}),
+]
+
+
+def _knob_guide_for(name: str) -> Optional[dict[str, str]]:
+    low = name.lower()
+    for subs, guide in KNOB_GUIDE:
+        if any(s in low for s in subs):
+            return guide
+    return None
+
+
+def _inspect_config(config: str) -> dict[str, Any]:
+    """Surface a PE TOML's tunable knobs so the agent knows WHAT it can turn
+    (and what the current values are) before proposing an A/B change. Highlights
+    the stress/pressure knobs the KB cares about (dmg, cold/food thresholds,
+    mutation sigma, generations, seed, archetype weights), and annotates each
+    with its safe range + effect direction so proposed params are sound."""
+    import server  # lazy
+    if not config:
+        return {"ok": False, "error": "需要 config 文件名(见 list_pe_configs)"}
+    p = server.PE_ROOT / config
+    if not p.exists():
+        return {"ok": False, "error": f"config not found: {config}"}
+    # utf-8-sig strips a leading BOM; several PE TOMLs are saved with one and a
+    # bare tomllib.loads() chokes on it ("Invalid statement at line 1, column 1").
+    text = p.read_text(encoding="utf-8-sig", errors="ignore").lstrip("\ufeff")
+    data: dict[str, Any] = {}
+    tl = getattr(server, "tomllib", None)
+    if tl is not None:
+        try:
+            data = tl.loads(text)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"toml parse failed: {e}",
+                    "raw_head": text[:1500]}
+    else:
+        return {"ok": True, "config": config, "parsed": False,
+                "raw": text[:4000], "note": "tomllib 不可用,返回原文"}
+
+    # Pull out the knobs worth tuning, scanning common section names. We surface
+    # the whole [section] dicts that typically hold pressure/world/evolution
+    # knobs, plus a flat shortlist of the highest-signal ones.
+    sections = {k: v for k, v in data.items() if isinstance(v, dict)}
+    hot_keys = ("dmg", "damage", "cold", "food", "hunger", "thresh", "mutation",
+                "sigma", "seed", "generation", "pop", "archetype", "weight",
+                "pressure", "stress", "tree", "density", "spawn", "reward")
+    knobs: dict[str, Any] = {}
+    def _scan(prefix: str, d: dict[str, Any]) -> None:
+        for k, v in d.items():
+            if isinstance(v, dict):
+                _scan(f"{prefix}{k}.", v)
+            elif any(h in k.lower() for h in hot_keys) and isinstance(v, (int, float, str, bool)):
+                knobs[f"{prefix}{k}"] = v
+    _scan("", data)
+    # Annotate each surfaced knob with its tuning guidance (range/effect) so the
+    # agent proposes sound params, not guesses. tunable = the knobs we have
+    # mechanics knowledge about (highest-signal to consider first).
+    guided: dict[str, Any] = {}
+    tunable: list[str] = []
+    for kname, kval in knobs.items():
+        g = _knob_guide_for(kname)
+        if g:
+            guided[kname] = {"value": kval, **g}
+            tunable.append(kname)
+        else:
+            guided[kname] = {"value": kval}
+    return {"ok": True, "config": config, "parsed": True,
+            "sections": list(sections.keys()),
+            "key_knobs": guided,
+            "tunable": tunable,
+            "runtime": sections.get("runtime", {}),
+            "note": "key_knobs[*]={value,sweet,range,effect};tunable=有机制依据、优先考虑的旋钮。一次只改一个做对照(ab_knob);经验 dmg=0.25 是 Goldilocks。"}
+
+
+def _gather_observation() -> dict[str, Any]:
+    import server  # lazy
+    obs: dict[str, Any] = {"time": datetime.now().isoformat(timespec="seconds")}
+    try:
+        obs["system"] = server.system_status()
+    except Exception as e:  # noqa: BLE001
+        obs["system"] = {"error": str(e)}
+    try:
+        procs = server.processes()
+        obs["processes"] = {
+            "total": procs.get("total"), "dp": procs.get("dp_count"),
+            "pe": procs.get("pe_count"),
+            "list": [{"project": p["project"], "pid": p["pid"],
+                      "config": p.get("config"), "uptime_s": p.get("elapsed_s"),
+                      "source": p.get("source")}
+                     for p in procs.get("processes", [])][:12],
+        }
+    except Exception as e:  # noqa: BLE001
+        obs["processes"] = {"error": str(e)}
+
+    # PE log summaries (external sweep logs + panel logs).
+    pe_logs: dict[str, Any] = {}
+    try:
+        for p in sorted(server.PE_PANEL_LOGS.glob("onepot_sD_*.log"),
+                        key=lambda x: x.stat().st_mtime, reverse=True)[:6]:
+            s = _pe_log_summary(p)
+            if s:
+                pe_logs[p.name] = s
+        if server.PE_PANEL_LOGS.exists():
+            for p in sorted(server.PE_PANEL_LOGS.glob("*.log"),
+                            key=lambda x: x.stat().st_mtime, reverse=True)[:4]:
+                s = _pe_log_summary(p)
+                if s:
+                    pe_logs[p.name] = s
+    except Exception as e:  # noqa: BLE001
+        pe_logs["error"] = str(e)
+    obs["pe_runs"] = pe_logs
+
+    # DP jsonl summaries.
+    dp_runs: dict[str, Any] = {}
+    try:
+        for p in sorted(server.DP_METRICS.glob("ft_*.jsonl"),
+                        key=lambda x: x.stat().st_mtime, reverse=True)[:5]:
+            s = _dp_jsonl_summary(p)
+            if s:
+                dp_runs[p.name] = s
+    except Exception as e:  # noqa: BLE001
+        dp_runs["error"] = str(e)
+    obs["dp_runs"] = dp_runs
+
+    STATE.last_obs_snapshot = obs
+    return obs
+
+
+# --------------------------------------------------------------------------- #
+# Tools exposed to the LLM (OpenAI function-calling schema).
+# --------------------------------------------------------------------------- #
+def _fn(name: str, desc: str, props: dict[str, Any],
+        required: Optional[list[str]] = None) -> dict[str, Any]:
+    params: dict[str, Any] = {"type": "object", "properties": props}
+    if required:
+        params["required"] = required
+    return {"type": "function",
+            "function": {"name": name, "description": desc, "parameters": params}}
+
+
+def _all_tool_defs() -> list[dict[str, Any]]:
+    """The FULL tool catalog. `_tool_schemas()` filters this down per the current
+    project focus + activated long-tail packs (hybrid tool network)."""
+    return [
+        _fn("focus_project",
+            "切换你的【项目焦点】(dp 或 pe)。一轮决策只针对一个项目:切到某项目后,只有该项目的动作工具可用,另一个项目的动作工具会从工具表里消失、调不出来。"
+            "即使要你『两个一起跑』,也必须串行:focus_project(dp)→决策执行→focus_project(pe)→决策执行。切换会清空已激活的长尾工具包(工具包按项目隔离)。",
+            {"project": {"type": "string", "enum": ["dp", "pe"],
+                         "description": "dp=单体生存PPO / pe=种群MAP-Elites进化"},
+             "reason": {"type": "string", "description": "为何切到这个项目(进历史)"}},
+            ["project"]),
+        _fn("find_tools",
+            "在【工具网络】里检索当前焦点项目的长尾工具(BC/老师录数据集/DAgger/PPO微调/奖励调参/档案几何/课程编辑等),按关键词或工具包匹配,"
+            "并把命中的工具【激活】——激活后它们的真·schema 会出现在下一轮工具表里,可直接像普通工具一样带类型化参数调用(不是通用 call_tool)。"
+            "凡涉及这些低频强力操作,先 find_tools 调出来再用。仅在当前焦点项目内检索。",
+            {"keyword": {"type": "string",
+                         "description": "关键词,如 bc/老师/demos/dagger/finetune/微调/reward/奖励/archive/档案/curriculum/课程"},
+             "pack": {"type": "string",
+                      "description": "可选:直接按工具包名激活(dp_pipeline/pe_reward/pe_evolution/pe_curriculum)"}}),
+        _fn("get_status",
+            "读取机器与训练现状:GPU/磁盘/进程数、各 PE run 的最新 gen/me_cov/qd、各 DP run 的 score/unlocks/kills。决策前先调。",
+            {}),
+        _fn("list_pe_configs", "列出可用的 PE TOML 配置文件名。", {}),
+        _fn("list_checkpoints",
+            "列出 DP 的 runs/*.pt 与 PE 的 checkpoint_gen* 检查点。",
+            {"project": {"type": "string", "enum": ["dp", "pe"]}}),
+        _fn("read_log_tail",
+            "读取某个 run 日志的末尾若干行用于诊断。",
+            {"run_id": {"type": "string", "description": "面板 run_id(优先)"},
+             "file": {"type": "string", "description": "或日志文件名(配合 project)"},
+             "project": {"type": "string", "enum": ["dp", "pe"]},
+             "n": {"type": "integer", "default": 40}}),
+        _fn("analyze_metrics",
+            "判断某个 run 是否值得继续,并拿到【行为全景谱 panorama】——这是看清『方向』的主要依据,不要只看 avg/score。"
+            "返回里含:粗趋势(PE avg/best/me_cov/qd;DP score/reward/unlocks)+ hint;**spectrum**=多维全景"
+            "(DP:主线深度/广度·科技树·动作熵·每命机制数·夜间避寒·死因均衡·链闭合·奖励构成;"
+            "PE:砍/造/投/猎成功率漏斗·niche占用·专精/通才·覆盖/QD·通讯响应·记忆·存活);"
+            "**panorama**=一句话谱摘要(直接拿去 kb_write 记账);**axes_trend**=进度轴 vs 广度轴趋势。"
+            "调参铁律:**广度轴坍缩(熵↓/niche被通才洗掉/覆盖↓)即便进度上行也算坏方向**(反 Goodhart)——别为单标量刷分。"
+            "file 用 get_status 里看到的 run 文件名(PE 用 .log,DP 用 .jsonl)。window=只看最近 N 个点(0=全部)。",
+            {"project": {"type": "string", "enum": ["dp", "pe"]},
+             "file": {"type": "string", "description": "PE: onepot_sD_*.log;DP: ft_*.jsonl"},
+             "window": {"type": "integer", "default": 0}},
+            ["project", "file"]),
+        _fn("compare_runs",
+            "把多个 run 放一起横向对比关键指标并排名,一次选出赢家/淘汰输家(比逐个 analyze_metrics 快)。"
+            "PE 比 avg/best/qd/me_cov,DP 比 score/reward/unlocks。返回每个 run 的关键值 + 按主指标的排名 + leader。"
+            "并行多组探路(fast_iter)时用它一次性判优劣。",
+            {"project": {"type": "string", "enum": ["dp", "pe"]},
+             "files": {"type": "array", "items": {"type": "string"},
+                       "description": "2+ 个 run 文件名(PE .log / DP .jsonl)"},
+             "window": {"type": "integer", "default": 0,
+                        "description": "只看最近 N 个点(0=全部)"}},
+            ["project", "files"]),
+        _fn("analyze_memory_ablation",
+            "读取一次【记忆消融评测】结果(memory_ablation_results.csv:7 认知任务 × 5 消融变体 "
+            "baseline/no_spatial/no_episodic/no_social/no_goal),给出『模型是否真的用了记忆/世界模型』"
+            "的直接证据——这不是代理分。返回:capability_baseline(基线能力)、memory_dependence"
+            "(去掉每种记忆后各任务的平均相对跌幅,跌得多=真依赖该记忆)、understanding_score(总体记忆"
+            "依赖度,这就是『真理解』的忠实信号)、per_task 明细、verdict。铁律:avg/best/me_cov 升但 "
+            "understanding_score 不升=在刷代理分、没长出真理解。需要 PE 跑过 memory_ablation.enabled=true "
+            "的 eval 才有数据;file 给该 run 目录或 csv 路径,留空则自动取最新一份。",
+            {"file": {"type": "string", "description": "run 目录或 memory_ablation_results.csv 路径(可留空,自动取最新)"},
+             "run_id": {"type": "string", "description": "或面板 run_id"}},
+            []),
+        _fn("inspect_config",
+            "查看一个 PE TOML 配置里【可调的旋钮】及其当前取值(压力 dmg、冷/饿阈值、mutation sigma、代数、seed、archetype 权重、树密度等),"
+            "搞清楚这条配置能动哪些参数、现在是多少,再决定改哪个。对照换旋钮(ab_knob)前先 inspect 看清基线。",
+            {"config": {"type": "string", "description": "PE TOML 文件名(见 list_pe_configs)"}},
+            ["config"]),
+        _fn("make_config_variant",
+            "对照实验执行器（ab_knob）：克隆一个 PE TOML，只改其中【一个】旋钮的值，生成一个独立的新配置文件（scenario_name/runs_dir 自动加后缀、写到自己的 run 目录，不污染基线、不与基线 run 冲突）。"
+            "返回新配置文件名，可直接用 start_pe_training 启动它与基线对照。一次只改一个钮；先 inspect_config 看清旋钮名与基线值。",
+            {"base": {"type": "string", "description": "基线 PE TOML 文件名（见 list_pe_configs）"},
+             "knob": {"type": "string", "description": "要改的旋钮名（inspect_config 里的点分名，如 world.dmg / runtime.random_seed）"},
+             "value": {"description": "新取值（数字/布尔/字符串）"}},
+            ["base", "knob", "value"]),
+        _fn("start_pe_training",
+            "启动一局 PE 训练(给定 toml 配置;可覆盖 seed/代数/续跑检查点,面板会克隆新 toml 不改原文件)。必须写 reason。",
+            {"config": {"type": "string", "description": "PE TOML 文件名"},
+             "seed": {"type": "integer"},
+             "generations": {"type": "integer"},
+             "resume_checkpoint": {"type": "string"},
+             "reason": {"type": "string", "description": "为什么这么训(必填,进历史)"},
+             "purpose": {"type": "string", "description": "这局要达成什么目标/验证什么假设(会显示在训练卡片里)"}},
+            ["config", "reason"]),
+        _fn("start_dp_training",
+            "启动一局 DP 训练。必须写 reason。",
+            {"checkpoint": {"type": "string", "description": "runs/ 下的基线 .pt(可空=从头)"},
+             "seed": {"type": "integer"},
+             "steps": {"type": "integer"},
+             "n_envs": {"type": "integer"},
+             "tag": {"type": "string"},
+             "extra_args": {"type": "string"},
+             "reason": {"type": "string", "description": "为什么这么训(必填,进历史)"},
+             "purpose": {"type": "string", "description": "这局要达成什么目标/验证什么假设(会显示在训练卡片里)"}},
+            ["reason"]),
+        _fn("stop_training",
+            "停止一个训练进程(检查点会自动保存,安全)。给 run_id 或 pid。必须写 reason。",
+            {"run_id": {"type": "string"}, "pid": {"type": "integer"},
+             "reason": {"type": "string"}},
+            ["reason"]),
+        _fn("cleanup_disk",
+            "清理日志/trace 释放磁盘(只动 .log/.jsonl/trace,移到回收站;不动 *.pt——检查点请用 delete_checkpoint)。",
+            {"project": {"type": "string", "enum": ["dp", "pe"]},
+             "reason": {"type": "string"}},
+            ["reason"]),
+        _fn("delete_checkpoint",
+            "删除你判定不重要的 DP .pt 检查点(移到回收站,可恢复)。受保护清单会被硬拦跳过。高后果动作,请先 list_checkpoints 看清楚再决定;必填 reason。",
+            {"names": {"type": "array", "items": {"type": "string"},
+                       "description": "runs/ 下要删的 .pt 文件名列表"},
+             "reason": {"type": "string", "description": "为何认为这些不重要可删(必填,进历史)"}},
+            ["names", "reason"]),
+        _fn("recall_timeline",
+            "按需回看你自己过去的决策/执行/休眠/笔记记录(读决策历史),避免重复劳动或遗忘上下文。不传入时不占上下文。",
+            {"limit": {"type": "integer", "default": 20, "description": "返回最近多少条"},
+             "kind": {"type": "string", "description": "可选过滤:decision/execute/sleep/note/compress/spec_pinned 等"}}),
+        _fn("list_docs", "列出可按需调阅的策略/交接/知识文档(playbook、handoff、知识笔记等)。", {}),
+        _fn("read_doc",
+            "读一份文档的内容(可只取包含关键词的段落以省 token)。先 list_docs 拿文件名。",
+            {"name": {"type": "string", "description": "文档文件名(来自 list_docs)"},
+             "query": {"type": "string", "description": "可选关键词:仅返回包含它的段落上下文"},
+             "max_chars": {"type": "integer", "default": 6000}},
+            ["name"]),
+        _fn("sleep",
+            "进入休眠以省额度。训练平稳时应当休眠;watcher 会在到点或关键事件(run 结束/报错/灭绝/磁盘告警)时唤醒你。",
+            {"minutes": {"type": "integer", "description": "最长睡多久"},
+             "reason": {"type": "string"}},
+            ["minutes", "reason"]),
+        _fn("log_note",
+            "记一条笔记/建议到历史(用于机制级代码建议、负结果、下一步计划等不需要立刻执行的内容)。",
+            {"text": {"type": "string"},
+             "level": {"type": "string",
+                       "enum": ["info", "suggestion", "warning"], "default": "info"}},
+            ["text"]),
+        _fn("pin_spec",
+            "把一条关键结论/spec/约束钉进【常驻记忆】:它会写进系统提示词每次都带上,且永不被上下文压缩丢弃。"
+            "用于你提炼出的、必须长期遵守的事实(如某 config 的最佳 seed、某红线、当前血脉命名)。简短精炼。",
+            {"text": {"type": "string", "description": "要长期记住的一句话(精炼)"}},
+            ["text"]),
+        _fn("kb_write",
+            "写入/更新【项目知识网络】的一个节点(持久化,跨会话不丢)。用于沉淀你对项目的理解:蓝图目标、红线、踩过的坑、机制结论、某血脉的状态等。"
+            "给 id 则更新该节点,否则新建。用 links 关联到其它节点 id 形成网络。",
+            {"id": {"type": "string", "description": "更新已有节点时给其 id;新建留空"},
+             "kind": {"type": "string",
+                      "enum": ["blueprint", "redline", "pitfall", "mechanism",
+                               "finding", "lineage", "todo", "other"],
+                      "description": "节点类型"},
+             "title": {"type": "string"},
+             "body": {"type": "string"},
+             "tags": {"type": "array", "items": {"type": "string"}},
+             "links": {"type": "array", "items": {"type": "string"},
+                       "description": "关联到的其它节点 id"}},
+            ["kind", "title", "body"]),
+        _fn("kb_query",
+            "检索【项目知识网络】。给 id 则取该节点并连带返回它关联的邻居(1跳=知识网络);否则按 query 关键词/kind/tag 过滤。决策前应先查坑与既往结论。",
+            {"id": {"type": "string"},
+             "query": {"type": "string", "description": "关键词(标题/正文/标签)"},
+             "kind": {"type": "string"},
+             "tag": {"type": "string"},
+             "limit": {"type": "integer", "default": 12}}),
+        _fn("record_gen",
+            "把某一代/某血脉的模型表现记进【逐代台账】(持久化),便于日后查询哪代最好、趋势如何。",
+            {"project": {"type": "string", "enum": ["dp", "pe"]},
+             "lineage": {"type": "string", "description": "血脉/配置名(如 onepot_sD、explore_s7)"},
+             "gen": {"type": "integer"},
+             "checkpoint": {"type": "string", "description": "对应 checkpoint 文件名(可选)"},
+             "metrics": {"type": "object",
+                         "description": "指标键值,如 {avg,best,me_cov,qd} 或 DP 的 {score,unlocks,prey_kills}"},
+             "note": {"type": "string"}},
+            ["project", "lineage", "gen"]),
+        _fn("query_gens",
+            "查询【逐代台账】:某项目/血脉各代的表现记录(按代排序,可看趋势与最佳代)。",
+            {"project": {"type": "string", "enum": ["dp", "pe"]},
+             "lineage": {"type": "string"},
+             "limit": {"type": "integer", "default": 40}}),
+        _fn("use_strategy",
+            "切换当前【策略】。你自己判断当前处境最该用哪条策略就调它;切换后系统会把这条策略的详细打法(该用的工具/关注参数/要避的坑)注入你的常驻上下文,接下来按它行动。可随处境变化随时再切。返回该策略的详细打法。",
+            {"strategy": {"type": "string",
+                          "enum": list(STRATEGIES.keys()),
+                          "description": "策略 id:fast_iter/ab_knob/hist_bench/early_stop/ckpt_hygiene/compute_yield"},
+             "reason": {"type": "string", "description": "为何切到这条策略(进历史)"}},
+            ["strategy"]),
+        _fn("list_strategies",
+            "列出所有可选策略及其适用场景与详细打法(忘了有哪些策略/具体怎么做时查)。", {}),
+        _fn("deep_think",
+            "面临复杂决策(如启训/换参/多因素权衡)时主动调用,进行多轮引导式内部推演——先看现状→找原因→权衡→定方案。"
+            "推演内容流式展示给用户但不占你的长期上下文(用完即丢)。简单问答无需调此工具。每轮唤醒最多调一次。"
+            "rounds 按决策权重自选:常规判断 1 轮即可,关键决策(开训/换参/回退/多组取舍)用 2-3 轮;别为琐事浪费轮数。",
+            {"rounds": {"type": "integer", "default": 2,
+                        "description": "推演轮数(1-上限):常规=1,关键决策=2-3"}},
+            ["rounds"]),
+        # ---- DP long-tail pipeline (pack=dp_pipeline; via find_tools) -------- #
+        _fn("dp_record_demos",
+            "【DP·造老师→录数据集】用脚本老师/oracle(settler 七层反应式)跑环境,录 (obs,action) 示范数据集供 BC 用。"
+            "对应已有 CLI --policy settler --record-demos(不改源码/维度)。低风险,可自主。",
+            {"teacher": {"type": "string", "enum": ["settler", "scripted", "wander", "noop"],
+                         "default": "settler", "description": "老师策略(默认 settler oracle)"},
+             "seed": {"type": "integer", "default": 24},
+             "steps": {"type": "integer", "description": "录制步数(默认 2e6)"},
+             "tag": {"type": "string", "default": "agent", "description": "数据集标签→traces/demos_<tag>_s<seed>.bin"},
+             "oracle_hunt": {"type": "boolean", "default": True, "description": "老师是否真的狩猎(DP_ORACLE_HUNT=1)"},
+             "oracle_no_fire": {"type": "boolean", "default": False, "description": "无火重标(D-114)"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["reason"]),
+        _fn("dp_train_bc",
+            "【DP·行为克隆 BC】用录好的示范数据集克隆出一个网络 → checkpoints/bc_<tag>.pt。"
+            "对应 --policy bc --bc-demos/--bc-epochs/...(不改源码)。低风险,可自主。",
+            {"demos": {"type": "string", "description": "示范文件名(逗号分隔多个),来自 dp_record_demos"},
+             "tag": {"type": "string", "default": "agent"},
+             "epochs": {"type": "integer", "default": 10},
+             "batch": {"type": "integer", "default": 16},
+             "bptt": {"type": "integer", "default": 64},
+             "lr": {"type": "number", "default": 0.001},
+             "trigger_weight": {"type": "number", "default": 5,
+                                "description": "触发动作的损失加权(稀有动作别被淹没)"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["demos", "reason"]),
+        _fn("dp_dagger",
+            "【DP·DAgger 纠偏】用加载的克隆走、用老师(ScriptedSettler)贴正确标签,修克隆的协变量漂移(D-102)→ traces/dagger_<tag>_s<seed>.bin。"
+            "对应 --policy ppo --load <clone> --record-demos <out> --dagger(源码确认)。低风险,可自主。",
+            {"clone": {"type": "string", "description": "要纠偏的克隆 checkpoint(--load)"},
+             "seed": {"type": "integer", "default": 24},
+             "steps": {"type": "integer"},
+             "tag": {"type": "string", "default": "dagger"},
+             "oracle_hunt": {"type": "boolean", "default": True},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["clone", "reason"]),
+        _fn("dp_finetune",
+            "【DP·PPO 微调】从 BC/PPO 基线热启动接着 PPO,可带【势能塑形系数】(ppo-hunt/repertoire/warmth/night/day-shaping)——"
+            "这是 policy-invariant 的安全奖励杠杆(加速学习不改最优策略),不是改奖励结构。对应 --policy ppo --load <base> --ent-coef/--ppo-*-shaping(不改源码)。低风险,可自主。",
+            {"load": {"type": "string", "description": "基线 checkpoint(如 bc_hv2.pt),必填"},
+             "seed": {"type": "integer", "default": 24},
+             "steps": {"type": "integer", "default": 8000000},
+             "n_envs": {"type": "integer", "default": 4},
+             "tag": {"type": "string", "default": "agent"},
+             "ent_coef": {"type": "number", "default": 0.0015},
+             "lr": {"type": "number", "default": 0.00015},
+             "critic_warmup": {"type": "integer", "default": 32},
+             "hunt_shaping": {"type": "number", "description": "狩猎势能塑形系数(安全)"},
+             "repertoire_shaping": {"type": "number", "description": "技能谱势能塑形系数(安全)"},
+             "warmth_shaping": {"type": "number", "description": "保暖势能塑形系数(安全)"},
+             "thirst_decay": {"type": "number"}, "trigger_cost": {"type": "number"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["load", "reason"]),
+        # ---- PE long-tail tuning (packs pe_reward/pe_evolution/pe_curriculum) - #
+        _fn("pe_reward_tune",
+            "【PE·奖励/惩罚调参】调 [reward]/[reward.goal_completion]/[combat] 段的权重(food/survival/cooperation/各目标奖励/惩罚等),生成隔离变体。"
+            "小幅微调(同号、幅度≤tier_c.reward_pct_limit)可自主;变号/翻倍/增删奖励项=结构性改动→即使 auto 也挂待批。先 inspect_config 看现值。",
+            {"config": {"type": "string", "description": "基线 PE TOML"},
+             "edits": {"type": "object",
+                       "description": "{点分旋钮: 新值},如 {\"reward.food_weight\": 1.2, \"combat.kill_bonus\": 0.0}"},
+             "label": {"type": "string", "default": "reward", "description": "变体名后缀"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
+        _fn("pe_archive_geometry",
+            "【PE·档案几何】调 [evolution.me_neat] 的 CVT 质心数/各 bin 数/max_bins(决定行为格子多少)。"
+            "经验:格子开太多(如 8×8×3=192)→只填 0.5~3% 看起来像凭运气撞;2D(5×5=25)gen30 能填 20%。低风险,可自主。",
+            {"config": {"type": "string"},
+             "edits": {"type": "object",
+                       "description": "{点分旋钮: 新值},如 {\"evolution.me_neat.cvt_num_centroids\": 64, \"evolution.me_neat.hunt_max_bins\": 5}"},
+             "label": {"type": "string", "default": "archive"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
+        _fn("pe_evolution_tune",
+            "【PE·进化引擎调参】调 [evolution.neat]/[evolution.selection]/[evolution.mutation](加节点率/精英比/锦标赛/扰动 sigma 等)。"
+            "sigma 大=探索强但噪声大,小=稳但易早熟;一次只动一个方向。低风险,可自主。",
+            {"config": {"type": "string"},
+             "edits": {"type": "object", "description": "{点分旋钮: 新值}"},
+             "label": {"type": "string", "default": "evo"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
+        _fn("pe_curriculum_edit",
+            "【PE·课程编辑(高风险)】改 [[evolution.task_templates]] 课程(任务清单/权重/难度/must_build_to_survive 等)——这是改『选择压往哪个方向』,PE 最高杠杆但高风险。"
+            "无论什么模式都【只提议、等人工批准】。提交前先 inspect_config + kb_query 查既往课程结论。",
+            {"config": {"type": "string"},
+             "edits": {"type": "object",
+                       "description": "{点分旋钮: 新值}(task_templates 改动)"},
+             "label": {"type": "string", "default": "curriculum"},
+             "reason": {"type": "string", "description": "为何改课程、改成什么方向(必填,进历史+待批卡)"},
+             "purpose": {"type": "string"}},
+            ["config", "edits", "reason"]),
+        # ---- autonomous campaign controller (staged-ladder自治,跨 dp/pe) ---- #
+        _fn("start_campaign",
+            "【自治训练战役】让你独立把当前焦点项目的一条血脉从零/从基线训到收敛,不用每次升级都等人批。"
+            "代码强制走分级阶梯 smoke→short→long:先起 smoke 小跑;结束后你调 advance_campaign,"
+            "由代码按这一阶段自己的指标判定【晋级/回退/延长/收尾】——你无法对不合格的阶段强行晋级。"
+            "DP 会把产出的 checkpoint 接力到下一阶段;PE 是种群法,smoke 当可行性探针、晋级=换更长代数重跑。"
+            "这取代了『新血脉必须人批』:阶梯+健康门就是安全机制。仍受资源 guard(进程/磁盘/显存)约束。先 kb_query。",
+            {"goal": {"type": "string", "description": "这条血脉的目标(进历史/台账)"},
+             "config": {"type": "string", "description": "PE:基线 TOML(必填);DP 不用"},
+             "base_checkpoint": {"type": "string",
+                                 "description": "可选:DP 从此 checkpoint 热启动;留空=从零起新血脉(smoke 起步,安全)"},
+             "seed": {"type": "integer"}, "n_envs": {"type": "integer", "default": 4},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["goal", "reason"]),
+        _fn("advance_campaign",
+            "评估某 campaign 刚结束阶段的指标并推进:代码据指标给出 promote(晋级更大规模)/revert(下行或灭绝→回退保持)/"
+            "extend(样本太少→延长再判,有上限)/done(收敛收尾)/stop(指标读不出→停)。判定在代码里,你不能伪造晋级。"
+            "当 get_status/唤醒提示某 campaign 的 run 已结束时调它。先 kb_query 回顾既往坑。",
+            {"campaign_id": {"type": "string"},
+             "reason": {"type": "string"}},
+            ["campaign_id", "reason"]),
+        _fn("campaign_status",
+            "列出所有自治训练战役及其阶段/状态/历史判定(只读,随时可调)。",
+            {}),
+        _fn("start_tune",
+            "【安全域自动调参闭环(PE)】对一个旋钮在 tier-C 低风险域内(同号、幅度≤reward_pct_limit)给几个候选值,"
+            "代码逐个核验安全性(结构性候选会被拒),为每个安全候选生成隔离变体并起 smoke;之后调 resolve_tune 由代码 compare 选赢家。"
+            "这让调参真正闭环收敛,而不是拍一下走一下。超出安全域的改动仍要走 pe_reward_tune→人批。先 kb_query。",
+            {"config": {"type": "string", "description": "基线 PE TOML"},
+             "knob": {"type": "string", "description": "点分旋钮,如 reward.food_weight"},
+             "values": {"type": "array", "items": {"type": "number"},
+                        "description": "候选值列表(每个都须落在同号且≤pct_limit 的安全域)"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "knob", "values", "reason"]),
+        _fn("resolve_tune",
+            "结算一个 start_tune 批次:确认各候选 smoke 已结束后,代码 compare_runs 选出赢家(PE 按 avg/qd,剔除灭绝),"
+            "记台账、保留赢家变体。先 kb_query。",
+            {"tune_id": {"type": "string"}, "reason": {"type": "string"}},
+            ["tune_id", "reason"]),
+        _fn("curriculum_advance",
+            "【沿预设课程阶梯自主推进一档】仅当存在人工预先评定好的课程阶梯(curriculum_ladder.json)时可自主把课程推进到下一档;"
+            "这给你『渐进难度』这个必需杠杆,又不让你凭空造任务。若没有预设阶梯,则退回到 pe_curriculum_edit(高风险→人批)。先 kb_query。",
+            {"config": {"type": "string", "description": "当前 PE TOML"},
+             "reason": {"type": "string"}, "purpose": {"type": "string"}},
+            ["config", "reason"]),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Tool network: project partition + hybrid resident-core / long-tail packs.
+#   project: "any"    -> resident, project-agnostic (perception/memory/meta)
+#            "shared" -> available once a focus is set, scoped to that focus
+#            "dp"/"pe"-> only visible under that focus
+#   pack in LONGTAIL_PACKS -> hidden until find_tools activates it (focus-scoped)
+# --------------------------------------------------------------------------- #
+LONGTAIL_PACKS = {"dp_pipeline", "pe_reward", "pe_evolution", "pe_curriculum"}
+
+TOOL_META: dict[str, dict[str, Any]] = {
+    # resident core (project-agnostic): perception + memory + meta + switches
+    "get_status": {"project": "any"},
+    "focus_project": {"project": "any"},
+    "find_tools": {"project": "any"},
+    "kb_query": {"project": "any"}, "kb_write": {"project": "any"},
+    "record_gen": {"project": "any"}, "query_gens": {"project": "any"},
+    "use_strategy": {"project": "any"}, "list_strategies": {"project": "any"},
+    "sleep": {"project": "any"}, "log_note": {"project": "any"},
+    "pin_spec": {"project": "any"}, "recall_timeline": {"project": "any"},
+    "list_docs": {"project": "any"}, "read_doc": {"project": "any"},
+    "deep_think": {"project": "any"},
+    # shared reads/controls — scoped to the current focus (project arg forced)
+    "analyze_metrics": {"project": "shared"}, "compare_runs": {"project": "shared"},
+    "analyze_memory_ablation": {"project": "shared"},
+    "read_log_tail": {"project": "shared"}, "cleanup_disk": {"project": "shared"},
+    "stop_training": {"project": "shared"}, "list_checkpoints": {"project": "shared"},
+    # autonomous campaign controller — campaign_status is resident/read-only;
+    # start/advance act on the current focus project (shared, serialized).
+    "campaign_status": {"project": "any"},
+    "start_campaign": {"project": "shared"}, "advance_campaign": {"project": "shared"},
+    # DP focus — primary (auto-active) + long-tail pipeline (find_tools)
+    "start_dp_training": {"project": "dp"},
+    "delete_checkpoint": {"project": "dp"},
+    "dp_record_demos": {"project": "dp", "pack": "dp_pipeline"},
+    "dp_train_bc": {"project": "dp", "pack": "dp_pipeline"},
+    "dp_dagger": {"project": "dp", "pack": "dp_pipeline"},
+    "dp_finetune": {"project": "dp", "pack": "dp_pipeline"},
+    # PE focus — primary (auto-active) + long-tail tuning packs (find_tools)
+    "start_pe_training": {"project": "pe"},
+    "list_pe_configs": {"project": "pe"},
+    "inspect_config": {"project": "pe"},
+    "make_config_variant": {"project": "pe"},
+    "pe_reward_tune": {"project": "pe", "pack": "pe_reward"},
+    "pe_archive_geometry": {"project": "pe", "pack": "pe_evolution"},
+    "pe_evolution_tune": {"project": "pe", "pack": "pe_evolution"},
+    "pe_curriculum_edit": {"project": "pe", "pack": "pe_curriculum"},
+    # PE autonomy: bounded auto-tune loop + vetted-ladder curriculum advance
+    "start_tune": {"project": "pe", "pack": "pe_reward"},
+    "resolve_tune": {"project": "pe", "pack": "pe_reward"},
+    "curriculum_advance": {"project": "pe", "pack": "pe_curriculum"},
+}
+
+# keyword -> pack, for find_tools discovery (focus-scoped at call time).
+_PACK_KEYWORDS: dict[str, list[str]] = {
+    "dp_pipeline": ["bc", "克隆", "clone", "老师", "teacher", "oracle", "demos",
+                    "数据集", "dataset", "record", "录", "dagger", "纠偏",
+                    "finetune", "微调", "ppo", "shaping", "塑形", "pipeline", "流水线"],
+    "pe_reward": ["reward", "奖励", "惩罚", "penalty", "权重", "weight", "combat",
+                  "tune", "调参", "闭环", "auto", "自动", "sweep", "扫"],
+    "pe_evolution": ["archive", "档案", "几何", "geometry", "cvt", "bin", "bins",
+                     "centroid", "质心", "evolution", "进化", "neat", "mutation",
+                     "sigma", "selection", "精英", "elite"],
+    "pe_curriculum": ["curriculum", "课程", "task", "任务", "template",
+                      "task_templates", "难度", "difficulty", "阶梯", "ladder",
+                      "推进", "advance", "进阶"],
+}
+
+
+def _tool_visible(name: str, focus: Optional[str], active_packs: set[str]) -> bool:
+    """Whether a tool should appear in the schema given the current focus +
+    activated long-tail packs. Pure -> unit-testable."""
+    meta = TOOL_META.get(name)
+    if meta is None:
+        return True                      # unknown -> default visible (safety)
+    proj = meta["project"]
+    if proj == "any":
+        return True
+    if focus is None:
+        return False                     # must focus_project first
+    if proj == "shared":
+        return True
+    if proj != focus:
+        return False
+    pack = meta.get("pack")
+    if pack in LONGTAIL_PACKS:
+        return pack in active_packs      # long-tail: only after find_tools
+    return True                          # focus's primary tool
+
+
+def _packs_for_focus(focus: Optional[str]) -> set[str]:
+    return {p for p in LONGTAIL_PACKS
+            if (p.startswith("dp_") and focus == "dp")
+            or (p.startswith("pe_") and focus == "pe")}
+
+
+def _find_tools(keyword: str, pack: str, focus: Optional[str]) -> dict[str, Any]:
+    """Search the focus project's long-tail packs by keyword/pack name and
+    ACTIVATE the matches (their real schemas appear next turn)."""
+    if focus is None:
+        return {"ok": False, "error": "请先 focus_project(dp|pe) 再检索工具网络。"}
+    allowed = _packs_for_focus(focus)
+    kw = (keyword or "").strip().lower()
+    matched: set[str] = set()
+    if pack:
+        p = pack.strip().lower()
+        if p in allowed:
+            matched.add(p)
+    for pk in allowed:
+        if pk in matched:
+            continue
+        if kw and any(term in kw or kw in term for term in _PACK_KEYWORDS.get(pk, [])):
+            matched.add(pk)
+    if not matched and not pack and kw:
+        # also match against tool names/descriptions directly
+        for nm, meta in TOOL_META.items():
+            pk = meta.get("pack")
+            if pk in allowed and kw in nm.lower():
+                matched.add(pk)
+    if not matched:
+        return {"ok": True, "activated": [], "tools": [],
+                "note": f"焦点[{focus}]下未匹配到长尾工具(可用包: {sorted(allowed)})。"
+                        "动作类工具大多已常驻,直接调用即可。"}
+    STATE.active_packs |= matched
+    defs = {d["function"]["name"]: d["function"]["description"]
+            for d in _all_tool_defs()}
+    tools = [{"name": nm, "pack": meta.get("pack"),
+              "desc": defs.get(nm, "")[:160]}
+             for nm, meta in TOOL_META.items()
+             if meta.get("pack") in matched]
+    _timeline("find_tools", keyword=keyword, pack=pack, focus=focus,
+              activated=sorted(matched), tools=[t["name"] for t in tools])
+    return {"ok": True, "activated": sorted(matched), "tools": tools,
+            "note": "已激活,下一轮可直接像普通工具一样带参数调用这些工具。"}
+
+
+def _tool_schemas() -> list[dict[str, Any]]:
+    focus = STATE.focus_project
+    packs = STATE.active_packs
+    return [d for d in _all_tool_defs()
+            if _tool_visible(d["function"]["name"], focus, packs)]
+
+
+def _tool_network_view(focus: Optional[str], packs: set[str]) -> dict[str, Any]:
+    """A UI-facing description of the partitioned tool network: every tool with
+    its project/pack and whether it is currently visible/activated."""
+    cat = {d["function"]["name"]: (d["function"]["description"] or "")[:90]
+           for d in _all_tool_defs()}
+    tools = []
+    for nm, meta in TOOL_META.items():
+        pk = meta.get("pack")
+        longtail = pk in LONGTAIL_PACKS
+        tools.append({
+            "name": nm, "project": meta["project"], "pack": pk,
+            "longtail": longtail,
+            "active": (pk in packs) if longtail else None,
+            "visible": _tool_visible(nm, focus, packs),
+            "desc": cat.get(nm, ""),
+        })
+    return {"focus": focus, "active_packs": sorted(packs),
+            "packs": sorted(LONGTAIL_PACKS), "tools": tools}
+
+
+READ_TOOLS = {"get_status", "list_pe_configs", "list_checkpoints", "read_log_tail",
+              "analyze_metrics", "compare_runs", "analyze_memory_ablation", "inspect_config",
+              "sleep", "log_note", "cleanup_disk", "pin_spec",
+              "recall_timeline", "list_docs", "read_doc",
+              "kb_write", "kb_query", "record_gen", "query_gens",
+              "use_strategy", "list_strategies", "deep_think",
+              "focus_project", "find_tools"}
+
+# Pure, side-effect-free reads that are safe to run concurrently (claude-code
+# `isConcurrencySafe`): the agent loop batches a run of consecutive such calls
+# and executes them in parallel. Everything else (writes, control flow such as
+# sleep/deep_think, KB/ledger writes, strategy switches) runs serially in order.
+CONCURRENCY_SAFE_TOOLS = {"get_status", "list_pe_configs", "list_checkpoints",
+                          "read_log_tail", "analyze_metrics", "compare_runs",
+                          "analyze_memory_ablation",
+                          "inspect_config", "recall_timeline", "list_docs",
+                          "read_doc", "kb_query", "query_gens", "list_strategies",
+                          "campaign_status"}
+
+
+# --------------------------------------------------------------------------- #
+# Guards.
+# --------------------------------------------------------------------------- #
+def _guard_launch(cfg: dict[str, Any]) -> Optional[str]:
+    """Return a refusal reason string if a new training MUST NOT start, else None."""
+    import server
+    try:
+        procs = server.processes()
+        if procs.get("total", 0) >= cfg.get("max_procs", 10):
+            return (f"拒绝启动:已有 {procs['total']} 个训练进程,达到上限 "
+                    f"{cfg['max_procs']}。请先停掉一些或等其结束。")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        st = server.system_status()
+        disk = st.get("disk") or {}
+        free = disk.get("free_gb")
+        if free is not None and free < cfg.get("disk_low_gb", 25.0):
+            return (f"拒绝启动:磁盘只剩 {free}G,低于阈值 {cfg['disk_low_gb']}G。"
+                    f"请先 cleanup_disk 释放空间。")
+        # Single 8G card: refuse a new launch when no GPU has enough free VRAM,
+        # so we fail loud here instead of OOM-crashing mid-train. Take the GPU
+        # with the MOST free memory (the freest candidate the run could land on).
+        gpu = st.get("gpu")
+        rows = gpu if isinstance(gpu, list) else ([gpu] if gpu else [])
+        min_free = cfg.get("gpu_min_free_mb", 1500.0)
+        frees = [r["mem_total_mb"] - r["mem_used_mb"] for r in rows
+                 if isinstance(r, dict) and r.get("mem_total_mb") is not None
+                 and r.get("mem_used_mb") is not None]
+        if frees and max(frees) < min_free:
+            return (f"拒绝启动:GPU 可用显存只剩 {max(frees):.0f}MB,低于安全余量 "
+                    f"{min_free:.0f}MB。等显存释放或先 stop_training 腾显存,避免 OOM 崩溃。")
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Tier-C risk classification (in code, not left to the LLM). High-risk ops are
+# queued for human approval EVEN IN AUTO mode. Pure functions -> unit-testable.
+# --------------------------------------------------------------------------- #
+def _num(v: Any) -> Optional[float]:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _reward_edit_is_structural(edits: dict[str, Any], pct_limit: float) -> Optional[str]:
+    """A PE reward edit is STRUCTURAL (high-risk) if any knob flips sign, more
+    than doubles/halves (|Δ|/old > pct_limit), or zeroes/un-zeroes a term.
+    Returns a human reason string if structural, else None.
+    NOTE: we can only check magnitude against the *proposed* value here; the
+    server's pe_tune dry_run gives the authoritative old->new delta, which the
+    gate below uses. This is the value-only heuristic for when old is unknown."""
+    for knob, new in (edits or {}).items():
+        n = _num(new)
+        if n is None:
+            return f"{knob} 改成非数值(结构性改动)"
+    return None
+
+
+def _delta_is_structural(delta: dict[str, Any], pct_limit: float) -> bool:
+    """Given a server _knob_delta() dict, decide if it's structural."""
+    if not delta.get("numeric"):
+        return True                       # non-numeric / added / removed key
+    if delta.get("sign_flip"):
+        return True
+    pct = delta.get("abs_pct_change")
+    if pct is None:                       # old==0 and new!=0 -> infinite change
+        return True
+    return pct > pct_limit
+
+
+def _is_new_bloodline(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> Optional[str]:
+    """A training launch that starts a FRESH lineage (no base ckpt/resume) and
+    runs past smoke length = high-risk new bloodline -> approval even in auto."""
+    tc = cfg.get("tier_c", {})
+    if name == "start_dp_training":
+        if args.get("checkpoint"):
+            return None
+        steps = int(args.get("steps", 8_000_000) or 0)
+        if steps > int(tc.get("dp_smoke_steps", 200000)):
+            return f"无基线 checkpoint 且 steps={steps}(>smoke)= 起新 DP 血脉"
+    elif name == "start_pe_training":
+        if args.get("resume_checkpoint"):
+            return None
+        gens = args.get("generations")
+        gens = int(gens) if gens is not None else 10_000   # unset = long run
+        if gens > int(tc.get("pe_smoke_generations", 4)):
+            return f"无 resume 且 generations={gens}(>smoke)= 起新 PE 血脉"
+    return None
+
+
+def _needs_approval(name: str, args: dict[str, Any],
+                    cfg: dict[str, Any]) -> tuple[bool, str]:
+    """Tier-C gate: return (needs_approval, reason) for HIGH-risk ops that must
+    queue for a human EVEN IN AUTO mode. Low-risk ops return (False, "")."""
+    pct_limit = float(cfg.get("tier_c", {}).get("reward_pct_limit", 0.25))
+    if name == "pe_curriculum_edit":
+        return True, "改课程(task_templates)是 PE 最高杠杆,高风险——只提议、等人工批准。"
+    if name == "pe_reward_tune":
+        # authoritative: ask server pe_tune dry_run for old->new deltas
+        try:
+            import server
+            res = server.pe_tune(server.PETuneReq(
+                config=args.get("config", ""), edits=args.get("edits") or {},
+                label=args.get("label") or "reward", dry_run=True))
+            applied = res.get("applied") or []
+            risky = [a.get("knob") for a in applied
+                     if _delta_is_structural(a.get("delta") or {}, pct_limit)]
+            if risky:
+                return True, ("奖励【结构性】改动(变号/幅度>%.0f%%/增删项): %s —— 需人工批准。"
+                              % (pct_limit * 100, ", ".join(risky)))
+        except Exception:  # noqa: BLE001
+            # if we cannot verify, be conservative on non-numeric edits only
+            s = _reward_edit_is_structural(args.get("edits") or {}, pct_limit)
+            if s:
+                return True, s + " —— 需人工批准。"
+        return False, ""
+    if name in ("start_dp_training", "start_pe_training"):
+        nb = _is_new_bloodline(name, args, cfg)
+        if nb:
+            return True, nb + " —— 需人工批准(即使在自主模式)。"
+    return False, ""
+
+
+# --------------------------------------------------------------------------- #
+# Autonomous training campaigns (blueprint-level autonomy).
+#
+# A campaign lets the agent drive a FULL training lineage on its own without a
+# human approving every escalation, while a human-equivalent *direct* full-scale
+# launch still needs approval. Safety moves from "a human approves each
+# high-leverage launch" to "CODE enforces a staged validation ladder + health
+# gates":   smoke -> (health pass) -> short -> (health pass) -> long.
+# Every promotion verdict is computed IN CODE from the stage's own metrics; the
+# LLM cannot fabricate a "promote" for a failing stage. Failing health reverts
+# to the last good stage and HOLDS (no infinite escalation). This is the
+# mechanism that closes the "agent alone reaches a ~good model" gap, without
+# opening the Goodhart/instability footgun (objective/curriculum/mechanism
+# redesign stay human-gated).
+# --------------------------------------------------------------------------- #
+CAMPAIGN_PATH = AGENT_DIR / "agent_campaigns.json"
+CURRICULUM_LADDER_PATH = AGENT_DIR / "curriculum_ladder.json"
+
+CAMPAIGN_STAGES = ["smoke", "short", "long"]
+_DP_LADDER_STEPS = {"smoke": 200_000, "short": 1_000_000, "long": 8_000_000}
+_PE_LADDER_GENS = {"smoke": 4, "short": 15, "long": 60}
+
+
+def _campaign_stages(project: str, tc: dict[str, Any]) -> dict[str, int]:
+    """Per-stage scale (DP steps / PE generations), overridable from tier_c."""
+    if project == "dp":
+        d = dict(_DP_LADDER_STEPS)
+        d["smoke"] = int(tc.get("dp_smoke_steps", d["smoke"]))
+        override = tc.get("dp_ladder_steps") or {}
+    else:
+        d = dict(_PE_LADDER_GENS)
+        d["smoke"] = int(tc.get("pe_smoke_generations", d["smoke"]))
+        override = tc.get("pe_ladder_generations") or {}
+    for k, v in override.items():
+        if k in d and _num(v) is not None:
+            d[k] = int(v)
+    return d
+
+
+def _campaign_verdict(project: str, am: dict[str, Any], *,
+                      at_final: bool) -> tuple[str, str]:
+    """Decide the next move from analyze_metrics output. PURE -> unit-testable.
+    Returns one of: promote | revert | extend | done | stop, plus a reason.
+
+    PREFERRED path (when the behavioural panorama resolved): a MULTI-AXIS verdict
+    over a PROGRESS axis (方向: main-line depth / fitness) and a BREADTH axis
+    (不退化: repertoire-per-life / MAP-Elites coverage). The anti-Goodhart rule —
+    a collapsing breadth axis vetoes promotion even when progress rises — is what
+    keeps '永续自迭代' from drifting into score-gaming single-strategy collapse.
+
+    FALLBACK (panorama unavailable): the legacy coarse-scalar logic so older runs
+    / log-only PE still get a conservative verdict. Extinction or any declining
+    metric -> revert; improvement -> promote; plateau -> done at final else
+    promote; too few points -> extend; unreadable -> stop."""
+    if not am or not am.get("ok"):
+        return "stop", "无法读取指标(metrics 不可解析)——不盲目晋级,停下待人工。"
+    # preferred: multi-axis (progress vs breadth) with anti-Goodhart veto
+    axt = am.get("axes_trend")
+    if axt and axt.get("progress") and axt.get("breadth"):
+        extinct = project == "pe" and (am.get("extinct_hits") or 0) > 0
+        return spectrum.multi_axis_verdict(
+            axt["progress"], axt["breadth"], at_final=at_final, extinct=extinct)
+    if project == "pe":
+        if (am.get("extinct_hits") or 0) > 0:
+            return "revert", "检测到灭绝(extinct)——回退到上一阶段并保持,别继续加压。"
+        keys = ["avg", "qd", "me_cov"]
+    else:
+        keys = ["score", "reward", "unlocks"]
+    verds = [(am.get(k) or {}).get("verdict") for k in keys]
+    verds = [v for v in verds if v]
+    if not verds or all(v == "too_short" for v in verds):
+        return "extend", "样本太少,延长观察一档再判定。"
+    if any(v == "declining" for v in verds):
+        return "revert", ("指标下行(%s 中出现 declining)——回退保持,先查既往坑。"
+                          % "/".join(keys))
+    if any(v == "improving" for v in verds):
+        if at_final:
+            return "done", "最终阶段仍在上行且无更大规模可升——产出当前最优,收尾。"
+        return "promote", "指标上行且无下行——晋级到更大规模/更长训练。"
+    # all plateau (no improving, no declining)
+    if at_final:
+        return "done", "最终阶段进入平台——视为收敛,产出当前最优,结束。"
+    return "promote", "当前规模已学满(平台)——晋级到更大规模继续提升。"
+
+
+def _load_campaigns() -> list[dict[str, Any]]:
+    if CAMPAIGN_PATH.exists():
+        try:
+            data = json.loads(CAMPAIGN_PATH.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+def _save_campaigns(camps: list[dict[str, Any]]) -> None:
+    CAMPAIGN_PATH.write_text(json.dumps(camps, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+
+
+def _find_campaign(camps: list[dict[str, Any]], cid: str) -> Optional[dict[str, Any]]:
+    for c in camps:
+        if c.get("id") == cid:
+            return c
+    return None
+
+
+TUNE_PATH = AGENT_DIR / "agent_tunes.json"
+
+
+def _load_tunes() -> list[dict[str, Any]]:
+    if TUNE_PATH.exists():
+        try:
+            data = json.loads(TUNE_PATH.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+def _save_tunes(tunes: list[dict[str, Any]]) -> None:
+    TUNE_PATH.write_text(json.dumps(tunes, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+
+
+def _campaign_launch_stage(camp: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    """Launch the campaign's CURRENT stage. Campaign launches bypass the
+    new-bloodline approval gate (the staged ladder + health gates ARE the
+    safety mechanism), but the resource guard (procs/disk/VRAM) still applies.
+    DP carries its produced checkpoint forward on promote; PE re-runs longer
+    from the base config (population-based: smoke is a viability probe)."""
+    import server
+    refusal = _guard_launch(cfg)
+    if refusal:
+        return {"ok": False, "refused": True, "reason": refusal}
+    tc = cfg.get("tier_c", {})
+    stage = camp["stages"][camp["stage_idx"]]
+    scale = _campaign_stages(camp["project"], tc).get(stage)
+    tag = f"camp{camp['id']}_{stage}"
+    if camp["project"] == "dp":
+        res = server.dp_train(server.DPTrainReq(
+            checkpoint=camp.get("base_checkpoint"),
+            seed=int(camp.get("seed") or 24), steps=int(scale),
+            n_envs=int(camp.get("n_envs") or 4), tag=tag,
+            reason=f"[campaign {camp['id']}] stage={stage} steps={scale}",
+            purpose=camp.get("goal")))
+        camp["last_run_file"] = res.get("metrics")
+    else:
+        res = server.pe_train(server.PETrainReq(
+            config=camp["base_config"], seed=camp.get("seed"),
+            resume_checkpoint=camp.get("base_checkpoint"),
+            generations=int(scale),
+            reason=f"[campaign {camp['id']}] stage={stage} gens={scale}",
+            purpose=camp.get("goal")))
+        camp["last_run_file"] = os.path.basename(res.get("log") or "") or None
+    camp["last_run_id"] = res.get("run_id")
+    camp["status"] = "running"
+    STATE.stats["actions"] += 1
+    _timeline("campaign_launch", id=camp["id"], project=camp["project"],
+              stage=stage, scale=scale, run_id=res.get("run_id"))
+    return res
+
+
+def _campaign_advance(cid: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate the just-finished stage and act: promote / extend / revert /
+    done / stop. The verdict is decided in code from the stage's metrics."""
+    import server
+    camps = _load_campaigns()
+    camp = _find_campaign(camps, cid)
+    if not camp:
+        return {"ok": False, "error": f"未找到 campaign {cid}"}
+    if camp["status"] in ("done", "stopped"):
+        return {"ok": False, "error": f"campaign {cid} 已结束({camp['status']})"}
+    live = {p.get("run_id") for p in (server.processes().get("processes") or [])}
+    if camp.get("last_run_id") in live:
+        return {"ok": False, "error": "当前阶段仍在训练,等它结束(或先 stop_training)再 advance。"}
+    am = _analyze_metrics(camp["project"], camp.get("last_run_file") or "", 0)
+    at_final = camp["stage_idx"] >= len(camp["stages"]) - 1
+    verdict, vreason = _campaign_verdict(camp["project"], am, at_final=at_final)
+    stage = camp["stages"][camp["stage_idx"]]
+    camp.setdefault("history", []).append(
+        {"stage": stage, "file": camp.get("last_run_file"), "verdict": verdict,
+         "reason": vreason, "hint": am.get("hint"),
+         "panorama": am.get("panorama"), "ts": time.time()})
+    launched: Optional[dict[str, Any]] = None
+    if verdict == "promote":
+        if camp["project"] == "dp" and camp.get("last_run_file"):
+            camp["base_checkpoint"] = ("checkpoints/"
+                                       + camp["last_run_file"].replace(".jsonl", ".pt"))
+        camp["stage_idx"] += 1
+        res = _campaign_launch_stage(camp, cfg)
+        if not res.get("ok"):
+            camp["stage_idx"] -= 1
+            camp["status"] = "held"
+            _save_campaigns(camps)
+            return {"ok": False, "verdict": verdict, "reason": vreason,
+                    "launch_refused": res.get("reason"), "campaign": camp}
+        launched = {"stage": camp["stages"][camp["stage_idx"]],
+                    "run_id": res.get("run_id")}
+    elif verdict == "extend":
+        if int(camp.get("extends", 0)) >= int(cfg.get("tier_c", {})
+                                               .get("campaign_max_extends", 1)):
+            camp["status"] = "stopped"
+            vreason += "(已达延长上限,停止待人工)"
+        else:
+            camp["extends"] = int(camp.get("extends", 0)) + 1
+            res = _campaign_launch_stage(camp, cfg)
+            if res.get("ok"):
+                launched = {"stage": stage, "run_id": res.get("run_id"),
+                            "re_extend": True}
+            else:
+                camp["status"] = "held"
+    elif verdict == "revert":
+        camp["stage_idx"] = max(0, camp["stage_idx"] - 1)
+        camp["status"] = "reverted"       # hold at last good stage; no auto-escalation
+    else:                                  # done | stop
+        camp["status"] = "done" if verdict == "done" else "stopped"
+    _save_campaigns(camps)
+    _timeline("campaign_advance", id=cid, from_stage=stage, verdict=verdict,
+              status=camp["status"], launched=launched,
+              panorama=am.get("panorama"))
+    return {"ok": True, "verdict": verdict, "reason": vreason,
+            "status": camp["status"], "stage_idx": camp["stage_idx"],
+            "launched": launched, "hint": am.get("hint"),
+            "panorama": am.get("panorama"), "campaign": camp}
+
+
+# ----- bounded closed-loop reward/evo auto-tune (③, PE safe-zone only) ----- #
+def _tune_candidate_is_safe(config: str, knob: str, value: Any,
+                            pct_limit: float) -> tuple[bool, str]:
+    """A tune candidate is allowed autonomously only if it stays in the tier-C
+    LOW-risk zone (same sign, |Δ|/old <= pct_limit, numeric, no add/remove).
+    Uses the server pe_tune dry_run for the authoritative old->new delta."""
+    import server
+    try:
+        res = server.pe_tune(server.PETuneReq(
+            config=config, edits={knob: value}, label="tune_probe", dry_run=True))
+    except Exception as e:  # noqa: BLE001
+        return False, f"无法核验改动安全性(dry_run 失败:{e})"
+    for a in (res.get("applied") or []):
+        if _delta_is_structural(a.get("delta") or {}, pct_limit):
+            return False, f"{a.get('knob')} 是结构性改动(变号/幅度>{int(pct_limit*100)}%/增删项)——超出自动调参安全域"
+    return True, ""
+
+
+def _tune_pick_winner(project: str, cmp: dict[str, Any]) -> Optional[str]:
+    """Pick the winning run file from a compare_runs result. PURE.
+    PE ranks by avg_recent then qd_recent; DP by score/reward recent. Runs with
+    any extinction or a parse error are disqualified."""
+    rows = [r for r in (cmp.get("rows") or []) if r.get("ok")]
+    if project == "pe":
+        rows = [r for r in rows if not (r.get("extinct_hits") or 0)]
+        key = lambda r: ((r.get("avg_recent") if r.get("avg_recent") is not None else -1e9),
+                         (r.get("qd_recent") if r.get("qd_recent") is not None else -1e9))
+    else:
+        key = lambda r: ((r.get("score_recent") if r.get("score_recent") is not None else -1e9),
+                         (r.get("reward_recent") if r.get("reward_recent") is not None else -1e9))
+    if not rows:
+        return None
+    return max(rows, key=key).get("file")
+
+
+# ----- vetted-ladder curriculum advance (② autonomy within a pre-vetted path) #
+CURRICULUM_STATE_PATH = AGENT_DIR / "agent_curriculum_state.json"
+
+
+def _load_curriculum_ladder() -> Optional[dict[str, Any]]:
+    """A HUMAN-authored, pre-vetted curriculum ladder. Its presence is what
+    lets the agent advance curriculum autonomously (within this fixed path);
+    without it, curriculum edits stay human-gated. Schema:
+      {"stages": [{"name": str, "edits": {dotted_knob: value, ...}}, ...]}"""
+    if not CURRICULUM_LADDER_PATH.exists():
+        return None
+    try:
+        data = json.loads(CURRICULUM_LADDER_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    stages = data.get("stages") if isinstance(data, dict) else None
+    if not isinstance(stages, list) or not stages:
+        return None
+    return data
+
+
+def _curriculum_advance(config: str, cfg: dict[str, Any], *,
+                        reason: str = "") -> dict[str, Any]:
+    """Advance the curriculum ONE rung along the vetted ladder, autonomously.
+    Falls back to the gated pe_curriculum_edit path if no vetted ladder exists."""
+    import server
+    if not config:
+        return {"ok": False, "error": "需要 config(当前 PE TOML)。"}
+    ladder = _load_curriculum_ladder()
+    if ladder is None:
+        return {"ok": False, "gated": True,
+                "error": ("没有预先评定的课程阶梯(curriculum_ladder.json)——"
+                          "凭空改课程是最高杠杆,请走 pe_curriculum_edit 提议→人工批准。"
+                          "若要开放自主推进,请人工放置 vetted 的 curriculum_ladder.json。")}
+    stages = ladder["stages"]
+    try:
+        state = json.loads(CURRICULUM_STATE_PATH.read_text(encoding="utf-8")) \
+            if CURRICULUM_STATE_PATH.exists() else {}
+    except Exception:  # noqa: BLE001
+        state = {}
+    cur = int(state.get(config, -1))
+    nxt = cur + 1
+    if nxt >= len(stages):
+        return {"ok": False, "error": f"课程已在阶梯顶端(stage {cur}),无更高难度可推进。"}
+    stage = stages[nxt]
+    edits = stage.get("edits") or {}
+    if not edits:
+        return {"ok": False, "error": f"阶梯 stage {nxt} 未定义 edits。"}
+    res = server.pe_tune(server.PETuneReq(
+        config=config, edits=edits,
+        label=f"curri_{stage.get('name', nxt)}"))
+    if not res.get("ok"):
+        return res
+    state[config] = nxt
+    CURRICULUM_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+    STATE.stats["actions"] += 1
+    _timeline("curriculum_advance", config=config, to_stage=nxt,
+              stage_name=stage.get("name"), variant=res.get("variant"))
+    return {"ok": True, "advanced_to": nxt, "stage_name": stage.get("name"),
+            "variant": res.get("variant"), "applied": res.get("applied"),
+            "note": "已沿预设阶梯推进一档(vetted 范围内,自主)。"}
+
+
+def _campaigns_awaiting_advance() -> list[dict[str, Any]]:
+    """Campaigns whose current-stage run has ended but that are still 'running'
+    (status not yet advanced). PURE-ish (reads campaign file + live procs)."""
+    import server
+    camps = _load_campaigns()
+    live = {p.get("run_id") for p in (server.processes().get("processes") or [])}
+    return [c for c in camps if c.get("status") == "running"
+            and c.get("last_run_id") not in live]
+
+
+def _watcher_campaign_selfheal(cfg: dict[str, Any]) -> str:
+    """④ watcher self-heal: when a campaign's stage run ends, either auto-drive
+    the code-decided next move (when autonomy_auto_advance is on) or surface a
+    hint so the woken agent advances it. The verdict is always code-decided in
+    _campaign_advance (extinction/decline->revert, plateau->done, up->promote)."""
+    pending = _campaigns_awaiting_advance()
+    if not pending:
+        return ""
+    auto = bool(cfg.get("autonomy_auto_advance", False))
+    bits: list[str] = []
+    for c in pending:
+        if auto:
+            res = _campaign_advance(c["id"], cfg)
+            pano = res.get("panorama")
+            bits.append(f"campaign {c['id']} 自动推进:{res.get('verdict')}"
+                        f"({res.get('status')})"
+                        + (f" | {pano}" if pano else ""))
+        else:
+            bits.append(f"campaign {c['id']}({c['project']},"
+                        f"{c['stages'][c['stage_idx']]})的 run 已结束,待 advance_campaign")
+    if auto:
+        return " 自治推进:" + ";".join(bits) + "。仍请 record_gen 记台账。"
+    return " " + ";".join(bits) + "。先 kb_query→record_gen,再 advance_campaign。"
+
+
+def _kb_query_in_recent(msgs: list[dict[str, Any]], lookback: int = 8) -> bool:
+    """True if kb_query was called within the last few messages — used to FORCE
+    a knowledge lookup before any high-leverage action."""
+    for m in reversed(msgs[-lookback:]):
+        for tc in (m.get("tool_calls") or []):
+            if (tc.get("function", {}) or {}).get("name") == "kb_query":
+                return True
+    return False
+
+
+# Action tools that MUST be preceded by a kb_query in the same wake cycle.
+_REQUIRE_KB_FIRST = {
+    "start_dp_training", "start_pe_training", "make_config_variant",
+    "dp_record_demos", "dp_train_bc", "dp_dagger", "dp_finetune",
+    "pe_reward_tune", "pe_archive_geometry", "pe_evolution_tune",
+    "pe_curriculum_edit",
+    "start_campaign", "advance_campaign", "start_tune", "resolve_tune",
+    "curriculum_advance",
+}
+
+
+# --------------------------------------------------------------------------- #
+# Tool execution. Returns a JSON-serializable dict (the tool result).
+# --------------------------------------------------------------------------- #
+def _execute_tool(name: str, args: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    # ---- project-partition guard (code level; not left to the LLM) --------- #
+    meta = TOOL_META.get(name, {})
+    proj = meta.get("project")
+    if name == "focus_project":
+        p = args.get("project")
+        if p not in ("dp", "pe"):
+            return {"ok": False, "error": "project 必须是 dp 或 pe"}
+        with STATE.lock:
+            STATE.focus_project = p
+            STATE.active_packs = set()       # packs are project-scoped
+        _timeline("focus_project", project=p, reason=args.get("reason", ""))
+        return {"ok": True, "focus_project": p,
+                "note": f"已聚焦 {p};现在只有 {p} 的动作工具可用,另一个项目的动作工具已从工具表移除。"
+                        "涉及 BC/老师/数据集/奖励/课程/档案 等长尾操作,先 find_tools 调出来。"}
+    if name == "find_tools":
+        return _find_tools(args.get("keyword", ""), args.get("pack", ""),
+                           STATE.focus_project)
+    if proj in ("dp", "pe") and STATE.focus_project != proj:
+        return {"ok": False, "refused": True, "focus_required": proj,
+                "error": f"拒绝执行:当前焦点={STATE.focus_project or '未设定'},而 {name} 属于 {proj} 项目。"
+                         f"请先 focus_project('{proj}') 再调用——一轮决策只针对一个项目,跨项目必须串行。"}
+    if proj == "shared":
+        if STATE.focus_project is None:
+            return {"ok": False, "refused": True,
+                    "error": f"拒绝执行:{name} 需要先 focus_project(dp|pe) 设定本轮焦点。"}
+        args = {**args, "project": STATE.focus_project}   # scope reads to focus
+    import server
+    try:
+        if name == "get_status":
+            return _gather_observation()
+        if name == "list_pe_configs":
+            return {"configs": server.pe_configs()}
+        if name == "list_checkpoints":
+            proj = args.get("project", "pe")
+            if proj == "dp":
+                return {"checkpoints": server.dp_checkpoints()}
+            return {"checkpoints": server.pe_checkpoints()}
+        if name == "read_log_tail":
+            n = max(1, min(int(args.get("n", 40)), 200))
+            rid = args.get("run_id")
+            if rid and rid in server.RUNS:
+                return _cap_log_lines(server.RUNS[rid].lines[-n:])
+            proj = args.get("project", "pe")
+            fname = args.get("file", "")
+            if proj == "dp":
+                p = server._dp_resolve(fname)
+            else:
+                p = server.PE_PANEL_LOGS / fname
+                if not p.exists():
+                    p = server.PE_ROOT / fname
+            if not p.exists():
+                return {"error": f"log not found: {fname}"}
+            return _cap_log_lines(p.read_text(encoding="utf-8", errors="ignore").splitlines()[-n:])
+        if name == "analyze_metrics":
+            return _analyze_metrics(args.get("project", "pe"), args.get("file", ""),
+                                    int(args.get("window", 0) or 0))
+        if name == "compare_runs":
+            return _compare_runs(args.get("project", "pe"),
+                                 args.get("files") or [],
+                                 int(args.get("window", 0) or 0))
+        if name == "analyze_memory_ablation":
+            return _analyze_memory_ablation(args.get("file", "") or "",
+                                            args.get("run_id", "") or "")
+        if name == "inspect_config":
+            return _inspect_config(args.get("config", ""))
+        if name == "make_config_variant":
+            res = server.make_config_variant(
+                args.get("base") or args.get("config", ""),
+                args.get("knob", ""), args.get("value"))
+            if res.get("ok"):
+                STATE.stats["actions"] += 1
+                _timeline("config_variant", base=res.get("base"),
+                          variant=res.get("variant"), knob=res.get("knob"),
+                          old=res.get("old_value"), new=res.get("new_value"))
+            return res
+        # ---- DP long-tail pipeline (teacher -> BC -> DAgger -> PPO finetune) - #
+        if name == "dp_record_demos":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            kw: dict[str, Any] = {
+                "teacher": args.get("teacher", "settler"),
+                "seed": int(args.get("seed", 24)), "tag": args.get("tag", "agent"),
+                "oracle_hunt": bool(args.get("oracle_hunt", True)),
+                "oracle_no_fire": bool(args.get("oracle_no_fire", False)),
+                "reason": args.get("reason"), "purpose": args.get("purpose")}
+            if args.get("steps") is not None:
+                kw["steps"] = int(args["steps"])
+            res = server.dp_record_demos(server.DPDemosReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_record_demos", teacher=kw["teacher"], seed=kw["seed"],
+                      tag=kw["tag"])
+            return {"ok": True, **res}
+        if name == "dp_train_bc":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            kw = {"demos": args["demos"], "tag": args.get("tag", "agent"),
+                  "epochs": int(args.get("epochs", 10)),
+                  "batch": int(args.get("batch", 16)),
+                  "bptt": int(args.get("bptt", 64)),
+                  "lr": float(args.get("lr", 1e-3)),
+                  "trigger_weight": float(args.get("trigger_weight", 5.0)),
+                  "reason": args.get("reason"), "purpose": args.get("purpose")}
+            res = server.dp_train_bc(server.DPBCReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_train_bc", demos=kw["demos"], tag=kw["tag"],
+                      epochs=kw["epochs"])
+            return {"ok": True, **res}
+        if name == "dp_dagger":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            kw = {"clone": args["clone"], "seed": int(args.get("seed", 24)),
+                  "tag": args.get("tag", "dagger"),
+                  "oracle_hunt": bool(args.get("oracle_hunt", True)),
+                  "reason": args.get("reason"), "purpose": args.get("purpose")}
+            if args.get("steps") is not None:
+                kw["steps"] = int(args["steps"])
+            res = server.dp_dagger(server.DPDaggerReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_dagger", clone=kw["clone"], tag=kw["tag"])
+            return {"ok": True, **res}
+        if name == "dp_finetune":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            kw = {"load": args["load"], "seed": int(args.get("seed", 24)),
+                  "steps": int(args.get("steps", 8_000_000)),
+                  "n_envs": int(args.get("n_envs", 4)), "tag": args.get("tag", "agent"),
+                  "ent_coef": float(args.get("ent_coef", 0.0015)),
+                  "lr": float(args.get("lr", 1.5e-4)),
+                  "critic_warmup": int(args.get("critic_warmup", 32)),
+                  "reason": args.get("reason"), "purpose": args.get("purpose")}
+            for k in ("hunt_shaping", "repertoire_shaping", "warmth_shaping",
+                      "night_shaping", "day_shaping", "thirst_decay", "trigger_cost"):
+                if args.get(k) is not None:
+                    kw[k] = float(args[k])
+            res = server.dp_finetune(server.DPFinetuneReq(**kw))
+            STATE.stats["actions"] += 1
+            _timeline("dp_finetune", load=kw["load"], tag=kw["tag"],
+                      shaping={k: kw[k] for k in kw if k.endswith("shaping")})
+            return {"ok": True, **res}
+        # ---- PE long-tail tuning (reward / archive / evolution / curriculum) - #
+        if name in ("pe_reward_tune", "pe_archive_geometry",
+                    "pe_evolution_tune", "pe_curriculum_edit"):
+            label = args.get("label") or name.replace("pe_", "")
+            res = server.pe_tune(server.PETuneReq(
+                config=args.get("config", ""), edits=args.get("edits") or {},
+                label=label))
+            if res.get("ok"):
+                STATE.stats["actions"] += 1
+                _timeline("pe_tune", tool=name, base=res.get("base"),
+                          variant=res.get("variant"), applied=res.get("applied"))
+            return res
+        # ---- autonomous campaign controller --------------------------------- #
+        if name == "start_campaign":
+            proj = STATE.focus_project
+            if proj not in ("dp", "pe"):
+                return {"ok": False, "error": "请先 focus_project(dp|pe) 再起 campaign。"}
+            base_config = args.get("config") or args.get("base_config")
+            if proj == "pe" and not base_config:
+                return {"ok": False, "error": "PE campaign 需要 config(.toml 基线)。"}
+            camps = _load_campaigns()
+            cid = datetime.now().strftime("%m%d%H%M%S")
+            camp = {"id": cid, "project": proj,
+                    "goal": args.get("goal") or cfg.get("objective", ""),
+                    "stages": list(CAMPAIGN_STAGES), "stage_idx": 0,
+                    "status": "new", "base_checkpoint": args.get("base_checkpoint"),
+                    "base_config": base_config, "seed": args.get("seed"),
+                    "n_envs": int(args.get("n_envs", 4) or 4), "history": [],
+                    "extends": 0, "created_at": time.time(),
+                    "reason": args.get("reason", "")}
+            res = _campaign_launch_stage(camp, cfg)
+            if not res.get("ok"):
+                return res
+            camps.append(camp)
+            _save_campaigns(camps)
+            return {"ok": True, "campaign_id": cid, "project": proj,
+                    "stage": "smoke", "run_id": res.get("run_id"),
+                    "metrics_file": camp.get("last_run_file"),
+                    "note": ("smoke 已启动;结束后调 advance_campaign,"
+                             "由代码按指标判定晋级/回退/收尾。")}
+        if name == "advance_campaign":
+            return _campaign_advance(args.get("campaign_id", ""), cfg)
+        if name == "campaign_status":
+            camps = _load_campaigns()
+            return {"ok": True, "count": len(camps),
+                    "campaigns": [{"id": c["id"], "project": c["project"],
+                                   "stage": c["stages"][c["stage_idx"]],
+                                   "stage_idx": c["stage_idx"], "status": c["status"],
+                                   "goal": c.get("goal"),
+                                   "last_run_file": c.get("last_run_file"),
+                                   "history": c.get("history", [])}
+                                  for c in camps]}
+        # ---- bounded closed-loop auto-tune (PE safe-zone) ------------------- #
+        if name == "start_tune":
+            if STATE.focus_project != "pe":
+                return {"ok": False, "error": "auto-tune 目前支持 PE 安全域;请先 focus pe。"}
+            base = args.get("config", "")
+            knob = args.get("knob", "")
+            values = args.get("values") or []
+            if not base or not knob or not values:
+                return {"ok": False, "error": "start_tune 需要 config + knob + values。"}
+            pct_limit = float(cfg.get("tier_c", {}).get("reward_pct_limit", 0.25))
+            max_n = max(1, int(cfg.get("max_procs", 10)) - 1)   # leave headroom
+            checked: list[dict[str, Any]] = []
+            for v in values[:max_n]:
+                safe, why = _tune_candidate_is_safe(base, knob, v, pct_limit)
+                checked.append({"value": v, "safe": safe, "why": why})
+            safe_vals = [c["value"] for c in checked if c["safe"]]
+            if not safe_vals:
+                return {"ok": False, "error": "所有候选都超出自动调参安全域(需走 pe_reward_tune→人批)。",
+                        "checked": checked}
+            arms: list[dict[str, Any]] = []
+            for v in safe_vals:
+                refusal = _guard_launch(cfg)
+                if refusal:
+                    arms.append({"value": v, "launched": False, "reason": refusal})
+                    continue
+                var = server.make_config_variant(base, knob, v)
+                if not var.get("ok"):
+                    arms.append({"value": v, "launched": False, "reason": var.get("error")})
+                    continue
+                variant_cfg = var.get("variant")
+                gens = int(cfg.get("tier_c", {}).get("pe_smoke_generations", 4))
+                pr = server.pe_train(server.PETrainReq(
+                    config=variant_cfg, generations=gens,
+                    reason=f"[tune {knob}={v}] smoke", purpose=args.get("purpose")))
+                arms.append({"value": v, "launched": True, "config": variant_cfg,
+                             "run_id": pr.get("run_id"),
+                             "file": os.path.basename(pr.get("log") or "") or None})
+                STATE.stats["actions"] += 1
+            tunes = _load_tunes()
+            tid = "t" + datetime.now().strftime("%m%d%H%M%S")
+            tunes.append({"id": tid, "project": "pe", "base": base, "knob": knob,
+                          "status": "running", "arms": arms, "checked": checked,
+                          "created_at": time.time(), "reason": args.get("reason", "")})
+            _save_tunes(tunes)
+            _timeline("start_tune", id=tid, knob=knob,
+                      launched=[a for a in arms if a.get("launched")])
+            return {"ok": True, "tune_id": tid, "knob": knob, "arms": arms,
+                    "rejected": [c for c in checked if not c["safe"]],
+                    "note": "各候选 smoke 已起;结束后调 resolve_tune 由代码 compare 选赢家。"}
+        if name == "resolve_tune":
+            tunes = _load_tunes()
+            tune = next((t for t in tunes if t.get("id") == args.get("tune_id")), None)
+            if not tune:
+                return {"ok": False, "error": f"未找到 tune {args.get('tune_id')}"}
+            if tune["status"] == "resolved":
+                return {"ok": False, "error": "该批次已结算。", "tune": tune}
+            live = {p.get("run_id") for p in (server.processes().get("processes") or [])}
+            still = [a for a in tune["arms"]
+                     if a.get("launched") and a.get("run_id") in live]
+            if still:
+                return {"ok": False, "error": "仍有候选在训练,等结束再 resolve。",
+                        "still_running": [a["run_id"] for a in still]}
+            files = [a["file"] for a in tune["arms"] if a.get("launched") and a.get("file")]
+            if len(files) < 2:
+                return {"ok": False, "error": "可比较的已完成候选 <2,无法选赢家。"}
+            cmp = _compare_runs("pe", files, 0)
+            winner = _tune_pick_winner("pe", cmp)
+            tune["status"] = "resolved"
+            tune["winner_file"] = winner
+            tune["winner_value"] = next((a["value"] for a in tune["arms"]
+                                         if a.get("file") == winner), None)
+            tune["compare"] = cmp
+            _save_tunes(tunes)
+            _timeline("resolve_tune", id=tune["id"], knob=tune["knob"],
+                      winner_value=tune.get("winner_value"), winner_file=winner)
+            return {"ok": True, "tune_id": tune["id"], "knob": tune["knob"],
+                    "winner_value": tune.get("winner_value"),
+                    "winner_file": winner, "ranking": cmp.get("ranking"),
+                    "note": "赢家变体已记台账;后续可用它做 start_campaign 的基线。"}
+        # ---- vetted-ladder curriculum advance (autonomous within envelope) -- #
+        if name == "curriculum_advance":
+            return _curriculum_advance(args.get("config", ""), cfg,
+                                       reason=args.get("reason", ""))
+        if name == "start_pe_training":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            req = server.PETrainReq(config=args["config"], seed=args.get("seed"),
+                                    resume_checkpoint=args.get("resume_checkpoint"),
+                                    generations=args.get("generations"),
+                                    reason=args.get("reason"),
+                                    purpose=args.get("purpose"))
+            res = server.pe_train(req)
+            STATE.stats["actions"] += 1
+            return {"ok": True, **res}
+        if name == "start_dp_training":
+            refusal = _guard_launch(cfg)
+            if refusal:
+                return {"ok": False, "refused": True, "reason": refusal}
+            req = server.DPTrainReq(
+                checkpoint=args.get("checkpoint"), seed=args.get("seed", 24),
+                steps=args.get("steps", 8_000_000), n_envs=args.get("n_envs", 4),
+                tag=args.get("tag", "agent"), extra_args=args.get("extra_args", ""),
+                reason=args.get("reason"), purpose=args.get("purpose"))
+            res = server.dp_train(req)
+            STATE.stats["actions"] += 1
+            return {"ok": True, **res}
+        if name == "stop_training":
+            req = server.StopReq(run_id=args.get("run_id"), pid=args.get("pid"))
+            res = server.train_stop(req)
+            STATE.stats["actions"] += 1
+            return {"ok": True, **res}
+        if name == "cleanup_disk":
+            proj = args.get("project", "pe")
+            before = (server.system_status().get("disk") or {}).get("free_gb")
+            # Reuse the panel's safe log clear over discovered logs (jsonl excluded
+            # by default protection; *.pt never touched). Also clear traces.
+            logs = server.dp_logs() if proj == "dp" else server.pe_logs()
+            names = [l["name"] for l in logs
+                     if l.get("name", "").endswith(".log") and not l.get("in_use")]
+            cleared = {}
+            if names:
+                creq = server.ClearLogsReq(project=proj, names=names, hard=False)
+                cleared = server.logs_clear(creq)
+            after = (server.system_status().get("disk") or {}).get("free_gb")
+            STATE.stats["actions"] += 1
+            return {"ok": True, "freed_gb": (after - before) if (after and before) else None,
+                    "free_gb_now": after, "cleared": cleared}
+        if name == "delete_checkpoint":
+            names = args.get("names") or []
+            if isinstance(names, str):
+                names = [names]
+            names = [n for n in names if n]
+            if not names:
+                return {"ok": False, "error": "no checkpoint names given"}
+            res = server.dp_clear_checkpoints(server.DeleteReq(names=names, hard=False))
+            STATE.stats["actions"] += 1
+            _timeline("checkpoint_deleted", removed=res.get("removed", []),
+                      skipped=res.get("skipped", []), reason=args.get("reason", ""))
+            return {"ok": True, **res}
+        if name == "recall_timeline":
+            return _recall_timeline(int(args.get("limit", 20) or 20), args.get("kind"))
+        if name == "list_docs":
+            return {"docs": _list_docs()}
+        if name == "read_doc":
+            return _read_doc(args.get("name", ""), args.get("query"),
+                             int(args.get("max_chars", 6000) or 6000))
+        if name == "kb_write":
+            return _kb_write(args)
+        if name == "kb_query":
+            return _kb_query(args)
+        if name == "record_gen":
+            STATE.needs_summary = False
+            STATE._recorded_since_wake = True
+            return _record_gen(args)
+        if name == "query_gens":
+            return _query_gens(args)
+        if name == "use_strategy":
+            sid = args.get("strategy", "")
+            if sid not in STRATEGIES:
+                return {"ok": False, "error": f"unknown strategy: {sid}",
+                        "available": list(STRATEGIES.keys())}
+            cfg["active_strategy"] = sid
+            _save_config(cfg)
+            s = STRATEGIES[sid]
+            _timeline("strategy", strategy=sid, name=s["name"],
+                      reason=args.get("reason", ""))
+            return {"ok": True, "active_strategy": sid, "name": s["name"],
+                    "when": s["when"], "guide": s["guide"]}
+        if name == "list_strategies":
+            return {"active": cfg.get("active_strategy"),
+                    "strategies": [{"id": k, "name": v["name"], "when": v["when"],
+                                    "guide": v["guide"]} for k, v in STRATEGIES.items()]}
+        if name == "deep_think":
+            cap = int(cfg.get("deep_think_rounds", 0) or 0)
+            if cap <= 0:
+                return {"ok": False, "error": "深度思考已禁用(上限=0)"}
+            if STATE._deliberated_this_wake:
+                return {"ok": False, "error": "本轮唤醒已执行过深度思考,无需重复"}
+            rounds = max(1, min(int(args.get("rounds", 2)), cap))
+            base_msgs = [_system_prompt(cfg)] + _safe_tail(STATE.messages)
+            try:
+                results = _deliberate(cfg, base_msgs, rounds)
+            except Exception as e:  # noqa: BLE001
+                _timeline("error", text=f"deep_think 失败: {e}")
+                return {"ok": False, "error": str(e)}
+            STATE._deliberated_this_wake = True
+            STATE._last_deliberation = results
+            blob = "\n".join(f"[第{e['round']}步·{e['label']}] {e['text']}"
+                             for e in results if e.get("text"))
+            return {"ok": True, "conclusion": blob[:4000]}
+        if name == "sleep":
+            minutes = max(1, min(int(args.get("minutes", cfg["default_sleep_min"])),
+                                 cfg["max_sleep_min"]))
+            STATE.sleep_until = time.time() + minutes * 60
+            STATE.sleep_reason = args.get("reason", "")
+            STATE.status = "sleeping"
+            STATE.wake_event.clear()
+            _timeline("sleep", minutes=minutes, reason=args.get("reason", ""))
+            return {"ok": True, "sleeping_minutes": minutes}
+        if name == "log_note":
+            _timeline("note", level=args.get("level", "info"), text=args.get("text", ""))
+            return {"ok": True}
+        if name == "pin_spec":
+            text = (args.get("text") or "").strip()
+            if not text:
+                return {"ok": False, "error": "empty spec"}
+            specs = cfg.setdefault("pinned_specs", [])
+            if text not in specs:
+                specs.append(text)
+            # cap so the always-present block stays bounded
+            if len(specs) > 40:
+                del specs[: len(specs) - 40]
+            _save_config(cfg)
+            _timeline("spec_pinned", text=text, count=len(specs))
+            return {"ok": True, "pinned_count": len(specs)}
+    except HTTPException as e:
+        return {"ok": False, "error": f"{e.status_code}: {e.detail}"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": f"unknown tool {name}"}
+
+
+# --------------------------------------------------------------------------- #
+# OpenAI-compatible chat call (stdlib urllib; no extra deps).
+# --------------------------------------------------------------------------- #
+def _chat(cfg: dict[str, Any], messages: list[dict[str, Any]]) -> dict[str, Any]:
+    prov = _active_provider(cfg)
+    if not prov:
+        raise RuntimeError("no active model provider configured")
+    url = prov["base_url"].rstrip("/") + "/chat/completions"
+    body = {
+        "model": prov["model"],
+        "messages": messages,
+        "tools": _tool_schemas(),
+        "tool_choice": "auto",
+        "temperature": cfg.get("temperature", 0.3),
+        "max_tokens": cfg.get("max_tokens", 900),
+    }
+    body["stream"] = True
+    body["stream_options"] = {"include_usage": True}
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + prov.get("api_key", ""),
+    })
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_map: dict[int, dict[str, Any]] = {}
+    usage: dict[str, Any] = {}
+    interrupted = False
+    STATE.stream_reset()
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            for raw in resp:                      # SSE: one "data: {...}" per line
+                # Abort-signal: a new user message (or stop) cuts the stream so
+                # the agent can re-plan immediately instead of finishing a now-
+                # stale generation. Partial tool calls are discarded by caller.
+                if _should_abort():
+                    interrupted = True
+                    break
+                line = raw.decode("utf-8", "replace").strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if line == "[DONE]":
+                    break
+                try:
+                    o = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                if o.get("usage"):
+                    usage = o["usage"]
+                ch = o.get("choices") or []
+                if not ch:
+                    continue
+                d = ch[0].get("delta") or {}
+                rc = d.get("reasoning_content")
+                if rc:
+                    reasoning_parts.append(rc)
+                    STATE.stream_update(reasoning=rc, phase="thinking")
+                c = d.get("content")
+                if c:
+                    content_parts.append(c)
+                    STATE.stream_update(content=c, phase="replying")
+                for tcd in (d.get("tool_calls") or []):
+                    idx = tcd.get("index", 0)
+                    slot = tool_map.setdefault(idx, {"id": "", "type": "function",
+                        "function": {"name": "", "arguments": ""}})
+                    if tcd.get("id"):
+                        slot["id"] = tcd["id"]
+                    fnd = tcd.get("function") or {}
+                    if fnd.get("name"):
+                        slot["function"]["name"] = fnd["name"]
+                    if fnd.get("arguments"):
+                        slot["function"]["arguments"] += fnd["arguments"]
+                    STATE.stream_update(phase="tool:" + slot["function"]["name"])
+    finally:
+        STATE.stream_done()
+    STATE.stats["llm_calls"] += 1
+    STATE.stats["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+    STATE.stats["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+    msg: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+    if interrupted:
+        # Discard any half-streamed tool calls (incomplete/unsafe to run) and
+        # flag the turn so the loop re-plans with the new user message.
+        msg["_interrupted"] = True
+        return msg
+    tcs = [tool_map[k] for k in sorted(tool_map)]
+    if tcs:
+        msg["tool_calls"] = tcs
+    reasoning = "".join(reasoning_parts)
+    if reasoning:
+        msg["reasoning_content"] = reasoning
+    return msg
+
+
+def _cognition_block(cfg: dict[str, Any]) -> str:
+    """PROJECT / TOOL / SELF / BEHAVIOR cognition — gives the agent an explicit
+    model of the two projects, its own partitioned tool network, the one-project
+    -per-decision rule, and the forced kb_query / record_gen behavior. Dynamic
+    parts (current focus + activated packs) reflect live STATE."""
+    focus = STATE.focus_project
+    packs = sorted(STATE.active_packs)
+    pct = int(float(cfg.get("tier_c", {}).get("reward_pct_limit", 0.25)) * 100)
+    focus_line = (f"当前焦点: 【{focus}】(只有 {focus} 的动作工具在工具表里)"
+                  if focus else "当前焦点: 【未设定】——动作前必须先 focus_project(dp|pe)")
+    pack_line = (f"已激活长尾工具包: {packs}" if packs
+                 else "尚未激活任何长尾工具包(需要时 find_tools 调出)")
+    return f"""
+# 项目认知 (两个项目是两种完全不同的范式,别混)
+- **DP (deep_protagonist)**: 单体生存,梯度训练(PPO)。奖励涨=变好,直观。
+  能力链(全是已有 CLI,不改源码/维度):造老师(settler oracle)→录数据集(dp_record_demos)
+  →行为克隆(dp_train_bc)→DAgger 纠偏(dp_dagger)→PPO 微调(dp_finetune,可带势能塑形系数)。
+  红线:不加击杀赏金这类改奖励【结构】的(D-064 实测狩猎崩到 0,Goodhart)。势能塑形(*-shaping)是 policy-invariant 的安全杠杆,可调。
+- **PE (protagonist_ecology)**: 种群进化,MAP-Elites 质量多样性(不是梯度)。维护一个"行为格子档案",
+  进步=填满更多格子+每格精英更强,不是单一分数爬升。几乎一切都在 TOML:奖励/惩罚、进化引擎、课程、档案几何。
+  关键坑(务必记住):**档案几何决定它像"有章法"还是"凭运气撞"**——格子开太多(如 8×8×3=192)只填 0.5~3%(维度灾难);
+  2D(5×5=25)gen30 能填 20%。改参难突破多半是撞了振幅平台期,要换杠杆别死磕单旋钮。
+
+# 工具认知 (混合工具网络:常驻核心 + 长尾工具网络)
+- 常驻核心(项目无关,永远可用):get_status(全局感知两边)、focus_project、find_tools、
+  kb_query/kb_write、record_gen/query_gens、use_strategy、sleep、log_note、pin_spec、recall_timeline、deep_think、读文档。
+- 项目专属动作工具只在对应焦点下出现;长尾强力工具(BC/老师/DAgger/微调/奖励/档案/进化/课程)默认【藏起来】,
+  用 find_tools(关键词或 pack) 把它们【激活】——激活后它们带类型化参数出现在下一轮工具表,直接调用(不是通用 call_tool)。
+  例:要做 BC,先 find_tools("bc") → 下一轮就能调 dp_record_demos/dp_train_bc 等。
+- {pack_line}
+
+# 自我认知 (一轮决策 = 一个项目,代码强制串行)
+- {focus_line}
+- 切项目必须显式 focus_project();切换会清空已激活的长尾包。错误焦点下调另一个项目的动作工具会被代码【拒绝】。
+- 即使用户要"两个一起跑",也必须串行:focus_project(dp)→决策执行→focus_project(pe)→决策执行,绝不在同一轮混着处理两个项目。
+
+# 行为认知 (硬规范,代码强制,不靠自觉)
+- 任何高杠杆动作(启训/录数据集/BC/DAgger/微调/奖励/档案/进化/课程/做变体)前,**必须先 kb_query** 查既往坑与结论,否则被拦截。
+- run 结束被唤醒后,**先 kb_query 回顾 → record_gen 记台账 → kb_write 沉淀结论**,没 record_gen 不允许 sleep。
+- C 分级:低风险(势能塑形系数、seed、档案几何、用现成老师跑 BC/DAgger/微调、PE 奖励权重同号且幅度≤{pct}%)可自主跑;
+  高风险(改奖励【结构】=变号/幅度>{pct}%/增删项、凭空改课程 task_templates、人工等价的【直接】全量起新血脉)无论什么模式都【只提议、挂待批】。
+
+# 自治认知 (新:把"人批每个高杠杆动作"换成"代码强制的分级验证 + 健康门")
+- **start_campaign**:你可以【自主】把一条血脉从零/基线训到收敛——但代码强制走 smoke→short→long 阶梯。
+  每阶段结束后调 **advance_campaign**,由【代码】按这一阶段的指标判定 晋级/回退/延长/收尾;你无法对不合格阶段强行晋级。
+  灭绝/下行→自动回退保持;平台→收尾;上行→晋级更大规模。这取代了"新血脉必须人批":阶梯+健康门就是安全机制。
+- **start_tune / resolve_tune**:在同号且≤{pct}% 的安全域内对一个旋钮给几个候选→代码核验安全性→各起 smoke→compare 选赢家。让调参真正闭环收敛。
+- **curriculum_advance**:仅当存在人工预先评定的课程阶梯(curriculum_ladder.json)时,可【自主】沿阶梯推进一档;没有阶梯则退回 pe_curriculum_edit(挂待批)。
+- 仍然永不放开(Layer-3 人工):改 C++ 源码/观测 82 维/动作 23 维/引擎机制、奖励结构重设计、凭空发明新课程任务。
+- run 结束被唤醒时:若它属于某 campaign(campaign_status 里 status=running 但进程已停),先 kb_query→record_gen→再 advance_campaign 让代码判定下一步。
+"""
+
+
+def _system_prompt(cfg: dict[str, Any]) -> dict[str, Any]:
+    """The foundation — ALWAYS present, NEVER compressed: role + red lines +
+    decision tree + objective/settings + agent-pinned specs + rolling summary
+    of any compressed-out history."""
+    mode = cfg.get("mode")
+    mode_note = ("【请求模式】启动训练/停止等受控动作会先变成请求卡,需人工批准后才执行。"
+                 if mode == "request" else
+                 "【完全决策权】你的动作会自动批准并立即执行,但参数+理由都会进历史。")
+    extra = (f"\n# 当前设置\n模式: {mode_note}\n并发进程上限: {cfg['max_procs']}。"
+             f"磁盘低于 {cfg['disk_low_gb']}G 会强制先清理。"
+             f"GPU 可用显存低于 {int(cfg.get('gpu_min_free_mb', 1500))}MB 会拒绝启动新训练(防 OOM)。\n"
+             f"用户目标: {cfg.get('objective','')}\n")
+    extra += _cognition_block(cfg)
+    specs = cfg.get("pinned_specs") or []
+    if specs:
+        extra += ("\n# 常驻记忆 / 你提取的关键 spec (始终有效,务必遵守)\n"
+                  + "\n".join(f"- {s}" for s in specs) + "\n"
+                  + "(用 pin_spec 工具补充关键结论;它们永不会被压缩。)\n")
+    summ = cfg.get("rolling_summary") or ""
+    if summ:
+        extra += f"\n# 早期历史摘要 (较早的对话已压缩成下文,细节以此为准)\n{summ}\n"
+    extra += _strategy_block(cfg)
+    return {"role": "system", "content": STRATEGY_DIGEST + extra}
+
+
+def _estimate_tokens(text: Optional[str]) -> int:
+    """Rough token estimate that works for mixed CN/EN. CJK ≈ 1 tok/char,
+    ASCII ≈ 1 tok/3.5 chars. Deliberately conservative (slightly over-counts)."""
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    return int(cjk + (len(text) - cjk) / 3.5) + 1
+
+
+def _msg_tokens(m: dict[str, Any]) -> int:
+    t = _estimate_tokens(m.get("content"))
+    for tc in (m.get("tool_calls") or []):
+        fn = tc.get("function", {}) or {}
+        t += _estimate_tokens(str(fn.get("arguments", ""))) + _estimate_tokens(fn.get("name")) + 8
+    return t + 4  # per-message role/formatting overhead
+
+
+def _safe_tail(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A conversation must not start with a 'tool' message (it needs the
+    assistant tool_call that precedes it)."""
+    cut = list(messages)
+    while cut and cut[0].get("role") == "tool":
+        cut = cut[1:]
+    return cut
+
+
+def _chat_plain(cfg: dict[str, Any], messages: list[dict[str, Any]],
+                max_tokens: int = 1200) -> str:
+    """A no-tools completion (used for history compression)."""
+    prov = _active_provider(cfg)
+    if not prov:
+        return ""
+    url = prov["base_url"].rstrip("/") + "/chat/completions"
+    body = {"model": prov["model"], "messages": messages,
+            "temperature": 0.2, "max_tokens": max_tokens}
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+        method="POST", headers={"Content-Type": "application/json",
+        "Authorization": "Bearer " + prov.get("api_key", "")})
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    usage = payload.get("usage") or {}
+    STATE.stats["llm_calls"] += 1
+    STATE.stats["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+    STATE.stats["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+    return payload["choices"][0]["message"].get("content") or ""
+
+
+def _chat_stream_plain(cfg: dict[str, Any], messages: list[dict[str, Any]],
+                       max_tokens: int = 1500, phase: str = "thinking") -> str:
+    """No-tools STREAMING completion. Streams reasoning+content into STATE.live
+    (so the web UI shows the thinking live) and returns the assembled text.
+    Used by the multi-round deep-think loop."""
+    prov = _active_provider(cfg)
+    if not prov:
+        return ""
+    url = prov["base_url"].rstrip("/") + "/chat/completions"
+    body = {"model": prov["model"], "messages": messages, "temperature": 0.4,
+            "max_tokens": max_tokens, "stream": True,
+            "stream_options": {"include_usage": True}}
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+        method="POST", headers={"Content-Type": "application/json",
+        "Authorization": "Bearer " + prov.get("api_key", "")})
+    parts: list[str] = []
+    usage: dict[str, Any] = {}
+    STATE.stream_update(phase=phase)
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if line == "[DONE]":
+                    break
+                try:
+                    o = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                if o.get("usage"):
+                    usage = o["usage"]
+                ch = o.get("choices") or []
+                if not ch:
+                    continue
+                d = ch[0].get("delta") or {}
+                rc = d.get("reasoning_content")
+                if rc:
+                    STATE.stream_update(reasoning=rc, phase=phase)
+                c = d.get("content")
+                if c:
+                    parts.append(c)
+                    STATE.stream_update(content=c, phase=phase)
+    except Exception as e:  # noqa: BLE001
+        return "(深度思考此轮失败: %s)" % e
+    STATE.stats["llm_calls"] += 1
+    STATE.stats["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+    STATE.stats["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+    return "".join(parts).strip()
+
+
+# Guided deliberation steps. Each round gets a DIFFERENT prompt so the model is
+# walked through real reasoning instead of one shallow pass. The last step is
+# always the conclusion.
+THINK_STEPS: list[tuple[str, str]] = [
+    ("看清现状", "只做第一步:看清现状。把与当前决策相关的事实列清楚——机器资源(GPU/磁盘/进程数)、各 run 的指标趋势、历史台账(query_gens 印象)、当前红线约束。先不要下结论、不要给动作。"),
+    ("找原因与可能性", "第二步:基于上面的现状,分析可能的原因、风险与机会,提出 2-4 个候选方向(含大致参数/旋钮方向)。先不要定。"),
+    ("权衡取舍", "第三步:逐个权衡候选方向的收益/风险/对红线与资源的影响,回忆 knowledge 里的已知坑排除会踩坑的,缩小到最优的 1-2 个。"),
+    ("定方案", "最后一步:给出你倾向执行的具体动作与参数,以及一句话理由。这是内部结论,先用文字说清,不要在这一步调用工具。"),
+]
+_THINK_DEEPEN = ("再深入", "在前面思考的基础上再深入一层:有没有被忽略的风险、更优的参数、或可借鉴的历史教训?")
+
+
+def _build_think_sequence(rounds: int) -> list[tuple[str, str]]:
+    rounds = max(1, min(int(rounds), 6))
+    concl = THINK_STEPS[-1]
+    explore = THINK_STEPS[:-1]
+    if rounds == 1:
+        return [concl]
+    need = rounds - 1
+    chosen = explore[:need]
+    while len(chosen) < need:
+        chosen.append(_THINK_DEEPEN)
+    return chosen + [concl]
+
+
+def _deliberate(cfg: dict[str, Any], base_msgs: list[dict[str, Any]],
+                rounds: int) -> list[dict[str, Any]]:
+    """Run multi-round guided thinking. Each round has its own context (prior
+    thoughts + a step-specific prompt). Rounds are EPHEMERAL: they are streamed
+    to the UI and logged to the timeline, but NOT added to STATE.messages, so
+    they do not linger in the rolling context (just like normal reasoning).
+    Returns list of {"round": i, "total": N, "label": str, "text": str}."""
+    seq = _build_think_sequence(rounds)
+    results: list[dict[str, Any]] = []
+    prior_texts: list[str] = []
+    for i, (label, prompt) in enumerate(seq, 1):
+        msgs = list(base_msgs)
+        for t in prior_texts:
+            msgs.append({"role": "assistant", "content": t})
+        msgs.append({"role": "user",
+                     "content": f"【内部深度思考 第{i}/{len(seq)}步·{label}】(这是你的内部推演,不是给用户的回复,也不要调用工具)\n{prompt}"})
+        STATE.stream_reset()
+        txt = _chat_stream_plain(cfg, msgs, max_tokens=int(cfg.get("max_tokens", 2000)),
+                                 phase=f"think:{i}/{len(seq)}·{label}")
+        STATE.stream_done()
+        txt = (txt or "").strip()
+        prior_texts.append(txt)
+        entry = {"round": i, "total": len(seq), "label": label, "text": txt}
+        results.append(entry)
+        with STATE.lock:
+            STATE.live.setdefault("deliberation", []).append(entry)
+        _timeline("deep_think", **entry)
+        # Abort-signal: a new user message (or stop) cuts deliberation short so
+        # the agent re-plans promptly instead of finishing all rounds.
+        if _should_abort():
+            break
+    return results
+
+
+def _serialize_block(msgs: list[dict[str, Any]]) -> str:
+    out = []
+    for m in msgs:
+        role = m.get("role", "?")
+        content = (m.get("content") or "")
+        if len(content) > 900:
+            content = content[:900] + "…(截断)"
+        line = f"[{role}] {content}".strip()
+        for tc in (m.get("tool_calls") or []):
+            fn = tc.get("function", {}) or {}
+            line += f"\n  ↳调用 {fn.get('name')}({str(fn.get('arguments',''))[:300]})"
+        out.append(line)
+    return "\n".join(out)
+
+
+def _maybe_compress(cfg: dict[str, Any]) -> None:
+    """Keep the request under context_token_budget. The system prompt (role,
+    red lines, decision tree, objective, pinned specs, rolling summary) is
+    ALWAYS kept and never compressed; only the oldest *dialogue* messages get
+    folded into the rolling summary."""
+    budget = int(cfg.get("context_token_budget", 600000))
+    headroom = int(cfg.get("max_tokens", 2000)) + 3000
+    sys_tokens = _msg_tokens(_system_prompt(cfg))
+    avail = budget - sys_tokens - headroom
+    msgs = STATE.messages
+    total = sum(_msg_tokens(m) for m in msgs)
+    if total <= avail or not _active_provider(cfg):
+        return
+
+    keep = max(2, int(cfg.get("keep_recent_msgs", 14)))
+    # Compress in chunks until we're back under budget (cap iterations to be safe).
+    for _ in range(6):
+        if len(STATE.messages) <= keep:
+            break
+        if sum(_msg_tokens(m) for m in STATE.messages) <= avail:
+            break
+        split = len(STATE.messages) - keep
+        # never cut between an assistant tool_call and its tool replies
+        while split < len(STATE.messages) and STATE.messages[split].get("role") == "tool":
+            split += 1
+        old = STATE.messages[:split]
+        recent = _safe_tail(STATE.messages[split:])
+        if not old:
+            break
+        prev = cfg.get("rolling_summary", "")
+        sys = {"role": "system", "content":
+               "你是历史压缩器。把下面这段训练管家的对话/动作历史压成要点(中文,"
+               "≤1200字):保留所有已执行动作及其参数、结果/指标、踩过的坑、未决问题、"
+               "需长期记住的结论。不要遗漏关键数字。"}
+        user = {"role": "user", "content":
+                (f"已有摘要:\n{prev}\n\n" if prev else "")
+                + "新增需要并入摘要的历史:\n" + _serialize_block(old)}
+        try:
+            summary = _chat_plain(cfg, [sys, user], max_tokens=1500)
+        except Exception as e:  # noqa: BLE001
+            _timeline("error", text=f"compress failed: {e}")
+            break
+        if not summary:
+            break
+        cfg["rolling_summary"] = summary.strip()
+        STATE.messages = recent
+        _save_config(cfg)
+        _timeline("compress", dropped=len(old), kept=len(recent),
+                  summary_chars=len(cfg["rolling_summary"]))
+        sys_tokens = _msg_tokens(_system_prompt(cfg))
+        avail = budget - sys_tokens - headroom
+
+
+# --------------------------------------------------------------------------- #
+# Interruption (abort-signal) + tool partitioning helpers (claude-code style).
+# --------------------------------------------------------------------------- #
+def _should_abort() -> bool:
+    """Abort-signal equivalent: True when the in-flight step should be cut
+    short — a NEW user message arrived (interrupt → re-plan) or the agent was
+    stopped. Checked during LLM streaming and between tool calls so a running
+    plan can be aborted promptly instead of finishing a now-stale batch."""
+    return bool(STATE.user_inbox) or not STATE.running
+
+
+def _parse_tc(tc: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
+    fn = tc.get("function", {}) or {}
+    try:
+        args = json.loads(fn.get("arguments") or "{}")
+    except Exception:  # noqa: BLE001
+        args = {}
+    return fn.get("name", ""), args, tc.get("id", "")
+
+
+def _fill_tool_results(tool_calls: list[dict[str, Any]], content: str) -> None:
+    """Append a placeholder tool-result for each tool_call WITHOUT executing it.
+    Every tool_call_id in an assistant turn must have a matching tool message or
+    the next LLM call errors; we use this when discarding calls on interrupt or
+    when pausing for human approval."""
+    for tc in tool_calls:
+        STATE.messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
+                               "content": content})
+
+
+def _run_reads_parallel(batch: list[tuple[str, dict[str, Any], str]],
+                        cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run a run of consecutive concurrency-safe read tools in parallel,
+    preserving input order in the returned results."""
+    if len(batch) == 1:
+        nm, ar, _ = batch[0]
+        return [_execute_tool(nm, ar, cfg)]
+    out: list[Optional[dict[str, Any]]] = [None] * len(batch)
+    with ThreadPoolExecutor(max_workers=min(4, len(batch))) as ex:
+        futs = {ex.submit(_execute_tool, nm, ar, cfg): k
+                for k, (nm, ar, _) in enumerate(batch)}
+        for f in as_completed(futs):
+            k = futs[f]
+            try:
+                out[k] = f.result()
+            except Exception as e:  # noqa: BLE001
+                out[k] = {"ok": False, "error": str(e)}
+    return [o if o is not None else {"ok": False, "error": "no result"} for o in out]
+
+
+def _microcompact_obs(keep_last: int = 1) -> int:
+    """claude-code microcompact: collapse stale bulky [现状快照] snapshots into a
+    one-line placeholder, keeping only the newest `keep_last` in full. Snapshots
+    are plain user messages (no tool pairing), so shrinking them is always safe
+    and keeps the rolling context cheap without dropping conversation structure."""
+    idxs = [k for k, m in enumerate(STATE.messages)
+            if m.get("role") == "user" and isinstance(m.get("content"), str)
+            and m["content"].startswith("[现状快照]")]
+    drop = idxs[:-keep_last] if keep_last > 0 else idxs
+    n = 0
+    for k in drop:
+        STATE.messages[k]["content"] = "[现状快照·已折叠省上下文(最新快照见下文)]"
+        n += 1
+    return n
+
+
+# --------------------------------------------------------------------------- #
+# The agent loop (background thread). One LLM "step" per active iteration.
+# --------------------------------------------------------------------------- #
+def _do_step(cfg: dict[str, Any]) -> None:
+    # Drain queued user messages into the conversation.
+    if STATE.user_inbox:
+        joined = "\n".join(STATE.user_inbox)
+        STATE.user_inbox = []
+        STATE.messages.append({"role": "user", "content": "[用户]: " + joined})
+        _timeline("user_msg", text=joined)
+
+    # Always give the model a fresh, compact observation as context. Older
+    # snapshots are collapsed to a placeholder first (microcompact) so only the
+    # newest full snapshot occupies real context — the live world state is in
+    # this latest one, stale ones add only tokens.
+    _microcompact_obs(keep_last=1)
+    obs = _gather_observation()
+    STATE.messages.append({"role": "user",
+                           "content": "[现状快照]\n" + json.dumps(obs, ensure_ascii=False)})
+
+    # Context budget: fold oldest dialogue into the rolling summary if needed.
+    # System prompt + pinned specs are always present and never compressed.
+    _maybe_compress(cfg)
+    base_msgs = [_system_prompt(cfg)] + _safe_tail(STATE.messages)
+
+    # Deep thinking is now agent-initiated: the model calls `deep_think` tool
+    # when it decides a decision is complex enough. The slider sets the max cap.
+    msgs = base_msgs
+    try:
+        reply = _chat(cfg, msgs)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "ignore")[:300]
+        STATE.last_error = f"LLM HTTP {e.code}: {detail}"
+        _timeline("error", text=STATE.last_error)
+        STATE.status = "sleeping"
+        STATE.sleep_until = time.time() + 120
+        STATE.sleep_reason = "LLM 调用失败,稍后重试"
+        STATE.wake_event.clear()
+        return
+    except Exception as e:  # noqa: BLE001
+        STATE.last_error = f"LLM error: {e}"
+        _timeline("error", text=STATE.last_error)
+        STATE.status = "sleeping"
+        STATE.sleep_until = time.time() + 120
+        STATE.sleep_reason = "LLM 调用异常,稍后重试"
+        STATE.wake_event.clear()
+        return
+
+    # Interrupted mid-stream (new user message / stop): discard this turn's
+    # tool calls entirely and re-plan next step (which drains the new message).
+    # We keep any partial assistant text but never the half-built tool calls.
+    if reply.get("_interrupted"):
+        partial = (reply.get("content") or "").strip()
+        if partial:
+            STATE.messages.append({"role": "assistant", "content": partial})
+            _timeline("assistant", text=partial)
+        _timeline("interrupted", phase="llm",
+                  reason="用户消息" if STATE.user_inbox else "停止")
+        if STATE.running:
+            STATE.status = "active"
+        return
+
+    # Record assistant message (content + any tool calls).
+    assistant_msg: dict[str, Any] = {"role": "assistant",
+                                      "content": reply.get("content") or ""}
+    tool_calls = reply.get("tool_calls") or []
+    if tool_calls:
+        assistant_msg["tool_calls"] = tool_calls
+    STATE.messages.append(assistant_msg)
+    # Deep-think rounds belong to the FINAL reply so they render in one bubble.
+    # Intermediate tool-calling turns don't carry deliberation; we keep it
+    # pending until the model emits its final (no-tool-call) reply.
+    final = not tool_calls
+    delib = STATE._last_deliberation if final else []
+    content = reply.get("content") or ""
+    reasoning = reply.get("reasoning_content") or ""
+    # Summarize this turn's tool calls so the chat can show what the model
+    # invoked (covers read tools too, which otherwise log no executed event).
+    tc_summary = []
+    for tc in tool_calls:
+        nm, ar, _ = _parse_tc(tc)
+        if nm:
+            tc_summary.append({"name": nm, "args": ar})
+    if content or reasoning or delib or tc_summary:
+        _timeline("assistant", text=content, reasoning=reasoning,
+                  deliberation=delib if delib else None,
+                  tool_calls=tc_summary if tc_summary else None)
+    if final:
+        STATE._last_deliberation = []
+
+    if not tool_calls:
+        # STALL GUARD: model produced reasoning but neither spoke (empty
+        # content) nor acted (no tool call) -> it planned without executing.
+        # Auto-nudge it to turn the plan into tool calls in the SAME wake
+        # instead of sleeping, capped per wake so a truly idle turn still
+        # falls through to sleep.
+        if (not content) and reasoning and STATE._autocontinue < _AUTOCONTINUE_MAX:
+            STATE._autocontinue += 1
+            STATE.messages.append({"role": "user", "content": (
+                "[\u7ee7\u7eed] \u4f60\u4e0a\u4e00\u6b65\u53ea\u5728\u601d\u8003\u91cc\u89c4\u5212\u4e86\uff0c\u4f46\u6ca1\u6709\u53d1\u51fa\u4efb\u4f55\u5de5\u5177\u8c03\u7528\u3002"
+                "\u5982\u679c\u8ba1\u5212\u9700\u8981\u6267\u884c\uff0c\u73b0\u5728\u5c31\u76f4\u63a5\u53d1\u51fa\u5bf9\u5e94\u7684\u5de5\u5177\u8c03\u7528"
+                "\uff08\u5982 use_strategy / make_config_variant / start_pe_training / "
+                "compare_runs \u7b49\uff09\uff0c\u628a\u5206\u6790\u2192\u51b3\u7b56\u2192\u6267\u884c\u5728\u8fd9\u4e00\u6b21\u5524\u9192\u5185\u4e00\u53e3\u6c14\u505a\u5b8c\uff1b"
+                "\u82e5\u786e\u5b9e\u65e0\u4e8b\u53ef\u505a\uff0c\u518d\u663e\u5f0f\u8c03\u7528 sleep \u5de5\u5177\u3002")})
+            _timeline("autocontinue", n=STATE._autocontinue,
+                      reason="\u89c4\u5212\u672a\u843d\u5730\u4e3a\u5de5\u5177\u8c03\u7528\uff0c\u81ea\u52a8\u50ac\u4fc3\u6267\u884c")
+            if STATE.running:
+                STATE.status = "active"
+            return
+        # No action proposed -> sleep to conserve credits. When the box is idle
+        # (no training running) there is nothing to monitor, so sleep long
+        # instead of waking every default_sleep_min; a user message / manual
+        # wake / critical event brings it back instantly.
+        try:
+            import server
+            n_train = int(server.processes().get("total", 0) or 0)
+        except Exception:  # noqa: BLE001
+            n_train = 0
+        idle = n_train == 0
+        mins = int(cfg.get("max_sleep_min", 240) if idle
+                   else cfg["default_sleep_min"])
+        STATE.status = "sleeping"
+        STATE.sleep_until = time.time() + mins * 60
+        STATE.sleep_reason = ("空闲无训练,长睡省额度" if idle
+                              else "模型未提动作,默认休眠")
+        STATE.wake_event.clear()
+        _timeline("sleep", minutes=mins,
+                  reason="auto idle (no training)" if idle else "auto (no tool call)")
+        return
+
+    STATE._autocontinue = 0  # model acted -> reset stall counter
+    gated = set(cfg.get("gated_tools", []))
+    n = len(tool_calls)
+    i = 0
+    while i < n:
+        # Abort-signal check (claude-code pattern): a new user message or a stop
+        # aborts the rest of the plan. Discarded calls still get a tool result
+        # so the assistant turn stays valid for the next (re-planning) LLM call.
+        if _should_abort():
+            _fill_tool_results(tool_calls[i:],
+                "INTERRUPTED:用户发来新消息或已停止,该工具调用被中止,即将重新规划。")
+            _timeline("interrupted", phase="tools", dropped=n - i,
+                      reason="用户消息" if STATE.user_inbox else "停止")
+            if STATE.running:
+                STATE.status = "active"
+            return
+
+        name, args, tcid = _parse_tc(tool_calls[i])
+
+        # FORCED BEHAVIOR 1: must kb_query before any high-leverage action.
+        if name in _REQUIRE_KB_FIRST and not _kb_query_in_recent(STATE.messages):
+            STATE.messages.append({"role": "tool", "tool_call_id": tcid,
+                "content": f"BLOCKED:执行 {name} 前必须先 kb_query 查既往坑/结论(行为规范,代码强制)。"
+                           "请先调用 kb_query(关于本项目/本动作的关键词),再重试该动作。"})
+            _fill_tool_results(tool_calls[i + 1:],
+                "SKIPPED:前序动作被 kb_query 前置规则拦截,本调用未执行。")
+            _timeline("kb_gate", tool=name,
+                      reason="决策前未 kb_query,已拦截并要求先查知识库")
+            if STATE.running:
+                STATE.status = "active"
+            return
+
+        # FORCED BEHAVIOR 2: after a run ended, must record_gen before sleeping.
+        if name == "sleep" and STATE.needs_summary and not STATE._recorded_since_wake:
+            STATE.messages.append({"role": "tool", "tool_call_id": tcid,
+                "content": "BLOCKED:刚有 run 结束,休眠前必须先 record_gen 记一笔台账"
+                           "(并按需 kb_write 沉淀结论),再 sleep。"})
+            _fill_tool_results(tool_calls[i + 1:],
+                "SKIPPED:run 结束总结未完成,后续调用未执行。")
+            _timeline("summary_gate", reason="run 结束未 record_gen,拦截 sleep")
+            if STATE.running:
+                STATE.status = "active"
+            return
+
+        # TIER-C gate: high-risk ops queue for human approval EVEN IN AUTO mode;
+        # request mode additionally queues any tool in gated_tools.
+        need_appr, appr_reason = _needs_approval(name, args, cfg)
+        request_gated = cfg.get("mode") == "request" and name in gated
+        if need_appr or request_gated:
+            why = appr_reason or "请求模式:该动作需人工批准。"
+            pend = {"id": f"act-{int(time.time()*1000)}-{len(STATE.pending)}",
+                    "tool": name, "args": args, "reason": args.get("reason", ""),
+                    "tool_call_id": tcid, "proposed_at": time.time(),
+                    "risk": "high" if need_appr else "gated",
+                    "approval_reason": why, "project": STATE.focus_project}
+            STATE.pending.append(pend)
+            STATE.messages.append({"role": "tool", "tool_call_id": tcid,
+                                   "content": f"QUEUED[{'高风险' if need_appr else '请求模式'}]:"
+                                              f"{why} 已生成待批卡,你已暂停。"})
+            # any remaining calls this turn can't run until approval -> close them
+            _fill_tool_results(tool_calls[i + 1:],
+                "SKIPPED:前序动作待人工批准,本调用未执行。")
+            _timeline("request", tool=name, args=args, reason=args.get("reason", ""),
+                      action_id=pend["id"], risk=pend["risk"], approval_reason=why,
+                      project=pend.get("project"))
+            STATE.status = "waiting_approval"
+            return  # stop stepping until approval
+
+        # Batch a run of consecutive concurrency-safe reads -> execute parallel.
+        if name in CONCURRENCY_SAFE_TOOLS:
+            j = i
+            batch: list[tuple[str, dict[str, Any], str]] = []
+            while j < n:
+                nm, ar, tid = _parse_tc(tool_calls[j])
+                if nm not in CONCURRENCY_SAFE_TOOLS:
+                    break
+                batch.append((nm, ar, tid))
+                j += 1
+            results = _run_reads_parallel(batch, cfg)
+            for (nm, ar, tid), res in zip(batch, results):
+                STATE.messages.append({"role": "tool", "tool_call_id": tid,
+                                       "content": json.dumps(res, ensure_ascii=False)})
+            if len(batch) > 1:
+                _timeline("parallel_reads", tools=[b[0] for b in batch])
+            i = j
+            continue
+
+        # Serial single tool (write / control / deliberation).
+        if name not in READ_TOOLS:
+            _timeline("decision", tool=name, args=args, reason=args.get("reason", ""),
+                      mode=cfg.get("mode"))
+        result = _execute_tool(name, args, cfg)
+        STATE.messages.append({"role": "tool", "tool_call_id": tcid,
+                               "content": json.dumps(result, ensure_ascii=False)})
+        if name not in READ_TOOLS:
+            _timeline("executed", tool=name, result=result)
+        if name == "sleep":
+            return  # sleep already set status
+        i += 1
+
+    # If we executed actions (not sleep), loop again next iteration immediately.
+    if STATE.status not in ("sleeping", "waiting_approval"):
+        STATE.status = "active"
+
+
+def _critical_wake(cfg: dict[str, Any]) -> Optional[str]:
+    """Cheap, no-LLM check for events that should wake a sleeping agent."""
+    import server
+    reason = None
+    try:
+        st = server.system_status()
+        disk = st.get("disk") or {}
+        if disk.get("free_gb") is not None and disk["free_gb"] < cfg["disk_low_gb"]:
+            return f"磁盘告警:剩 {disk['free_gb']}G"
+        procs = server.processes()
+        base = STATE._watch_baseline
+        cur_total = procs.get("total", 0)
+        cur_dp = procs.get("dp_count", 0)
+        cur_pe = procs.get("pe_count", 0)
+        if "proc_total" in base and cur_total < base["proc_total"]:
+            # a run ended -> which project's count dropped? pre-set focus there
+            # so the woken agent acts on the right project, and require a summary.
+            dropped = None
+            if cur_dp < base.get("dp", cur_dp):
+                dropped = "dp"
+            elif cur_pe < base.get("pe", cur_pe):
+                dropped = "pe"
+            if dropped:
+                STATE.focus_project = dropped
+                STATE.active_packs = set()
+            STATE.needs_summary = True
+            reason = (f"训练进程减少({base['proc_total']}→{cur_total}),"
+                      f"{('['+dropped+'] ' ) if dropped else ''}run 结束—先总结再决策")
+            try:
+                reason += _watcher_campaign_selfheal(cfg)
+            except Exception:  # noqa: BLE001
+                pass
+        base["proc_total"] = cur_total
+        base["dp"] = cur_dp
+        base["pe"] = cur_pe
+        # extinction / error scan on the freshest PE log
+        for p in sorted(server.PE_PANEL_LOGS.glob("onepot_sD_*.log"),
+                        key=lambda x: x.stat().st_mtime, reverse=True)[:3]:
+            try:
+                tail = p.read_text(encoding="utf-8", errors="ignore").splitlines()[-60:]
+            except Exception:  # noqa: BLE001
+                continue
+            if any("extinct" in ln.lower() for ln in tail):
+                STATE.focus_project = "pe"      # extinction is always PE
+                STATE.active_packs = set()
+                return f"检测到灭绝事件(PE):{p.name}"
+    except Exception:  # noqa: BLE001
+        pass
+    return reason
+
+
+def _runner() -> None:
+    while STATE.running:
+        cfg = _load_config()
+        st = STATE.status
+        if st == "waiting_approval":
+            time.sleep(0.5)
+            continue
+        if st == "sleeping":
+            # auto-disk-protection even while asleep
+            crit = _critical_wake(cfg)
+            now = time.time()
+            if crit or now >= STATE.sleep_until or STATE.wake_event.is_set() or STATE.user_inbox:
+                STATE.stats["wakes"] += 1
+                why = crit or ("用户消息" if STATE.user_inbox else
+                               ("手动唤醒" if STATE.wake_event.is_set() else "到点"))
+                STATE.wake_event.clear()
+                # disk emergency: auto-cleanup before handing back to the model
+                if crit and "磁盘" in crit:
+                    # system-initiated cleanup; ensure a focus so the shared-tool
+                    # guard passes (defaults to pe, where the big traces live).
+                    if STATE.focus_project is None:
+                        STATE.focus_project = "pe"
+                    res = _execute_tool("cleanup_disk", {"project": STATE.focus_project,
+                                        "reason": "磁盘告警自动清理"}, cfg)
+                    _timeline("auto_cleanup", trigger=crit, result=res)
+                _timeline("wake", reason=why,
+                          focus=STATE.focus_project, needs_summary=STATE.needs_summary)
+                focus_hint = (f" 本轮焦点已预设为 [{STATE.focus_project}]。"
+                              if STATE.focus_project else
+                              " 请先 focus_project(dp|pe) 设定本轮焦点。")
+                summ_hint = (" 有 run 刚结束:先 kb_query 回顾→record_gen 记台账→"
+                             "kb_write 沉淀结论,再决定下一步。"
+                             if STATE.needs_summary else "")
+                STATE.messages.append({"role": "user",
+                                       "content": f"[唤醒] 原因: {why}。{focus_hint}{summ_hint}"})
+                STATE.status = "active"
+                STATE._recorded_since_wake = False
+                STATE._deliberated_this_wake = False
+                STATE._last_deliberation = []
+                STATE._autocontinue = 0
+                with STATE.lock:
+                    STATE.live["deliberation"] = []
+            else:
+                time.sleep(min(cfg["poll_interval_s"], 5))
+            continue
+        if st in ("active", "error"):
+            try:
+                _do_step(cfg)
+            except Exception as e:  # noqa: BLE001
+                STATE.last_error = f"step crash: {e}"
+                _timeline("error", text=STATE.last_error)
+                STATE.status = "sleeping"
+                STATE.sleep_until = time.time() + 60
+            time.sleep(1.0)
+            continue
+        time.sleep(0.5)
+
+
+def _ensure_thread() -> None:
+    if STATE.thread and STATE.thread.is_alive():
+        return
+    STATE.thread = threading.Thread(target=_runner, daemon=True)
+    STATE.thread.start()
+
+
+# --------------------------------------------------------------------------- #
+# Request models + routes.
+# --------------------------------------------------------------------------- #
+class ProviderReq(BaseModel):
+    id: Optional[str] = None
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+
+
+class ActivateReq(BaseModel):
+    id: str
+
+
+class ModeReq(BaseModel):
+    mode: str
+
+
+class ConfigReq(BaseModel):
+    max_procs: Optional[int] = None
+    disk_low_gb: Optional[float] = None
+    default_sleep_min: Optional[int] = None
+    objective: Optional[str] = None
+    gated_tools: Optional[list[str]] = None
+    deep_think_rounds: Optional[int] = None
+    active_strategy: Optional[str] = None
+    tier_c: Optional[dict[str, Any]] = None
+
+
+class StartReq(BaseModel):
+    objective: Optional[str] = None
+
+
+class MessageReq(BaseModel):
+    text: str
+
+
+class ApprovalReq(BaseModel):
+    id: str
+    reason: Optional[str] = ""
+
+
+class FocusReq(BaseModel):
+    project: str            # "dp" | "pe"
+    reason: Optional[str] = ""
+
+
+def register_agent(app: Any) -> None:
+    # Restore chat + dialogue context from the on-disk timeline so reopening the
+    # page after a service restart looks exactly like before.
+    _rehydrate()
+
+    @app.get("/api/agent/state")
+    def agent_state() -> dict[str, Any]:
+        cfg = _load_config()
+        return STATE.snapshot(cfg)
+
+    @app.get("/api/agent/timeline")
+    def agent_timeline(limit: int = 120) -> dict[str, Any]:
+        return {"events": list(_TIMELINE_RING)[-limit:]}
+
+    @app.get("/api/agent/models")
+    def agent_models() -> dict[str, Any]:
+        cfg = _load_config()
+        return {"providers": _redact_providers(cfg),
+                "active_provider": cfg.get("active_provider")}
+
+    @app.post("/api/agent/models")
+    def agent_add_model(req: ProviderReq) -> dict[str, Any]:
+        cfg = _load_config()
+        pid = req.id or re.sub(r"[^a-zA-Z0-9]+", "-", req.name.lower()).strip("-") or \
+            f"m{int(time.time())}"
+        prov = {"id": pid, "name": req.name, "base_url": req.base_url,
+                "api_key": req.api_key, "model": req.model}
+        provs = [p for p in cfg.get("providers", []) if p.get("id") != pid]
+        provs.append(prov)
+        cfg["providers"] = provs
+        if not cfg.get("active_provider"):
+            cfg["active_provider"] = pid
+        _save_config(cfg)
+        _timeline("model_added", id=pid, name=req.name, model=req.model)
+        return {"ok": True, "id": pid, "providers": _redact_providers(cfg)}
+
+    @app.delete("/api/agent/models/{pid}")
+    def agent_del_model(pid: str) -> dict[str, Any]:
+        cfg = _load_config()
+        cfg["providers"] = [p for p in cfg.get("providers", []) if p.get("id") != pid]
+        if cfg.get("active_provider") == pid:
+            cfg["active_provider"] = (cfg["providers"][0]["id"]
+                                      if cfg["providers"] else None)
+        _save_config(cfg)
+        return {"ok": True, "providers": _redact_providers(cfg)}
+
+    @app.post("/api/agent/models/activate")
+    def agent_activate_model(req: ActivateReq) -> dict[str, Any]:
+        cfg = _load_config()
+        if not any(p.get("id") == req.id for p in cfg.get("providers", [])):
+            raise HTTPException(404, "provider not found")
+        cfg["active_provider"] = req.id
+        _save_config(cfg)
+        return {"ok": True, "active_provider": req.id}
+
+    @app.post("/api/agent/models/test")
+    def agent_test_model(req: ActivateReq) -> dict[str, Any]:
+        cfg = _load_config()
+        # temporarily target the requested provider
+        save = cfg.get("active_provider")
+        cfg["active_provider"] = req.id
+        try:
+            msg = _chat(cfg, [{"role": "user", "content": "ping(只回 pong)"}])
+            return {"ok": True, "reply": (msg.get("content") or "")[:200]}
+        except urllib.error.HTTPError as e:
+            return {"ok": False, "error": f"HTTP {e.code}: "
+                    + e.read().decode('utf-8', 'ignore')[:300]}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+        finally:
+            cfg["active_provider"] = save
+
+    @app.post("/api/agent/mode")
+    def agent_set_mode(req: ModeReq) -> dict[str, Any]:
+        if req.mode not in ("request", "auto"):
+            raise HTTPException(400, "mode must be 'request' or 'auto'")
+        cfg = _load_config()
+        cfg["mode"] = req.mode
+        _save_config(cfg)
+        _timeline("mode", mode=req.mode)
+        return {"ok": True, "mode": req.mode}
+
+    @app.post("/api/agent/focus")
+    def agent_set_focus(req: FocusReq) -> dict[str, Any]:
+        """Manually set the project focus from the UI (one decision = one
+        project). Switching clears any activated long-tail tool packs."""
+        if req.project not in ("dp", "pe"):
+            raise HTTPException(400, "project must be 'dp' or 'pe'")
+        with STATE.lock:
+            STATE.focus_project = req.project
+            STATE.active_packs = set()
+        _timeline("focus_project", project=req.project,
+                  reason=req.reason or "(UI 手动切换)")
+        return {"ok": True, "focus_project": req.project, "active_packs": []}
+
+    @app.post("/api/agent/config")
+    def agent_set_config(req: ConfigReq) -> dict[str, Any]:
+        cfg = _load_config()
+        for k in ("max_procs", "disk_low_gb", "default_sleep_min", "objective",
+                  "gated_tools", "deep_think_rounds"):
+            v = getattr(req, k)
+            if v is not None:
+                cfg[k] = v
+        if req.active_strategy is not None:
+            sid = req.active_strategy or None
+            if sid and sid not in STRATEGIES:
+                raise HTTPException(400, f"unknown strategy: {sid}")
+            cfg["active_strategy"] = sid
+        if req.tier_c is not None:
+            tc = dict(cfg.get("tier_c") or {})
+            tc.update({k: v for k, v in req.tier_c.items() if v is not None})
+            cfg["tier_c"] = tc
+        _save_config(cfg)
+        return {"ok": True, "config": {k: cfg[k] for k in
+                ("max_procs", "disk_low_gb", "default_sleep_min", "objective",
+                 "gated_tools", "deep_think_rounds", "active_strategy", "tier_c")}}
+
+    @app.post("/api/agent/start")
+    def agent_start(req: StartReq) -> dict[str, Any]:
+        cfg = _load_config()
+        if not _active_provider(cfg):
+            raise HTTPException(400, "请先注册并激活一个模型")
+        if req.objective:
+            cfg["objective"] = req.objective
+            _save_config(cfg)
+        with STATE.lock:
+            if not STATE.messages:
+                STATE.messages.append({"role": "user", "content":
+                    f"开始值守。目标:{cfg.get('objective','')}。"
+                    f"先 get_status 看现状,再决定要不要开训或休眠。"})
+            STATE.running = True
+            STATE.status = "active"
+            STATE.last_error = ""
+            STATE._deliberated_this_wake = False
+            STATE._last_deliberation = []
+            with STATE.lock:
+                STATE.live["deliberation"] = []
+        _ensure_thread()
+        _timeline("agent_start", objective=cfg.get("objective"))
+        return {"ok": True, "status": STATE.status}
+
+    @app.post("/api/agent/stop")
+    def agent_stop() -> dict[str, Any]:
+        STATE.running = False
+        STATE.status = "stopped"
+        _timeline("agent_stop")
+        return {"ok": True}
+
+    @app.post("/api/agent/wake")
+    def agent_wake() -> dict[str, Any]:
+        STATE.wake_event.set()
+        return {"ok": True}
+
+    @app.post("/api/agent/message")
+    def agent_message(req: MessageReq) -> dict[str, Any]:
+        STATE.user_inbox.append(req.text)
+        STATE.wake_event.set()
+        _timeline("user_msg_queued", text=req.text)
+        # if agent never started, start it so the user can chat immediately
+        cfg = _load_config()
+        if not STATE.running and _active_provider(cfg):
+            STATE.running = True
+            STATE.status = "active"
+            _ensure_thread()
+        return {"ok": True}
+
+    @app.post("/api/agent/approve")
+    def agent_approve(req: ApprovalReq) -> dict[str, Any]:
+        cfg = _load_config()
+        pend = next((p for p in STATE.pending if p["id"] == req.id), None)
+        if not pend:
+            raise HTTPException(404, "no such pending action")
+        STATE.pending = [p for p in STATE.pending if p["id"] != req.id]
+        # restore the focus that was active when this action was queued so the
+        # project-partition guard inside _execute_tool lets it through.
+        if pend.get("project") in ("dp", "pe"):
+            STATE.focus_project = pend["project"]
+        _timeline("decision", tool=pend["tool"], args=pend["args"],
+                  reason=pend.get("reason", ""), approved=True)
+        result = _execute_tool(pend["tool"], pend["args"], cfg)
+        _timeline("executed", tool=pend["tool"], result=result, approved=True)
+        STATE.messages.append({"role": "user", "content":
+            f"[人工已批准 {pend['tool']}] 执行结果: "
+            + json.dumps(result, ensure_ascii=False)})
+        STATE.status = "active"
+        return {"ok": True, "result": result}
+
+    @app.post("/api/agent/reject")
+    def agent_reject(req: ApprovalReq) -> dict[str, Any]:
+        pend = next((p for p in STATE.pending if p["id"] == req.id), None)
+        if not pend:
+            raise HTTPException(404, "no such pending action")
+        STATE.pending = [p for p in STATE.pending if p["id"] != req.id]
+        _timeline("rejected", tool=pend["tool"], args=pend["args"],
+                  reason=req.reason or "")
+        STATE.messages.append({"role": "user", "content":
+            f"[人工否决 {pend['tool']}] 理由: {req.reason or '(未填)'}。"
+            f"请换个方案或休眠。"})
+        STATE.status = "active"
+        return {"ok": True}
+
+    @app.post("/api/agent/clear_context")
+    def agent_clear_context() -> dict[str, Any]:
+        """Manually wipe the rolling dialogue context. The system prompt
+        (role / red lines / strategy catalog / objective), pinned specs, the
+        knowledge base and the gen ledger are ALL kept — only the chat history
+        and rolling summary are dropped. The agent still knows the project."""
+        cfg = _load_config()
+        n = len(STATE.messages)
+        with STATE.lock:
+            STATE.messages = []
+            STATE.user_inbox = []
+            STATE.live["deliberation"] = []
+        STATE._last_deliberation = []
+        STATE._deliberated_this_wake = False
+        if cfg.get("rolling_summary"):
+            cfg["rolling_summary"] = ""
+            _save_config(cfg)
+        _timeline("context_cleared", dropped=n)
+        return {"ok": True, "dropped": n}

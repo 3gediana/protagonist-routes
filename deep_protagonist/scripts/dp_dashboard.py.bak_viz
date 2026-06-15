@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""deep_protagonist training dashboard (matplotlib).
+
+Reads one or more runs/*.jsonl produced by deep_protagonist_train and renders:
+  fig1  lineage comparison  : reward / score / r_bites / steps / unlocks / milestone
+  fig2  latest-run deep-dive: reward-component stack / deaths-by-cause / action hist / nutrition
+
+Standalone: reads only the metrics jsonl (does not touch training code).
+
+Usage:
+  python3 dp_dashboard.py v1.jsonl v2.jsonl ... --labels v1,v2,... --out-prefix dp
+"""
+from __future__ import annotations
+import argparse, json
+from pathlib import Path
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+WANDER_REWARD = -37.38  # docs/BASELINE.md wander ref
+
+
+def load(path: Path) -> list[dict]:
+    rows = []
+    for ln in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rows.append(json.loads(ln))
+        except json.JSONDecodeError:
+            pass
+    return rows
+
+
+def smooth(xs, w=20):
+    xs = np.asarray(xs, dtype=float)
+    if len(xs) == 0:
+        return xs
+    out = np.empty_like(xs)
+    for i in range(len(xs)):
+        lo = max(0, i - w + 1)
+        out[i] = xs[lo:i + 1].mean()
+    return out
+
+
+def col(rows, key, default=0.0):
+    return [float(r.get(key, default)) for r in rows]
+
+
+def unlock_count(rows):
+    out = []
+    for r in rows:
+        u = r.get("unlocks", [])
+        out.append(sum(1 for x in u if x))
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("paths", nargs="+", type=Path)
+    ap.add_argument("--labels", default="")
+    ap.add_argument("--out-prefix", default="dp")
+    ap.add_argument("--window", type=int, default=20)
+    args = ap.parse_args()
+
+    labels = [s.strip() for s in args.labels.split(",")] if args.labels else [p.stem for p in args.paths]
+    runs = [load(p) for p in args.paths]
+    w = args.window
+    colors = plt.cm.viridis(np.linspace(0.1, 0.85, len(runs)))
+
+    # ---- fig1: lineage comparison ----
+    fig1, axes = plt.subplots(2, 3, figsize=(16, 8.5))
+    fig1.suptitle("deep_protagonist · nutrition lineage (PPO, BC warm-start)  —  smoothed window=%d" % w,
+                  fontsize=14, fontweight="bold")
+    panels = [
+        ("reward", "reward", "episode reward", True),
+        ("score", "score", "score (normalized)", False),
+        ("r_bites", "r_bites", "predator damage  (r_bites, higher=safer)", False),
+        ("steps", "steps", "episode length (steps survived)", False),
+        ("__unlocks__", None, "unlocks achieved (count /10)", False),
+        ("r_milestone", "r_milestone", "milestone reward", False),
+    ]
+    for ax, (name, key, title, show_wander) in zip(axes.flat, panels):
+        for r, lab, c in zip(runs, labels, colors):
+            if not r:
+                continue
+            ys = unlock_count(r) if name == "__unlocks__" else col(r, key)
+            ax.plot(smooth(ys, w), color=c, label=lab, lw=1.8)
+        if show_wander:
+            ax.axhline(WANDER_REWARD, color="crimson", ls="--", lw=1, alpha=0.7, label="wander ref")
+            ax.axhline(0, color="grey", ls=":", lw=0.8)
+        ax.set_title(title, fontsize=11)
+        ax.set_xlabel("episode")
+        ax.grid(alpha=0.25)
+    axes.flat[0].legend(fontsize=9, loc="best")
+    fig1.tight_layout(rect=(0, 0, 1, 0.96))
+    out1 = f"{args.out_prefix}_lineage.png"
+    fig1.savefig(out1, dpi=130)
+    print("wrote", out1)
+
+    # ---- fig2: latest-run deep dive ----
+    rows = runs[-1]
+    lab = labels[-1]
+    fig2, ax = plt.subplots(2, 2, figsize=(16, 9))
+    fig2.suptitle(f"deep_protagonist · {lab} deep-dive  (n={len(rows)} episodes)",
+                  fontsize=14, fontweight="bold")
+
+    # (a) reward component stack (smoothed)
+    comp_keys = ["r_alive", "r_food", "r_water", "r_collect", "r_craft",
+                 "r_milestone", "r_potential", "r_shelter", "r_kills"]
+    neg_keys = ["r_bites", "r_death", "r_vital"]
+    a0 = ax[0, 0]
+    x = np.arange(len(rows))
+    pos_stack = np.vstack([smooth(col(rows, k), w) for k in comp_keys])
+    a0.stackplot(x, pos_stack, labels=comp_keys, alpha=0.85)
+    for k in neg_keys:
+        a0.plot(x, smooth(col(rows, k), w), lw=1.5, ls="--", label=k)
+    a0.plot(x, smooth(col(rows, "reward"), w), color="black", lw=2.2, label="reward(total)")
+    a0.axhline(0, color="grey", lw=0.8)
+    a0.set_title("reward composition (smoothed)", fontsize=11)
+    a0.set_xlabel("episode"); a0.grid(alpha=0.25)
+    a0.legend(fontsize=7, ncol=2, loc="upper left")
+
+    # (b) deaths by cause cumulative
+    a1 = ax[0, 1]
+    for k, c in [("deaths_cold", "tab:blue"), ("deaths_food", "tab:orange"),
+                 ("deaths_protein", "tab:red"), ("deaths_vitamin", "tab:green")]:
+        a1.plot(np.cumsum(col(rows, k)), label=k, lw=1.8, color=c)
+    a1.set_title("cumulative deaths by cause", fontsize=11)
+    a1.set_xlabel("episode"); a1.grid(alpha=0.25); a1.legend(fontsize=9)
+
+    # (c) action histogram (summed over all episodes)
+    a2 = ax[1, 0]
+    acts = np.zeros(18)
+    for r in rows:
+        a = r.get("act", [])
+        for i, v in enumerate(a[:18]):
+            acts[i] += float(v)
+    a2.bar(np.arange(len(acts)), acts, color="tab:purple", alpha=0.8)
+    a2.set_title("action usage (summed counts, idx 0..17)", fontsize=11)
+    a2.set_xlabel("action index"); a2.grid(alpha=0.25, axis="y")
+
+    # (d) nutrition levels + score
+    a3 = ax[1, 1]
+    a3.plot(smooth(col(rows, "protein", 100.0), w), label="protein", color="tab:red")
+    a3.plot(smooth(col(rows, "vitamin", 100.0), w), label="vitamin", color="tab:green")
+    a3.set_ylabel("nutrition level"); a3.set_xlabel("episode")
+    a3b = a3.twinx()
+    a3b.plot(smooth(col(rows, "score"), w), label="score", color="black", lw=1.5, ls=":")
+    a3b.set_ylabel("score")
+    a3.set_title("nutrition reserves + score", fontsize=11)
+    a3.grid(alpha=0.25); a3.legend(fontsize=9, loc="lower left")
+    fig2.tight_layout(rect=(0, 0, 1, 0.96))
+    out2 = f"{args.out_prefix}_{lab}_deepdive.png"
+    fig2.savefig(out2, dpi=130)
+    print("wrote", out2)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,1 @@
+Set-Location "D:\claude-code\c++\routes\deep_protagonist"; .\eval_gate_mask.ps1 -ckpt runs\s4ppo_c3c.pt -tag c3c -eps 10 -steps 120000; "SCR $(Get-Date -Format o)" | Out-File runs\eval_v11\done_c3cscr.txt -Encoding ASCII

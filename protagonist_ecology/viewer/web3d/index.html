@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Protagonist Ecology — 3D Replay Viewer</title>
+<style>
+  :root { --panel: rgba(14,18,24,0.78); --edge: rgba(255,255,255,0.12); --txt:#e8eef5; --dim:#9fb0c0; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; background:#0a0d12;
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; color:var(--txt); }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+
+  .panel { position:absolute; background:var(--panel); border:1px solid var(--edge);
+    border-radius:10px; padding:10px 12px; backdrop-filter: blur(8px); font-size:12px;
+    box-shadow:0 6px 24px rgba(0,0,0,0.35); }
+
+  #hud { top:12px; left:12px; min-width:210px; }
+  #hud h1 { font-size:13px; margin:0 0 6px; letter-spacing:.4px; font-weight:600; }
+  #hud .row { display:flex; justify-content:space-between; gap:14px; line-height:1.7; }
+  #hud .k { color:var(--dim); } #hud .v { font-variant-numeric:tabular-nums; }
+  .bar { height:5px; border-radius:3px; background:rgba(255,255,255,0.12); margin-top:3px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,#5ec8ff,#7CFC00); width:0%; }
+
+  #clock { display:flex; align-items:center; gap:8px; margin:4px 0 8px; }
+  #clockDot { width:14px; height:14px; border-radius:50%; box-shadow:0 0 10px 2px rgba(255,200,80,.6); }
+  #clockTime { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #phaseName { color:var(--dim); font-size:11px; }
+
+  #legend { top:12px; right:12px; max-width:190px; }
+  #legend h2 { font-size:11px; margin:0 0 6px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; }
+  .lg { display:flex; align-items:center; gap:7px; line-height:1.65; }
+  .sw { width:11px; height:11px; border-radius:50%; flex:0 0 auto; }
+
+  #toggles { right:12px; top:300px; max-width:190px; }
+  #toggles label { display:flex; align-items:center; gap:7px; line-height:1.8; cursor:pointer; color:var(--dim); }
+  #toggles input { accent-color:#5ec8ff; }
+
+  #story { left:12px; bottom:84px; max-width:420px; pointer-events:none; }
+  #storyCap { font-size:14px; font-weight:600; opacity:0; transition:opacity .4s; text-shadow:0 2px 8px #000; }
+  #storyLog { margin-top:6px; max-height:96px; overflow:hidden; font-size:11px; color:var(--dim); }
+  #storyLog div { opacity:.85; line-height:1.55; }
+  #storyLog .new { color:#ffd36b; }
+
+  #controls { left:50%; transform:translateX(-50%); bottom:14px; width:min(880px,92vw);
+    display:flex; align-items:center; gap:12px; }
+  #controls button { background:#1b2531; color:var(--txt); border:1px solid var(--edge);
+    border-radius:7px; padding:6px 12px; cursor:pointer; font-size:13px; }
+  #controls button:hover { background:#243140; }
+  #scrub { flex:1; accent-color:#5ec8ff; }
+  #frameLbl { font-variant-numeric:tabular-nums; color:var(--dim); min-width:108px; text-align:right; }
+  #speed { background:#1b2531; color:var(--txt); border:1px solid var(--edge); border-radius:7px; padding:5px; }
+
+  #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:14px; background:#0a0d12; z-index:50; }
+  #loading .spin { width:46px; height:46px; border:4px solid rgba(255,255,255,.15);
+    border-top-color:#5ec8ff; border-radius:50%; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #loading .pct { color:var(--dim); font-size:13px; }
+  .hint { position:absolute; left:12px; bottom:58px; color:var(--dim); font-size:11px; opacity:.7; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud" class="panel">
+  <h1>PROTAGONIST ECOLOGY · 3D</h1>
+  <div id="clock">
+    <span id="clockDot"></span>
+    <span><span id="clockTime">--:--</span> <span id="phaseName">day</span></span>
+  </div>
+  <div class="row"><span class="k">Season</span><span class="v" id="seasonV">—</span></div>
+  <div class="bar"><i id="seasonBar"></i></div>
+  <div class="row"><span class="k">Weather</span><span class="v" id="weatherV">—</span></div>
+  <div class="row"><span class="k">Alive</span><span class="v" id="popV">—</span></div>
+  <div class="row"><span class="k">Buildings</span><span class="v" id="bldV">—</span></div>
+  <div class="row"><span class="k">Fires lit</span><span class="v" id="fireV">—</span></div>
+  <div class="row"><span class="k">Tick</span><span class="v" id="tickV">—</span></div>
+</div>
+
+<div id="legend" class="panel"><h2>Species</h2><div id="legendList"></div></div>
+
+<div id="toggles" class="panel">
+  <h2 style="font-size:11px;margin:0 0 6px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;">Layers</h2>
+  <label><input type="checkbox" id="t_terrain" checked> Terrain</label>
+  <label><input type="checkbox" id="t_resources" checked> Vegetation</label>
+  <label><input type="checkbox" id="t_water" checked> Water</label>
+  <label><input type="checkbox" id="t_trees" checked> Trees</label>
+  <label><input type="checkbox" id="t_agents" checked> Species</label>
+  <label><input type="checkbox" id="t_objects" checked> Projectiles</label>
+  <label><input type="checkbox" id="t_worksites" checked> Buildings</label>
+  <label><input type="checkbox" id="t_fires" checked> Fires</label>
+  <label><input type="checkbox" id="t_weather" checked> Weather FX</label>
+</div>
+
+<div id="story">
+  <div id="storyCap"></div>
+  <div id="storyLog"></div>
+</div>
+
+<div class="hint">drag = orbit · scroll = zoom · right-drag = pan</div>
+
+<div id="controls" class="panel">
+  <button id="playBtn">Pause</button>
+  <input id="scrub" type="range" min="0" max="100" value="0" step="1" />
+  <select id="speed">
+    <option value="0.5">0.5x</option>
+    <option value="1" selected>1x</option>
+    <option value="2">2x</option>
+    <option value="4">4x</option>
+  </select>
+  <span id="frameLbl">0 / 0</span>
+</div>
+
+<div id="loading"><div class="spin"></div><div class="pct" id="loadPct">loading world…</div></div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+﻿{
+  "seq": 1,
+  "nodes": [
+    {
+      "id": "k1",
+      "created": "2026-06-10T15:49:05",
+      "kind": "finding",
+      "title": "PE worksite_proximity 突破 me_cov 天花板",
+      "body": "PE worksite_proximity_reward=1.0 是唯一突破me_cov天花板的变体: gen23 me_cov=13/96(基线12), avg=1855, qd=38.2K, best=5428。worksite_proximity=5.0早期(gen9) avg=1623也高于1.0同期。proximity reward引导agent靠近工地→更多craft触发→突破me_cov天花板。这是当前PE最有前途的方向。DP侧:v5_resume(seed42)ep171 score=0.321,最高单集6/10unlocks; fresh(seed42)ep131 score=0.318仍在跑。v5 baseline 0.358仍是DP最佳。",
+      "tags": [
+        "pe",
+        "worksite_proximity",
+        "me_cov",
+        "breakthrough",
+        "finding"
+      ],
+      "updated": "2026-06-10T15:49:05"
+    }
+  ],
+  "generations": [
+    {
+      "project": "dp",
+      "lineage": "fresh_seed42",
+      "gen": 188,
+      "checkpoint": null,
+      "metrics": {
+        "score": 0.3157,
+        "unlocks": 4,
+        "reward": 13.0,
+        "deaths_cold": 6,
+        "deaths_food": 147
+      },
+      "note": "Final. ep188, score=0.316 plateau. Best single ep had 5/10 unlocks(water+food+potion+shelter+planting). From-scratch reached 5 unlocks but couldn't sustain. Below v5 baseline 0.358.",
+      "ts": "2026-06-10T15:59:13"
+    }
+  ]
+}
