@@ -28,6 +28,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1476,6 +1477,8 @@ int main(int argc, char** argv) {
     // collapses). A small finetune ent_coef keeps PPO refining inside the BC
     // basin instead of exploring back out to the foraging attractor.
     float       ppo_ent_coef = -1.0f;
+    float       ppo_dead_action_floor = -1.0f;  // <0: keep PPO::Config default
+    float       ppo_dead_action_coef  = -1.0f;
     float       ppo_lr       = -1.0f;
     int         ppo_critic_warmup = 0;   // D-101: value-only updates before policy training (BC->PPO)
     bool        ppo_mask_atk_fire = false;  // decision_round_17: mask attack(2)+fire(17)
@@ -1489,8 +1492,12 @@ int main(int argc, char** argv) {
     // (drink/eat/collect/spear/shelter/clothing/seed/house/crop/follower).
     // Potential Phi_rep = milestones().count(); each NEW mechanism gives a
     // one-time pulse (~coef), holding pays ~0 -> rewards WIDTH, not grinding a
-    // single action. Bounded at 10 (anti-Goodhart). 0=off.
-    float       ppo_repertoire_shaping = 0.0f;
+    // single action. Bounded at 10 (anti-Goodhart).
+    // D-136 audit: default ON at 0.5 (was 0=off). The geometric-mean score
+    // demands breadth, but with this off the reward gave no breadth gradient
+    // at all - the exact mechanism designed to fix the ceiling was dormant.
+    // 0.5/new-mechanism is a gentle pulse vs milestone=2.5; pass 0 to disable.
+    float       ppo_repertoire_shaping = 0.5f;
     // D-136 warmth: PBRS on body-temperature recovery (see phi_warmth above).
     // Breaks the ~6000-step freeze wall that caps breadth, pulling the policy
     // toward PORTABLE warmth (clothing) since that is the only heat source
@@ -1503,15 +1510,23 @@ int main(int argc, char** argv) {
     float       nutri_debuff_thresh = 0.30f;
     float       nutri_death_grace   = 8.0f;
     bool        ppo_mask_fire_only  = false; // mask fire only, leave attack open
+    bool        ppo_survive_first_mask   = false; // survive-first action-mask A/B
+    float       ppo_survive_first_thresh = 0.35f; // mask non-eat/drink when vital<thresh
+    bool        ppo_decouple_disc        = false; // D1 discrete-head decoupling A/B
     // D-122 one-pot tech-tree curriculum gates (default OFF = reserved class
     // masked, byte-identical to pre-tech-tree champion). Flip on to unlock.
-    bool        ppo_allow_cook       = false; // unlock idx18 cook
+    // D-136 audit round 3: tech-tree defaults flipped ON. The blueprint goal
+    // is multi-mechanism emergence, and the 15-milestone score now measures
+    // cook/mine/axe/pickaxe/monument - keeping them masked by default made
+    // the metric structurally unable to reflect those behaviours. --lock-*
+    // flags restore the old masked behaviour for A/B comparisons.
+    bool        ppo_allow_cook       = true;  // unlock idx18 cook
     bool        cook_selftest_mode   = false; // D-122 RUNG 1 end-to-end cook test then exit
-    bool        ppo_allow_mine       = false; // unlock idx19 mine
+    bool        ppo_allow_mine       = true;  // unlock idx19 mine
     bool        mine_selftest_mode   = false; // D-122 RUNG 2 end-to-end mine test then exit
-    bool        ppo_allow_craft_axe  = false; // unlock idx20 craft_axe
-    bool        ppo_allow_craft_pick = false; // unlock idx21 craft_pickaxe
-    bool        ppo_allow_monument   = false; // unlock idx22 build_monument
+    bool        ppo_allow_craft_axe  = true;  // unlock idx20 craft_axe
+    bool        ppo_allow_craft_pick = true;  // unlock idx21 craft_pickaxe
+    bool        ppo_allow_monument   = true;  // unlock idx22 build_monument
     bool        ppo_tier_gate        = false; // RUNG 4: gate advanced builds behind tools
     bool        tools_selftest_mode  = false; // D-122 RUNG 3 end-to-end tool test then exit
     bool        monument_selftest_mode = false; // D-122 RUNG 5 end-to-end monument/boss test then exit
@@ -1566,6 +1581,8 @@ int main(int argc, char** argv) {
         else if (a == "--bc-trig-post") bc_trig_post = std::stoi(next());
         else if (a == "--deterministic") deterministic = true;
         else if (a == "--ent-coef")   ppo_ent_coef = std::stof(next());
+        else if (a == "--ppo-dead-action-floor") ppo_dead_action_floor = std::stof(next());
+        else if (a == "--ppo-dead-action-coef")  ppo_dead_action_coef  = std::stof(next());
         else if (a == "--lr")         ppo_lr       = std::stof(next());
         else if (a == "--critic-warmup") ppo_critic_warmup = std::stoi(next());
         else if (a == "--ppo-mask-atk-fire") ppo_mask_atk_fire = true;
@@ -1583,7 +1600,15 @@ int main(int argc, char** argv) {
         else if (a == "--nutri-debuff-thresh") nutri_debuff_thresh = std::stof(next());
         else if (a == "--nutri-death-grace")   nutri_death_grace   = std::stof(next());
         else if (a == "--ppo-mask-fire-only")  ppo_mask_fire_only  = true;
+        else if (a == "--survive-first-mask")  ppo_survive_first_mask   = true;
+        else if (a == "--survive-first-thresh") ppo_survive_first_thresh = std::stof(next());
+        else if (a == "--decouple-disc")       ppo_decouple_disc        = true;
         else if (a == "--allow-cook")          ppo_allow_cook       = true;
+        else if (a == "--lock-cook")           ppo_allow_cook       = false;
+        else if (a == "--lock-mine")           ppo_allow_mine       = false;
+        else if (a == "--lock-craft-axe")      ppo_allow_craft_axe  = false;
+        else if (a == "--lock-craft-pickaxe")  ppo_allow_craft_pick = false;
+        else if (a == "--lock-monument")       ppo_allow_monument   = false;
         else if (a == "--cook-selftest")       cook_selftest_mode   = true;
         else if (a == "--allow-mine")          ppo_allow_mine       = true;
         else if (a == "--mine-selftest")       mine_selftest_mode   = true;
@@ -1834,6 +1859,8 @@ int main(int argc, char** argv) {
     if (policy == "ppo") {
         pcfg.seed = static_cast<int>(seed & 0x7FFFFFFFULL);
         pcfg.n_envs = n_envs;  // D-078: VecEnv parallelism (PPO hidden_ shape [N, HIDDEN])
+        if (ppo_dead_action_floor >= 0.0f) pcfg.dead_action_floor = ppo_dead_action_floor;
+        if (ppo_dead_action_coef  >= 0.0f) pcfg.dead_action_coef  = ppo_dead_action_coef;
         if (ppo_ent_coef >= 0.0f) {
             pcfg.ent_coef = ppo_ent_coef;
             spdlog::info("D-101: ent_coef override {} (finetune; D-099 default 0.01)", ppo_ent_coef);
@@ -1844,6 +1871,9 @@ int main(int argc, char** argv) {
         }
         pcfg.mask_atk_fire  = ppo_mask_atk_fire;
         pcfg.mask_fire_only = ppo_mask_fire_only;
+        pcfg.survive_first_mask   = ppo_survive_first_mask;
+        pcfg.survive_first_thresh = ppo_survive_first_thresh;
+        pcfg.decouple_disc        = ppo_decouple_disc;
         pcfg.kl_ref_coef    = ppo_kl_coef;
         pcfg.target_kl      = ppo_target_kl;
         // D-122 one-pot tech-tree curriculum gates.
@@ -1876,14 +1906,28 @@ int main(int argc, char** argv) {
     // favors agents that unlock many milestones over those that grind one.
     std::array<int, dp::env::EpisodeMilestones::N> unlock_total{};
     int score_eps = 0;
-    auto compute_score = [&]() {
-        if (score_eps == 0) return 0.0;
+    // D-136 audit round 3: the score was cumulative-since-step-0, so every
+    // pre-learning failure stayed in the denominator forever - late-training
+    // score asymptotically underestimates the CURRENT policy and the
+    // "plateau" was partly a statistical artifact. score= is now computed
+    // over a sliding window of the most recent kScoreWindow episodes
+    // (current policy behaviour); score_cum= keeps the legacy whole-run
+    // number for cross-run comparability.
+    static constexpr int kScoreWindow = 100;
+    std::deque<uint32_t> window_masks;
+    std::array<int, dp::env::EpisodeMilestones::N> unlock_window{};
+    auto compute_score_from = [](const std::array<int, dp::env::EpisodeMilestones::N>& counts, int eps) {
+        if (eps == 0) return 0.0;
         double s = 0.0;
         for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
-            double rate = static_cast<double>(unlock_total[i]) / score_eps;
+            double rate = static_cast<double>(counts[i]) / eps;
             s += std::log(1.0 + rate);
         }
         return std::exp(s / dp::env::EpisodeMilestones::N) - 1.0;
+    };
+    auto compute_score = [&]() {
+        return compute_score_from(unlock_window,
+                                  static_cast<int>(window_masks.size()));
     };
 
     auto log_episode = [&](int episode_id,
@@ -1891,19 +1935,33 @@ int main(int argc, char** argv) {
                            const dp::env::EpisodeMilestones& ms,
                            const dp::env::Environment& e) {
         // Update cumulative counters BEFORE computing the score.
+        uint32_t mask = 0;
         for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
-            if (ms.get(i)) ++unlock_total[i];
+            if (ms.get(i)) {
+                ++unlock_total[i];
+                ++unlock_window[i];
+                mask |= (1u << i);
+            }
         }
         ++score_eps;
+        window_masks.push_back(mask);
+        if (static_cast<int>(window_masks.size()) > kScoreWindow) {
+            const uint32_t old = window_masks.front();
+            window_masks.pop_front();
+            for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
+                if (old & (1u << i)) --unlock_window[i];
+            }
+        }
         double score = compute_score();
-        spdlog::info("ep {}: steps={} R={:+.1f} unlocks={}/{} score={:.3f} "
+        double score_cum = compute_score_from(unlock_total, score_eps);
+        spdlog::info("ep {}: steps={} R={:+.1f} unlocks={}/{} score={:.3f} score_cum={:.3f} "
                      "(alive={:+.1f} food={:+.1f} water={:+.1f} kills={:+.1f} "
                      "bites={:+.1f} death={:+.1f} vital={:+.1f} "
                      "collect={:+.1f} shelter={:+.1f} craft={:+.1f} "
                      "milestone={:+.1f} potential={:+.1f}) "
                      "hunt_hits={} prey_kind_hits={} prey_kills={} atk_prey_reach={} atk_prey_cone={} opp_reach={} opp_rest={} explore_cells={} closest_prey={:.1f}m closest_rest={:.1f}m",
                      episode_id, s.steps, s.total_reward,
-                     ms.count(), dp::env::EpisodeMilestones::N, score,
+                     ms.count(), dp::env::EpisodeMilestones::N, score, score_cum,
                      s.r_alive, s.r_food, s.r_water, s.r_kills,
                      s.r_bites, s.r_death, s.r_vital,
                      s.r_collect, s.r_shelter, s.r_craft, s.r_milestone,
@@ -1931,7 +1989,7 @@ int main(int argc, char** argv) {
                 "\"deaths_protein\":%d,\"deaths_vitamin\":%d,"
                 "\"protein\":%.1f,\"vitamin\":%.1f,"
                 "\"policy\":\"%s\",\"seed\":%llu,"
-                "\"mv\":%.3f,\"yw\":%.3f,\"score\":%.4f,\"unlocks\":[",
+                "\"mv\":%.3f,\"yw\":%.3f,\"score\":%.4f,\"score_cum\":%.4f,\"unlocks\":[",
                 episode_id, s.steps, s.total_reward,
                 s.r_alive, s.r_food, s.r_water, s.r_kills,
                 s.r_bites, s.r_death, s.r_vital,
@@ -1942,7 +2000,7 @@ int main(int argc, char** argv) {
                 e.vitals().deaths_protein, e.vitals().deaths_vitamin,
                 e.vitals().protein, e.vitals().vitamin, policy.c_str(),
                 static_cast<unsigned long long>(seed),
-                mv, yw, score);
+                mv, yw, score, score_cum);
             for (int i = 0; i < dp::env::EpisodeMilestones::N; ++i) {
                 std::fprintf(mf, "%s%d", i == 0 ? "" : ",", ms.get(i) ? 1 : 0);
             }

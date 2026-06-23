@@ -1,0 +1,8 @@
+# night_manifest_d1.txt — D1 离散头解耦 A/B（2x2 因子：decouple × mask + 一个 seed42 稳健性臂）
+# 跑在重编译后的新 exe 上（--decouple-disc 默认 OFF=逐字节等价旧 exe，对照干净）。
+# K=4 并发（实测峰值）。这组目的：分离 D1(结构修复) 与 mask(轻量干预) 的主效应 + 交互。
+ab_ctrl_v2     | --seed 7
+ab_d1          | --seed 7 --decouple-disc
+ab_mask030     | --seed 7 --survive-first-mask --survive-first-thresh 0.30
+ab_d1_mask030  | --seed 7 --decouple-disc --survive-first-mask --survive-first-thresh 0.30
+ab_d1_s42      | --seed 42 --decouple-disc

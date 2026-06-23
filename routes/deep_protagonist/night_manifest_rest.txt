@@ -1,0 +1,8 @@
+﻿# night_manifest_rest.txt — 剩余臂（4 个阈值臂已跑完+验收，这里只跑剩下 6 个）
+# 并发 K=4（实测吞吐峰值：4臂x8envs=32逻辑核；>4 反而被 CPU env 步进抢崩）
+ab_treat035_floor0   | --seed 7 --survive-first-mask --survive-first-thresh 0.35 --ppo-dead-action-floor 0
+ab_treat035_ent005   | --seed 7 --survive-first-mask --survive-first-thresh 0.35 --ent-coef 0.005
+ab_ctrl_s42          | --seed 42
+ab_treat035_s42      | --seed 42 --survive-first-mask --survive-first-thresh 0.35
+ab_ctrl_locktech     | --seed 7 --lock-cook --lock-mine --lock-craft-axe --lock-craft-pickaxe --lock-monument
+ab_treat035_locktech | --seed 7 --survive-first-mask --survive-first-thresh 0.35 --lock-cook --lock-mine --lock-craft-axe --lock-craft-pickaxe --lock-monument

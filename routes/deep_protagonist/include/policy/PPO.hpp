@@ -71,6 +71,10 @@ struct ActorCriticImpl : torch::nn::Module {
     // diverse biomes + slope/temp coupling) it actually needs the capacity
     // for, and trades sample-efficiency for ceiling per the owner's decision.
     static constexpr int HIDDEN    = 1408;
+    // D1 (discrete-head decoupling): width of the dedicated discrete trunk used
+    // only when decouple_disc is ON (see forward_step). Append-only new module,
+    // so old checkpoints warm-start via the tolerant loader.
+    static constexpr int DISC_HID  = 512;
     // D-123 Successor-Features: ψ head width = number of reward feature
     // channels φ. Tied to RewardSystem::F so dot(φ, w) stays consistent;
     // a static_assert in main.cpp pins them equal.
@@ -86,6 +90,17 @@ struct ActorCriticImpl : torch::nn::Module {
     // of `value` reading the SAME hidden h; trained (detached, see psi()) so
     // its gradient never perturbs the champion policy/value/trunk.
     torch::nn::Linear   successor{nullptr};
+    // D1 discrete-head decoupling. When decouple_disc is ON, the discrete policy
+    // reads (a) the shared trunk hidden as a STOP-GRADIENT feature (so the
+    // discrete gradient never reshapes the movement-dominated encoder+GRU, the
+    // diagnosed root cause of discrete-head collapse) plus (b) its OWN dedicated
+    // feed-forward trunk on raw obs. disc_head2 is zero-init so the net is
+    // byte-identical to the shared-trunk policy the moment decoupling is enabled;
+    // the dedicated path grows from zero (cf. the D-122 tech-tree rows). OFF
+    // (default) keeps the legacy disc_logits(h) path exactly.
+    torch::nn::Linear   disc_trunk{nullptr};   // OBS_DIM  -> DISC_HID
+    torch::nn::Linear   disc_head2{nullptr};   // DISC_HID -> DISC_CATS (zero-init)
+    bool                decouple_disc = false; // set from PPOConfig in PPO ctor
     torch::Tensor       log_std;   // shape [CONT_DIM]
 
     ActorCriticImpl();
@@ -137,6 +152,14 @@ struct PPOConfig {
     float  clip_eps        = 0.2f;
     float  vf_coef         = 0.5f;
     float  ent_coef        = 0.01f;   // D-073: D-071 (ent=0.01, fresh init) reached score 0.158 > D-072 (ent=0.02, fresh init) score 0.114. Lower ent_coef wins for fresh init. Use 0.01 going forward.
+    // Dead-action floor: extra loss term that penalizes discrete actions whose
+    // batch-mean probability falls below `dead_action_floor`. Every from-scratch
+    // PPO run so far collapsed to ~8-10/23 live actions and the dead logits
+    // never recover from reward alone (mechanism, not tuning). The floor keeps
+    // a minimal exploration probability alive on EVERY action head so rare
+    // milestone actions (craft/build/tame) stay reachable. 0 disables.
+    float  dead_action_floor = 0.005f;  // min mean prob per discrete action
+    float  dead_action_coef  = 1.0f;    // weight of the revival penalty
     float  lr              = 3e-4f;   // D-072: revert to 3e-4 (D-065 baseline). D-070 1e-4 had same endpoint as 3e-4 (drift hypothesis falsified). For fresh init exploration use D-065's original 3e-4.
     float  max_grad_norm   = 0.5f;
     bool   use_cuda        = true;
@@ -149,6 +172,18 @@ struct PPOConfig {
     // is left open so the policy can hunt prey for the protein bar. Mutually
     // exclusive with mask_atk_fire (if both set, atk_fire wins / masks both).
     bool   mask_fire_only = false;
+    // survive-first action mask (diagnostic A/B, default OFF = control). When
+    // ON, every discrete action except eat(0)/drink(1) is masked to -50 on any
+    // step where the agent is in vital danger (hunger/100 OR thirst/100 below
+    // survive_first_thresh). Movement is the continuous head and stays
+    // unmasked, so the agent can still navigate to food/water. OFF is
+    // byte-identical to the pre-mask config.
+    bool   survive_first_mask   = false;
+    float  survive_first_thresh = 0.35f;
+    // D1: decouple the discrete head from the movement-dominated shared trunk
+    // (dedicated obs trunk + stop-gradient shared read-out). Default OFF =
+    // byte-identical to the shared-trunk policy. See ActorCriticImpl.
+    bool   decouple_disc        = false;
     float  kl_ref_coef   = 0.0f;   // beta for KL(pi||pi_ref=bc_v9) anchor (0=off)
     float  target_kl     = 0.0f;   // CleanRL-style early-stop threshold (0=off)
     // D-122 one-pot tech-tree curriculum gates. Each reserved categorical
@@ -317,6 +352,9 @@ private:
     // gate is OFF. Populated once in the ctor from PPOConfig.allow_*; these
     // columns are masked to -inf EVERY step until their stage unlocks them.
     std::vector<int64_t>                     locked_cats_;
+    // survive-first mask (see PPOConfig); cached from cfg_ in the ctor.
+    bool                                     survive_first_mask_   = false;
+    float                                    survive_first_thresh_ = 0.35f;
     torch::Tensor apply_disc_mask(const torch::Tensor& dl) const {
         if (!mask_enabled_ && locked_cats_.empty()) return dl;
         // In-place writes (index_put_/fill_) and from_blob tensors abort in
@@ -337,6 +375,29 @@ private:
         auto m    = torch::where(cond, torch::full_like(dl, -50.0f),
                                        torch::zeros_like(dl));            // [B,C]
         return dl + m;                                                    // same-shape add
+    }
+
+    // survive-first action mask: on any row whose hunger or thirst (obs cols
+    // 0/1, normalised 0..1) is below survive_first_thresh_, every discrete
+    // action except eat(0)/drink(1) gets -50 added to its logit (prob ~2e-22,
+    // multinomial-safe); vitals safe => full action set. Functional ops + a
+    // same-shape add only (CUDA-safe, identical idiom to apply_disc_mask).
+    // Applied AFTER apply_disc_mask at every call site (sample + PPO update +
+    // KL-ref) so the importance ratio stays consistent. OFF => returns dl.
+    torch::Tensor apply_survive_first_mask(const torch::Tensor& dl,
+                                           const torch::Tensor& obs) const {
+        if (!survive_first_mask_) return dl;
+        auto hunger = obs.narrow(1, 0, 1);                                  // [B,1]
+        auto thirst = obs.narrow(1, 1, 1);                                  // [B,1]
+        auto danger = (hunger < survive_first_thresh_)
+                    | (thirst < survive_first_thresh_);                     // [B,1] bool
+        auto col    = torch::arange(dl.size(1), dl.options()).unsqueeze(0); // [1,C]
+        auto keep   = (col == 0.0) | (col == 1.0);                          // eat,drink
+        auto cond   = danger.expand({dl.size(0), dl.size(1)})
+                    & (~keep).expand({dl.size(0), dl.size(1)});             // [B,C]
+        auto m      = torch::where(cond, torch::full_like(dl, -50.0f),
+                                         torch::zeros_like(dl));            // [B,C]
+        return dl + m;                                                      // same-shape add
     }
 };
 

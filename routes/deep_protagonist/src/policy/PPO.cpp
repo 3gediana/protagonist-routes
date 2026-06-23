@@ -117,6 +117,14 @@ ActorCriticImpl::ActorCriticImpl() {
     // D-123 SF: successor-feature head ψ (HIDDEN -> SF_DIM). Sibling of value.
     successor   = register_module("successor",
                                   torch::nn::Linear(HIDDEN, SF_DIM));
+    // D1 discrete-head decoupling: dedicated discrete trunk (raw obs -> DISC_HID)
+    // + a second discrete head (DISC_HID -> DISC_CATS). Registered ALWAYS so the
+    // modules serialize and warm-start tolerantly like the ψ head; only USED
+    // when decouple_disc is set (see forward_step).
+    disc_trunk  = register_module("disc_trunk",
+                                  torch::nn::Linear(OBS_DIM, DISC_HID));
+    disc_head2  = register_module("disc_head2",
+                                  torch::nn::Linear(DISC_HID, DISC_CATS));
 
     // log_std initialised to log(0.5) ≈ -0.693 (moderate exploration).
     log_std = register_parameter(
@@ -134,6 +142,15 @@ ActorCriticImpl::ActorCriticImpl() {
     orthogonal_(disc_logits, 0.01f);
     orthogonal_(value,       1.0f);
     orthogonal_(successor,   1.0f);    // D-123 SF: same as value head
+    orthogonal_(disc_trunk,  std::sqrt(2.0f));  // D1: hidden trunk, ReLU gain
+    // D1: disc_head2 ZERO-init so the decoupled discrete contribution starts at
+    // exactly 0 -> the policy is byte-identical to the shared-trunk disc_logits(h)
+    // the moment decoupling is enabled; the dedicated path grows from zero.
+    {
+        torch::NoGradGuard g;
+        torch::nn::init::zeros_(disc_head2->weight);
+        torch::nn::init::zeros_(disc_head2->bias);
+    }
     // GRUCell weights are initialised by libtorch with reasonable defaults
     // (uniform Kaiming-ish). We leave them alone.
 }
@@ -146,7 +163,15 @@ ActorCriticImpl::forward_step(const torch::Tensor& obs,
     auto h   = gru(enc, h_in);                          // [B, HIDDEN]
     auto cm  = cont_mean(h);                            // [B, CONT_DIM]
     auto cs  = log_std.expand({obs.size(0), CONT_DIM}); // [B, CONT_DIM]
-    auto dl  = disc_logits(h);                          // [B, DISC_DIM]
+    // D1: when decoupling, the discrete logits = stop-gradient shared-feature
+    // read-out (disc_logits on h.detach(), so the discrete gradient never
+    // reshapes the movement-dominated trunk) + a dedicated feed-forward trunk on
+    // raw obs. disc_head2 zero-init => identical VALUE to disc_logits(h) at
+    // warm-start (detach changes gradient flow only, not the forward value).
+    auto dl  = decouple_disc
+        ? (disc_logits(h.detach())
+           + disc_head2(torch::relu(disc_trunk(obs))))
+        : disc_logits(h);                               // [B, DISC_CATS]
     auto v   = value(h).squeeze(-1);                    // [B]
     return {cm, cs, dl, v, h};
 }
@@ -169,6 +194,7 @@ PPO::PPO(const PPOConfig& cfg)
       net_(ActorCritic())
 {
     torch::manual_seed(cfg.seed);
+    net_->decouple_disc = cfg.decouple_disc;
     net_->to(device_);
 
     opt_ = std::make_shared<torch::optim::Adam>(
@@ -205,6 +231,19 @@ PPO::PPO(const PPOConfig& cfg)
     if (!locked_cats_.empty())
         spdlog::info("D-122 one-pot: {} reserved tech-tree class(es) masked "
                      "(locked until stage unlock)", locked_cats_.size());
+
+    if (cfg_.decouple_disc)
+        spdlog::info("D1 discrete-head decoupling ON: discrete policy uses a "
+                     "dedicated obs trunk (width {}) + stop-gradient shared "
+                     "feature read-out; the movement trunk no longer carries "
+                     "the discrete-policy gradient", ActorCriticImpl::DISC_HID);
+
+    survive_first_mask_   = cfg_.survive_first_mask;
+    survive_first_thresh_ = cfg_.survive_first_thresh;
+    if (survive_first_mask_)
+        spdlog::info("survive-first action mask ON: non-eat/drink discrete "
+                     "actions masked when hunger or thirst < {:.2f} (normalised)",
+                     survive_first_thresh_);
 
     spdlog::info("PPO init on device={}, params={}, obs_dim={}",
                  (device_.is_cuda() ? "CUDA" : "CPU"),
@@ -261,7 +300,7 @@ dp::agent::AgentAction PPO::sample_action(
     // Discrete: 17-way categorical (16 triggers + NOOP). Multinomial
     // sample one index, log_prob = log p(a). Replaces independent
     // Bernoulli heads to break the "press every button" collapse.
-    auto dlm         = apply_disc_mask(dl);
+    auto dlm         = apply_survive_first_mask(apply_disc_mask(dl), t_obs);
     auto log_probs_d = torch::log_softmax(dlm, /*dim=*/1);   // [1, DISC_CATS]
     auto probs_d     = log_probs_d.exp();                    // [1, 17]
     auto idx         = deterministic_
@@ -362,7 +401,7 @@ void PPO::sample_actions_batch(
          - cs
          - 0.5f * std::log(2.0f * static_cast<float>(M_PI)))
             .sum(1);  // [N]
-    auto dlm         = apply_disc_mask(dl);
+    auto dlm         = apply_survive_first_mask(apply_disc_mask(dl), t_obs);
     auto log_probs_d = torch::log_softmax(dlm, /*dim=*/1);  // [N, DISC_CATS]
     auto probs_d     = log_probs_d.exp();
     auto idx         = probs_d.multinomial(1, /*replacement=*/true);  // [N, 1]
@@ -614,7 +653,8 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             auto b_ret   = t_ret.index_select(0,   t_idx);
 
             auto [cm, cs, dl0, v, h_out] = net_->forward_step(b_obs, b_hin);
-            auto dl   = apply_disc_mask(dl0);
+            auto dl_disc = apply_disc_mask(dl0);
+            auto dl   = apply_survive_first_mask(dl_disc, b_obs);
             auto std_ = cs.exp();
             auto cont_lp =
                 (-0.5f * ((b_cont - cm) / std_).pow(2)
@@ -664,7 +704,8 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                     auto rt = ref_net_->forward_step(b_obs, b_hin);
                     r_cm = std::get<0>(rt);
                     r_cs = std::get<1>(rt);
-                    r_dl = apply_disc_mask(std::get<2>(rt));
+                    r_dl = apply_survive_first_mask(
+                               apply_disc_mask(std::get<2>(rt)), b_obs);
                 }
                 auto kl_cont = ((r_cs - cs)
                     + (torch::exp(2.0f * cs) + (cm - r_cm).pow(2))
@@ -698,6 +739,17 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                 ? (cfg_.vf_coef * value_loss)
                 : (policy_loss + cfg_.vf_coef * value_loss
                    - cfg_.ent_coef * entropy);
+            // Dead-action floor: penalize discrete actions whose batch-mean
+            // probability has fallen below the floor so collapsed logits keep
+            // a recoverable gradient. relu(floor - mean_p) is zero for any
+            // healthy action, so this is inert until an action actually dies.
+            if (!critic_only && cfg_.dead_action_floor > 0.0f && cfg_.dead_action_coef > 0.0f) {
+                auto mean_p = torch::log_softmax(dl_disc, /*dim=*/1)
+                                  .exp().mean(0);  // [n_discrete] (pre survive-first mask)
+                auto dead_pen = torch::relu(
+                    torch::full_like(mean_p, cfg_.dead_action_floor) - mean_p).sum();
+                loss = loss + cfg_.dead_action_coef * dead_pen;
+            }
             if (kl_ref.defined()) loss = loss + cfg_.kl_ref_coef * kl_ref;
             // ψ TD loss rides along on the detached head (zero policy effect).
             if (sf_loss.defined()) loss = loss + cfg_.sf_coef * sf_loss;

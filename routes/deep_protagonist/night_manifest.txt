@@ -1,0 +1,72 @@
+# night_manifest.txt — 夜间实验队列（睡前批量跑）
+# 格式：每行一组实验臂  ->  名字 | flags
+#   '#' 开头 = 注释，空行忽略；'|' 左边是名字（决定 metrics/log/ckpt 文件名），右边是额外 CLI flags。
+#   名字只用 [A-Za-z0-9_-]，别带空格。
+#   公共 flags（--policy ppo --n-envs --steps --save-path --save-every --metrics）由 night_run.ps1 自动补齐，
+#   这里只写"区别于对照"的变量。一组一个变量，保持单变量干净对照。
+#
+# 当前这一轮主题：验证"结构 > 奖励塑形"——survive-first 动作 mask 能否在零奖励改动下救回早期生存。
+# 默认 10M 步/臂 ≈ 1 小时；下面 ~10 组 ≈ 8-10 小时，正好一整晚串行跑完。
+# ⚠ 跑之前请先确认：这是要跑的队列吗？阈值/种子要不要改？（本文件是模板，next session 或 John 拍板后再 night_launch.ps1）
+
+# ---- 主轴：阈值扫（单变量 = mask 开关 + 阈值）----
+ab_ctrl              | --seed 7
+ab_treat035          | --seed 7 --survive-first-mask --survive-first-thresh 0.35
+ab_treat025          | --seed 7 --survive-first-mask --survive-first-thresh 0.25
+ab_treat050          | --seed 7 --survive-first-mask --survive-first-thresh 0.50
+
+# ---- 交互项：mask 是否和 dead-action-floor / 熵系数 打架 ----
+ab_treat035_floor0   | --seed 7 --survive-first-mask --survive-first-thresh 0.35 --ppo-dead-action-floor 0
+ab_treat035_ent005   | --seed 7 --survive-first-mask --survive-first-thresh 0.35 --ent-coef 0.005
+
+# ---- 种子稳健性：换 seed 看结论是否复现（配对对照）----
+ab_ctrl_s42          | --seed 42
+ab_treat035_s42      | --seed 42 --survive-first-mask --survive-first-thresh 0.35
+
+# ---- 动作集大小隔离：锁掉 5 个科技树动作，看"砍小离散动作集"是否本身就够（呼应 p0_champ 旁证）----
+ab_ctrl_locktech     | --seed 7 --lock-cook --lock-mine --lock-craft-axe --lock-craft-pickaxe --lock-monument
+ab_treat035_locktech | --seed 7 --survive-first-mask --survive-first-thresh 0.35 --lock-cook --lock-mine --lock-craft-axe --lock-craft-pickaxe --lock-monument
+
+# =====================================================================================
+# 备选猜想组（默认注释；想换某一晚就把上面 survive-first 整块注释、解开下面某一组）
+# 详细 rationale 见 docs/夜间猜想清单.md。每组都自带一个 ctrl 配对。
+# =====================================================================================
+
+# ---- N+1 抗乱按之夜：三路治"熵太高"（trigger-cost / floor / 熵系数）----
+# nb_ctrl              | --seed 7
+# nb_tc002             | --seed 7 --trigger-cost 0.002
+# nb_tc005             | --seed 7 --trigger-cost 0.005
+# nb_tc010             | --seed 7 --trigger-cost 0.01
+# nb_floor0            | --seed 7 --ppo-dead-action-floor 0
+# nb_floor001          | --seed 7 --ppo-dead-action-floor 0.001
+# nb_ent005            | --seed 7 --ent-coef 0.005
+# nb_ent002            | --seed 7 --ent-coef 0.002
+# nb_ent0              | --seed 7 --ent-coef 0.0
+# nb_mask_tc005        | --seed 7 --survive-first-mask --survive-first-thresh 0.35 --trigger-cost 0.005
+
+# ---- N+2 点火之夜：针对性 shaping + 广度脉冲扫 ----
+# fire_ctrl            | --seed 7
+# fire_night05         | --seed 7 --ppo-night-shaping 0.5
+# fire_warmth05        | --seed 7 --ppo-warmth-shaping 0.5
+# fire_hunt05          | --seed 7 --ppo-hunt-shaping 0.5
+# fire_day05           | --seed 7 --ppo-day-shaping 0.5
+# fire_rep0            | --seed 7 --ppo-repertoire-shaping 0
+# fire_rep10           | --seed 7 --ppo-repertoire-shaping 1.0
+# fire_rep20           | --seed 7 --ppo-repertoire-shaping 2.0
+# fire_cw300           | --seed 7 --critic-warmup 300
+
+# ---- N+3 BC 之夜（需先 night_cpu.ps1 录 demo + 一次性 BC 克隆出 checkpoints\bc.pt）----
+# bc_ctrl              | --seed 7
+# bc_kl0               | --seed 7 --load checkpoints\bc.pt --critic-warmup 300 --ent-coef 0.003
+# bc_kl01              | --seed 7 --load checkpoints\bc.pt --critic-warmup 300 --ent-coef 0.003 --ppo-kl-ref checkpoints\bc.pt --ppo-kl-coef 0.1
+# bc_kl03              | --seed 7 --load checkpoints\bc.pt --critic-warmup 300 --ent-coef 0.003 --ppo-kl-ref checkpoints\bc.pt --ppo-kl-coef 0.3
+
+# ---- N+4 世界之夜（改世界 = 改基准，各自成组别混比）----
+# w_tiergate           | --seed 7 --tier-gate
+# w_thirst8            | --seed 7 --thirst-decay 8
+# w_thirst16           | --seed 7 --thirst-decay 16
+# w_nutrition          | --seed 7 --nutrition
+# w_weather            | --seed 7 --weather
+# w_domainrand         | --seed 7 --domain-rand
+# w_maskfire           | --seed 7 --ppo-mask-fire-only
+# w_maskatkfire        | --seed 7 --ppo-mask-atk-fire
