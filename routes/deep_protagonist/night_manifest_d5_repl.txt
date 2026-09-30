@@ -1,0 +1,7 @@
+# D5 (2026-10-01): multi-seed replication of the D4 teleport deep-chain
+# breakthrough (base vs tp at seeds 42 and 9). Per-arm --seed overrides the
+# runner default (later arg wins).
+d5_base_s42 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --seed 42
+d5_tp_s42 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --seed 42
+d5_base_s9 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --seed 9
+d5_tp_s9 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --seed 9

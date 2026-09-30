@@ -63,6 +63,8 @@
 #include <array>
 #include <cmath>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -124,6 +126,41 @@ struct TrainingParams {
     float combat_kill_bonus{10.0f};
     float combat_death_penalty{5.0f};
     float worksite_proximity_reward{0.05f};
+    // D-136 audit (approach-tree PBRS): dense distance gradient toward the
+    // nearest available tree. Each tick the agent gets
+    // approach_tree_reward * max(0, prev_dist - cur_dist) so walking toward
+    // a tree is immediately reinforced. PBRS-style (pays on potential
+    // CHANGE, not on holding a state): standing still or circling pays 0,
+    // so it cannot be camped. This bridges the "agent never reaches a
+    // tree" gap that capped chop success at <0.3% even with chop_radius=25.
+    float approach_tree_reward{0.01f};
+    // D-136 audit round 2 (carry-to-worksite PBRS): same net-approach
+    // gradient as approach_tree_reward, but paid only while isCarrying()
+    // and measured toward the nearest active uncompleted worksite. This is
+    // the missing middle of the pickup -> carry -> deliver -> build chain:
+    // gather_stick pays on pickup and worksite dwell/deposit pays at the
+    // destination, but nothing rewarded the long walk in between, so
+    // deposits stayed at 0. Oscillation pays 0; bounded by distance walked.
+    float approach_worksite_reward{0.01f};
+    // D-136 audit round 3 (metric-mechanism binding): one-shot bonus the
+    // FIRST time an agent completes each distinct goal type in an episode.
+    // Fitness was dominated by eat/drink/survive volume, so selection barely
+    // distinguished a one-trick survivor from a genome expressing many
+    // mechanisms - the blueprint's target (multi-mechanism emergence) was
+    // invisible to the selection metric. First-use-only => bounded by
+    // 16 * bonus per episode, cannot be ground.
+    float repertoire_bonus{3.0f};
+    // D-136 audit round 3: radius (m) at which an agent records a worksite
+    // into spatial memory and senses its material needs. Pays NO reward -
+    // pure information. Configurable so 60 vs the legacy 28 can be A/B
+    // tested (perception.worksite_sighting_radius).
+    float worksite_sighting_radius{60.0f};
+    // Anti-camping cap: maximum seconds of paid worksite-proximity dwell per
+    // agent per episode. Dwell shaping is dense (paid every tick) while real
+    // achievements (fell/build/kill) are one-shot, so uncapped dwell lets a
+    // "stand next to the worksite all day" strategy out-earn actual work.
+    // 0 = uncapped (legacy behaviour).
+    float worksite_proximity_cap_seconds{120.0f};
     float worksite_completion_reward{60.0f};
     // L5 #11: hard "must build to survive" gate. When true, every
     // protagonist that finishes the episode without contributing to at
@@ -154,6 +191,9 @@ struct TrainingParams {
     float shelter_camp_predator_radius{12.0f};
     float social_proximity_reward{0.01f};
     float social_proximity_radius{6.0f};
+    // Anti-camping cap for social-proximity dwell (seconds paid per agent
+    // per episode). 0 = uncapped (legacy behaviour).
+    float social_proximity_cap_seconds{120.0f};
     float signal_emit_reward{0.03f};
     float signal_emit_companion_radius{12.0f};
     float signal_co_attendance_reward{0.6f};
@@ -188,6 +228,15 @@ struct TrainingParams {
     // published regardless of share_reward magnitude (it carries lineage,
     // not just reward).
     float signal_response_share_reward{0.0f};
+    // 2026-10-01 anti-farming gate for signal_response_share_reward. Raw
+    // dwell-share settles on ANY emit (a saturated policy emits constantly)
+    // x mere co-presence -> fitness farming with zero real response
+    // (pe_smoke_c 2026-09-30: emits ~48/gen, response 0, avgFit x5). When
+    // require_approach is on, a listener earns its share only if it CLOSED
+    // distance to the emitter over the response window:
+    // dist_now <= approach_ratio * dist_at_first_dwell. Default off = legacy.
+    bool  signal_response_require_approach{false};
+    float signal_response_approach_ratio{0.8f};
     float joint_hunt_reward{8.0f};
     float joint_hunt_radius{10.0f};
     std::size_t checkpoint_every{0};
@@ -204,6 +253,17 @@ struct TrainingParams {
     double weight_perturb_rate{0.80};
     double weight_reset_rate{0.05};
     double weight_perturb_sigma{0.5};
+
+    // P0 self-adaptive mutation (evolution.mutation.self_adaptive). When true,
+    // each protagonist genome carries its own mutation sigma that co-evolves
+    // with the weights, replacing the weight_perturb_sigma / line_sigma /
+    // mutation_boost / weight_perturb_rate / weight_reset_rate knobs. Default
+    // off, so the legacy fixed-sigma path is unchanged unless opted in.
+    bool mutation_self_adaptive{false};
+    double mutation_initial_sigma{0.10};
+    double mutation_sigma_learning_rate{0.05};
+    double mutation_sigma_min{0.001};
+    double mutation_sigma_max{2.0};
 
     double prey_survival_weight{0.6};
     double prey_food_weight{4.0};
@@ -223,6 +283,16 @@ struct TrainingParams {
     double neat_toggle_connection_rate{0.02};
     double neat_add_modulatory_rate{0.005};
     double neat_compatibility_threshold{3.0};
+
+    // P1 self-adaptive species threshold (evolution.neat.target_species_count).
+    // When > 0, the background-species NEAT auto-adjusts compatibility_threshold
+    // each generation toward this many species (bounded by the min/max below),
+    // demoting compatibility_threshold from a hand-tuned knob to a seed value.
+    // Default 0 keeps the legacy hardcoded band (3..10, step 0.25, no upper clamp).
+    std::size_t neat_target_species_count{0};
+    double neat_compat_adjustment_rate{0.1};
+    double neat_compat_threshold_min{0.5};
+    double neat_compat_threshold_max{10.0};
     bool memory_cognition_enabled{true};
     bool spatial_memory_writes_enabled{true};
     bool episodic_memory_writes_enabled{true};
@@ -512,6 +582,11 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.cooperation_weight = config.getOr<double>("reward.cooperation_weight", params.cooperation_weight);
     params.communication_weight = config.getOr<double>("reward.communication_weight", params.communication_weight);
     params.worksite_proximity_reward = config.getOr<float>("reward.worksite_proximity_reward", params.worksite_proximity_reward);
+    params.approach_tree_reward = config.getOr<float>("reward.approach_tree_reward", params.approach_tree_reward);
+    params.approach_worksite_reward = config.getOr<float>("reward.approach_worksite_reward", params.approach_worksite_reward);
+    params.repertoire_bonus = config.getOr<float>("reward.repertoire_bonus", params.repertoire_bonus);
+    params.worksite_sighting_radius = config.getOr<float>("perception.worksite_sighting_radius", params.worksite_sighting_radius);
+    params.worksite_proximity_cap_seconds = config.getOr<float>("reward.worksite_proximity_cap_seconds", params.worksite_proximity_cap_seconds);
     params.worksite_completion_reward = config.getOr<float>("reward.worksite_completion_reward", params.worksite_completion_reward);
     params.storage_deposit_reward = config.getOr<float>("reward.storage_deposit_reward", params.storage_deposit_reward);
     params.shelter_camp_reward = config.getOr<float>("reward.shelter_camp_reward", params.shelter_camp_reward);
@@ -523,6 +598,7 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     // L2.7 v13: HRL goal-completion sub-reward weights (mirrored from
     // route config so the per-tick reward loop has them available).
     params.social_proximity_reward = config.getOr<float>("reward.social_proximity_reward", params.social_proximity_reward);
+    params.social_proximity_cap_seconds = config.getOr<float>("reward.social_proximity_cap_seconds", params.social_proximity_cap_seconds);
     params.social_proximity_radius = config.getOr<float>("reward.social_proximity_radius", params.social_proximity_radius);
     params.signal_emit_reward = config.getOr<float>("reward.signal_emit_reward", params.signal_emit_reward);
     params.signal_emit_companion_radius = config.getOr<float>("reward.signal_emit_companion_radius", params.signal_emit_companion_radius);
@@ -533,6 +609,8 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.signal_response_reward = config.getOr<float>("reward.signal_response_reward", params.signal_response_reward);
     params.signal_response_dense_reward = config.getOr<float>("reward.signal_response_dense_reward", params.signal_response_dense_reward);
     params.signal_response_share_reward = config.getOr<float>("reward.signal_response_share_reward", params.signal_response_share_reward);
+    params.signal_response_require_approach = config.getOr<bool>("reward.signal_response_require_approach", params.signal_response_require_approach);
+    params.signal_response_approach_ratio = config.getOr<float>("reward.signal_response_approach_ratio", params.signal_response_approach_ratio);
     params.joint_hunt_reward = config.getOr<float>("reward.joint_hunt_reward", params.joint_hunt_reward);
     params.joint_hunt_radius = config.getOr<float>("reward.joint_hunt_radius", params.joint_hunt_radius);
     params.checkpoint_every = config.getOr<std::size_t>("evolution.checkpoint_every", params.checkpoint_every);
@@ -545,6 +623,11 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.weight_perturb_rate = config.getOr<double>("evolution.mutation.weight_perturb_rate", params.weight_perturb_rate);
     params.weight_reset_rate = config.getOr<double>("evolution.mutation.weight_reset_rate", params.weight_reset_rate);
     params.weight_perturb_sigma = config.getOr<double>("evolution.mutation.weight_perturb_sigma", params.weight_perturb_sigma);
+    params.mutation_self_adaptive = config.getOr<bool>("evolution.mutation.self_adaptive", params.mutation_self_adaptive);
+    params.mutation_initial_sigma = config.getOr<double>("evolution.mutation.initial_sigma", params.mutation_initial_sigma);
+    params.mutation_sigma_learning_rate = config.getOr<double>("evolution.mutation.sigma_learning_rate", params.mutation_sigma_learning_rate);
+    params.mutation_sigma_min = config.getOr<double>("evolution.mutation.sigma_min", params.mutation_sigma_min);
+    params.mutation_sigma_max = config.getOr<double>("evolution.mutation.sigma_max", params.mutation_sigma_max);
 
     params.prey_survival_weight = config.getOr<double>("reward.prey.survival_weight", params.prey_survival_weight);
     params.prey_food_weight = config.getOr<double>("reward.prey.food_weight", params.prey_food_weight);
@@ -564,6 +647,10 @@ TrainingParams loadTrainingParams(const config::Config& config) {
     params.neat_toggle_connection_rate = config.getOr<double>("evolution.neat.toggle_connection_rate", params.neat_toggle_connection_rate);
     params.neat_add_modulatory_rate = config.getOr<double>("evolution.neat.add_modulatory_rate", params.neat_add_modulatory_rate);
     params.neat_compatibility_threshold = config.getOr<double>("evolution.neat.compatibility_threshold", params.neat_compatibility_threshold);
+    params.neat_target_species_count = config.getOr<std::size_t>("evolution.neat.target_species_count", params.neat_target_species_count);
+    params.neat_compat_adjustment_rate = config.getOr<double>("evolution.neat.compatibility_threshold_adjustment_rate", params.neat_compat_adjustment_rate);
+    params.neat_compat_threshold_min = config.getOr<double>("evolution.neat.compatibility_threshold_min", params.neat_compat_threshold_min);
+    params.neat_compat_threshold_max = config.getOr<double>("evolution.neat.compatibility_threshold_max", params.neat_compat_threshold_max);
     params.memory_cognition_enabled = config.getOr<bool>("population.protagonist.memory_cognition_enabled", params.memory_cognition_enabled);
     params.spatial_memory_writes_enabled = config.getOr<bool>("population.protagonist.spatial_memory_writes_enabled", params.spatial_memory_writes_enabled);
     params.episodic_memory_writes_enabled = config.getOr<bool>("population.protagonist.episodic_memory_writes_enabled", params.episodic_memory_writes_enabled);
@@ -1699,6 +1786,9 @@ void evaluatePopulation(World2D& world,
         SimTimeSeconds emit_time{0.0};
         Tick emit_tick{0};
         std::unordered_map<AgentId, float> response_seconds;
+        // require_approach gate: listener position at its FIRST dwell tick,
+        // compared against its position at settlement time.
+        std::unordered_map<AgentId, Vec2> first_pos;
         bool settled{false};
     };
     std::unordered_map<Tick, SignalLedgerEntry> signal_response_ledger;
@@ -1726,6 +1816,16 @@ void evaluatePopulation(World2D& world,
     std::unordered_map<AgentId, std::size_t> previous_kills;
     std::unordered_map<AgentId, float> previous_hydration;
     std::unordered_map<AgentId, std::unordered_map<AgentId, Tick>> last_signal_response_tick;
+    // Anti-camping dwell accounting (seconds of *paid* proximity dwell per
+    // agent this episode). Once an agent hits the cap, further dwell pays 0.
+    std::unordered_map<AgentId, float> worksite_dwell_paid_seconds;
+    std::unordered_map<AgentId, float> social_dwell_paid_seconds;
+    // D-136 audit (approach-tree PBRS): last tick's distance to the nearest
+    // available tree per protagonist. Used to pay a dense "got closer"
+    // gradient; see params.approach_tree_reward.
+    std::unordered_map<AgentId, float> prev_nearest_tree_dist;
+    std::unordered_map<AgentId, float> prev_nearest_site_dist;
+    std::unordered_map<AgentId, std::uint32_t> repertoire_paid_mask;
     // Audit § 4.4 / 4.2 fix: each (listener, emitter, emit_tick) tuple
     // generates exactly one peer_signal_heard episodic event, so the
     // listener's EpisodicMemoryBank carries a "last heard signal pos"
@@ -2000,7 +2100,13 @@ void evaluatePopulation(World2D& world,
             const double outcome_w = params.outcome_weight;
             if (alive_now) {
                 any_alive = true;
-                reward += outcome_w * params.survival_weight * 0.01 * static_cast<double>(dt_seconds);
+                // D-136 audit: dense survival baseline lowered 0.01 -> 0.004.
+                // At 0.01 a do-nothing survivor banked ~7.2 fitness per 720s
+                // episode, dwarfing the marginal fitness of chop/build/craft
+                // chains and letting "lazy survivor" genomes dominate NEAT
+                // selection. 0.004 keeps survival mattering (~2.9/episode)
+                // while letting mechanism completions differentiate genomes.
+                reward += outcome_w * params.survival_weight * 0.004 * static_cast<double>(dt_seconds);
                 reward += outcome_w * params.food_weight * evaluateFoodReward(*concrete, world);
                 // L2.6 v12: NEAT-style intrinsic motivation (Cuccu &
                 // Schmidhuber 2011, "Intrinsically Motivated NeuroEvolution").
@@ -2010,6 +2116,56 @@ void evaluatePopulation(World2D& world,
                 // weak to overcome drive penalty. v10/v11 had it
                 // multiplied by outcome_w which silently zeroed it.
                 reward += params.intrinsic_weight * evaluateIntrinsicReward(*concrete);
+                // D-136 audit (approach-tree PBRS): pay for net progress
+                // toward the nearest available tree. Only positive deltas
+                // pay (walking away just resets the baseline), and the
+                // per-tick payment is bounded by agent speed * dt, so the
+                // episode total is bounded by total distance walked toward
+                // trees - it cannot be farmed by oscillating.
+                if (params.approach_tree_reward > 0.0f && tree_layer != nullptr) {
+                    if (const auto nearest = tree_layer->nearestTree(concrete->position());
+                        nearest.has_value() && nearest->available) {
+                        const float cur_dist = Vec2::distance(concrete->position(), nearest->position);
+                        auto [dist_it, inserted] = prev_nearest_tree_dist.try_emplace(agent->id(), cur_dist);
+                        if (!inserted) {
+                            const float closer_by = dist_it->second - cur_dist;
+                            if (closer_by > 0.0f) {
+                                reward += static_cast<double>(params.approach_tree_reward) * static_cast<double>(closer_by);
+                            }
+                            dist_it->second = cur_dist;
+                        }
+                    }
+                }
+                // D-136 audit round 2: carry-to-worksite gradient (see
+                // params.approach_worksite_reward). Only while carrying, so
+                // dropping the object resets nothing exploitable - the
+                // baseline entry is erased when not carrying.
+                if (params.approach_worksite_reward > 0.0f && worksite_layer != nullptr) {
+                    if (!concrete->isCarrying()) {
+                        prev_nearest_site_dist.erase(agent->id());
+                    } else {
+                        float best = -1.0f;
+                        for (const auto& site : worksite_layer->sites()) {
+                            if (!site.active || site.completed) {
+                                continue;
+                            }
+                            const float d = Vec2::distance(concrete->position(), site.position);
+                            if (best < 0.0f || d < best) {
+                                best = d;
+                            }
+                        }
+                        if (best >= 0.0f) {
+                            auto [site_it, site_inserted] = prev_nearest_site_dist.try_emplace(agent->id(), best);
+                            if (!site_inserted) {
+                                const float closer_by = site_it->second - best;
+                                if (closer_by > 0.0f) {
+                                    reward += static_cast<double>(params.approach_worksite_reward) * static_cast<double>(closer_by);
+                                }
+                                site_it->second = best;
+                            }
+                        }
+                    }
+                }
                 // L2.7 v13: Hierarchical RL sub-rewards. Each goal-type
                 // completion event in this tick contributes a dense
                 // reward independent of outcome_weight, breaking the
@@ -2021,6 +2177,20 @@ void evaluatePopulation(World2D& world,
                     const int n = concrete->goalCompletionThisTick(static_cast<int>(g));
                     if (n > 0) {
                         reward += static_cast<double>(w) * static_cast<double>(n);
+                    }
+                }
+                // D-136 audit round 3: repertoire breadth bonus (see
+                // params.repertoire_bonus). Pays once per distinct goal type
+                // per episode, on its first completion.
+                if (params.repertoire_bonus > 0.0f) {
+                    auto& paid = repertoire_paid_mask[agent->id()];
+                    for (std::size_t g = 0; g < params.goal_completion_rewards.size(); ++g) {
+                        const std::uint32_t bit = 1u << g;
+                        if ((paid & bit) == 0u
+                            && concrete->goalCompletionThisTick(static_cast<int>(g)) > 0) {
+                            paid |= bit;
+                            reward += static_cast<double>(params.repertoire_bonus);
+                        }
                     }
                 }
                 alive_last_tick.insert(agent->id());
@@ -2151,7 +2321,14 @@ void evaluatePopulation(World2D& world,
                     }
                     if (worksite_layer != nullptr) {
                         for (const auto& site : worksite_layer->sites()) {
-                            if (site.active && Vec2::distanceSquared(agent_pos, site.position) <= 28.0f * 28.0f) {
+                            // D-136 audit round 3: a worksite is a large
+                            // landmark; the legacy 28m sighting radius made
+                            // worksite memory (and thus the BuildWorksite /
+                            // GatherStick goals plus the carry-hold guard)
+                            // unreachable for agents foraging away from the
+                            // base. Radius is configurable for A/B tests.
+                            if (site.active && Vec2::distanceSquared(agent_pos, site.position)
+                                    <= params.worksite_sighting_radius * params.worksite_sighting_radius) {
                                 worksite_nearby = true;
                                 record_spatial(site.position, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
                             }
@@ -2221,7 +2398,8 @@ void evaluatePopulation(World2D& world,
                         if (worksite_layer != nullptr) {
                             for (const auto& site : worksite_layer->sites()) {
                                 if (!site.active || site.completed) continue;
-                                if (Vec2::distanceSquared(agent_pos, site.position) > 32.0f * 32.0f) continue;
+                                if (Vec2::distanceSquared(agent_pos, site.position)
+                                        > params.worksite_sighting_radius * params.worksite_sighting_radius) continue;
                                 if (site.stored_sticks < site.required_sticks) site_needs_sticks = true;
                                 if (site.stored_stones < site.required_stones) site_needs_stones = true;
                             }
@@ -2566,7 +2744,11 @@ void evaluatePopulation(World2D& world,
                             // shouldn't occur), skip silently.
                             if (auto ledger_it = signal_response_ledger.find(emit.tick);
                                 ledger_it != signal_response_ledger.end() && !ledger_it->second.settled) {
-                                ledger_it->second.response_seconds[agent->id()] += static_cast<float>(dt_seconds);
+                                auto& lentry = ledger_it->second;
+                                if (lentry.response_seconds[agent->id()] == 0.0f) {
+                                    lentry.first_pos[agent->id()] = agent_pos;
+                                }
+                                lentry.response_seconds[agent->id()] += static_cast<float>(dt_seconds);
                             }
                             if (halo_credited_this_tick) {
                                 continue;
@@ -2615,7 +2797,20 @@ void evaluatePopulation(World2D& world,
                     }
                 }
                 if (inside_active_worksite) {
-                    reward += params.cooperation_weight * static_cast<double>(params.worksite_proximity_reward) * static_cast<double>(dt_seconds);
+                    // D-136 audit: dwell shaping is gated on isCarrying().
+                    // Paying for bare presence let "stand next to the
+                    // worksite all day" out-earn actual building work even
+                    // with the 120s cap. Requiring carried material aligns
+                    // the dense signal with the intended behaviour (bring
+                    // sticks/stones to the site); empty-handed dwell pays 0
+                    // and does not consume the cap.
+                    float& ws_paid = worksite_dwell_paid_seconds[agent->id()];
+                    if (concrete->isCarrying()
+                        && (params.worksite_proximity_cap_seconds <= 0.0f
+                            || ws_paid < params.worksite_proximity_cap_seconds)) {
+                        reward += params.cooperation_weight * static_cast<double>(params.worksite_proximity_reward) * static_cast<double>(dt_seconds);
+                        ws_paid += static_cast<float>(dt_seconds);
+                    }
                     if (params.social_memory_writes_enabled) {
                         if (auto* protagonist_brain = dynamic_cast<ProtagonistBrain*>(&concrete->brain()); protagonist_brain != nullptr) {
                             for (const auto* peer : alive_protagonists) {
@@ -2755,7 +2950,12 @@ void evaluatePopulation(World2D& world,
                     }
                 }
                 if (neighbours >= 1) {
-                    reward += params.cooperation_weight * static_cast<double>(params.social_proximity_reward) * static_cast<double>(neighbours) * static_cast<double>(dt_seconds);
+                    float& soc_paid = social_dwell_paid_seconds[agent->id()];
+                    if (params.social_proximity_cap_seconds <= 0.0f
+                        || soc_paid < params.social_proximity_cap_seconds) {
+                        reward += params.cooperation_weight * static_cast<double>(params.social_proximity_reward) * static_cast<double>(neighbours) * static_cast<double>(dt_seconds);
+                        soc_paid += static_cast<float>(dt_seconds);
+                    }
                     if (neighbours >= 2) {
                         behavior.cooperative_co_presence_seconds += dt_seconds;
                     }
@@ -3007,6 +3207,18 @@ void evaluatePopulation(World2D& world,
             const SimTimeSeconds window = params.signal_co_attendance_window_seconds;
             const float signal_reward_scale = static_cast<float>(
                 params.cooperation_weight * static_cast<double>(params.signal_response_share_reward));
+            // require_approach gate: snapshot current positions once per tick;
+            // a listener without a proven approach earns nothing (its dwell
+            // was co-presence, not response). Lineage events for gated-out
+            // listeners are dropped too -- no reward, no record.
+            const bool approach_gate_on = params.signal_response_require_approach
+                                       && params.signal_response_share_reward != 0.0f;
+            std::unordered_map<AgentId, Vec2> pos_now;
+            if (approach_gate_on) {
+                for (const auto* ag : agent_layer->agents()) {
+                    if (ag != nullptr) pos_now[ag->id()] = ag->position();
+                }
+            }
             for (auto it = signal_response_ledger.begin(); it != signal_response_ledger.end(); ) {
                 auto& entry = it->second;
                 if (entry.settled || now_time <= entry.emit_time + window) {
@@ -3019,6 +3231,20 @@ void evaluatePopulation(World2D& world,
                     entry.response_seconds,
                     signal_reward_scale);
                 for (const auto& p : signal_payouts) {
+                    if (approach_gate_on) {
+                        const auto fp = entry.first_pos.find(p.recipient);
+                        const auto pn = pos_now.find(p.recipient);
+                        if (fp == entry.first_pos.end() || pn == pos_now.end()) {
+                            continue;   // no proven approach -> no pay
+                        }
+                        const float d0 = std::sqrt(
+                            Vec2::distanceSquared(fp->second, entry.emit_pos));
+                        const float d1 = std::sqrt(
+                            Vec2::distanceSquared(pn->second, entry.emit_pos));
+                        if (d1 > params.signal_response_approach_ratio * d0) {
+                            continue;   // did not close distance -> no pay
+                        }
+                    }
                     world.eventBus().publish(events::Event{
                         events::EventType::CreditAssigned,
                         events::CreditAssigned{
@@ -3310,6 +3536,12 @@ void accumulateGenomeBehavior(
         bd.craft_count   += concrete->goalCompletionTotal(static_cast<int>(GoalType::CraftWeapon));
         bd.hunt_count    += concrete->goalCompletionTotal(static_cast<int>(GoalType::Hunt));
         bd.signal_emits  += concrete->goalCompletionTotal(static_cast<int>(GoalType::EmitSignal));
+        // A1 (v18) expansion axes (social / explore / provision).
+        bd.respond_signals  += concrete->goalCompletionTotal(static_cast<int>(GoalType::RespondSignal));
+        bd.explore_count    += concrete->goalCompletionTotal(static_cast<int>(GoalType::Explore));
+        bd.find_water_count += concrete->goalCompletionTotal(static_cast<int>(GoalType::FindWater));
+        bd.find_food_count  += concrete->goalCompletionTotal(static_cast<int>(GoalType::FindFood));
+        bd.rest_count       += concrete->goalCompletionTotal(static_cast<int>(GoalType::RestNearFire));
     }
 }
 
@@ -3837,16 +4069,29 @@ int ProtagonistEcologyRuntime::runTraining() {
              route.compute.protagonist_dense_gpu_enabled);
 
     const auto trace_config = loadTraceRecorderConfig(config_);
+    SelfAdaptiveSigma protagonist_self_adaptive{};
+    protagonist_self_adaptive.enabled = params.mutation_self_adaptive;
+    protagonist_self_adaptive.initial_sigma = params.mutation_initial_sigma;
+    protagonist_self_adaptive.learning_rate = params.mutation_sigma_learning_rate;
+    protagonist_self_adaptive.sigma_min = params.mutation_sigma_min;
+    protagonist_self_adaptive.sigma_max = params.mutation_sigma_max;
+    if (params.mutation_self_adaptive) {
+        LOG_INFO("ProtagonistEcologyRuntime: P0 self-adaptive mutation enabled (initial_sigma={}, lr={}, sigma in [{}, {}])",
+                 params.mutation_initial_sigma, params.mutation_sigma_learning_rate,
+                 params.mutation_sigma_min, params.mutation_sigma_max);
+    }
+
     ProtagonistEvolution evolution(
         params.elite_ratio,
         params.tournament_size,
         params.weight_perturb_rate,
         params.weight_reset_rate,
         params.weight_perturb_sigma,
-        route.random_seed + 5000);
+        route.random_seed + 5000,
+        protagonist_self_adaptive);
 
     auto make_neat_evolution = [&](std::uint32_t seed_offset) {
-        return std::make_unique<NeatEvolution>(
+        auto neat = std::make_unique<NeatEvolution>(
             params.elite_ratio,
             params.tournament_size,
             params.weight_perturb_rate,
@@ -3860,6 +4105,13 @@ int ProtagonistEcologyRuntime::runTraining() {
             1.0, 1.0, 0.4,
             0.1f, 5.0f,
             route.random_seed + seed_offset);
+        // P1: opt the background species into target-species-driven, bounded
+        // threshold control. No-op (legacy band) when target_species_count == 0.
+        neat->configureSpeciation(params.neat_target_species_count,
+                                  params.neat_compat_adjustment_rate,
+                                  params.neat_compat_threshold_min,
+                                  params.neat_compat_threshold_max);
+        return neat;
     };
 
     const auto resolved_slots = resolveBackgroundSlots(route);
@@ -3905,6 +4157,16 @@ int ProtagonistEcologyRuntime::runTraining() {
     const auto checkpoint_path = config_.getOr<std::string>("runtime.resume_checkpoint_path", "");
     if (checkpoint_path.empty()) {
         population = createInitialPopulation(route);
+        // P0: seed the fresh population's self-adaptive sigma from config. On a
+        // checkpoint resume we intentionally keep each genome's already-evolved
+        // sigma (loaded from disk) rather than resetting it.
+        if (params.mutation_self_adaptive) {
+            for (auto& genome : population) {
+                if (auto* pg = dynamic_cast<ProtagonistGenome*>(genome.get())) {
+                    pg->setMutationSigma(static_cast<float>(params.mutation_initial_sigma));
+                }
+            }
+        }
         for (auto& ctx : species_contexts) {
             const auto output_dim = backgroundOutputDim(ctx.archetype, &route);
             const std::uint64_t id_base = static_cast<std::uint64_t>(ctx.slot_index + 1) * kIdStride + 1ULL;
@@ -4247,13 +4509,72 @@ int ProtagonistEcologyRuntime::runTraining() {
                                        route.me_neat_max_bins,
                                        route.me_neat_hunt_bin_size,
                                        route.me_neat_hunt_max_bins);
-    if (route.me_neat_enabled && route.me_neat_cvt_enabled) {
+    std::map<QualityDiversityArchive::CellKey, std::unique_ptr<ProtagonistGenome>> me_archive_genomes;
+
+    // P0 fix: try restoring ME archive from checkpoint first (preserves CVT
+    // centroids + accumulated cell elites across warm-resume). Falls back to
+    // fresh initCvt if no checkpoint archive is found.
+    bool me_archive_restored = false;
+    if (route.me_neat_enabled && !checkpoint_path.empty()) {
+        const auto ckpt_archive_path = std::filesystem::path(checkpoint_path) / "me_archive.bin";
+        // Hard gate: resuming without a serialized archive silently rebuilds an
+        // empty archive under the *current* config geometry, which historically
+        // destroyed accumulated coverage (me_cov 39/96 -> 3..8 within a few
+        // gens). Refuse to start unless explicitly overridden.
+        if (!std::filesystem::exists(ckpt_archive_path)) {
+            const char* allow = std::getenv("PE_ALLOW_ARCHIVE_REBUILD");
+            if (allow == nullptr || std::string(allow) != "1") {
+                spdlog::error("FATAL: resume checkpoint '{}' has no me_archive.bin. "
+                              "Resuming would rebuild an EMPTY archive with the current "
+                              "config geometry and discard all accumulated coverage. "
+                              "Set PE_ALLOW_ARCHIVE_REBUILD=1 to override deliberately.",
+                              checkpoint_path);
+                throw std::runtime_error("resume refused: me_archive.bin missing in checkpoint");
+            }
+            spdlog::warn("PE_ALLOW_ARCHIVE_REBUILD=1: resuming '{}' without me_archive.bin; "
+                         "archive will be rebuilt empty.", checkpoint_path);
+        }
+        if (std::filesystem::exists(ckpt_archive_path) && !me_archive.loadFromFile(ckpt_archive_path)) {
+            spdlog::error("FATAL: me_archive.bin exists in checkpoint '{}' but failed to load "
+                          "(corrupt or incompatible format). Refusing to resume with an empty archive.",
+                          checkpoint_path);
+            throw std::runtime_error("resume refused: me_archive.bin load failed");
+        }
+        if (std::filesystem::exists(ckpt_archive_path)) {
+            me_archive_restored = true;
+            LOG_INFO("ME archive restored from checkpoint: coverage={}/{} qd={:.1f}",
+                     me_archive.coverage(), me_archive.maxCells(), me_archive.qdScore());
+            if (route.me_neat_lifetime_archive_enabled) {
+                const auto me_genomes_dir = std::filesystem::path(checkpoint_path) / "me_archive_genomes";
+                if (std::filesystem::exists(me_genomes_dir) && std::filesystem::is_directory(me_genomes_dir)) {
+                    std::size_t loaded_me_genomes = 0;
+                    for (const auto& entry : std::filesystem::directory_iterator(me_genomes_dir)) {
+                        if (!entry.is_regular_file()) continue;
+                        const auto fn = entry.path().filename().string();
+                        if (fn.substr(0, 8) != "me_cell_" || fn.size() < 12) continue;
+                        const auto dot = fn.rfind('.');
+                        if (dot == std::string::npos) continue;
+                        const auto key_str = fn.substr(8, dot - 8);
+                        try {
+                            const int cell_key = std::stoi(key_str);
+                            auto genome = ProtagonistGenome::loadFromFile(entry.path());
+                            if (genome) {
+                                me_archive_genomes[cell_key] = std::make_unique<ProtagonistGenome>(*genome);
+                                ++loaded_me_genomes;
+                            }
+                        } catch (...) {}
+                    }
+                    LOG_INFO("ME archive genomes restored: {} cell genomes loaded", loaded_me_genomes);
+                }
+            }
+        }
+    }
+    if (!me_archive_restored && route.me_neat_enabled && route.me_neat_cvt_enabled) {
         me_archive.initCvt(route.me_neat_cvt_num_centroids,
                            route.me_neat_cvt_samples_per_centroid,
                            route.me_neat_cvt_kmeans_iters,
                            static_cast<std::uint32_t>(route.random_seed + 0x1A2B));
     }
-    std::map<QualityDiversityArchive::CellKey, std::unique_ptr<ProtagonistGenome>> me_archive_genomes;
 
     for (std::size_t generation = start_generation; generation < params.generations; ++generation) {
         if (stop_requested_.load()) {
@@ -4584,6 +4905,12 @@ int ProtagonistEcologyRuntime::runTraining() {
                 dst.craft_count   += bd.craft_count;
                 dst.hunt_count    += bd.hunt_count;
                 dst.signal_emits  += bd.signal_emits;
+                // A1 (v18) expansion axes.
+                dst.respond_signals  += bd.respond_signals;
+                dst.explore_count    += bd.explore_count;
+                dst.find_water_count += bd.find_water_count;
+                dst.find_food_count  += bd.find_food_count;
+                dst.rest_count       += bd.rest_count;
             }
             // Merge behavior counters.
             behavior.deposits_total += r.behavior.deposits_total;
@@ -5396,6 +5723,22 @@ int ProtagonistEcologyRuntime::runTraining() {
                 }
             }
 
+            // P0 fix: persist ME archive (CVT centroids + cell mapping) so
+            // warm-resume does not lose diversity coverage.
+            if (route.me_neat_enabled) {
+                me_archive.saveToFile(checkpoint_dir / "me_archive.bin");
+                if (route.me_neat_lifetime_archive_enabled && !me_archive_genomes.empty()) {
+                    const auto me_genomes_dir = checkpoint_dir / "me_archive_genomes";
+                    std::filesystem::create_directories(me_genomes_dir, ec);
+                    for (const auto& [cell_key, genome_ptr] : me_archive_genomes) {
+                        if (genome_ptr != nullptr) {
+                            const auto fn = std::string("me_cell_") + std::to_string(cell_key) + ".bin";
+                            genome_ptr->saveToFile(me_genomes_dir / fn);
+                        }
+                    }
+                }
+            }
+
             std::ofstream manifest(checkpoint_dir / "checkpoint_manifest.json", std::ios::out | std::ios::trunc);
             if (manifest.is_open()) {
                 manifest << "{\n"
@@ -5431,7 +5774,9 @@ int ProtagonistEcologyRuntime::runTraining() {
                              << "\"population_count\":" << background_entries[i].population_count
                              << "}";
                 }
-                manifest << "]\n}\n";
+                manifest << "],\n"
+                         << "  \"me_archive_resume\": " << (route.me_neat_enabled ? "true" : "false")
+                         << "\n}\n";
             }
             LOG_INFO("Protagonist gen {} checkpoint saved protagonist={} background_species={} -> {}",
                      generation,

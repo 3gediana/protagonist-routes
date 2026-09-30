@@ -1,0 +1,5 @@
+# D6 (2026-10-01): 40M-step scaling of the two best D4 arms (same seed 7 as
+# D4 for continuity). Steps come from the launcher (-Steps 40000000), not
+# from this manifest.
+d6_tp_s7_40m | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3
+d6_ss_tp_s7_40m | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --stream-split --teleport --teleport-prob 0.3
