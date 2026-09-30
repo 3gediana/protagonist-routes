@@ -84,6 +84,15 @@ public:
 
     void clear();  // episode reset
 
+    // D2 teleport curriculum: restore a captured campfire verbatim (no wood
+    // cost, no merge). Only ever called from Environment's snapshot restore,
+    // which itself is gated behind cfg.teleport_curriculum_enabled, so default
+    // worlds never hit this path.
+    void restore_fire(float x, float y, float fuel) {
+        if (static_cast<int>(fires_.size()) >= cfg_.max_fires) return;
+        fires_.push_back(Campfire{x, y, fuel, fuel > 0.0f});
+    }
+
 private:
     Config                cfg_;
     std::vector<Campfire> fires_;

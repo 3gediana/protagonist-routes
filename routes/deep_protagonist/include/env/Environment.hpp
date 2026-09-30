@@ -59,6 +59,18 @@ struct EnvConfig {
     // ≈10%, 0.005 collapses to NOOP 98%, 0 lets cheap noop triggers dominate.
     float    trigger_cost         = 0.001f;
 
+    // --- D2 teleport milestone curriculum (Go-Explore style, on-policy) ----
+    // When ON, the first time this life fires a deep-chain milestone (cook /
+    // mine / axe / pickaxe) the env captures a snapshot of the opportunity
+    // (pose, vitals, inventory, tech counters, nearest lit fire, ore layout).
+    // With probability teleport_prob each later reset() restores one snapshot
+    // instead of the normal fresh spawn, so rare tech events occur at a
+    // trainable frequency. Same-world only: snapshots are always valid here
+    // because the world is static across episodes (only VecEnv::reseed
+    // changes it, and that path never captures). Default OFF = byte-identical.
+    bool     teleport_enabled = false;
+    float    teleport_prob    = 0.30f;
+
     // D-101: when true, disable the in-building hunger/thirst regen (and the
     // D-099 in-building r_alive bonus). Used ONLY for ScriptedSettler demo
     // recording: with regen on, the settler camps at home and never forages,
@@ -177,12 +189,23 @@ struct EpisodeMilestones {
     bool house     = false;
     bool crop      = false;
     bool follower  = false;
+    // D-136 audit round 3: the D-122 tech-tree mechanisms were invisible to
+    // the score - the blueprint asks for multi-mechanism emergence but the
+    // metric only measured 10 of the 15 mechanisms, so the trainer had no
+    // measured incentive to ever express cook/mine/tool/monument behaviour.
+    // Metric and mechanism set are now bound 1:1.
+    bool cook      = false;
+    bool mine      = false;
+    bool axe       = false;
+    bool pickaxe   = false;
+    bool monument  = false;
 
-    static constexpr int N = 10;
+    static constexpr int N = 15;
     static const char* name(int i) {
         static const char* names[N] = {
             "drink","eat","collect","spear","shelter",
-            "clothing","seed","house","crop","follower"
+            "clothing","seed","house","crop","follower",
+            "cook","mine","axe","pickaxe","monument"
         };
         return names[i];
     }
@@ -288,6 +311,9 @@ public:
     // PASS/FAIL per check; returns true iff all pass. Invoked by
     // `--mine-selftest` in main_train.
     bool mine_selftest();
+    // D2 teleport curriculum: end-to-end capture+restore check (drives the
+    // REAL step() mine handler, then verifies reset() restores the snapshot).
+    bool teleport_selftest();
 
     // D-122 RUNG 3 stone-tool END-TO-END self-test. Drives the REAL step()
     // craft handlers + tool effects deterministically. Verifies: (1) craft an
@@ -399,6 +425,11 @@ private:
     // DP_SPAWN_RANDOM is on, so there is no fixed safe corner to camp.
     bool pick_random_spawn_(float& sx, float& sy, float& sz);
 
+    // D2 teleport curriculum: capture on first deep-chain milestone of the
+    // life; restore (probabilistically) at the end of reset().
+    void maybe_capture_teleport_();
+    void apply_teleport_restore_();
+
     EnvConfig                       cfg_;
     float                           spawn_x_ = 0.0f;
     float                           spawn_y_ = 0.0f;
@@ -423,6 +454,11 @@ private:
     dp::agent::Wardrobe             wardrobe_;
     dp::world::BuildingSystem       buildings_;
     dp::world::FireSystem           fires_;        // D-112 Stage3 L2 campfires
+    // Ember buff: residual body-stored warmth after leaving a lit fire.
+    // Charges while standing in a fire's warm radius, then decays over
+    // ~kEmberDurationS seconds once away, giving early agents a portable
+    // "warm up at night, forage at dawn" path before clothing unlocks.
+    float                           ember_warmth_s_ = 0.0f;
     dp::world::WeatherSystem        weather_;      // Stage W1 rain coupling
     dp::world::FarmingSystem        farming_;
     dp::agent::TameSystem           tame_;
@@ -484,6 +520,28 @@ private:
     // time the agent mines (curriculum carrot; NOT added to the 10-entry
     // EpisodeMilestones score vector, matching first_cook).
     struct OreNode { float x; float y; float z; int remaining; };
+
+    // ---- D2 teleport curriculum snapshot. Mid-life opportunity state,
+    // captured the step a deep-chain milestone fires and restored at some
+    // later reset() so the tech chain can be practised from its midpoint.
+    struct TeleportSnapshot {
+        float x = 0.0f, y = 0.0f, z = 0.0f, yaw = 0.0f;
+        dp::agent::VitalState vitals{};
+        dp::agent::Inventory  inventory{};
+        int  raw_meat = 0, cooked_meat = 0, ore = 0;
+        bool has_axe = false, has_pickaxe = false;
+        bool has_fire = false;
+        float fire_x = 0.0f, fire_y = 0.0f, fire_fuel = 0.0f;
+        std::vector<OreNode> ore_nodes;
+    };
+    // kind index: 0=cook 1=mine 2=axe 3=pickaxe. Monument is excluded: its
+    // site is re-placed near the per-life spawn, so a mid-life pose would
+    // strand the restored agent away from it.
+    static constexpr int TP_KINDS = 4;
+    static constexpr int TP_ARCHIVE_CAP = 4;   // ring per kind (world-diversity)
+    std::vector<TeleportSnapshot> tp_archive_[TP_KINDS];
+    bool                          tp_captured_[TP_KINDS] = {};
+    uint64_t                      tp_rng_ = 0;   // lazily seeded from world seed
     static constexpr int            ORE_CAP            = 5;
     static constexpr int            ORE_NODE_RICHNESS  = 3;     // mines per node
     static constexpr float          MINE_REACH         = 3.0f;  // metres to node

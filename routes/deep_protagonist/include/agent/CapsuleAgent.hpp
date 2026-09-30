@@ -40,6 +40,9 @@ public:
     const dp::world::CapsuleState& state() const { return state_; }
     const AgentAction&             last_action() const { return last_action_; }
     float                          yaw() const { return yaw_; }
+    // D2 teleport curriculum: set the facing directly. Only used by the
+    // snapshot restore (default worlds never call it).
+    void                           set_yaw(float y) { yaw_ = y; }
     bool                           inside_cave() const { return inside_cave_; }
 
 private:

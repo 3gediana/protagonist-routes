@@ -99,8 +99,19 @@ struct ActorCriticImpl : torch::nn::Module {
     // the dedicated path grows from zero (cf. the D-122 tech-tree rows). OFF
     // (default) keeps the legacy disc_logits(h) path exactly.
     torch::nn::Linear   disc_trunk{nullptr};   // OBS_DIM  -> DISC_HID
+    // D1.5: dedicated discrete trunk whose input is cat(obs, h.detach()) =
+    // OBS_DIM+HIDDEN -> DISC_HID. Used only when disc_mem_ctx is ON. Registered
+    // ALWAYS so it serializes / warm-starts tolerantly like disc_trunk.
+    torch::nn::Linear   disc_trunk_mem{nullptr}; // OBS_DIM+HIDDEN -> DISC_HID
     torch::nn::Linear   disc_head2{nullptr};   // DISC_HID -> DISC_CATS (zero-init)
     bool                decouple_disc = false; // set from PPOConfig in PPO ctor
+    bool                disc_mem_ctx  = false; // set from PPOConfig in PPO ctor
+    // D2 (critic balancing): second value head for the SPARSE tech reward
+    // stream. Registered ALWAYS (serialize + tolerant warm-start like
+    // disc_trunk); ZERO-init so, the moment stream_split is enabled on an old
+    // checkpoint, V_tech(s)=0 (the correct prior: tech events are rare) and the
+    // survival value path is untouched. Only READ when stream_split is ON.
+    torch::nn::Linear   value_tech{nullptr};   // HIDDEN -> 1 (zero-init)
     torch::Tensor       log_std;   // shape [CONT_DIM]
 
     ActorCriticImpl();
@@ -136,6 +147,13 @@ struct Transition {
     // (RewardSystem::last_features(), length SF_DIM). Empty if the caller
     // never filled it -> ψ TD loss is skipped for that rollout (back-compat).
     std::vector<float>  phi;
+    // D2 critic balancing: the part of this step's shaped reward that belongs
+    // to the SPARSE tech stream (hunt-chain + repertoire PBRS pulses added by
+    // the trainer). The env φ channels carry the rest of the split; the
+    // residual (reward - tech stream) stays in the survival stream, so
+    // surv+tech == reward exactly regardless of clipping or knob mix. 0 when
+    // the caller never filled it -> legacy single-stream behaviour.
+    float               reward_tech_extra = 0.0f;
 };
 
 // =============================================================================
@@ -180,10 +198,20 @@ struct PPOConfig {
     // byte-identical to the pre-mask config.
     bool   survive_first_mask   = false;
     float  survive_first_thresh = 0.35f;
+    // D3: affordance/precondition action mask. Mask a discrete action when the
+    // resource its env-handler requires is provably out of reach (read from
+    // obs), so the agent cannot waste the step pressing a button with no
+    // resource present and is pushed to navigate there first. Default OFF =
+    // byte-identical. See apply_afford_mask for the exact gated set + margins.
+    bool   afford_mask          = false;
     // D1: decouple the discrete head from the movement-dominated shared trunk
     // (dedicated obs trunk + stop-gradient shared read-out). Default OFF =
     // byte-identical to the shared-trunk policy. See ActorCriticImpl.
     bool   decouple_disc        = false;
+    // D1.5: feed the dedicated discrete trunk cat(obs, h.detach()) instead of
+    // obs alone, giving its nonlinear path the shared GRU's recurrent memory
+    // (still stop-grad). Only meaningful when decouple_disc is ON.
+    bool   disc_mem_ctx         = false;
     float  kl_ref_coef   = 0.0f;   // beta for KL(pi||pi_ref=bc_v9) anchor (0=off)
     float  target_kl     = 0.0f;   // CleanRL-style early-stop threshold (0=off)
     // D-122 one-pot tech-tree curriculum gates. Each reserved categorical
@@ -201,6 +229,31 @@ struct PPOConfig {
     // the `successor` head -> zero perturbation to policy/value. 0 disables
     // ψ learning entirely (e.g. legacy runs). 0.5 is the design default.
     float  sf_coef          = 0.5f;
+    // D2 critic balancing (TOPPO-inspired). Diagnosis: the DENSE survival
+    // stream (alive/food/water/vital/collect, paid every tick) dominates the
+    // shared value head's targets, so when a SPARSE tech event fires
+    // (craft/milestone/shelter-build/hunt PBRS) its advantage is noise ->
+    // the discrete head gets no learnable signal -> "rolling dice" and
+    // deep tech chains pinned at 0 (D1 actor-side decoupling alone did not
+    // move this). Fix, all behind one flag:
+    //   * split each step's reward into surv + tech streams (exact: tech =
+    //     kills/shelter/craft/milestone φ channels + trainer PBRS pulses;
+    //     surv = reward - tech),
+    //   * GAE per stream, per-stream advantage standardisation,
+    //     adv = z(adv_surv) + tech_adv_weight * z(adv_tech),
+    //   * a dedicated zero-init value_tech head trained on PopArt-style
+    //     standardised tech return targets (running mean/var + output
+    //     rescale on stat change) so the sparse stream's value gradient is
+    //     scale-balanced against the survival stream's.
+    // OFF (default) = byte-identical single-stream PPO.
+    bool   stream_split     = false;
+    float  tech_adv_weight  = 1.0f;   // w in adv = z(adv_surv) + w*z(adv_tech)
+    float  vf_tech_coef     = 1.0f;   // value-loss weight for the tech head
+    // φ->reward weight vector used to rebuild the tech stream from the
+    // un-weighted φ channels. Filled by main_train from the env's
+    // RewardSystem recipe; PPO falls back to the default Weights recipe when
+    // left all-zero (env uses default weights).
+    std::array<float, static_cast<int>(dp::agent::RewardSystem::F)> phi_weights{};
 };
 
 class PPO {
@@ -286,6 +339,16 @@ public:
         int total_transitions = 0;
         // D-123 SF: mean ψ TD loss this update (0 if φ not provided / sf_coef 0).
         float sf_loss = 0.0f;
+        // D2 critic-balancing diagnostics (stream_split only; 0 otherwise).
+        // adv_tech_raw = mean PRE-normalisation tech-stream advantage over the
+        // transitions that carried a nonzero tech reward (sign => PPO will
+        // push/pull the behaviour that earned it); cnt_tech = how many such
+        // transitions were in the rollout; value_loss_tech = mean tech-head
+        // MSE; ret_tech_mean = running mean of raw tech returns (PopArt stat).
+        float adv_tech_raw    = 0.0f;
+        int   cnt_tech        = 0;
+        float value_loss_tech = 0.0f;
+        float ret_tech_mean   = 0.0f;
     };
 
     // D-122 early-warning helper (pure math, no network / no GPU; unit-tested
@@ -355,6 +418,20 @@ private:
     // survive-first mask (see PPOConfig); cached from cfg_ in the ctor.
     bool                                     survive_first_mask_   = false;
     float                                    survive_first_thresh_ = 0.35f;
+    bool                                     afford_mask_          = false;
+    // D2 critic balancing: cached config + PopArt running stats for the tech
+    // return stream. value_tech predicts STANDARDISED tech returns
+    // (ret - mean) / std; GAE de-normalises its outputs back to raw return
+    // space with these SAME stats so rewards and bootstrap values stay in one
+    // scale. On a stat update the head's output layer is rescaled in place
+    // (PopArt's precise perturbation) so its raw predictions are unchanged.
+    bool                                     stream_split_    = false;
+    float                                    tech_adv_weight_ = 1.0f;
+    float                                    vf_tech_coef_    = 1.0f;
+    std::array<float, static_cast<int>(dp::agent::RewardSystem::F)> phi_w_{};
+    float                                    rett_mean_ = 0.0f;
+    float                                    rett_std_  = 1.0f;
+    bool                                     rett_init_ = false;
     torch::Tensor apply_disc_mask(const torch::Tensor& dl) const {
         if (!mask_enabled_ && locked_cats_.empty()) return dl;
         // In-place writes (index_put_/fill_) and from_blob tensors abort in
@@ -397,6 +474,45 @@ private:
                     & (~keep).expand({dl.size(0), dl.size(1)});             // [B,C]
         auto m      = torch::where(cond, torch::full_like(dl, -50.0f),
                                          torch::zeros_like(dl));            // [B,C]
+        return dl + m;                                                      // same-shape add
+    }
+
+    // D3 affordance/precondition mask. For a subset of discrete actions whose
+    // env-handler requires a nearby resource, add -50 to that action's logit on
+    // any row where the resource is provably out of reach (read straight from
+    // obs), using a SAFE margin so an action that WOULD succeed is never masked:
+    //   drink(1): env drinks within 6 m of River/Swamp; obs water dist_norm
+    //             (col 147 = dist/VISION, VISION=60 m; sentinel 1.0 = none).
+    //             Mask when dist_norm > 0.22 (~13 m >> 6 m).
+    //   collect(3): env collects within 2 m of an available resource; nearest
+    //             resource slot0 = dx,dy (cols 99,100, normalised by VISION) +
+    //             3-way kind one-hot (cols 102..104; sum 0 = none). Mask when no
+    //             resource in vision OR its dist_norm > 0.12 (~7 m >> 2 m).
+    // Movement (continuous head) is never masked, so the agent can always still
+    // navigate toward the resource. Functional ops + same-shape add (CUDA-safe,
+    // identical idiom to apply_disc_mask). Applied at every call site AFTER the
+    // survive-first mask so the importance ratio stays consistent. OFF => dl.
+    torch::Tensor apply_afford_mask(const torch::Tensor& dl,
+                                    const torch::Tensor& obs) const {
+        if (!afford_mask_) return dl;
+        const int64_t B = dl.size(0);
+        auto water_dist  = obs.narrow(1, 147, 1);                           // [B,1]
+        auto drink_block = (water_dist > 0.22);                             // [B,1]
+        auto res_dx      = obs.narrow(1, 99, 1);
+        auto res_dy      = obs.narrow(1, 100, 1);
+        auto res_kind    = obs.narrow(1, 102, 1) + obs.narrow(1, 103, 1)
+                         + obs.narrow(1, 104, 1);                           // [B,1]
+        auto res_dist    = (res_dx * res_dx + res_dy * res_dy).sqrt();      // [B,1] norm
+        auto coll_block  = (res_kind < 0.5) | (res_dist > 0.12);            // [B,1]
+        auto col      = torch::arange(dl.size(1), dl.options()).unsqueeze(0); // [1,C]
+        auto is_drink = (col == 1.0);                                       // [1,C]
+        auto is_coll  = (col == 3.0);                                       // [1,C]
+        auto cond = (drink_block.expand({B, dl.size(1)})
+                     & is_drink.expand({B, dl.size(1)}))
+                  | (coll_block.expand({B, dl.size(1)})
+                     & is_coll.expand({B, dl.size(1)}));                    // [B,C]
+        auto m    = torch::where(cond, torch::full_like(dl, -50.0f),
+                                       torch::zeros_like(dl));              // [B,C]
         return dl + m;                                                      // same-shape add
     }
 };

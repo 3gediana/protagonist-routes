@@ -1422,6 +1422,41 @@ static float phi_warmth(const dp::agent::ObservationBuilder::Vector& obs) {
     constexpr int IDX_TEMP = 3;   // matches OBS_TEMP in the scripted settler
     return std::clamp(obs[IDX_TEMP] / 0.5f, 0.0f, 1.0f);  // 1 @>=neutral -> 0 @freezing
 }
+
+// D2 navigation-survival PBRS. The one wall no intervention (D1/D1.5/survive-
+// first mask) moved across two seed batches is food/thirst DEATH: the agent
+// presses eat/drink but dies anyway because it is not NEAR water/food. The
+// existing phi_day_forage covers food only, is day-gated, and is ungated by
+// need; there is NO water-proximity potential at all. This strict potential-
+// based shaping (Ng/Harada/Russell 1999; policy-invariant) is NEED-GATED and
+// time-agnostic: Phi = hunger_deficit*food_prox + thirst_deficit*water_prox, so
+// the pull toward a resource scales with how badly the matching vital is needed
+// and VANISHES when satiated (no Goodhart: a fed agent feels no nav pull). It
+// adds the missing WATER axis (obs 145..147; sentinel dist=1 => prox 0) and
+// reuses the plant0 anchor (39/40 dx/dy, kind one-hot 42..45) for food.
+// Phi in [0,2]. Not a direct eat/drink reward (that is the food/water bucket).
+static float phi_nav_survival(const dp::agent::ObservationBuilder::Vector& obs) {
+    constexpr int   IDX_HUNGER     = 0;    // satiation /100 in [0,1] (1=full)
+    constexpr int   IDX_THIRST     = 1;
+    constexpr int   IDX_PLANT0_DX  = 39;
+    constexpr int   IDX_PLANT0_DY  = 40;
+    constexpr int   IDX_PLANT0_K0  = 42;   // ripe-plant kind one-hot 42..45
+    constexpr int   IDX_WATER_DIST = 147;  // nearest water dist/VISION (1=none)
+    constexpr float VISION_RANGE   = 60.0f;
+    const float hunger_def = std::clamp(1.0f - obs[IDX_HUNGER], 0.0f, 1.0f);
+    const float thirst_def = std::clamp(1.0f - obs[IDX_THIRST], 0.0f, 1.0f);
+    float food_prox = 0.0f;                 // 0 when no ripe plant in vision
+    const float kindsum = obs[IDX_PLANT0_K0] + obs[IDX_PLANT0_K0 + 1]
+                        + obs[IDX_PLANT0_K0 + 2] + obs[IDX_PLANT0_K0 + 3];
+    if (kindsum >= 0.5f) {
+        const float dx = obs[IDX_PLANT0_DX], dy = obs[IDX_PLANT0_DY];
+        const float d_m = std::sqrt(dx * dx + dy * dy) * VISION_RANGE;
+        food_prox = std::clamp((VISION_RANGE - d_m) / VISION_RANGE, 0.0f, 1.0f);
+    }
+    // water proximity: sentinel dist_norm=1.0 ("no water in sight") -> prox 0.
+    const float water_prox = std::clamp(1.0f - obs[IDX_WATER_DIST], 0.0f, 1.0f);
+    return hunger_def * food_prox + thirst_def * water_prox;   // [0,2]
+}
 int main(int argc, char** argv) {
     auto console = spdlog::stdout_color_mt("deep_protagonist_train");
     spdlog::set_default_logger(console);
@@ -1503,6 +1538,21 @@ int main(int argc, char** argv) {
     // toward PORTABLE warmth (clothing) since that is the only heat source
     // compatible with its wander-and-forage strategy. 0=off.
     float       ppo_warmth_shaping = 0.0f;
+    // D2 navigation-survival PBRS coef (need-gated proximity to water+food).
+    // 0 = off (default). See phi_nav_survival above. Targets the food/thirst
+    // death wall that D1/D1.5/survive-first mask did not move.
+    float       ppo_nav_shaping = 0.0f;
+    // D2 critic balancing (TOPPO-inspired): split surv/tech reward streams,
+    // per-stream advantage normalisation + dedicated zero-init value_tech head
+    // with PopArt-standardised targets. Default OFF = byte-identical.
+    bool        ppo_stream_split    = false;
+    float       ppo_tech_adv_weight = 1.0f;
+    float       ppo_vf_tech_coef    = 1.0f;
+    // D2 teleport milestone curriculum (Go-Explore style): restore a captured
+    // deep-chain opportunity state with probability p each episode reset.
+    bool        teleport_enabled = false;
+    bool        teleport_selftest_mode = false;
+    float       teleport_prob    = 0.30f;
     // decision_blueprint_nutrition (round_21): dual nutrition bars + hunting.
     bool        nutrition_enabled = false; // master switch (default off = old world)
     float       nutri_protein_decay = 20.0f;
@@ -1513,6 +1563,8 @@ int main(int argc, char** argv) {
     bool        ppo_survive_first_mask   = false; // survive-first action-mask A/B
     float       ppo_survive_first_thresh = 0.35f; // mask non-eat/drink when vital<thresh
     bool        ppo_decouple_disc        = false; // D1 discrete-head decoupling A/B
+    bool        ppo_disc_mem_ctx         = false; // D1.5 disc trunk reads cat(obs,h.detach())
+    bool        ppo_afford_mask          = false; // D3 affordance/precondition mask (drink/collect)
     // D-122 one-pot tech-tree curriculum gates (default OFF = reserved class
     // masked, byte-identical to pre-tech-tree champion). Flip on to unlock.
     // D-136 audit round 3: tech-tree defaults flipped ON. The blueprint goal
@@ -1594,6 +1646,13 @@ int main(int argc, char** argv) {
         else if (a == "--ppo-hunt-shaping")  ppo_hunt_shaping  = std::stof(next());
         else if (a == "--ppo-repertoire-shaping") ppo_repertoire_shaping = std::stof(next());
         else if (a == "--ppo-warmth-shaping")     ppo_warmth_shaping     = std::stof(next());
+        else if (a == "--nav-potential")          ppo_nav_shaping        = std::stof(next());
+        else if (a == "--stream-split")           ppo_stream_split       = true;
+        else if (a == "--tech-adv-weight")        ppo_tech_adv_weight    = std::stof(next());
+        else if (a == "--vf-tech-coef")           ppo_vf_tech_coef       = std::stof(next());
+        else if (a == "--teleport")               teleport_enabled       = true;
+        else if (a == "--teleport-prob")          teleport_prob          = std::stof(next());
+        else if (a == "--teleport-selftest")      teleport_selftest_mode = true;
         else if (a == "--nutrition")            nutrition_enabled  = true;
         else if (a == "--nutri-protein-decay") nutri_protein_decay = std::stof(next());
         else if (a == "--nutri-vitamin-decay") nutri_vitamin_decay = std::stof(next());
@@ -1603,6 +1662,8 @@ int main(int argc, char** argv) {
         else if (a == "--survive-first-mask")  ppo_survive_first_mask   = true;
         else if (a == "--survive-first-thresh") ppo_survive_first_thresh = std::stof(next());
         else if (a == "--decouple-disc")       ppo_decouple_disc        = true;
+        else if (a == "--disc-mem-ctx")        ppo_disc_mem_ctx         = true;
+        else if (a == "--afford-mask")         ppo_afford_mask          = true;
         else if (a == "--allow-cook")          ppo_allow_cook       = true;
         else if (a == "--lock-cook")           ppo_allow_cook       = false;
         else if (a == "--lock-mine")           ppo_allow_mine       = false;
@@ -1685,6 +1746,8 @@ int main(int argc, char** argv) {
     ecfg.fixed_dt   = 1.0f / 30.0f;
     ecfg.thirst_decay_per_min = thirst_decay;
     ecfg.trigger_cost         = trigger_cost;
+    ecfg.teleport_enabled     = teleport_enabled;
+    ecfg.teleport_prob        = teleport_prob;
     ecfg.demo_no_regen        = demo_no_regen;
     // decision_blueprint_nutrition (round_21): plumb nutrition CLI into env.
     ecfg.nutrition_enabled     = nutrition_enabled;
@@ -1772,6 +1835,13 @@ int main(int argc, char** argv) {
     if (mine_selftest_mode) {
         const bool pass = env.mine_selftest();
         spdlog::info("--mine-selftest result: {}", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 1;
+    }
+
+    // D2 teleport curriculum: end-to-end capture+restore test then exit.
+    if (teleport_selftest_mode) {
+        const bool pass = env.teleport_selftest();
+        spdlog::info("--teleport-selftest result: {}", pass ? "PASS" : "FAIL");
         return pass ? 0 : 1;
     }
 
@@ -1874,6 +1944,11 @@ int main(int argc, char** argv) {
         pcfg.survive_first_mask   = ppo_survive_first_mask;
         pcfg.survive_first_thresh = ppo_survive_first_thresh;
         pcfg.decouple_disc        = ppo_decouple_disc;
+        pcfg.disc_mem_ctx         = ppo_disc_mem_ctx;
+        pcfg.afford_mask          = ppo_afford_mask;
+        pcfg.stream_split         = ppo_stream_split;
+        pcfg.tech_adv_weight      = ppo_tech_adv_weight;
+        pcfg.vf_tech_coef         = ppo_vf_tech_coef;
         pcfg.kl_ref_coef    = ppo_kl_coef;
         pcfg.target_kl      = ppo_target_kl;
         // D-122 one-pot tech-tree curriculum gates.
@@ -1882,6 +1957,12 @@ int main(int argc, char** argv) {
         pcfg.allow_craft_axe  = ppo_allow_craft_axe;
         pcfg.allow_craft_pick = ppo_allow_craft_pick;
         pcfg.allow_monument   = ppo_allow_monument;
+        if (ppo_nav_shaping > 0.0f)
+            spdlog::info("D2 nav-potential PBRS ON (coef {}): need-gated "
+                         "proximity to water+food, F=gamma*Phi(s')-Phi(s), "
+                         "Phi=hunger_def*food_prox+thirst_def*water_prox "
+                         "(policy-invariant; targets the food/thirst death wall)",
+                         ppo_nav_shaping);
         ppo = std::make_unique<dp::policy::PPO>(pcfg);
         ppo->set_deterministic(deterministic);
         if (deterministic) spdlog::info("D-101: deterministic eval (mode action, no sampling noise)");
@@ -2097,6 +2178,10 @@ int main(int argc, char** argv) {
                     tr.disc_act = v_disc[i];
                     tr.h_in     = std::move(v_hin[i]);
                     float shaped_r = v_sr[i].reward;
+                    // D2: PBRS pulses that belong to the sparse tech stream
+                    // (hunt chain, repertoire firsts) are tagged so PPO can
+                    // split surv/tech streams exactly (surv = residual).
+                    float tech_extra = 0.0f;
                     if (ppo_night_shaping > 0.0f) {
                         float phi_s  = phi_night_shelter(obs_batch[i]);
                         float phi_sp = v_sr[i].done ? 0.0f
@@ -2117,6 +2202,8 @@ int main(int argc, char** argv) {
                                        : phi_hunt_progress(v_sr[i].obs);
                         shaped_r += ppo_hunt_shaping
                                   * (pcfg.gamma * hphi_sp - hphi_s);
+                        tech_extra += ppo_hunt_shaping
+                                  * (pcfg.gamma * hphi_sp - hphi_s);
                     }
                     if (ppo_repertoire_shaping > 0.0f) {
                         // env(i) is post-step but NOT yet reset here (reset
@@ -2127,6 +2214,8 @@ int main(int argc, char** argv) {
                                        : static_cast<float>(venv.env(i).milestones().count());
                         shaped_r += ppo_repertoire_shaping
                                   * (pcfg.gamma * rphi_sp - rphi_s);
+                        tech_extra += ppo_repertoire_shaping
+                                  * (pcfg.gamma * rphi_sp - rphi_s);
                     }
                     if (ppo_warmth_shaping > 0.0f) {
                         float wphi_s  = phi_warmth(obs_batch[i]);
@@ -2135,7 +2224,15 @@ int main(int argc, char** argv) {
                         shaped_r += ppo_warmth_shaping
                                   * (pcfg.gamma * wphi_sp - wphi_s);
                     }
+                    if (ppo_nav_shaping > 0.0f) {
+                        float nphi_s  = phi_nav_survival(obs_batch[i]);
+                        float nphi_sp = v_sr[i].done ? 0.0f
+                                       : phi_nav_survival(v_sr[i].obs);
+                        shaped_r += ppo_nav_shaping
+                                  * (pcfg.gamma * nphi_sp - nphi_s);
+                    }
                     tr.reward   = shaped_r;
+                    tr.reward_tech_extra = tech_extra;
                     tr.value    = v_val[i];
                     tr.log_prob = v_lp[i];
                     tr.done     = v_sr[i].done;
@@ -2199,6 +2296,12 @@ int main(int argc, char** argv) {
                                      stats.clip_frac,
                                      stats.adv_attack, stats.cnt_attack,
                                      stats.adv_cook,   stats.cnt_cook);
+                        if (ppo_stream_split)
+                            spdlog::info("  D2 tech: adv_t={:+.3f}(n={})  "
+                                         "vt_loss={:.4f}  ret_t_mu={:.4f}",
+                                         stats.adv_tech_raw, stats.cnt_tech,
+                                         stats.value_loss_tech,
+                                         stats.ret_tech_mean);
                         if (behavior_panel_due(stats, total_updates))
                             spdlog::info("  behaviors: {}",
                                          format_behavior_panel(stats));
@@ -2291,6 +2394,8 @@ int main(int argc, char** argv) {
             tr.disc_act = disc_idx;
             tr.h_in     = std::move(ppo_h_in_snapshot);
             float shaped_r = sr.reward;
+            // D2: tech-stream PBRS tag (hunt chain, repertoire firsts).
+            float tech_extra = 0.0f;
             if (ppo_night_shaping > 0.0f) {
                 float phi_s  = phi_night_shelter(obs);
                 float phi_sp = sr.done ? 0.0f : phi_night_shelter(sr.obs);
@@ -2305,19 +2410,27 @@ int main(int argc, char** argv) {
                 float hphi_s  = phi_hunt_progress(obs);
                 float hphi_sp = sr.done ? 0.0f : phi_hunt_progress(sr.obs);
                 shaped_r += ppo_hunt_shaping * (pcfg.gamma * hphi_sp - hphi_s);
+                tech_extra += ppo_hunt_shaping * (pcfg.gamma * hphi_sp - hphi_s);
             }
             if (ppo_repertoire_shaping > 0.0f) {
                 float rphi_s  = static_cast<float>(rep_before);
                 float rphi_sp = sr.done ? 0.0f
                                : static_cast<float>(env.milestones().count());
                 shaped_r += ppo_repertoire_shaping * (pcfg.gamma * rphi_sp - rphi_s);
+                tech_extra += ppo_repertoire_shaping * (pcfg.gamma * rphi_sp - rphi_s);
             }
             if (ppo_warmth_shaping > 0.0f) {
                 float wphi_s  = phi_warmth(obs);
                 float wphi_sp = sr.done ? 0.0f : phi_warmth(sr.obs);
                 shaped_r += ppo_warmth_shaping * (pcfg.gamma * wphi_sp - wphi_s);
             }
+            if (ppo_nav_shaping > 0.0f) {
+                float nphi_s  = phi_nav_survival(obs);
+                float nphi_sp = sr.done ? 0.0f : phi_nav_survival(sr.obs);
+                shaped_r += ppo_nav_shaping * (pcfg.gamma * nphi_sp - nphi_s);
+            }
             tr.reward   = shaped_r;
+            tr.reward_tech_extra = tech_extra;
             tr.value    = vv;
             tr.log_prob = lp;
             tr.done     = sr.done;
@@ -2349,6 +2462,11 @@ int main(int argc, char** argv) {
                              stats.clip_frac,
                              stats.adv_attack, stats.cnt_attack,
                              stats.adv_cook,   stats.cnt_cook);
+                if (ppo_stream_split)
+                    spdlog::info("  D2 tech: adv_t={:+.3f}(n={})  "
+                                 "vt_loss={:.4f}  ret_t_mu={:.4f}",
+                                 stats.adv_tech_raw, stats.cnt_tech,
+                                 stats.value_loss_tech, stats.ret_tech_mean);
                 if (behavior_panel_due(stats, total_updates))
                     spdlog::info("  behaviors: {}", format_behavior_panel(stats));
                 rollout.clear();

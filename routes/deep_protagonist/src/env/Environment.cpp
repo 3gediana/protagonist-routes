@@ -51,6 +51,26 @@ Environment::Environment(const EnvConfig& cfg)
     animals_.initialize(cfg_.world.seed    ^ 0xA11AULL, world_);
     resources_.initialize(cfg_.world.seed  ^ 0xC011ULL, world_);
 
+    // Env-gated stage-gate curriculum knobs. Defaults match the compiled-in
+    // ProgressTracker thresholds, so unset env vars keep behavior identical.
+    {
+        auto env_int = [](const char* name, int dflt) {
+            const char* v = std::getenv(name);
+            if (!v || !*v) return dflt;
+            char* e = nullptr; long x = std::strtol(v, &e, 10);
+            return (e == v) ? dflt : static_cast<int>(x);
+        };
+        auto env_float = [](const char* name, float dflt) {
+            const char* v = std::getenv(name);
+            if (!v || !*v) return dflt;
+            char* e = nullptr; float f = std::strtof(v, &e);
+            return (e == v) ? dflt : f;
+        };
+        progress_.mid_collect_threshold = env_int("DP_MID_COLLECT",   progress_.mid_collect_threshold);
+        progress_.mid_explore_threshold = env_float("DP_MID_EXPLORE", progress_.mid_explore_threshold);
+        progress_.late_house_threshold  = env_int("DP_LATE_HOUSES",   progress_.late_house_threshold);
+    }
+
     // Stage W1 world coherence: plumb the CLI weather knobs into the global
     // sky. Default disabled => always clear, so the old world is unchanged.
     {
@@ -392,6 +412,7 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
                         buildings_);
         wardrobe_.clear();
         fires_.clear();     // D-112: campfires are per-life, like buildings.
+        ember_warmth_s_ = 0.0f;  // ember buff is per-life too.
         farming_.clear();
         tame_.clear();
     }
@@ -514,7 +535,126 @@ void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
         buildings_.admin_place_site(dp::world::BuildingType::Shed, sx, sy, sz);
     }
 
+    for (int k = 0; k < TP_KINDS; ++k) tp_captured_[k] = false;
+    apply_teleport_restore_();
     rebuild_observation_(obs_out);
+}
+
+// ---- D2 teleport milestone curriculum ------------------------------------
+// Capture: the first time this life fires cook/mine/axe/pickaxe, snapshot the
+// opportunity (pose, vitals, inventory, tech counters, nearest lit fire, ore
+// layout). One snapshot per kind per life; a per-kind ring (cap 4) keeps
+// world/state diversity across lives.
+void Environment::maybe_capture_teleport_() {
+    if (!cfg_.teleport_enabled) return;
+    if (tp_rng_ == 0) tp_rng_ = cfg_.world.seed ^ 0x7E13E7ULL;
+
+    auto capture = [&](int k) {
+        if (tp_captured_[k]) return false;
+        tp_captured_[k] = true;
+        TeleportSnapshot s;
+        s.x = agent_.state().pos_x; s.y = agent_.state().pos_y;
+        s.z = agent_.state().pos_z; s.yaw = agent_.yaw();
+        s.vitals = vital_state_;
+        s.inventory = inventory_;
+        s.raw_meat = raw_meat_; s.cooked_meat = cooked_meat_;
+        s.ore = ore_; s.has_axe = has_axe_; s.has_pickaxe = has_pickaxe_;
+        for (const auto& f : fires_.fires()) {
+            if (!f.lit) continue;
+            s.has_fire = true;
+            s.fire_x = f.x; s.fire_y = f.y; s.fire_fuel = f.fuel;
+            break;
+        }
+        s.ore_nodes = ore_nodes_;
+        auto& arch = tp_archive_[k];
+        if (static_cast<int>(arch.size()) >= TP_ARCHIVE_CAP)
+            arch.erase(arch.begin());
+        arch.push_back(std::move(s));
+        return true;
+    };
+
+    // Success-gated captures: the step a deep-chain milestone first fires.
+    const bool fired[TP_KINDS] = { first_cook_fired_, first_mine_fired_,
+                                   first_axe_fired_,  first_pickaxe_fired_ };
+    for (int k = 0; k < TP_KINDS; ++k) {
+        if (fired[k] && capture(k)) return;   // one capture per step is enough
+    }
+
+    // Opportunity-gated captures: seed the archive the first time this life
+    // stands in a trainable deep-chain OPPORTUNITY (no prior success needed),
+    // so the curriculum is live before any success ever happens. Same
+    // once-per-kind-per-life throttle as the success path.
+    bool lit_fire_near = false;
+    {
+        const float wr2 = fires_.config().warm_radius;
+        const float wr2sq = wr2 * wr2;
+        const float ax = agent_.state().pos_x, ay = agent_.state().pos_y;
+        for (const auto& f : fires_.fires()) {
+            if (!f.lit) continue;
+            const float ddx = f.x - ax, ddy = f.y - ay;
+            if (ddx * ddx + ddy * ddy <= wr2sq) { lit_fire_near = true; break; }
+        }
+    }
+    bool ore_in_reach = false;
+    {
+        const float ax = agent_.state().pos_x, ay = agent_.state().pos_y;
+        for (const auto& nd : ore_nodes_) {
+            const float ddx = nd.x - ax, ddy = nd.y - ay;
+            if (ddx * ddx + ddy * ddy <= MINE_REACH * MINE_REACH
+                && nd.remaining > 0) { ore_in_reach = true; break; }
+        }
+    }
+    const bool opp[TP_KINDS] = {
+        raw_meat_ > 0 && lit_fire_near,                     // cook
+        agent_.inside_cave() && ore_in_reach,               // mine
+        !has_axe_ && ore_ >= TOOL_ORE_COST
+            && inventory_.num_of(dp::agent::ItemKind::Wood) >= TOOL_WOOD_COST,  // axe
+        !has_pickaxe_ && ore_ >= TOOL_ORE_COST
+            && inventory_.num_of(dp::agent::ItemKind::Wood) >= TOOL_WOOD_COST,  // pickaxe
+    };
+    for (int k = 0; k < TP_KINDS; ++k) {
+        if (opp[k] && capture(k)) return;
+    }
+}
+
+// Restore: with probability teleport_prob, bring a random archived snapshot's
+// opportunity state into this fresh life. Ore node POSITIONS come from the
+// snapshot (valid in this static world) but per-node counts are refreshed so
+// the mine opportunity survives archive reuse; the visited-cell mark prevents
+// the D-131 explore lure from re-paying the teleport landing cell for free.
+void Environment::apply_teleport_restore_() {
+    if (!cfg_.teleport_enabled) return;
+    if (tp_rng_ == 0) tp_rng_ = cfg_.world.seed ^ 0x7E13E7ULL;
+    tp_rng_ = tp_rng_ * 6364136223846793005ULL + 1442695040888963407ULL;
+    const float u = static_cast<float>((tp_rng_ >> 33) & 0x7FFFFFFFULL)
+                  / static_cast<float>(0x7FFFFFFFULL);
+    if (u >= cfg_.teleport_prob) return;
+
+    int nonempty[TP_KINDS]; int n = 0;
+    for (int k = 0; k < TP_KINDS; ++k)
+        if (!tp_archive_[k].empty()) nonempty[n++] = k;
+    if (n == 0) return;
+    tp_rng_ = tp_rng_ * 6364136223846793005ULL + 1442695040888963407ULL;
+    const int kind = nonempty[(tp_rng_ >> 33) % static_cast<uint64_t>(n)];
+    const auto& arch = tp_archive_[kind];
+    tp_rng_ = tp_rng_ * 6364136223846793005ULL + 1442695040888963407ULL;
+    const TeleportSnapshot& s = arch[(tp_rng_ >> 33) % arch.size()];
+
+    agent_.reset(s.x, s.y, s.z);
+    agent_.set_yaw(s.yaw);
+    vital_state_ = s.vitals;
+    inventory_ = s.inventory;
+    raw_meat_ = s.raw_meat; cooked_meat_ = s.cooked_meat;
+    ore_ = s.ore; has_axe_ = s.has_axe; has_pickaxe_ = s.has_pickaxe;
+    ore_nodes_ = s.ore_nodes;
+    for (auto& nd : ore_nodes_) nd.remaining = ORE_NODE_RICHNESS;
+    if (s.has_fire) fires_.restore_fire(s.fire_x, s.fire_y, s.fire_fuel);
+    {
+        constexpr float CELL = 24.0f;
+        const long cx = static_cast<long>(std::floor(s.x / CELL));
+        const long cy = static_cast<long>(std::floor(s.y / CELL));
+        visited_cells_.insert(cy * 1000003L + cx);
+    }
 }
 
 // D-043 P1: drive function (Keramati & Gutkin 2014, Homeostatic RL).
@@ -567,14 +707,18 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // (prey, biomes) it otherwise never reaches. Deliberately instrumental, not
     // curiosity-for-its-own-sake: paid once per cell (pacing/old cells pay 0, so
     // it cannot be farmed) and it self-fades as the map fills, so the agent
-    // reverts to real survival/hunting once it has roamed. Env-gated: default
-    // DP_EXPLORE_REW=0 leaves the shipped reward landscape byte-identical.
+    // reverts to real survival/hunting once it has roamed.
+    // D-136 audit: default changed from 0.0 to 0.03. The BC-imprinted
+    // settler stays in its spawn corner forever, never encountering prey or
+    // biomes beyond 60m vision. A small per-new-cell bonus (0.03) breaks
+    // this: ~40 unique cells explored → +1.2 total, meaningful but not
+    // dominant. Still env-overridable via DP_EXPLORE_REW.
     {
         static const float EXPLORE_REW = []{
             const char* v = std::getenv("DP_EXPLORE_REW");
-            if (!v || !*v) return 0.0f;
+            if (!v || !*v) return 0.03f;
             char* e = nullptr; float f = std::strtof(v, &e);
-            return (e == v) ? 0.0f : f;
+            return (e == v) ? 0.03f : f;
         }();
         static const float EXPLORE_CELL = []{
             const char* v = std::getenv("DP_EXPLORE_CELL");
@@ -793,6 +937,23 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // D-112: a lit campfire within radius warms the agent (heat-source term),
     // passed into VitalSystem::tick alongside the Wardrobe cold-resist damper.
     float fire_warmth = fires_.warm_rate_at(as.pos_x, as.pos_y);
+    // Ember buff (portable early-game warmth): standing at a lit fire charges
+    // a body-heat reserve; after walking away the reserve decays and keeps
+    // warming at a fraction of the fire rate. This gives a pre-clothing agent
+    // a learnable "warm up at the fire, then go forage" loop instead of the
+    // binary stay-at-fire-or-freeze choice that dominated cold deaths.
+    // Causal: the reserve only exists if the agent actually built/visited a
+    // lit fire, and it always runs out — clothing remains the durable answer.
+    {
+        constexpr float kEmberChargeMaxS = 120.0f;  // max stored seconds
+        constexpr float kEmberWarmFrac   = 0.5f;    // residual = 50% fire rate
+        if (fire_warmth > 0.0f) {
+            ember_warmth_s_ = std::min(kEmberChargeMaxS, ember_warmth_s_ + dt);
+        } else if (ember_warmth_s_ > 0.0f) {
+            ember_warmth_s_ = std::max(0.0f, ember_warmth_s_ - dt);
+            fire_warmth = fires_.config().warm_rate_per_min * kEmberWarmFrac;
+        }
+    }
     // D-122 RUNG 5: a BUILT capstone monument radiates warmth like a giant
     // hearth; fold it into the same heat-source term the fire uses so that
     // sheltering at the monument is precisely what lets the agent ride out
@@ -945,11 +1106,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // penalty on top of the legacy linear one (never removed -> iron law). It
     // concentrates blame on whichever single vital is being neglected, so the
     // gradient + GAE back-prop of an eventual death point at the exact decision
-    // window that let that vital slide. Gated on cook_enabled so the v7 world is
-    // byte-identical (cook off -> this term never fires).
-    if (cfg_.cook_enabled) {
-        reward_.event_vital_danger(vital_state_, dt);
-    }
+    // window that let that vital slide.
+    // D-136 audit: ALWAYS fire vital_danger, not just when cook_enabled.
+    // The convex penalty is the primary gradient source for per-vital blame;
+    // gating it behind cook_enabled left most training runs with only the
+    // weak linear pressure (vital_decay_coef=0.00005), which is drowned by
+    // alive_step. Ungating this is safe: the term is 0 when all vitals are
+    // comfortable, so well-fed agents see no change.
+    reward_.event_vital_danger(vital_state_, dt);
 
     // E -> action.eat
     if (action.eat) {
@@ -1444,9 +1608,14 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
     // nothing -> zero spam vector; (2) the breadth reward only pays first-use,
     // so camping a lean-to cannot farm width. The +5 built_shelter and the
     // shelter milestone therefore fire exactly once per life.
+    // D-136 audit round 2: default ON (DP_LEANTO=0 to disable). 387/387
+    // validation episodes had shelter milestone = 0 because this switch was
+    // off, permanently zeroing one channel of the geometric-mean score. The
+    // anti-grind guards (one lean-to per episode, first-use-only breadth pay)
+    // make default-on safe.
     static const bool kLeanToEnabled = [] {
         const char* v = std::getenv("DP_LEANTO");
-        return v && v[0] == '1';
+        return !(v && v[0] == '0');
     }();
     if (action.place_shelter) {
         if (kLeanToEnabled && !shelter_.placed()) {
@@ -1521,7 +1690,16 @@ float Environment::apply_action_effects_(const dp::agent::AgentAction& action) {
             return (e == v) ? 3.0f : f;
         }();
         float reach  = has_spear ? SPEAR_REACH : 1.5f;
-        float damage = has_spear ? 50.0f : 20.0f;
+        // Env-gated hunt curriculum knob: spear damage vs prey 100 HP. Default
+        // 50 (2 hits to kill) keeps old behavior; DP_SPEAR_DMG=100 makes the
+        // first landed blow lethal so PPO can bootstrap the kill credit.
+        static const float SPEAR_DMG = []{
+            const char* v = std::getenv("DP_SPEAR_DMG");
+            if (!v || !*v) return 50.0f;
+            char* e = nullptr; float f = std::strtof(v, &e);
+            return (e == v || f <= 0.0f) ? 50.0f : f;
+        }();
+        float damage = has_spear ? SPEAR_DMG : 20.0f;
         // D-128c: at THIS attack step, is a rabbit/deer within reach, and is it
         // also inside the same forward cone agent_attack uses? Lets the episode
         // log split the never-registering prey hit into timing (reach=0 -> the
@@ -2015,6 +2193,7 @@ StepResult Environment::step(const dp::agent::AgentAction& action) {
         }
     }
 
+    maybe_capture_teleport_();
     rebuild_observation_(out.obs);
     ++step_index_;
     return out;
@@ -2132,6 +2311,11 @@ EpisodeMilestones Environment::milestones() const {
     m.house    = first_house_built_fired_;
     m.crop     = first_crop_harvested_fired_;
     m.follower = first_follower_fired_;
+    m.cook     = first_cook_fired_;
+    m.mine     = first_mine_fired_;
+    m.axe      = first_axe_fired_;
+    m.pickaxe  = first_pickaxe_fired_;
+    m.monument = first_monument_fired_;
     return m;
 }
 
@@ -2360,6 +2544,66 @@ bool Environment::building_tier_allowed_(dp::world::BuildingType bt) const {
 // negatives (no ore / no wood / already owned do NOTHING) and the effects are
 // proven against the bare-handed baseline (pickaxe mine richer+cheaper, axe
 // wood collect yields a bonus log).
+bool Environment::teleport_selftest() {
+    using dp::agent::AgentAction;
+    bool ok = true;
+    auto check = [&](const char* n, bool c) {
+        spdlog::info("[tp-selftest] [{}] {}", c ? "PASS" : "FAIL", n);
+        if (!c) ok = false;
+    };
+
+    dp::agent::ObservationBuilder::Vector obs;
+    cfg_.mine_enabled     = true;
+    cfg_.teleport_enabled = true;
+    cfg_.teleport_prob    = 1.0f;
+    tp_rng_ = 0;   // force lazy re-seed for a deterministic test
+    reset(obs);
+
+    // Stage a REAL mine success (same scaffolding as mine_selftest): cave[0],
+    // node at feet, stamina full -> step(mine) -> first_mine fires -> the
+    // step() capture hook must archive a snapshot.
+    const auto& boxes = world_.caves().caves();
+    check("setup: world has at least one cave", !boxes.empty());
+    if (boxes.empty()) { spdlog::info("[tp-selftest] OVERALL FAIL"); return false; }
+    const dp::world::CaveBox cave = boxes[0];
+    agent_.reset(cave.center_x, cave.center_y, cave.floor_z + 0.5f);
+    ore_nodes_.clear();
+    OreNode nd; nd.x = cave.center_x; nd.y = cave.center_y;
+    nd.z = cave.floor_z; nd.remaining = ORE_NODE_RICHNESS;
+    ore_nodes_.push_back(nd);
+    vital_state_.stamina = 100.0f;
+    first_mine_fired_    = false;
+    AgentAction mine{}; mine.mine = true;
+    step(mine);
+    check("capture: mine snapshot archived", !tp_archive_[1].empty());
+    if (tp_archive_[1].empty()) { spdlog::info("[tp-selftest] OVERALL FAIL"); return false; }
+    const TeleportSnapshot snap = tp_archive_[1][0];
+    check("capture: snapshot carries ore=1", snap.ore == 1);
+    check("capture: snapshot carries ore nodes", !snap.ore_nodes.empty());
+
+    // prob=1.0: reset() must restore the snapshot opportunity state.
+    reset(obs);
+    const float dx = agent_.state().pos_x - snap.x;
+    const float dy = agent_.state().pos_y - snap.y;
+    check("restore: agent at snapshot pose", dx * dx + dy * dy < 1.0f);
+    check("restore: ore counter carried", ore_ == snap.ore);
+    check("restore: ore nodes present", !ore_nodes_.empty());
+    check("restore: node counts refreshed",
+          !ore_nodes_.empty() && ore_nodes_[0].remaining == ORE_NODE_RICHNESS);
+    check("restore: visited-cell marked (no explore double-dip)",
+          !visited_cells_.empty());
+
+    // prob=0: reset() must leave the normal fresh spawn.
+    cfg_.teleport_prob = 0.0f;
+    reset(obs);
+    const float sx = agent_.state().pos_x - spawn_x_;
+    const float sy = agent_.state().pos_y - spawn_y_;
+    check("prob0: agent stays at spawn", sx * sx + sy * sy < 1.0f);
+
+    spdlog::info("[tp-selftest] OVERALL {}", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 bool Environment::tools_selftest() {
     using dp::agent::AgentAction;
     using dp::agent::ItemKind;

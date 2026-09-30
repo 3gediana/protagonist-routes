@@ -1,0 +1,8 @@
+# D4 (2026-09-30): critic balancing (stream split) + teleport milestone curriculum.
+# Shared base = current best-known flags (survive-first 0.35 + afford mask +
+# nav-potential 0.75). Variables: --stream-split (D2 reward streams + tech
+# value head), --teleport (Go-Explore-style opportunity snapshots).
+d4_base_s7 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75
+d4_ss_s7 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --stream-split
+d4_tp_s7 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3
+d4_ss_tp_s7 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --stream-split --teleport --teleport-prob 0.3

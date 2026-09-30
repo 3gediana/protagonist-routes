@@ -123,8 +123,18 @@ ActorCriticImpl::ActorCriticImpl() {
     // when decouple_disc is set (see forward_step).
     disc_trunk  = register_module("disc_trunk",
                                   torch::nn::Linear(OBS_DIM, DISC_HID));
+    // D1.5: memory-context trunk, input cat(obs, h.detach()) -> DISC_HID.
+    disc_trunk_mem = register_module("disc_trunk_mem",
+                                  torch::nn::Linear(OBS_DIM + HIDDEN, DISC_HID));
     disc_head2  = register_module("disc_head2",
                                   torch::nn::Linear(DISC_HID, DISC_CATS));
+    // D2 critic balancing: dedicated tech-stream value head (HIDDEN -> 1).
+    // Registered ALWAYS (serialize + tolerant warm-start); ZERO-init so the
+    // tech value starts at exactly V_tech(s)=0 (correct prior for a sparse
+    // stream) and enabling stream_split on an old checkpoint changes no
+    // existing output. Only READ when stream_split is ON.
+    value_tech  = register_module("value_tech",
+                                  torch::nn::Linear(HIDDEN, 1));
 
     // log_std initialised to log(0.5) ≈ -0.693 (moderate exploration).
     log_std = register_parameter(
@@ -143,6 +153,7 @@ ActorCriticImpl::ActorCriticImpl() {
     orthogonal_(value,       1.0f);
     orthogonal_(successor,   1.0f);    // D-123 SF: same as value head
     orthogonal_(disc_trunk,  std::sqrt(2.0f));  // D1: hidden trunk, ReLU gain
+    orthogonal_(disc_trunk_mem, std::sqrt(2.0f)); // D1.5: same ReLU-gain init
     // D1: disc_head2 ZERO-init so the decoupled discrete contribution starts at
     // exactly 0 -> the policy is byte-identical to the shared-trunk disc_logits(h)
     // the moment decoupling is enabled; the dedicated path grows from zero.
@@ -150,6 +161,12 @@ ActorCriticImpl::ActorCriticImpl() {
         torch::NoGradGuard g;
         torch::nn::init::zeros_(disc_head2->weight);
         torch::nn::init::zeros_(disc_head2->bias);
+    }
+    // D2: value_tech ZERO-init for the same warm-start-equivalence reason.
+    {
+        torch::NoGradGuard g;
+        torch::nn::init::zeros_(value_tech->weight);
+        torch::nn::init::zeros_(value_tech->bias);
     }
     // GRUCell weights are initialised by libtorch with reasonable defaults
     // (uniform Kaiming-ish). We leave them alone.
@@ -168,10 +185,18 @@ ActorCriticImpl::forward_step(const torch::Tensor& obs,
     // reshapes the movement-dominated trunk) + a dedicated feed-forward trunk on
     // raw obs. disc_head2 zero-init => identical VALUE to disc_logits(h) at
     // warm-start (detach changes gradient flow only, not the forward value).
-    auto dl  = decouple_disc
-        ? (disc_logits(h.detach())
-           + disc_head2(torch::relu(disc_trunk(obs))))
-        : disc_logits(h);                               // [B, DISC_CATS]
+    // D1.5: when disc_mem_ctx, the dedicated trunk reads cat(obs, h.detach())
+    // so its nonlinear path can use the shared GRU memory (still stop-grad, so
+    // it never reshapes the movement trunk); else legacy obs-only D1 path.
+    torch::Tensor dl;
+    if (decouple_disc) {
+        auto disc_feat = disc_mem_ctx
+            ? torch::relu(disc_trunk_mem(torch::cat({obs, h.detach()}, 1)))
+            : torch::relu(disc_trunk(obs));
+        dl = disc_logits(h.detach()) + disc_head2(disc_feat);
+    } else {
+        dl = disc_logits(h);                            // [B, DISC_CATS]
+    }
     auto v   = value(h).squeeze(-1);                    // [B]
     return {cm, cs, dl, v, h};
 }
@@ -195,6 +220,7 @@ PPO::PPO(const PPOConfig& cfg)
 {
     torch::manual_seed(cfg.seed);
     net_->decouple_disc = cfg.decouple_disc;
+    net_->disc_mem_ctx  = cfg.disc_mem_ctx;
     net_->to(device_);
 
     opt_ = std::make_shared<torch::optim::Adam>(
@@ -237,6 +263,12 @@ PPO::PPO(const PPOConfig& cfg)
                      "dedicated obs trunk (width {}) + stop-gradient shared "
                      "feature read-out; the movement trunk no longer carries "
                      "the discrete-policy gradient", ActorCriticImpl::DISC_HID);
+    if (cfg_.decouple_disc && cfg_.disc_mem_ctx)
+        spdlog::info("D1.5 disc-mem-ctx ON: dedicated discrete trunk reads "
+                     "cat(obs, h.detach()) (input {}+{}={}) so its nonlinear "
+                     "path uses the shared GRU memory (stop-grad preserved)",
+                     ActorCriticImpl::OBS_DIM, ActorCriticImpl::HIDDEN,
+                     ActorCriticImpl::OBS_DIM + ActorCriticImpl::HIDDEN);
 
     survive_first_mask_   = cfg_.survive_first_mask;
     survive_first_thresh_ = cfg_.survive_first_thresh;
@@ -244,6 +276,31 @@ PPO::PPO(const PPOConfig& cfg)
         spdlog::info("survive-first action mask ON: non-eat/drink discrete "
                      "actions masked when hunger or thirst < {:.2f} (normalised)",
                      survive_first_thresh_);
+
+    afford_mask_ = cfg_.afford_mask;
+    if (afford_mask_)
+        spdlog::info("D3 affordance mask ON: drink(1) masked unless water within "
+                     "~13m (obs[147]<0.22; env drinks <=6m); collect(3) masked "
+                     "unless an available resource within ~7m (obs[99,100] dist, "
+                     "kind obs[102..104]); movement + other actions unaffected "
+                     "(policy still free to navigate to the resource)");
+
+    // D2 critic balancing: cache config + resolve the φ->reward weight vector.
+    // The env's RewardSystem is built with the default Weights recipe, so an
+    // all-zero PPOConfig::phi_weights falls back to exactly that recipe.
+    stream_split_    = cfg_.stream_split;
+    tech_adv_weight_ = cfg_.tech_adv_weight;
+    vf_tech_coef_    = cfg_.vf_tech_coef;
+    if (stream_split_) {
+        float sum = 0.0f;
+        for (float w : cfg_.phi_weights) sum += w;
+        if (sum != 0.0f) phi_w_ = cfg_.phi_weights;
+        else             phi_w_ = dp::agent::RewardSystem{}.weight_vector();
+        spdlog::info("D2 stream split ON: surv/tech reward streams, per-stream "
+                     "advantage norm (tech w={:.2f}), zero-init value_tech head "
+                     "(vf_tech_coef={:.2f}, PopArt-std targets)",
+                     tech_adv_weight_, vf_tech_coef_);
+    }
 
     spdlog::info("PPO init on device={}, params={}, obs_dim={}",
                  (device_.is_cuda() ? "CUDA" : "CPU"),
@@ -300,7 +357,7 @@ dp::agent::AgentAction PPO::sample_action(
     // Discrete: 17-way categorical (16 triggers + NOOP). Multinomial
     // sample one index, log_prob = log p(a). Replaces independent
     // Bernoulli heads to break the "press every button" collapse.
-    auto dlm         = apply_survive_first_mask(apply_disc_mask(dl), t_obs);
+    auto dlm         = apply_afford_mask(apply_survive_first_mask(apply_disc_mask(dl), t_obs), t_obs);
     auto log_probs_d = torch::log_softmax(dlm, /*dim=*/1);   // [1, DISC_CATS]
     auto probs_d     = log_probs_d.exp();                    // [1, 17]
     auto idx         = deterministic_
@@ -401,7 +458,7 @@ void PPO::sample_actions_batch(
          - cs
          - 0.5f * std::log(2.0f * static_cast<float>(M_PI)))
             .sum(1);  // [N]
-    auto dlm         = apply_survive_first_mask(apply_disc_mask(dl), t_obs);
+    auto dlm         = apply_afford_mask(apply_survive_first_mask(apply_disc_mask(dl), t_obs), t_obs);
     auto log_probs_d = torch::log_softmax(dlm, /*dim=*/1);  // [N, DISC_CATS]
     auto probs_d     = log_probs_d.exp();
     auto idx         = probs_d.multinomial(1, /*replacement=*/true);  // [N, 1]
@@ -524,24 +581,99 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
         done[i] = tr.done ? 1.0f : 0.0f;
     }
 
-    // ---------- GAE-λ on host ----------
-    std::vector<float> adv(N, 0.0f), ret(N, 0.0f);
-    float gae = 0.0f;
-    for (int i = N - 1; i >= 0; --i) {
-        float next_v = (i == N - 1) ? last_value : val[i + 1];
-        float next_nonterm = (i == N - 1)
-            ? (rollout[N - 1].done ? 0.0f : 1.0f)
-            : (rollout[i].done     ? 0.0f : 1.0f);
-        float delta = rew[i] + cfg_.gamma * next_v * next_nonterm - val[i];
-        gae   = delta + cfg_.gamma * cfg_.lambda_ * next_nonterm * gae;
-        adv[i] = gae;
-        ret[i] = adv[i] + val[i];
+    // ---------- D2 stream split (host) ----------
+    // tech stream = trainer PBRS pulses (Transition::reward_tech_extra) + the
+    // sparse env φ channels (kills=3, shelter-build=8, craft=9, milestone=10)
+    // rebuilt through the φ->reward weight vector; surv = reward - tech, so
+    // surv+tech == the exact clipped shaped reward the trainer recorded, no
+    // matter what mix of knobs (clipping included) produced it.
+    std::vector<float> rs(N, 0.0f), rt(N, 0.0f);
+    if (stream_split_) {
+        for (int i = 0; i < N; ++i) {
+            const auto& tr = rollout[i];
+            float tech = tr.reward_tech_extra;
+            if (static_cast<int>(tr.phi.size()) == ActorCriticImpl::SF_DIM) {
+                tech += phi_w_[3]  * tr.phi[3]    // kills
+                      + phi_w_[8]  * tr.phi[8]    // built shelter
+                      + phi_w_[9]  * tr.phi[9]    // crafted tool
+                      + phi_w_[10] * tr.phi[10];  // milestone (incl. prey_blow/explore)
+            }
+            rt[i] = tech;
+            rs[i] = rew[i] - tech;
+        }
     }
+
+    // ---------- D2: stale value_tech over the rollout (no-grad) ----------
+    // Needed BEFORE the tech GAE. One batched stale-hidden forward (same scheme
+    // as the minibatch re-forward); the bootstrap for s_{T+1} uses the last
+    // row's h (one step staler than the caller's s_{T+1} surv bootstrap --
+    // negligible for a sparse, zero-initialised stream; documented trade-off).
+    std::vector<float> vt(N, 0.0f);
+    float last_vt_raw = 0.0f;
+    if (stream_split_) {
+        auto t_obs0 = torch::from_blob(obs_flat.data(), {N, O},
+                                       torch::kFloat32).clone().to(device_);
+        auto t_hin0 = torch::from_blob(hin_flat.data(), {N, H},
+                                       torch::kFloat32).clone().to(device_);
+        torch::NoGradGuard ng;
+        auto fo2   = net_->forward_step(t_obs0, t_hin0);
+        auto vt_n  = net_->value_tech(std::get<4>(fo2))
+                         .squeeze(-1).to(torch::kCPU).contiguous();
+        const float* vp = vt_n.data_ptr<float>();
+        for (int i = 0; i < N; ++i)
+            vt[i] = rett_std_ * vp[i] + rett_mean_;
+        if (!rollout[N - 1].done) {
+            float vt_last_n = net_->value_tech(std::get<4>(fo2).narrow(0, N - 1, 1))
+                                  .squeeze(-1).item<float>();
+            last_vt_raw = rett_std_ * vt_last_n + rett_mean_;
+        }
+    }
+
+    // ---------- GAE-λ on host (dual-stream when stream_split_) ----------
+    std::vector<float> adv(N, 0.0f), ret(N, 0.0f);
+    {
+        const std::vector<float>& rew_s = stream_split_ ? rs : rew;
+        float gae = 0.0f;
+        for (int i = N - 1; i >= 0; --i) {
+            float next_v = (i == N - 1) ? last_value : val[i + 1];
+            float next_nonterm = (i == N - 1)
+                ? (rollout[N - 1].done ? 0.0f : 1.0f)
+                : (rollout[i].done     ? 0.0f : 1.0f);
+            float delta = rew_s[i] + cfg_.gamma * next_v * next_nonterm - val[i];
+            gae   = delta + cfg_.gamma * cfg_.lambda_ * next_nonterm * gae;
+            adv[i] = gae;
+            ret[i] = adv[i] + val[i];
+        }
+    }
+    std::vector<float> adv_t(N, 0.0f), ret_t(N, 0.0f);
+    if (stream_split_) {
+        float gae_t = 0.0f;
+        for (int i = N - 1; i >= 0; --i) {
+            float next_v = (i == N - 1) ? last_vt_raw : vt[i + 1];
+            float next_nonterm = (i == N - 1)
+                ? (rollout[N - 1].done ? 0.0f : 1.0f)
+                : (rollout[i].done     ? 0.0f : 1.0f);
+            float delta = rt[i] + cfg_.gamma * next_v * next_nonterm - vt[i];
+            gae_t  = delta + cfg_.gamma * cfg_.lambda_ * next_nonterm * gae_t;
+            adv_t[i] = gae_t;
+            ret_t[i] = adv_t[i] + vt[i];
+        }
+    }
+    // D2: with the split, the policy-relevant RAW quantity is the combined
+    // surv + w*tech advantage -- the early-warning panels below keep their
+    // "sign => behaviour rises/falls next" meaning against THAT quantity.
+    std::vector<float> adv_comb;
+    if (stream_split_) {
+        adv_comb.resize(N);
+        for (int i = 0; i < N; ++i)
+            adv_comb[i] = adv[i] + tech_adv_weight_ * adv_t[i];
+    }
+    const std::vector<float>& ew_src = stream_split_ ? adv_comb : adv;
     // D-122 early-warning: snapshot mean RAW advantage of the hunt(attack,idx2)
     // and cook(idx18) actions BEFORE normalization, so the sign keeps its
     // "is this action better/worse than the value baseline" meaning.
-    auto [ew_adv_attack, ew_cnt_attack] = mean_adv_for_action(adv, disc_idx, /*attack*/2);
-    auto [ew_adv_cook,   ew_cnt_cook]   = mean_adv_for_action(adv, disc_idx, /*cook*/18);
+    auto [ew_adv_attack, ew_cnt_attack] = mean_adv_for_action(ew_src, disc_idx, /*attack*/2);
+    auto [ew_adv_cook,   ew_cnt_cook]   = mean_adv_for_action(ew_src, disc_idx, /*cook*/18);
     // D-123 FULL-behavior panel: same pre-normalization snapshot, but for every
     // categorical class so a few hundred episodes predict which of ALL behaviors
     // rise vs get extinguished. Pure read-out of the SAME `adv`/`disc_idx`
@@ -549,9 +681,21 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     std::array<float, ActorCriticImpl::DISC_CATS> ew_adv_all{};
     std::array<int,   ActorCriticImpl::DISC_CATS> ew_cnt_all{};
     for (int a = 0; a < ActorCriticImpl::DISC_CATS; ++a) {
-        auto [m, c] = mean_adv_for_action(adv, disc_idx, a);
+        auto [m, c] = mean_adv_for_action(ew_src, disc_idx, a);
         ew_adv_all[a] = m;
         ew_cnt_all[a] = c;
+    }
+    // D2 tech-stream diagnostics: how many transitions carried a nonzero tech
+    // reward, and their mean raw tech advantage (pre-normalisation).
+    int   ew_cnt_tech = 0;
+    float ew_adv_tech = 0.0f;
+    {
+        int c = 0; double s = 0.0;
+        for (int i = 0; i < N; ++i) {
+            if (rt[i] != 0.0f) { s += adv_t[i]; ++c; }
+        }
+        ew_cnt_tech = c;
+        ew_adv_tech = (c > 0) ? static_cast<float>(s / c) : 0.0f;
     }
 
     // Normalise advantages
@@ -561,6 +705,18 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
         for (auto a : adv) sq += (a - mean) * (a - mean);
         float std_ = static_cast<float>(std::sqrt(sq / std::max(1, N - 1)) + 1e-8);
         for (auto& a : adv) a = (a - static_cast<float>(mean)) / std_;
+        if (stream_split_) {
+            // per-stream standardisation: the tech stream's z-scored advantage
+            // enters at equal footing (weighted by tech_adv_weight_) instead of
+            // being drowned by the survival stream's return scale.
+            double mt = std::accumulate(adv_t.begin(), adv_t.end(), 0.0) / N;
+            double qt  = 0.0;
+            for (auto a : adv_t) qt += (a - mt) * (a - mt);
+            float std_t = static_cast<float>(std::sqrt(qt / std::max(1, N - 1)) + 1e-8);
+            for (auto& a : adv_t) a = (a - static_cast<float>(mt)) / std_t;
+            for (int i = 0; i < N; ++i)
+                adv[i] += tech_adv_weight_ * adv_t[i];
+        }
     }
 
     auto t_obs   = torch::from_blob(obs_flat.data(),  {N, O}, torch::kFloat32).clone().to(device_);
@@ -570,6 +726,16 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     auto t_lpold = torch::from_blob(lp.data(),        {N},    torch::kFloat32).clone().to(device_);
     auto t_adv   = torch::from_blob(adv.data(),       {N},    torch::kFloat32).clone().to(device_);
     auto t_ret   = torch::from_blob(ret.data(),       {N},    torch::kFloat32).clone().to(device_);
+    // D2: tech value targets, PopArt-standardised with the SAME stats the
+    // stale forward and the tech GAE used (one consistent scale per update).
+    torch::Tensor t_rett;
+    if (stream_split_) {
+        std::vector<float> rett_n(N);
+        for (int i = 0; i < N; ++i)
+            rett_n[i] = (ret_t[i] - rett_mean_) / rett_std_;
+        t_rett = torch::from_blob(rett_n.data(), {N},
+                                  torch::kFloat32).clone().to(device_);
+    }
 
     // ---------- D-123 SF: ψ TD target (host, fixed within this update) ----------
     // ψ(s) predicts the discounted future accumulation of each reward feature
@@ -654,7 +820,7 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
 
             auto [cm, cs, dl0, v, h_out] = net_->forward_step(b_obs, b_hin);
             auto dl_disc = apply_disc_mask(dl0);
-            auto dl   = apply_survive_first_mask(dl_disc, b_obs);
+            auto dl   = apply_afford_mask(apply_survive_first_mask(dl_disc, b_obs), b_obs);
             auto std_ = cs.exp();
             auto cont_lp =
                 (-0.5f * ((b_cont - cm) / std_).pow(2)
@@ -678,6 +844,16 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             auto clipped   = ratio.clamp(1.0f - cfg_.clip_eps, 1.0f + cfg_.clip_eps) * b_adv;
             auto policy_loss = -torch::min(unclipped, clipped).mean();
             auto value_loss  = (v - b_ret).pow(2).mean();
+            // D2: tech-stream value loss on the dedicated zero-init head.
+            // Its gradient flows into the shared trunk (that is the point --
+            // the sparse stream must shape the trunk's value features too),
+            // scale-balanced by the PopArt-standardised target.
+            torch::Tensor value_loss_tech;
+            if (stream_split_ && t_rett.defined()) {
+                auto b_rett  = t_rett.index_select(0, t_idx);
+                auto vt_pred = net_->value_tech(h_out).squeeze(-1);
+                value_loss_tech = (vt_pred - b_rett).pow(2).mean();
+            }
 
             // D-123 SF: ψ TD loss on the DETACHED trunk. Because h_out is
             // detached, this gradient updates ONLY the `successor` head -> the
@@ -704,8 +880,8 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                     auto rt = ref_net_->forward_step(b_obs, b_hin);
                     r_cm = std::get<0>(rt);
                     r_cs = std::get<1>(rt);
-                    r_dl = apply_survive_first_mask(
-                               apply_disc_mask(std::get<2>(rt)), b_obs);
+                    r_dl = apply_afford_mask(apply_survive_first_mask(
+                               apply_disc_mask(std::get<2>(rt)), b_obs), b_obs);
                 }
                 auto kl_cont = ((r_cs - cs)
                     + (torch::exp(2.0f * cs) + (cm - r_cm).pow(2))
@@ -739,6 +915,11 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
                 ? (cfg_.vf_coef * value_loss)
                 : (policy_loss + cfg_.vf_coef * value_loss
                    - cfg_.ent_coef * entropy);
+            // D2: the tech critic rides along in BOTH paths -- critic warmup
+            // should calibrate it too (a cold tech head would poison the tech
+            // advantage right after warmup ends).
+            if (stream_split_ && value_loss_tech.defined())
+                loss = loss + vf_tech_coef_ * value_loss_tech;
             // Dead-action floor: penalize discrete actions whose batch-mean
             // probability has fallen below the floor so collapsed logits keep
             // a recoverable gradient. relu(floor - mean_p) is zero for any
@@ -787,6 +968,8 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
             stats.value_loss  += value_loss.item<float>();
             stats.entropy     += entropy.item<float>();
             if (sf_loss.defined()) stats.sf_loss += sf_loss.item<float>();
+            if (stream_split_ && value_loss_tech.defined())
+                stats.value_loss_tech += value_loss_tech.item<float>();
             stats.approx_kl   += (b_lpold - lp_new).mean().item<float>();
             stats.clip_frac   += ((ratio - 1.0f).abs() > cfg_.clip_eps)
                                    .to(torch::kFloat32)
@@ -810,7 +993,46 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
         stats.approx_kl   /= total_minibatches;
         stats.clip_frac   /= total_minibatches;
         stats.sf_loss     /= total_minibatches;
+        stats.value_loss_tech /= total_minibatches;
     }
+    // D2: PopArt running-stat update for the tech return stream + precise
+    // output rescale of value_tech so its RAW predictions are unchanged by the
+    // re-standardisation (w' = c*w, b' = c*b + d keeps sigma*out+mu constant).
+    // In-place tensor ops are required (the optimizer holds these tensors);
+    // parameter in-place ops are the proven-safe path in this build (cf. the
+    // log_std clamp above). std floor 0.05 keeps the all-zero-event rollouts
+    // from exploding the normalised targets.
+    if (stream_split_) {
+        double m = std::accumulate(ret_t.begin(), ret_t.end(), 0.0) / N;
+        double q = 0.0;
+        for (float r : ret_t) q += (r - m) * (r - m);
+        float bm = static_cast<float>(m);
+        float bv = static_cast<float>(q / std::max(1, N - 1));
+        float new_mean, new_std;
+        if (!rett_init_) {
+            new_mean = bm;
+            new_std  = std::sqrt(bv) + 0.05f;
+            rett_init_ = true;
+        } else {
+            const float beta = 0.99f;
+            new_mean = beta * rett_mean_ + (1.0f - beta) * bm;
+            float new_var = beta * (rett_std_ * rett_std_)
+                          + (1.0f - beta) * bv;
+            new_std = std::sqrt(new_var) + 0.05f;
+        }
+        float c = rett_std_ / new_std;
+        float d = (rett_mean_ - new_mean) / new_std;
+        {
+            torch::NoGradGuard ng;
+            net_->value_tech->weight.mul_(c);
+            net_->value_tech->bias.mul_(c).add_(d);
+        }
+        rett_mean_ = new_mean;
+        rett_std_  = new_std;
+        stats.ret_tech_mean = new_mean;
+    }
+    stats.adv_tech_raw = ew_adv_tech;
+    stats.cnt_tech     = ew_cnt_tech;
     return stats;
 }
 
