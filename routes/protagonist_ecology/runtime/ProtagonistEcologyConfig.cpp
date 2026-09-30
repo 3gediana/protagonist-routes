@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <stdexcept>
+
+#include "core/logging/Logger.h"
 
 namespace neuro::routes::protagonist {
 
@@ -182,6 +185,12 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.campfire.warmth_energy_bonus = config.getOr<float>("world.campfire.warmth_energy_bonus", out.campfire.warmth_energy_bonus);
     out.campfire.danger_damage = config.getOr<float>("world.campfire.danger_damage", out.campfire.danger_damage);
 
+    out.prey.two_stage_flee = config.getOr<bool>("world.prey.two_stage_flee", out.prey.two_stage_flee);
+    out.prey.flee_burst_seconds = config.getOr<float>("world.prey.burst_s", out.prey.flee_burst_seconds);
+    out.prey.flee_rest_seconds = config.getOr<float>("world.prey.rest_s", out.prey.flee_rest_seconds);
+    out.prey.flee_damage_memory_seconds = config.getOr<float>("world.prey.damage_memory_s", out.prey.flee_damage_memory_seconds);
+    out.prey.large_herbivore_damage_threshold = config.getOr<float>("world.prey.large_herbivore_damage_threshold", out.prey.large_herbivore_damage_threshold);
+
     out.water.enabled = config.getOr<bool>("world.water.enabled", out.water.enabled);
     out.water.source_count = config.getOr<std::size_t>("world.water.source_count", out.water.source_count);
     out.water.spawn_radius_min = config.getOr<float>("world.water.spawn_radius_min", out.water.spawn_radius_min);
@@ -252,6 +261,12 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.worksite.type_dist_shelter = config.getOr<float>("world.worksite.type_dist_shelter", out.worksite.type_dist_shelter);
     out.worksite.type_dist_storage = config.getOr<float>("world.worksite.type_dist_storage", out.worksite.type_dist_storage);
     out.worksite.type_dist_lookout = config.getOr<float>("world.worksite.type_dist_lookout", out.worksite.type_dist_lookout);
+
+    out.craft.require_in_base = config.getOr<bool>("world.craft.require_in_base", out.craft.require_in_base);
+    out.craft.require_stone = config.getOr<bool>("world.craft.require_stone", out.craft.require_stone);
+    out.craft.respect_worksite_reservation = config.getOr<bool>("world.craft.respect_worksite_reservation", out.craft.respect_worksite_reservation);
+    out.craft.activation_threshold = config.getOr<float>("world.craft.activation_threshold", out.craft.activation_threshold);
+    out.craft.energy_cost = config.getOr<float>("world.craft.energy_cost", out.craft.energy_cost);
 
     out.intervention.enabled = config.getOr<bool>("world.intervention.enabled", out.intervention.enabled);
     out.intervention.initial_budget = config.getOr<float>("world.intervention.initial_budget", out.intervention.initial_budget);
@@ -408,6 +423,14 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist.goal_action_assist_enabled = config.getOr<bool>("population.protagonist.goal_action_assist_enabled", out.protagonist.goal_action_assist_enabled);
     out.protagonist.predator_warn_enabled = config.getOr<bool>("population.protagonist.predator_warn_enabled", out.protagonist.predator_warn_enabled);
     out.protagonist.hunt_enabled = config.getOr<bool>("population.protagonist.hunt_enabled", out.protagonist.hunt_enabled);
+    out.protagonist.hunt_radius = config.getOr<float>("population.protagonist.hunt_radius", out.protagonist.hunt_radius);
+    out.protagonist.hunt_damage = config.getOr<float>("population.protagonist.hunt_damage", out.protagonist.hunt_damage);
+    out.protagonist.hunt_energy_gain = config.getOr<float>("population.protagonist.hunt_energy_gain", out.protagonist.hunt_energy_gain);
+    out.protagonist.hunt_cost = config.getOr<float>("population.protagonist.hunt_cost", out.protagonist.hunt_cost);
+    out.protagonist.chop_radius = config.getOr<float>("population.protagonist.chop_radius", out.protagonist.chop_radius);
+    out.protagonist.chop_damage = config.getOr<float>("population.protagonist.chop_damage", out.protagonist.chop_damage);
+    out.protagonist.chop_energy_cost = config.getOr<float>("population.protagonist.chop_energy_cost", out.protagonist.chop_energy_cost);
+    out.protagonist.chop_progress_reward = config.getOr<float>("population.protagonist.chop_progress_reward", out.protagonist.chop_progress_reward);
     out.protagonist.building_type_choice_enabled = config.getOr<bool>("population.protagonist.building_type_choice_enabled", out.protagonist.building_type_choice_enabled);
 
     out.background.forager_count = config.getOr<std::size_t>("population.background.forager_count", out.background.forager_count);
@@ -547,6 +570,11 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
     out.protagonist_warmth_drive_enabled = config.getOr<bool>(
         "evolution.protagonist_warmth_drive_enabled",
         out.protagonist_warmth_drive_enabled);
+    // Border proprioception (2026-06-10 Devin): true -> fresh lineage with
+    // +4 border-perception dims.
+    out.protagonist_border_perception_enabled = config.getOr<bool>(
+        "evolution.protagonist_border_perception_enabled",
+        out.protagonist_border_perception_enabled);
     // Realism (2026-06): true -> fresh lineage with +4 cave-perception dims.
     out.protagonist_cave_perception_enabled = config.getOr<bool>(
         "evolution.protagonist_cave_perception_enabled",
@@ -682,7 +710,89 @@ ProtagonistEcologyConfig ProtagonistEcologyConfig::fromConfig(const config::Conf
         "evolution.me_neat.mutation_boost",
         out.me_neat_mutation_boost);
 
+    // Density auto-scaling: parse toggle and reference size.
+    out.density_auto_scale = config.getOr<bool>("world.density_auto_scale", out.density_auto_scale);
+    try {
+        const auto ref_sz = config.getArray<double>("world.density_reference_size");
+        if (ref_sz.size() == 2) {
+            out.density_reference_size = Vec2{static_cast<float>(ref_sz[0]),
+                                              static_cast<float>(ref_sz[1])};
+        }
+    } catch (...) {
+        // Key not present — keep default 600×600.
+    }
+    if (out.density_auto_scale) {
+        out.applyDensityScaling();
+    }
+
     return out;
+}
+
+// ─── Density auto-scaling implementation ────────────────────────────
+void ProtagonistEcologyConfig::applyDensityScaling() {
+    const float ref_area = density_reference_size.x * density_reference_size.y;
+    const float act_area = world_size.x * world_size.y;
+    if (ref_area <= 0.0f || act_area <= 0.0f) return;
+
+    const float area_ratio = act_area / ref_area;
+    const float dist_ratio = std::sqrt(area_ratio);
+
+    // Helper: scale a count, minimum 1.
+    auto scaleCount = [&](std::size_t base) -> std::size_t {
+        const auto v = static_cast<std::size_t>(std::round(base * area_ratio));
+        return v < 1 ? 1 : v;
+    };
+    auto scaleDist = [&](float base) -> float {
+        return base * dist_ratio;
+    };
+
+    // Resources
+    resources.count = scaleCount(resources.count);
+
+    // Trees
+    tree.count = scaleCount(tree.count);
+    tree.spawn_radius_min = scaleDist(tree.spawn_radius_min);
+    tree.spawn_radius_max = scaleDist(tree.spawn_radius_max);
+
+    // Campfires
+    campfire.count = scaleCount(campfire.count);
+    campfire.spawn_radius = scaleDist(campfire.spawn_radius);
+
+    // Water sources
+    water.source_count = scaleCount(water.source_count);
+    water.spawn_radius_min = scaleDist(water.spawn_radius_min);
+    water.spawn_radius_max = scaleDist(water.spawn_radius_max);
+
+    // Worksites
+    worksite.count = scaleCount(worksite.count);
+    worksite.spawn_radius = scaleDist(worksite.spawn_radius);
+
+    // Objects (sticks, stones, etc.)
+    objects.count = scaleCount(objects.count);
+
+    // Base zone radius + offsets
+    base.radius = scaleDist(base.radius);
+    base.stockpile_radius = scaleDist(base.stockpile_radius);
+    base.nest_radius = scaleDist(base.nest_radius);
+    base.center.x = scaleDist(base.center.x);
+    base.center.y = scaleDist(base.center.y);
+
+    // Background species counts (via task_templates and direct species list
+    // are not scaled here — they're parsed from TOML as absolute values.
+    // The Agent should scale background species counts explicitly, or
+    // a separate mechanism handles them in BootstrapPopulation).
+    //
+    // NOTE: protagonist.count is NOT scaled — NEAT population size is
+    // independent of world area (selection pressure vs spatial density
+    // are separate concerns).
+
+    LOG_INFO("density_auto_scale: ref={}x{} actual={}x{} area_ratio={:.3f} dist_ratio={:.3f}"
+             " | trees={} resources={} campfires={} water={} worksites={} objects={}",
+             density_reference_size.x, density_reference_size.y,
+             world_size.x, world_size.y,
+             area_ratio, dist_ratio,
+             tree.count, resources.count, campfire.count,
+             water.source_count, worksite.count, objects.count);
 }
 
 }  // namespace neuro::routes::protagonist

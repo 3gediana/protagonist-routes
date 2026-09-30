@@ -11,8 +11,12 @@
 
 namespace neuro {
 
-FleeCapability::FleeCapability(float flee_radius, float flee_speed_boost, float flee_cost)
-    : flee_radius_(flee_radius), flee_speed_boost_(flee_speed_boost), flee_cost_(flee_cost) {}
+FleeCapability::FleeCapability(float flee_radius, float flee_speed_boost, float flee_cost,
+                               TwoStageFleeParams params)
+    : flee_radius_(flee_radius),
+      flee_speed_boost_(flee_speed_boost),
+      flee_cost_(flee_cost),
+      params_(params) {}
 
 std::size_t FleeCapability::consumedOutputs() const {
     return 1;  // flee intensity [0,1]
@@ -28,6 +32,16 @@ void FleeCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     auto* agent_layer = world.getLayer<AgentLayer>();
     if (agent_layer == nullptr) return;
 
+    const bool two_stage = params_.enabled;
+    const SimTimeSeconds now = world.currentTimeSeconds();
+    // Two-stage mode: protagonist-like hunters (archetype tag 0) only
+    // count as threats while the prey was damaged recently. Legacy mode
+    // (two_stage == false) keeps the predator-only threat set.
+    const bool hunters_are_threats =
+        two_stage && concrete->lastDamageTimeSeconds() >= 0.0
+        && (now - concrete->lastDamageTimeSeconds())
+               <= static_cast<SimTimeSeconds>(params_.damage_memory_seconds);
+
     // Find nearest predator
     float nearest_dx = 0.0f;
     float nearest_dy = 0.0f;
@@ -37,7 +51,9 @@ void FleeCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
     for (const auto* other : agent_layer->agents()) {
         if (other == &agent || !other->alive()) continue;
         const auto* other_concrete = dynamic_cast<const Agent*>(other);
-        if (other_concrete == nullptr || !other_concrete->isPredator()) continue;
+        if (other_concrete == nullptr) continue;
+        const bool is_predator = other_concrete->isPredator();
+        if (!is_predator && !(hunters_are_threats && other_concrete->archetypeTag() == 0)) continue;
 
         const float dx = agent.position().x - other->position().x;
         const float dy = agent.position().y - other->position().y;
@@ -51,7 +67,29 @@ void FleeCapability::apply(IAgent& agent, IWorld& world, std::span<const float> 
         }
     }
 
-    if (!threat_found) return;
+    if (!threat_found) {
+        if (two_stage) cycle_active_ = false;
+        return;
+    }
+
+    // Two-stage burst/rest cycle. Starts on the first threatened tick;
+    // while threatened it alternates burst_seconds of fleeing with
+    // rest_seconds of no flee movement. Threat-free ticks reset the
+    // cycle so the next hit starts with a fresh burst.
+    if (two_stage) {
+        if (!cycle_active_) {
+            cycle_active_ = true;
+            resting_ = false;
+            phase_started_ = now;
+        } else {
+            const float phase_len = resting_ ? params_.rest_seconds : params_.burst_seconds;
+            if ((now - phase_started_) >= static_cast<SimTimeSeconds>(phase_len)) {
+                resting_ = !resting_;
+                phase_started_ = now;
+            }
+        }
+        if (resting_) return;  // respite window: no flee movement
+    }
 
     // Day/night: prey flee more effectively during day (1.0x), worse at night (0.6x)
     float time_mult = 1.0f;

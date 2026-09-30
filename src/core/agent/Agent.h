@@ -157,6 +157,12 @@ public:
     void clearThreatDamageWindow();
     const std::vector<ThreatHit>& threatDamageHistory() const { return threat_damage_window_; }
 
+    // Last time this agent received combat damage (sim seconds), or -1 if
+    // never hit. Only read by the two-stage prey flee mode in
+    // FleeCapability; writing it is behavior-neutral otherwise.
+    void noteDamageReceived(SimTimeSeconds t) { last_damage_time_seconds_ = t; }
+    SimTimeSeconds lastDamageTimeSeconds() const { return last_damage_time_seconds_; }
+
     // Stealth state (leopard ambush). When true, AgentSocialPerception
     // filters self out for observers that are not directly adjacent
     // (< 2m). Set/cleared by StealthCapability based on stationary time.
@@ -460,6 +466,7 @@ private:
     // L2.1 species differentiation
     std::vector<ThreatHit> threat_damage_window_;
     float damage_threshold_ = 0.0f;
+    SimTimeSeconds last_damage_time_seconds_ = -1.0;
     bool stealth_state_ = false;
     int task_template_idx_ = -1;
     // L2.7 v13: HRL goal completion counters.

@@ -50,6 +50,7 @@
 #include "perception/MemoryCognitionPerception.h"
 #include "perception/MemoryTrialPerception.h"
 #include "perception/ObjectLogisticsPerception.h"
+#include "perception/BorderPerception.h"
 #include "perception/ProtagonistRhythmPerception.h"
 #include "perception/ProtagonistWarmthDrivePerception.h"
 #include "perception/SelfHeadingPerception.h"
@@ -208,6 +209,13 @@ std::size_t protagonistSensoryDim(const ProtagonistEcologyConfig& config) {
         sensory_dim += ProtagonistWarmthDrivePerception::kDim;
     }
 
+    // Border proprioception (2026-06-10 Devin): normalized position + wall
+    // closeness ramps. The addPerception call in createProtagonist must add
+    // exactly BorderPerception::kDim dims in this same trailing position.
+    if (config.protagonist_border_perception_enabled) {
+        sensory_dim += BorderPerception::kDim;
+    }
+
     // One-pot unified bloodline (2026-06-01): when enabled, UNCONDITIONALLY
     // reserve all forward-compatible A–F perception dims so input_dim is locked
     // ONCE and phases C→F can be switched on later without a lineage reset. The
@@ -289,12 +297,11 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     constexpr float kInitialEnergy = 120.0f;
     constexpr float kMoveCost = 0.01f;
     constexpr float kMovementFactor = 0.002f;
-    constexpr float kEatRadius = 4.5f;
+    constexpr float kEatRadius = 6.0f;
     constexpr float kSignalCost = 0.01f;
     constexpr float kSignalRadius = 16.0f;
     constexpr float kSocialSenseRadius = 24.0f;
     constexpr float kTreeSenseRadius = 30.0f;
-    constexpr float kChopRadius = 3.0f;
     constexpr float kThrowSpeed = 7.5f;
     constexpr float kThrowRadius = 14.0f;
     constexpr float kWeaponSenseRadius = 20.0f;
@@ -374,7 +381,7 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         agent->addPerception(std::make_unique<AgentSocialPerception>(kSocialSenseRadius));
     }
     if (has_tree_curriculum) {
-        agent->addPerception(std::make_unique<TreePerception>(kTreeSenseRadius, kChopRadius));
+        agent->addPerception(std::make_unique<TreePerception>(kTreeSenseRadius, config.protagonist.chop_radius));
     }
     if (has_tool_curriculum) {
         agent->addPerception(std::make_unique<CarriedObjectPerception>());
@@ -444,6 +451,12 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
         agent->addPerception(std::make_unique<ProtagonistWarmthDrivePerception>());
     }
 
+    // Border proprioception (2026-06-10 Devin). Must match the dim summation
+    // in protagonistSensoryDim (added last, after warmth-drive).
+    if (config.protagonist_border_perception_enabled) {
+        agent->addPerception(std::make_unique<BorderPerception>());
+    }
+
     // One-pot unified bloodline (2026-06-01): reserve all A–F perception
     // channels. SelfHeading carries real signal (Phase C proprioception);
     // kin/territory/world-history now carry REAL signals (genetic relatedness,
@@ -484,18 +497,27 @@ std::unique_ptr<Agent> makeProtagonistAgent(AgentId id,
     }
     if (hasBackgroundAgents(config)) {
         agent->addCapability(std::make_unique<ProtagonistHuntCapability>(
-            5.0f,
-            10.0f,
-            6.0f,
-            0.02f,
+            config.protagonist.hunt_radius,
+            config.protagonist.hunt_damage,
+            config.protagonist.hunt_energy_gain,
+            config.protagonist.hunt_cost,
             config.protagonist.hunt_enabled));
         agent->addCapability(std::make_unique<FleeCapability>(16.0f, 3.0f, 0.03f));
     }
     if (has_tree_curriculum) {
-        agent->addCapability(std::make_unique<ChopTreeCapability>(kChopRadius, 6.0f, 0.02f));
+        agent->addCapability(std::make_unique<ChopTreeCapability>(config.protagonist.chop_radius,
+                                                                  config.protagonist.chop_damage,
+                                                                  config.protagonist.chop_energy_cost,
+                                                                  /*activation_threshold=*/0.5f,
+                                                                  config.protagonist.chop_progress_reward));
     }
     if (has_tool_curriculum) {
-        agent->addCapability(std::make_unique<CraftSpearCapability>(0.025f));
+        agent->addCapability(std::make_unique<CraftSpearCapability>(
+            config.craft.energy_cost,
+            config.craft.activation_threshold,
+            config.craft.require_in_base,
+            config.craft.require_stone,
+            config.craft.respect_worksite_reservation));
         agent->addCapability(std::make_unique<ThrowCarriedObjectCapability>(kThrowSpeed, kThrowRadius, 10.0f, 18.0f, 0.02f));
     }
     if (config.objects.enabled) {
@@ -685,18 +707,32 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
 
     attachBackgroundCommonSensors(*agent, config, initial_energy);
 
+    // G1 two-stage flee params for background prey archetypes. When
+    // config.prey.two_stage_flee is false (default) every ctor below
+    // behaves exactly like the legacy 3-arg construction.
+    FleeCapability::TwoStageFleeParams prey_flee_params{};
+    prey_flee_params.enabled = config.prey.two_stage_flee;
+    prey_flee_params.burst_seconds = config.prey.flee_burst_seconds;
+    prey_flee_params.rest_seconds = config.prey.flee_rest_seconds;
+    prey_flee_params.damage_memory_seconds = config.prey.flee_damage_memory_seconds;
+    // G2 cooperative prey: 0 = built-in default (9.0).
+    const float large_herbivore_threshold =
+        config.prey.large_herbivore_damage_threshold > 0.0f
+            ? config.prey.large_herbivore_damage_threshold
+            : 9.0f;
+
     switch (archetype) {
         case SpeciesArchetype::LargeHerbivore:
             // Large grazers: slow, defensive flee, plant diet.
-            // L2.1 v2: damage_threshold=12 means a single PackHunter
-            // (4 dmg/sec) accumulates only 4 in a 1s window - below 12,
-            // can't kill alone. 3+ wolves simultaneously break the
-            // threshold, forcing emergent group hunting.
+            // L2.1 v2: damage_threshold gates solo kills.
+            // Protagonist hunt_damage=10 (default): threshold=9 allows
+            // solo protagonist kills while PackHunter (4 dmg) still needs
+            // 3+ wolves. With Spear (×1.6=16) the kill is even faster.
             agent->setDietPreference(0.05f);  // pure herbivore
-            agent->setDamageThreshold(12.0f);
+            agent->setDamageThreshold(large_herbivore_threshold);
             agent->addCapability(std::make_unique<MoveCapability>(1.8f, 0.0035f, 0.0009f, 20));
             agent->addCapability(std::make_unique<EatCapability>(4.5f, 40.0f));
-            agent->addCapability(std::make_unique<FleeCapability>(10.0f, 0.7f, 0.012f));
+            agent->addCapability(std::make_unique<FleeCapability>(10.0f, 0.7f, 0.012f, prey_flee_params));
             // outputs: Move 2 + Eat 0 + Flee 1 = 3
             break;
 
@@ -709,7 +745,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             agent->setDamageThreshold(0.0f);
             agent->addCapability(std::make_unique<MoveCapability>(2.3f, 0.005f, 0.0011f, 20));
             agent->addCapability(std::make_unique<EatCapability>(3.5f, 44.0f));
-            agent->addCapability(std::make_unique<FleeCapability>(6.0f, 1.0f, 0.012f));
+            agent->addCapability(std::make_unique<FleeCapability>(6.0f, 1.0f, 0.012f, prey_flee_params));
             agent->addCapability(std::make_unique<CaveHideCapability>());
             // outputs: Move 2 + Eat 0 + Flee 1 + CaveHide 0 = 3
             break;
@@ -768,7 +804,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             agent->addCapability(std::make_unique<EatCapability>(5.0f, 54.0f));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(4.0f, 7.0f, 5.0f, 0.018f));
             agent->addCapability(std::make_unique<AttackCapability>(3.0f, 0.10f, 0.0f, 0.018f));
-            agent->addCapability(std::make_unique<FleeCapability>(8.0f, 0.8f, 0.012f));
+            agent->addCapability(std::make_unique<FleeCapability>(8.0f, 0.8f, 0.012f, prey_flee_params));
             // outputs: Move 2 + Eat 0 + Hunt 1 + Attack 3 + Flee 1 = 7
             // NOTE: backgroundOutputDim must reflect this.
             break;
@@ -785,7 +821,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             agent->addCapability(std::make_unique<EatCapability>(4.0f, 42.0f));
             agent->addCapability(std::make_unique<PredatorHuntCapability>(4.0f, 7.0f, 5.0f, 0.02f));
             agent->addCapability(std::make_unique<AttackCapability>(3.8f, 0.35f, 0.0f, 0.022f));
-            agent->addCapability(std::make_unique<FleeCapability>(7.0f, 0.7f, 0.012f));
+            agent->addCapability(std::make_unique<FleeCapability>(7.0f, 0.7f, 0.012f, prey_flee_params));
             // outputs: Move 2 + Eat 0 + Hunt 1 + Attack 3 + Flee 1 = 7
             break;
 
@@ -798,7 +834,7 @@ std::unique_ptr<Agent> makeNeatSpeciesAgent(AgentId id,
             agent->setDamageThreshold(0.0f);  // single-bite kill
             agent->addCapability(std::make_unique<MoveCapability>(2.8f, 0.003f, 0.0008f, 20));  // very fast
             agent->addCapability(std::make_unique<EatCapability>(3.0f, 38.0f));
-            agent->addCapability(std::make_unique<FleeCapability>(8.0f, 1.2f, 0.010f));
+            agent->addCapability(std::make_unique<FleeCapability>(8.0f, 1.2f, 0.010f, prey_flee_params));
             // outputs: Move 2 + Eat 0 + Flee 1 = 3
             break;
 

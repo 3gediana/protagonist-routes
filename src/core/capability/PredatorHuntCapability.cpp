@@ -88,6 +88,8 @@ void PredatorHuntCapability::apply(IAgent& agent, IWorld& world, std::span<const
                                         * stealth_mult * satiety_mult * dt;
             float actual_gain = base_gain * time_damage_mult * satiety_mult * dt;
             actual_gain *= 0.85f + 0.3f * concrete->dietPreference();
+            // Two-stage prey flee: note last combat damage on the victim.
+            other_concrete->noteDamageReceived(now);
 
             // L2.1 v2: scavenger bonus on low-vitality prey. Prey is
             // "low-vitality" if its energy is below 25% of its damage

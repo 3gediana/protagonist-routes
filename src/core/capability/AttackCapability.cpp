@@ -85,6 +85,10 @@ void AttackCapability::apply(IAgent& agent, IWorld& world, std::span<const float
         const float prev_energy = other->energy();
         other->setEnergy(prev_energy - damage);
         total_damage_dealt += damage;
+        // Two-stage prey flee: note last combat damage on the victim.
+        if (auto* victim = dynamic_cast<Agent*>(other)) {
+            victim->noteDamageReceived(world.currentTimeSeconds());
+        }
 
         const float gained = damage * energy_transfer_rate_;
         agent.setEnergy(agent.energy() + gained);

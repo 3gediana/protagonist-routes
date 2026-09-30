@@ -92,6 +92,11 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
 
         const float actual_damage = damage_ * weapon_mult * dt;
         const float actual_gain = energy_gain_ * dt;
+        // Two-stage prey flee: record when the target last took combat
+        // damage so its FleeCapability can treat the attacker's kind as
+        // threats for a short memory window. Purely a state note; the
+        // damage path itself is unchanged.
+        target->noteDamageReceived(now);
 
         // L2.1 v2 (SPECIES_DIFFERENTIATION_SPEC.md): damage threshold.
         // Same prey-side accumulator that PredatorHuntCapability uses;
@@ -99,25 +104,33 @@ void ProtagonistHuntCapability::apply(IAgent& agent, IWorld& world, std::span<co
         // wolfpack-style group requirement. Targets without threshold
         // (foragers, predators) take direct damage.
         constexpr SimTimeSeconds kThreatWindow = 1.0;
+        // Energy is only gained when damage actually lands on the target.
+        // Attacking a thresholded target without breaking its threshold
+        // yields nothing - meat comes from wounds, not from swinging.
+        bool damage_landed = false;
         if (target->damageThreshold() > 0.0f) {
             target->accumulateThreatDamage(agent.id(), actual_damage, now);
             const float window_total = target->threatDamageInWindow(now, kThreatWindow);
             if (window_total >= target->damageThreshold()) {
                 target->setEnergy(target->energy() - window_total);
                 target->clearThreatDamageWindow();
+                damage_landed = true;
             }
         } else {
             target->setEnergy(target->energy() - actual_damage);
+            damage_landed = true;
         }
 
-        concrete->setEnergy(concrete->energy() + actual_gain);
+        if (damage_landed) {
+            concrete->setEnergy(concrete->energy() + actual_gain);
+        }
         world.eventBus().publish(events::Event{
             events::EventType::AgentAttacked,
             events::AgentAttacked{agent.id(), target->id(), actual_damage},
             world.currentTick(),
             world.currentTimeSeconds()});
         concrete->noteDamageDealt(actual_damage);
-        if (actual_gain > 0.0f) {
+        if (damage_landed && actual_gain > 0.0f) {
             concrete->noteMeatFood(actual_gain);
         }
         if (target->energy() <= 0.0f) {

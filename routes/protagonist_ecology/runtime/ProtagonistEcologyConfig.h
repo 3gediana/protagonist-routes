@@ -130,6 +130,25 @@ struct CampfireConfig {
     float danger_damage{0.4f};
 };
 
+// Prey-side behavior knobs (G1/G2). Defaults reproduce the historical
+// hardcoded behavior exactly: two-stage flee off, LargeHerbivore
+// damage threshold 9.
+struct PreyConfig {
+    // G1 two-stage flee ("被打才逃+喘息窗口"): prey treat protagonist-like
+    // hunters as threats only within damage_memory_s of the last hit,
+    // then alternate burst-flee / rest windows. Applies to background
+    // prey archetypes only (protagonist's own FleeCapability is never
+    // given these params).
+    bool two_stage_flee{false};
+    float flee_burst_seconds{0.4f};
+    float flee_rest_seconds{2.5f};
+    float flee_damage_memory_seconds{6.0f};
+    // G2 cooperative prey: LargeHerbivore kill-burst threshold. 0 keeps
+    // the built-in 9.0; raise (e.g. 22) so a single protagonist cannot
+    // break it alone and hunters must stack damage together.
+    float large_herbivore_damage_threshold{0.0f};
+};
+
 struct WaterConfig {
     bool enabled{true};
     std::size_t source_count{2};
@@ -199,6 +218,18 @@ struct WorksiteConfig {
     float type_dist_shelter{0.0f};
     float type_dist_storage{0.0f};
     float type_dist_lookout{0.0f};
+};
+
+// Craft (spear) prerequisite knobs. Defaults reproduce the historical
+// hardcoded behaviour: craft only inside the base, consumes one stone, and
+// stones earmarked for unfinished worksites cannot be spent on spears.
+// Loosening these is the curriculum lever for bootstrapping craft behaviour.
+struct CraftConfig {
+    bool require_in_base{true};
+    bool require_stone{true};
+    bool respect_worksite_reservation{true};
+    float activation_threshold{0.5f};
+    float energy_cost{0.025f};
 };
 
 struct InterventionConfig {
@@ -300,9 +331,9 @@ struct MemoryTrialConfig {
 struct ProgressionConfig {
     bool enabled{true};
     std::size_t first_fire_stick_threshold{4};
-    std::size_t worksite_unlock_deposit_threshold{8};
+    std::size_t worksite_unlock_deposit_threshold{4};
     std::size_t worksite_unlock_stone_threshold{1};
-    std::size_t stone_unlock_deposit_threshold{6};
+    std::size_t stone_unlock_deposit_threshold{3};
     std::size_t heavy_unlock_deposit_threshold{12};
     std::size_t second_fire_deposit_threshold{16};
     std::size_t heavy_unlock_stone_threshold{2};
@@ -347,6 +378,25 @@ struct ProtagonistBrainConfig {
     bool goal_action_assist_enabled{false};
     bool predator_warn_enabled{true};
     bool hunt_enabled{true};
+    float hunt_radius{5.0f};
+    float hunt_damage{10.0f};
+    float hunt_energy_gain{6.0f};
+    float hunt_cost{0.02f};
+    // Chop curriculum knobs. Defaults reproduce the historical hardcoded
+    // values (radius 6, damage 6/s, cost 0.02/s); raising radius/damage is
+    // the curriculum lever for bootstrapping chop behaviour, mirroring the
+    // world.craft.* knobs for craft.
+    float chop_radius{6.0f};
+    float chop_damage{6.0f};
+    float chop_energy_cost{0.02f};
+    // D-136 audit (chop progress PBRS): dense fitness paid per point of
+    // tree integrity actually removed (added directly via addFitness by
+    // ChopTreeCapability). A full 16-integrity fell trickles in
+    // 16 * this as a dense trail toward the one-shot ChopCompleted
+    // reward, giving NEAT a selection gradient on PARTIAL chops. Bounded
+    // by real integrity damage (trees are finite, regrow slowly), so it
+    // cannot be farmed by output-spamming away from trees. 0 = off.
+    float chop_progress_reward{0.05f};
     // L5 #6: when true, attaches ChooseBuildingTypeCapability (4 extra
     // outputs) so the protagonist softmax-votes which BuildingType the
     // next dormant worksite becomes. Default off so existing checkpoints
@@ -443,10 +493,12 @@ struct ProtagonistEcologyConfig {
     NurseryLogisticsConfig nursery{};
     NurserySupplyConfig nursery_supply{};
     CampfireConfig campfire{};
+    PreyConfig prey{};
     WaterConfig water{};
     SurvivalConfig survival{};
     TreeConfig tree{};
     WorksiteConfig worksite{};
+    CraftConfig craft{};
     InterventionConfig intervention{};
     ProgressionConfig progression{};
     DayNightConfig day_night{};
@@ -638,6 +690,10 @@ struct ProtagonistEcologyConfig {
     // Adds +2 input dims -> fresh lineage. Independent of candidate-1; NOT
     // stacked. Default false keeps existing checkpoints loadable.
     bool protagonist_warmth_drive_enabled{false};
+    // Border proprioception (2026-06-10 Devin): normalized position + wall
+    // closeness ramps via BorderPerception (+4 input dims). Changes input_dim
+    // -> fresh lineage. Default false keeps existing checkpoints loadable.
+    bool protagonist_border_perception_enabled{false};
     // Realism (2026-06): cave perception. Adds +4 input dims (in-cave flag,
     // unit direction to nearest cave, normalized distance) so cave-seeking /
     // sheltering is learnable. Changes input_dim -> fresh lineage. Default
@@ -771,11 +827,24 @@ struct ProtagonistEcologyConfig {
     double me_neat_line_sigma{0.0};
     double me_neat_mutation_boost{1.0};
 
+    // Density auto-scaling: when enabled, resource/species counts and
+    // spawn radii are automatically scaled relative to a reference world
+    // size. TOML values become "base counts at reference size"; the
+    // runtime multiplies by (actual_area / reference_area) for counts
+    // and sqrt(ratio) for distances. Agent only needs to adjust
+    // world.size — density stays consistent automatically.
+    bool density_auto_scale{false};
+    Vec2 density_reference_size{600.0f, 600.0f};
+
     bool isTrainRole() const;
     bool isEvalRole() const;
     bool isLiveRole() const;
     bool isBorderlandRole() const;   // L6 R1
     bool isMainWorldRole() const;    // L6 R1
+
+    // Scale resource counts and spawn radii by world area ratio.
+    // Called automatically at end of fromConfig when density_auto_scale=true.
+    void applyDensityScaling();
 
     static ProtagonistEcologyConfig fromConfig(const config::Config& config);
 };

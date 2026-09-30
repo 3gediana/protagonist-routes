@@ -14,8 +14,14 @@ namespace neuro::routes::protagonist {
 
 namespace {
 
-bool shouldHoldStoneForLogistics(const Agent& agent, const MovableObject& object) {
-    if (object.type != ObjectType::Stone) {
+// D-136 audit round 3: hold ANY build material (stick or stone) while the
+// agent is on a logistics goal. Sticks are the primary worksite material,
+// yet only stones were protected - a random/early network's throw output
+// fires within a few ticks of pickup, so carried sticks were discarded long
+// before reaching a site (observed: deposits=0, site_sticks=0 across full
+// validation runs while throw_attempts were in the tens of thousands).
+bool shouldHoldMaterialForLogistics(const Agent& agent, const MovableObject& object) {
+    if (object.type != ObjectType::Stone && object.type != ObjectType::Stick) {
         return false;
     }
 
@@ -71,7 +77,7 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
         concrete->setCarriedObject(0);
         return;
     }
-    if (shouldHoldStoneForLogistics(*concrete, *carried)) {
+    if (shouldHoldMaterialForLogistics(*concrete, *carried)) {
         return;
     }
     // L2.7 v13 Detail #4 (stick throw): allow Stick as a weak thrown
@@ -127,6 +133,10 @@ void ThrowCarriedObjectCapability::apply(IAgent& agent, IWorld& world, std::span
     if (best_target != nullptr) {
         const float actual_damage = damage * dt;
         best_target->setEnergy(best_target->energy() - actual_damage);
+        // Two-stage prey flee: note last combat damage on the victim.
+        if (auto* victim = dynamic_cast<Agent*>(best_target)) {
+            victim->noteDamageReceived(world.currentTimeSeconds());
+        }
         world.eventBus().publish(events::Event{
             events::EventType::AgentAttacked,
             events::AgentAttacked{agent.id(), best_target->id(), actual_damage},
