@@ -43,9 +43,21 @@ public:
     int   houses_built()        const { return houses_built_; }
 
     // Helpers to ask "is X unlocked this stage?"
+    // D-136 audit: can_farm moved from Late to Mid. The Late gate requires a
+    // completed house, which the PPO agent almost never reaches; that hard
+    // lock made the seed/crop milestones structurally unreachable (their
+    // unlock rate stayed 0, dragging the geometric-mean score toward 0 with
+    // no gradient to fix it). Farming from Mid keeps an earned curriculum
+    // (collect+explore first) while making every milestone reachable within
+    // a typical episode lifetime. D-136 round 2: taming moved Late -> Mid
+    // too. Follower milestone fired in 0/387 validation episodes with the
+    // Late gate: Late needs a finished house (reached in ~30% of episodes,
+    // and only near the end), then trust needs 5+ feeds of the same animal -
+    // the chain never fit in the remaining lifetime. The trust mechanic
+    // itself (5 feeds, right food) is the earned part of the curriculum.
     bool can_build()  const { return stage_ != ProgressStage::Early; }
-    bool can_farm()   const { return stage_ == ProgressStage::Late; }
-    bool can_tame()   const { return stage_ == ProgressStage::Late; }
+    bool can_farm()   const { return stage_ != ProgressStage::Early; }
+    bool can_tame()   const { return stage_ != ProgressStage::Early; }
 
     // EpisodeManager calls this on reset (progress persists across
     // episodes in *training* mode by convention, but the API is here so

@@ -1,0 +1,11 @@
+# D7 (2026-10-01): experience injection on top of the D4/D5 teleport
+# curriculum (seed 7, comparable to d4_tp / d6 10M prefix). All arms share the
+# D4/D5 base flags + teleport; the variables are the two D7 knives:
+#   inj = --inject-disc-prob 0.02  (random allowed-action swap, excluded from
+#         the policy gradient)
+#   frc = --teleport-force 4       (force the chain's trigger for 4 decisions
+#         after each opportunity restore; log_prob re-priced, learns outcome)
+d7_tp | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3
+d7_tp_frc | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --teleport-force 4
+d7_tp_inj | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --inject-disc-prob 0.02
+d7_tp_frc_inj | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --teleport-force 4 --inject-disc-prob 0.02

@@ -1553,6 +1553,9 @@ int main(int argc, char** argv) {
     bool        teleport_enabled = false;
     bool        teleport_selftest_mode = false;
     float       teleport_prob    = 0.30f;
+    // D7 forced deep-chain practice + random experience injection.
+    int         teleport_force_steps = 0;   // K forced decisions after restore
+    float       inject_disc_prob     = 0.0f; // p random discrete action swap
     // decision_blueprint_nutrition (round_21): dual nutrition bars + hunting.
     bool        nutrition_enabled = false; // master switch (default off = old world)
     float       nutri_protein_decay = 20.0f;
@@ -1653,6 +1656,8 @@ int main(int argc, char** argv) {
         else if (a == "--teleport")               teleport_enabled       = true;
         else if (a == "--teleport-prob")          teleport_prob          = std::stof(next());
         else if (a == "--teleport-selftest")      teleport_selftest_mode = true;
+        else if (a == "--teleport-force")         teleport_force_steps   = std::stoi(next());
+        else if (a == "--inject-disc-prob")       inject_disc_prob       = std::stof(next());
         else if (a == "--nutrition")            nutrition_enabled  = true;
         else if (a == "--nutri-protein-decay") nutri_protein_decay = std::stof(next());
         else if (a == "--nutri-vitamin-decay") nutri_vitamin_decay = std::stof(next());
@@ -1748,6 +1753,7 @@ int main(int argc, char** argv) {
     ecfg.trigger_cost         = trigger_cost;
     ecfg.teleport_enabled     = teleport_enabled;
     ecfg.teleport_prob        = teleport_prob;
+    ecfg.teleport_force_steps = teleport_force_steps;
     ecfg.demo_no_regen        = demo_no_regen;
     // decision_blueprint_nutrition (round_21): plumb nutrition CLI into env.
     ecfg.nutrition_enabled     = nutrition_enabled;
@@ -1949,6 +1955,7 @@ int main(int argc, char** argv) {
         pcfg.stream_split         = ppo_stream_split;
         pcfg.tech_adv_weight      = ppo_tech_adv_weight;
         pcfg.vf_tech_coef         = ppo_vf_tech_coef;
+        pcfg.inject_disc_prob     = inject_disc_prob;
         pcfg.kl_ref_coef    = ppo_kl_coef;
         pcfg.target_kl      = ppo_target_kl;
         // D-122 one-pot tech-tree curriculum gates.
@@ -2150,6 +2157,8 @@ int main(int argc, char** argv) {
         // D-136: per-env distinct-mechanism count snapshot taken BEFORE each
         // step, so Phi_rep(s) for the PBRS shaping below uses the pre-step state.
         std::vector<int>                         v_rep_before(n_envs, 0);
+        // D7: forced decisions since the last update log line (diagnostic).
+        long long                                forced_pending = 0;
 
         while (steps_done < max_steps) {
             // Snapshot per-env GRU hiddens BEFORE the batched sample.
@@ -2158,6 +2167,23 @@ int main(int argc, char** argv) {
             // Batched policy forward (single GPU call for N envs).
             ppo->sample_actions_batch(obs_batch, v_actions, v_conts,
                                       v_disc, v_lp, v_val);
+
+            // D7 forced deep-chain practice: after a teleport restore into an
+            // opportunity, force the chain's discrete trigger for K decisions.
+            // The stored log_prob is re-priced at the forced category from the
+            // same forward pass, so the PPO ratio stays coherent and the
+            // update LEARNS from the forced outcome (reward or failure alike).
+            if (teleport_force_steps > 0) {
+                const auto& dlp = ppo->last_disc_log_probs();
+                for (int i = 0; i < n_envs; ++i) {
+                    int fidx = venv.env(i).consume_forced_disc();
+                    if (fidx < 0) continue;
+                    v_lp[i] += dlp[i][fidx] - dlp[i][v_disc[i]];
+                    v_disc[i] = fidx;
+                    dp::policy::set_disc_trigger(v_actions[i], fidx);
+                    ++forced_pending;
+                }
+            }
 
             // D-136: snapshot pre-step repertoire (distinct milestones) per env.
             if (ppo_repertoire_shaping > 0.0f)
@@ -2177,6 +2203,9 @@ int main(int argc, char** argv) {
                     tr.cont_act = std::move(v_conts[i]);
                     tr.disc_act = v_disc[i];
                     tr.h_in     = std::move(v_hin[i]);
+                    // D7: random-injection flag -> update() excludes the step
+                    // from the policy minibatches (rewards still flow).
+                    tr.injected = ppo->last_inject_flags()[i] != 0;
                     float shaped_r = v_sr[i].reward;
                     // D2: PBRS pulses that belong to the sparse tech stream
                     // (hunt chain, repertoire firsts) are tagged so PPO can
@@ -2289,13 +2318,16 @@ int main(int argc, char** argv) {
                     if (i == 0) {
                         spdlog::info("PPO update #{:3d} (env0): pi={:+.4f}  "
                                      "v={:.4f}  ent={:.3f}  kl={:+.4f}  clip={:.2f}  "
-                                     "hunt_adv={:+.3f}(n={})  cook_adv={:+.3f}(n={})",
+                                     "hunt_adv={:+.3f}(n={})  cook_adv={:+.3f}(n={})  "
+                                     "inj={} frc={}",
                                      total_updates,
                                      stats.policy_loss, stats.value_loss,
                                      stats.entropy,    stats.approx_kl,
                                      stats.clip_frac,
                                      stats.adv_attack, stats.cnt_attack,
-                                     stats.adv_cook,   stats.cnt_cook);
+                                     stats.adv_cook,   stats.cnt_cook,
+                                     stats.injected_excluded, forced_pending);
+                        forced_pending = 0;
                         if (ppo_stream_split)
                             spdlog::info("  D2 tech: adv_t={:+.3f}(n={})  "
                                          "vt_loss={:.4f}  ret_t_mu={:.4f}",
@@ -2352,6 +2384,18 @@ int main(int argc, char** argv) {
             // on entry to this step.
             ppo_h_in_snapshot = ppo->current_hidden();
             action = ppo->sample_action(obs, cont_act, disc_idx, lp, vv);
+            // D7 forced deep-chain practice (single-env path): same contract
+            // as the VecEnv path — re-price the stored log_prob at the forced
+            // category so PPO learns from the forced outcome.
+            if (teleport_force_steps > 0) {
+                int fidx = env.consume_forced_disc();
+                if (fidx >= 0) {
+                    const auto& dlp = ppo->last_disc_log_probs_row();
+                    lp += dlp[fidx] - dlp[disc_idx];
+                    disc_idx = fidx;
+                    dp::policy::set_disc_trigger(action, fidx);
+                }
+            }
         } else {
             spdlog::error("Unknown policy '{}'", policy);
             return 1;
@@ -2393,6 +2437,9 @@ int main(int argc, char** argv) {
             tr.cont_act = std::move(cont_act);
             tr.disc_act = disc_idx;
             tr.h_in     = std::move(ppo_h_in_snapshot);
+            // D7: random-injection flag -> update() excludes the step from
+            // the policy minibatches (rewards still flow).
+            tr.injected = ppo->last_inject_flag();
             float shaped_r = sr.reward;
             // D2: tech-stream PBRS tag (hunt chain, repertoire firsts).
             float tech_extra = 0.0f;

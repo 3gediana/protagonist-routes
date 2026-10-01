@@ -87,7 +87,7 @@ Write-Output ""
 Write-Output ">>> -Go 已指定，注册并启动计划任务 $TaskName ..."
 $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $runArgs -WorkingDirectory $proj
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $TaskName -Action $action -Settings $settings -RunLevel Highest -Force | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 Write-Output "已启动 (tag=$tag)。监控/停止："
 Write-Output "  状态:  Get-Content night_status_$tag.txt -Wait    （或  Get-ScheduledTask $TaskName）"

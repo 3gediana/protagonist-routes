@@ -154,7 +154,21 @@ struct Transition {
     // surv+tech == reward exactly regardless of clipping or knob mix. 0 when
     // the caller never filled it -> legacy single-stream behaviour.
     float               reward_tech_extra = 0.0f;
+    // D7 experience injection: true when this step's discrete action was
+    // RANDOMLY injected (see PPOConfig.inject_disc_prob). Injected steps keep
+    // their reward flow (GAE/value) but are EXCLUDED from the PPO policy
+    // minibatches, so junk exploration never pollutes the policy gradient.
+    // Forced steps (teleport-force) are NOT flagged injected: their stored
+    // log_prob is re-priced at the forced category so the update learns from
+    // the forced outcome like from a demonstrated action.
+    bool                injected = false;
 };
+
+// D7: apply a discrete category to an AgentAction. Resets EVERY trigger
+// first, so applying onto an already-filled action cleanly replaces the
+// sampled trigger (used by the forced-action path in main_train).
+void set_disc_trigger(dp::agent::AgentAction& a, int idx);
+
 
 // =============================================================================
 // PPO trainer. Plug an environment in via the obs/step lambda interface so
@@ -212,6 +226,12 @@ struct PPOConfig {
     // obs alone, giving its nonlinear path the shared GRU's recurrent memory
     // (still stop-grad). Only meaningful when decouple_disc is ON.
     bool   disc_mem_ctx         = false;
+    // D7 experience injection: with this per-decision probability the sampled
+    // discrete action is REPLACED by a uniform draw over the currently allowed
+    // (mask-respecting) categories. Injected steps are flagged Transition::
+    // injected and excluded from the policy update (rewards still flow).
+    // Default 0 = byte-identical.
+    float  inject_disc_prob     = 0.0f;
     float  kl_ref_coef   = 0.0f;   // beta for KL(pi||pi_ref=bc_v9) anchor (0=off)
     float  target_kl     = 0.0f;   // CleanRL-style early-stop threshold (0=off)
     // D-122 one-pot tech-tree curriculum gates. Each reserved categorical
@@ -349,6 +369,9 @@ public:
         int   cnt_tech        = 0;
         float value_loss_tech = 0.0f;
         float ret_tech_mean   = 0.0f;
+        // D7: how many randomly-injected transitions were excluded from the
+        // policy minibatches this update (0 unless inject_disc_prob > 0).
+        int   injected_excluded = 0;
     };
 
     // D-122 early-warning helper (pure math, no network / no GPU; unit-tested
@@ -397,6 +420,18 @@ public:
     // the exploration noise that exp(log_std) and multinomial sampling add.
     void set_deterministic(bool d) { deterministic_ = d; }
 
+    // D7: injection flags of the LAST sample_* call (per env, 1 = the
+    // discrete action was randomly injected). main_train copies this into
+    // Transition::injected so update() can exclude those policy steps.
+    const std::vector<char>& last_inject_flags() const { return last_inject_flags_; }
+    bool last_inject_flag() const { return last_inject_flag_; }
+    // D7: log-prob of EVERY discrete category from the LAST sample_* call
+    // ([N][DISC_CATS] batched / [DISC_CATS] single-env). Lets main_train
+    // re-price a FORCED action's stored log_prob from the same forward pass
+    // so the PPO importance ratio stays coherent (no extra forward needed).
+    const std::vector<std::vector<float>>& last_disc_log_probs() const { return last_disc_lp_mat_; }
+    const std::vector<float>& last_disc_log_probs_row() const { return last_disc_lp_row_; }
+
 private:
     PPOConfig                                cfg_;
     torch::Device                            device_;
@@ -405,6 +440,13 @@ private:
     // Persistent recurrent state. Shape [1, HIDDEN] on `device_`.
     torch::Tensor                            hidden_;
     bool                                     deterministic_ = false;
+    // D7 experience injection (see PPOConfig.inject_disc_prob) + per-sample
+    // discrete log-prob read-out used to re-price forced actions.
+    float                                    inject_disc_prob_ = 0.0f;
+    std::vector<char>                        last_inject_flags_;
+    bool                                     last_inject_flag_ = false;
+    std::vector<std::vector<float>>          last_disc_lp_mat_;
+    std::vector<float>                       last_disc_lp_row_;
     // decision_round_17 (S4 PPO C):
     ActorCritic                              ref_net_{nullptr}; // frozen KL-ref
     bool                                     has_ref_      = false;

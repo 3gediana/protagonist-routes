@@ -70,6 +70,13 @@ struct EnvConfig {
     // changes it, and that path never captures). Default OFF = byte-identical.
     bool     teleport_enabled = false;
     float    teleport_prob    = 0.30f;
+    // D7 forced deep-chain practice: for this many decisions AFTER a teleport
+    // restore into an opportunity, consume_forced_disc() returns the chain's
+    // discrete action so main_train can force it (the agent then experiences
+    // the outcome — reward or failure — and PPO learns from it, since the
+    // forced step's log_prob is re-priced, not excluded). 0 = off (default,
+    // byte-identical); requires teleport_enabled to ever fire.
+    int      teleport_force_steps = 0;
 
     // D-101: when true, disable the in-building hunger/thirst regen (and the
     // D-099 in-building r_alive bonus). Used ONLY for ScriptedSettler demo
@@ -315,6 +322,11 @@ public:
     // REAL step() mine handler, then verifies reset() restores the snapshot).
     bool teleport_selftest();
 
+    // D7 forced deep-chain practice: after a teleport restore into an
+    // opportunity, return the chain's discrete action for the next
+    // teleport_force_steps decisions (consuming the counter), else -1.
+    int consume_forced_disc();
+
     // D-122 RUNG 3 stone-tool END-TO-END self-test. Drives the REAL step()
     // craft handlers + tool effects deterministically. Verifies: (1) craft an
     // axe with Wood+ore consumes both and grants has_axe + milestone; (2)
@@ -542,6 +554,9 @@ private:
     std::vector<TeleportSnapshot> tp_archive_[TP_KINDS];
     bool                          tp_captured_[TP_KINDS] = {};
     uint64_t                      tp_rng_ = 0;   // lazily seeded from world seed
+    // D7 forced deep-chain practice (see EnvConfig.teleport_force_steps).
+    int                           tp_forced_remaining_ = 0;
+    int                           tp_forced_action_    = -1;
     static constexpr int            ORE_CAP            = 5;
     static constexpr int            ORE_NODE_RICHNESS  = 3;     // mines per node
     static constexpr float          MINE_REACH         = 3.0f;  // metres to node

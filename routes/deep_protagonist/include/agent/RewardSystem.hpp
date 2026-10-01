@@ -32,29 +32,31 @@ public:
     // docs/参数速查.md.
     struct Weights {
         // "Stay alive" payout, applied per simulated second (multiplied
-        // by dt internally). 0.05 ⇒ +3 reward per minute alive.
-        // (D-051 tried 0.02 to lift drink/eat above the alive baseline,
-        // but the agent stopped valuing survival entirely - food collapsed
-        // and death% spiked to 60 %. Reverted in D-052; the louder
-        // first-eat/drink critical bonus is enough to break NOOP without
-        // sacrificing alive incentive.)
-        float alive_step       = 0.05f;
+        // by dt internally).
+        // D-136 audit: lowered from 0.05 to 0.015. At 0.05 the alive
+        // baseline (+27/episode) dwarfed food/water rewards, making "do
+        // nothing" the dominant strategy. At 0.015 the baseline is ~+8,
+        // comparable to a few successful eat/drink events, so PPO sees a
+        // real gradient toward active foraging. Combined with the raised
+        // food/water coefs below, the reward landscape now favours
+        // "actively satisfy needs" over "passively survive".
+        float alive_step       = 0.015f;
 
         // D-043: payouts for needs satisfaction. Semantic change from
         // "linear in amount" to "linear in drive reduction" (Keramati 2014
         // homeostatic RL). Callers now pass drive_before-drive_after instead
         // of kcal/ml. drive(v) = ((100-v)/100)^2, so drive_red ∈ [0, 1] per
         // call; coef 3.0 means a full hunger→full takes ~3.0 reward across
-        // D-048 blueprint回归: drive_red×6 (was ×3). Keramati 2014 quadratic
-        // drive yields tiny rewards near full vitals; ×3 made drink/eat
-        // signal subordinate to the +0.05/s alive bonus and to "do nothing"
-        // (sleep) tactics. ×6 makes "drink to fullness when thirsty" worth
-        // ~+1.5 in one event - on par with milestone events - so PPO can
-        // actually see the gradient toward water/food. The drive shape
-        // still naturally bounds reward (full → 0) so this is not a
-        // reward-hacking risk like a flat per-ml carrot would be.
-        float food_coef        = 6.0f;
-        float water_coef       = 6.0f;
+        // D-048 blueprint回归: drive_red×6 (was ×3).
+        // D-136 audit: raised from 6.0 to 12.0. With alive_step lowered to
+        // 0.015, the old ×6 coef still left eat/drink marginal: a single
+        // eat when hunger≈60 yields drive_red≈0.16 → reward +0.96, vs
+        // alive_step +0.45/s standing still. At ×12 the same eat gives
+        // +1.92, decisively beating idle baseline. The quadratic Keramati
+        // drive shape still self-limits near satiation (full→0), so this
+        // cannot be reward-hacked by eating when already full.
+        float food_coef        = 12.0f;
+        float water_coef       = 12.0f;
 
         // Wolves
         // D-043: align with Crafter "defeat_zombie/skeleton +1". 5.0 was a
@@ -120,12 +122,14 @@ public:
 
         // S3.10/D-041 main-line milestones (first house, first crop, first
         // follower, stage unlock).
-        // D-043: down from 20.0 to 1.0 to align with Crafter's +1/achievement
-        // convention. Run7 result confirmed that +20 per first_X dwarfed the
-        // -100 death penalty by 1/5, making "gamble for a milestone then die"
-        // worthwhile (eg. attacking wolves to get first_hunt). At +1 the agent
-        // sees milestones as bonus, not as gambling target.
-        float milestone        = 1.0f;
+        // D-136 audit: raised from 1.0 to 2.5. At 1.0, milestone reward was
+        // trivial vs the alive baseline (+27 at old 0.05/s). With alive_step
+        // now 0.015 the baseline is ~+8/episode; milestone=2.5 makes each new
+        // first_X worth ~30% of the baseline, strong enough to attract PPO
+        // without triggering death-gambling (death=-10 still dominates a
+        // single 2.5 milestone). The old +20 was too high (gambling); the old
+        // +1 was too low (invisible). 2.5 is the middle ground.
+        float milestone        = 2.5f;
 
         // D-043 P1: per-step total reward clip. Prevents single-step outliers
         // from polluting PPO advantage estimation. -10 keeps death intact;

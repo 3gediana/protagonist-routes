@@ -58,7 +58,12 @@ public:
     void clear();
 
     // Tunables
-    float growth_per_second = 1.0f / 120.0f;  // 2 minutes to mature with full water
+    // D-136 audit round 2: 120s -> 90s. Median episode lifetime is ~200
+    // sim-seconds and seeds are typically planted mid-episode; at 120s the
+    // crop milestone fired in 0/387 validation episodes (plant -> mature ->
+    // harvest never fit). 90s (45s near a building) keeps watering/tending
+    // mandatory but makes the chain completable within one life.
+    float growth_per_second = 1.0f / 90.0f;
     float water_drain_per_second = 1.0f / 60.0f;  // dry in 1 minute
     float water_step = 0.5f;                  // each watering adds 0.5
     // D-091: settlement-boost multiplier for plots near a finished building.

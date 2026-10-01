@@ -211,6 +211,48 @@ torch::Tensor ActorCriticImpl::psi(const torch::Tensor& h) {
 // ============================================================================
 // PPO
 // ============================================================================
+// D7: discrete category -> AgentAction trigger. Shared by the sampled path
+// (below) and the forced-action path in main_train: resets every trigger
+// first so a forced application cleanly replaces a sampled one.
+void set_disc_trigger(dp::agent::AgentAction& a, int idx) {
+    a.eat = false;              a.drink = false;
+    a.attack = false;           a.collect = false;
+    a.place_shelter = false;    a.craft_spear = false;
+    a.sleep = false;            a.craft_grass_dress = false;
+    a.craft_fur_cloak = false;  a.wear_clothes = false;
+    a.place_blueprint = false;  a.cycle_building_type = false;
+    a.deposit_to_site = false;  a.plant_seed = false;
+    a.water_plot = false;       a.feed_tame = false;
+    a.tend_fire = false;        a.cook = false;
+    a.mine = false;             a.craft_axe = false;
+    a.craft_pickaxe = false;    a.build_monument = false;
+    switch (idx) {
+        case  0: a.eat                  = true; break;
+        case  1: a.drink                = true; break;
+        case  2: a.attack               = true; break;
+        case  3: a.collect              = true; break;
+        case  4: a.place_shelter        = true; break;
+        case  5: a.craft_spear          = true; break;
+        case  6: a.sleep                = true; break;
+        case  7: a.craft_grass_dress    = true; break;
+        case  8: a.craft_fur_cloak      = true; break;
+        case  9: a.wear_clothes         = true; break;
+        case 10: a.place_blueprint      = true; break;
+        case 11: a.cycle_building_type  = true; break;
+        case 12: a.deposit_to_site      = true; break;
+        case 13: a.plant_seed           = true; break;
+        case 14: a.water_plot           = true; break;
+        case 15: a.feed_tame            = true; break;
+        case 17: a.tend_fire            = true; break;  // D-112 fire (TEND_FIRE_IDX)
+        case 18: a.cook                 = true; break;  // D-122 tech-tree (COOK_IDX)
+        case 19: a.mine                 = true; break;  // D-122 tech-tree (MINE_IDX)
+        case 20: a.craft_axe            = true; break;  // D-122 tech-tree (CRAFT_AXE_IDX)
+        case 21: a.craft_pickaxe        = true; break;  // D-122 tech-tree (CRAFT_PICKAXE_IDX)
+        case 22: a.build_monument       = true; break;  // D-122 tech-tree (BUILD_MONUMENT_IDX)
+        default: /* NOOP (16) */ break;
+    }
+}
+
 PPO::PPO(const PPOConfig& cfg)
     : cfg_(cfg),
       device_((cfg.use_cuda && torch::cuda::is_available())
@@ -284,6 +326,13 @@ PPO::PPO(const PPOConfig& cfg)
                      "unless an available resource within ~7m (obs[99,100] dist, "
                      "kind obs[102..104]); movement + other actions unaffected "
                      "(policy still free to navigate to the resource)");
+
+    inject_disc_prob_ = cfg_.inject_disc_prob;
+    if (inject_disc_prob_ > 0.0f)
+        spdlog::info("D7 random-action injection ON: p={:.3f} per decision "
+                     "(uniform over allowed categories; injected steps keep "
+                     "their rewards but are EXCLUDED from the policy update)",
+                     inject_disc_prob_);
 
     // D2 critic balancing: cache config + resolve the φ->reward weight vector.
     // The env's RewardSystem is built with the default Weights recipe, so an
@@ -363,6 +412,23 @@ dp::agent::AgentAction PPO::sample_action(
     auto idx         = deterministic_
                          ? probs_d.argmax(1, /*keepdim=*/true)
                          : probs_d.multinomial(1, /*replacement=*/true);  // [1, 1]
+    // D7: read-out of the full categorical log-prob row (lets main_train
+    // re-price a FORCED action from this same forward pass, no re-forward).
+    {
+        auto dlp = log_probs_d.to(torch::kCPU).contiguous();
+        last_disc_lp_row_.assign(dlp.data_ptr<float>(),
+                                 dlp.data_ptr<float>() + ActorCriticImpl::DISC_CATS);
+    }
+    // D7: random-action injection — replace the sampled category with a
+    // uniform draw over the allowed (mask-respecting) set. Masked columns
+    // carry a -50 logit add, so "> -25" separates allowed from masked. All
+    // tensors stay on t_obs's device (no CPU/CUDA mixing).
+    last_inject_flag_ = false;
+    if (inject_disc_prob_ > 0.0f && !deterministic_
+        && torch::rand({1}, t_obs.options()).item<float>() < inject_disc_prob_) {
+        idx = torch::multinomial((dlm > -25.0f).to(torch::kFloat32), 1, true);
+        last_inject_flag_ = true;
+    }
     auto disc_log_prob = log_probs_d.gather(1, idx).squeeze(1);       // [1]
 
     auto log_prob = cont_log_prob + disc_log_prob;
@@ -382,31 +448,7 @@ dp::agent::AgentAction PPO::sample_action(
     a.move_y   = std::tanh(out_cont[1]);
     a.yaw_rate = std::tanh(out_cont[2]) * 3.0f;    // up to 3 rad/s
     // Categorical fan-out: exactly one trigger is set, or NOOP (idx=16).
-    switch (out_disc_idx) {
-        case  0: a.eat                  = true; break;
-        case  1: a.drink                = true; break;
-        case  2: a.attack               = true; break;
-        case  3: a.collect              = true; break;
-        case  4: a.place_shelter        = true; break;
-        case  5: a.craft_spear          = true; break;
-        case  6: a.sleep                = true; break;
-        case  7: a.craft_grass_dress    = true; break;
-        case  8: a.craft_fur_cloak      = true; break;
-        case  9: a.wear_clothes         = true; break;
-        case 10: a.place_blueprint      = true; break;
-        case 11: a.cycle_building_type  = true; break;
-        case 12: a.deposit_to_site      = true; break;
-        case 13: a.plant_seed           = true; break;
-        case 14: a.water_plot           = true; break;
-        case 15: a.feed_tame            = true; break;
-        case 17: a.tend_fire            = true; break;  // D-112 fire (TEND_FIRE_IDX)
-        case 18: a.cook                 = true; break;  // D-122 tech-tree (COOK_IDX)
-        case 19: a.mine                 = true; break;  // D-122 tech-tree (MINE_IDX)
-        case 20: a.craft_axe            = true; break;  // D-122 tech-tree (CRAFT_AXE_IDX)
-        case 21: a.craft_pickaxe        = true; break;  // D-122 tech-tree (CRAFT_PICKAXE_IDX)
-        case 22: a.build_monument       = true; break;  // D-122 tech-tree (BUILD_MONUMENT_IDX)
-        default: /* NOOP (16) */ break;
-    }
+    set_disc_trigger(a, out_disc_idx);
     return a;
 }
 
@@ -462,6 +504,31 @@ void PPO::sample_actions_batch(
     auto log_probs_d = torch::log_softmax(dlm, /*dim=*/1);  // [N, DISC_CATS]
     auto probs_d     = log_probs_d.exp();
     auto idx         = probs_d.multinomial(1, /*replacement=*/true);  // [N, 1]
+    // D7: full per-row categorical log-probs (forced-action re-pricing).
+    {
+        auto dlp = log_probs_d.to(torch::kCPU).contiguous();
+        last_disc_lp_mat_.assign(N, std::vector<float>(ActorCriticImpl::DISC_CATS));
+        const float* dp_ = dlp.data_ptr<float>();
+        for (int i = 0; i < N; ++i)
+            std::copy(dp_ + static_cast<size_t>(i) * ActorCriticImpl::DISC_CATS,
+                      dp_ + static_cast<size_t>(i + 1) * ActorCriticImpl::DISC_CATS,
+                      last_disc_lp_mat_[i].begin());
+    }
+    // D7: vectorized random-action injection (see sample_action). Masked
+    // columns carry a -50 logit add, so "> -25" = allowed set. Everything
+    // stays on dlm's device (mixing CPU condition with CUDA operands aborts).
+    last_inject_flags_.assign(N, 0);
+    if (inject_disc_prob_ > 0.0f) {
+        auto inj = (torch::rand({N}, dlm.options()) < inject_disc_prob_); // [N] bool
+        if (inj.any().item<bool>()) {
+            auto uni = torch::multinomial((dlm > -25.0f).to(torch::kFloat32),
+                                          1, /*replacement=*/true);       // [N,1]
+            idx = torch::where(inj.unsqueeze(1), uni, idx);
+            auto inj_cpu = inj.to(torch::kCPU).contiguous();
+            const bool* ip = inj_cpu.data_ptr<bool>();
+            for (int i = 0; i < N; ++i) last_inject_flags_[i] = ip[i] ? 1 : 0;
+        }
+    }
     auto disc_log_prob = log_probs_d.gather(1, idx).squeeze(1);       // [N]
     auto log_prob = cont_log_prob + disc_log_prob;
 
@@ -485,31 +552,7 @@ void PPO::sample_actions_batch(
         a.move_x   = std::tanh(cont_acts_out[i][0]);
         a.move_y   = std::tanh(cont_acts_out[i][1]);
         a.yaw_rate = std::tanh(cont_acts_out[i][2]) * 3.0f;
-        switch (disc_idxs_out[i]) {
-            case  0: a.eat                  = true; break;
-            case  1: a.drink                = true; break;
-            case  2: a.attack               = true; break;
-            case  3: a.collect              = true; break;
-            case  4: a.place_shelter        = true; break;
-            case  5: a.craft_spear          = true; break;
-            case  6: a.sleep                = true; break;
-            case  7: a.craft_grass_dress    = true; break;
-            case  8: a.craft_fur_cloak      = true; break;
-            case  9: a.wear_clothes         = true; break;
-            case 10: a.place_blueprint      = true; break;
-            case 11: a.cycle_building_type  = true; break;
-            case 12: a.deposit_to_site      = true; break;
-            case 13: a.plant_seed           = true; break;
-            case 14: a.water_plot           = true; break;
-            case 15: a.feed_tame            = true; break;
-            case 17: a.tend_fire            = true; break;  // D-112 fire (TEND_FIRE_IDX)
-            case 18: a.cook                 = true; break;  // D-122 tech-tree (COOK_IDX)
-            case 19: a.mine                 = true; break;  // D-122 tech-tree (MINE_IDX)
-            case 20: a.craft_axe            = true; break;  // D-122 tech-tree (CRAFT_AXE_IDX)
-            case 21: a.craft_pickaxe        = true; break;  // D-122 tech-tree (CRAFT_PICKAXE_IDX)
-            case 22: a.build_monument       = true; break;  // D-122 tech-tree (BUILD_MONUMENT_IDX)
-            default: /* NOOP (16) */ break;
-        }
+        set_disc_trigger(a, disc_idxs_out[i]);
     }
 }
 
@@ -795,16 +838,29 @@ PPO::UpdateStats PPO::update(const std::vector<Transition>& rollout,
     stats.cnt_by_action    = ew_cnt_all;
     stats.total_transitions = N;
     int total_minibatches = 0;
-    std::vector<int> idx(N);
-    std::iota(idx.begin(), idx.end(), 0);
+    // D7: randomly-injected steps keep their reward flow (the GAE/value math
+    // above runs over the FULL rollout) but are excluded from the policy
+    // minibatches — junk exploration must not pollute the policy gradient.
+    // With inject_disc_prob == 0 this pool is exactly iota(N): same shuffle,
+    // same minibatches, byte-identical to the pre-D7 update.
+    std::vector<int> idx;
+    idx.reserve(N);
+    int injected_cnt = 0;
+    for (int i = 0; i < N; ++i) {
+        if (rollout[i].injected) { ++injected_cnt; continue; }
+        idx.push_back(i);
+    }
+    if (idx.empty()) { idx.resize(N); std::iota(idx.begin(), idx.end(), 0); }
+    stats.injected_excluded = injected_cnt;
+    const int M = static_cast<int>(idx.size());
     std::mt19937 rng(static_cast<uint32_t>(cfg_.seed) + N);
 
     net_->train();
     bool kl_stop = false;
     for (int e = 0; e < cfg_.epochs; ++e) {
         std::shuffle(idx.begin(), idx.end(), rng);
-        for (int mb = 0; mb < N; mb += cfg_.minibatch_size) {
-            int end = std::min(mb + cfg_.minibatch_size, N);
+        for (int mb = 0; mb < M; mb += cfg_.minibatch_size) {
+            int end = std::min(mb + cfg_.minibatch_size, M);
             std::vector<int64_t> sub(idx.begin() + mb, idx.begin() + end);
             auto t_idx = torch::from_blob(
                 sub.data(), {static_cast<int64_t>(sub.size())},

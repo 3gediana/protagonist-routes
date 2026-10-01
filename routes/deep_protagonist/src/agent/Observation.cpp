@@ -1,9 +1,12 @@
 #include "agent/Observation.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <string>
 
 namespace dp::agent {
 
@@ -19,6 +22,67 @@ inline float clamp_norm(float v) {
     if (v < -1.0f) return -1.0f;
     if (v >  1.0f) return 1.0f;
     return v;
+}
+
+// ---- A3 counterfactual perception probe (read-only eval diagnostic) --------
+// The env var DP_OBS_ABLATE may name one or more observation channel groups
+// (substring match, e.g. "spatial,water"). Those slots are forced to 0 AFTER
+// the observation vector is fully composed, so an eval run can measure how much
+// the policy's competence depends on each perceptual channel: a large drop in
+// milestone/survival metrics under ablation == genuine reliance == the policy
+// "understands" that part of the world. Training never sets this env var, so
+// normal runs and saved checkpoints stay byte-identical.
+struct ObsAblationConfig {
+    bool                                       active = false;
+    std::array<bool, ObservationBuilder::SIZE> zero{};   // true => force slot 0
+    std::string                                label;    // active groups, joined
+};
+
+ObsAblationConfig parseObsAblation() {
+    ObsAblationConfig cfg;
+    const char* raw = std::getenv("DP_OBS_ABLATE");
+    if (raw == nullptr || raw[0] == '\0') return cfg;
+
+    // Documented, LOCKED observation layout (see Observation.hpp). Each entry
+    // is a half-open slot range [lo, hi).
+    struct Group { const char* name; int lo; int hi; };
+    static constexpr Group kGroups[] = {
+        {"vital",     0,   4},
+        {"self",      4,   11},
+        {"day",       12,  14},
+        {"terrain",   14,  39},
+        {"plants",    39,  67},
+        {"animals",   67,  99},
+        {"resources", 99,  117},
+        {"inventory", 117, 121},
+        {"shelter",   121, 124},
+        {"water",     145, 148},
+        {"threat",    148, 151},   // nearest wolf (biggest hazard)
+        {"biome",     151, 157},
+        {"lastact",   164, 183},
+        {"spatial",   183, 567},   // 8x8x6 cognitive map (internal world model)
+        {"nutrition", 567, 569},
+        {"weather",   569, 573},   // ambient/slope + rain/wetness direct sense
+    };
+
+    std::string s(raw);
+    for (char& c : s) c = static_cast<char>(std::tolower((unsigned char)c));
+    for (const auto& g : kGroups) {
+        if (s.find(g.name) == std::string::npos) continue;
+        for (int i = g.lo; i < g.hi && i < ObservationBuilder::SIZE; ++i)
+            cfg.zero[i] = true;
+        cfg.active = true;
+        if (!cfg.label.empty()) cfg.label += "+";
+        cfg.label += g.name;
+    }
+    return cfg;
+}
+
+void applyObsAblation(ObservationBuilder::Vector& out) {
+    static const ObsAblationConfig cfg = parseObsAblation();   // parsed once
+    if (!cfg.active) return;
+    for (int i = 0; i < ObservationBuilder::SIZE; ++i)
+        if (cfg.zero[i]) out[i] = 0.0f;
 }
 
 // Pick the K closest entries (in 2D distance from anchor) into out_idx,
@@ -556,6 +620,10 @@ void ObservationBuilder::compose(const dp::world::World&         world,
     for (int i = 0; i < OBS_TECH_RESERVED; ++i) out[p++] = 0.0f;
 
     // p should equal SIZE here.
+
+    // A3 counterfactual probe: zero any channel groups named in DP_OBS_ABLATE.
+    // No-op unless the env var is set (i.e. only during diagnostic eval runs).
+    applyObsAblation(out);
 }
 
 }  // namespace dp::agent

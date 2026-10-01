@@ -382,6 +382,9 @@ bool Environment::pick_random_spawn_(float& sx, float& sy, float& sz) {
 void Environment::reset(dp::agent::ObservationBuilder::Vector& obs_out) {
     // First-time reset (episode_id == -1) or post-done reset both go
     // through here.
+    // D7: a new life never inherits a stale forced-action counter; it is
+    // re-armed below ONLY when this reset restores a teleport snapshot.
+    tp_forced_remaining_ = 0;
     // D-133 random spawn (env-gated): pick a fresh valid spawn each episode so
     // there is no fixed safe corner to camp. Must run BEFORE the branch below
     // so both first-life (agent_.reset) and respawn (episodes_.reset, which
@@ -655,6 +658,27 @@ void Environment::apply_teleport_restore_() {
         const long cy = static_cast<long>(std::floor(s.y / CELL));
         visited_cells_.insert(cy * 1000003L + cx);
     }
+    // D7 forced deep-chain practice: arm the forced-action counter for the
+    // restored kind so the agent's next K decisions press the chain's trigger
+    // (main_train consumes via consume_forced_disc()). The capture gates
+    // guaranteed the opportunity was trainable when snapped; if the world has
+    // drifted (fire died, ore mined out) the forced action simply fails and
+    // the agent experiences the failure — which is the point too.
+    if (cfg_.teleport_force_steps > 0) {
+        // kind index -> discrete category, matching ActorCriticImpl's layout
+        // (COOK=18, MINE=19, CRAFT_AXE=20, CRAFT_PICKAXE=21; D-122 mapping).
+        static constexpr int KIND_TO_DISC[TP_KINDS] = {18, 19, 20, 21};
+        tp_forced_remaining_ = cfg_.teleport_force_steps;
+        tp_forced_action_    = KIND_TO_DISC[kind];
+    }
+}
+
+// D7 forced deep-chain practice: hand out the armed chain action for the
+// next K decisions after a teleport restore, then go back to -1 (no force).
+int Environment::consume_forced_disc() {
+    if (tp_forced_remaining_ <= 0) return -1;
+    --tp_forced_remaining_;
+    return tp_forced_action_;
 }
 
 // D-043 P1: drive function (Keramati & Gutkin 2014, Homeostatic RL).
