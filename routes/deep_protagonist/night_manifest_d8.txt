@@ -1,0 +1,7 @@
+# D8 (2026-10-01): two zero-code knives on top of the teleport curriculum,
+# seed 7, control = d7_tp (same binary, same seed, same base flags).
+#   p50 = teleport-prob 0.3 -> 0.5 (practise the opportunity more often)
+#   w05 = stream-split with tech_adv_weight 0.5 (half-weight tech stream:
+#         keep mine/axe gains, try to recover follower; D6 w=1.0 killed it)
+d8_tp_p50 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.5
+d8_ss_tp_w05 | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --stream-split --tech-adv-weight 0.5
