@@ -1,8 +1,8 @@
-# PE d_gate smoke 结果（2026-10-01 12:28 / 12:51，batched.exe 10-01 构建）
+# PE d_gate smoke 结果（2026-10-01 12:28 / 12:51，batched.exe 10-01 构建，均已跑完 30 gens）
 
 两个种子（50031/50032，threshold 22→14 + share 0.5 + signal_response_require_approach gate）：
 - 50031: 30 gens, cov 0.067→0.065, resp=0.00, emits=48.0, surv 2.7/48, avgFit 1542
-- 50032: 15 gens 时提前读表（后台队列未跑完时查的），cov 0.061→0.088, resp=0.00, emits=48.0
+- 50032: 30 gens, cov 0.061→0.101, resp=0.00, emits=48.0, surv 5.0/48, avgFit 854
 
 ## 核心诊断（读代码确认）
 resp（即时响应事件）与 approach gate 无关——gate 只作用于 dwell-share 结算支付；
