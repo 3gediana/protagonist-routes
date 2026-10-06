@@ -384,3 +384,19 @@ F-COMM MI 始终低于 0.3。可能原因：200 代不足；signal backprop rewa
 1. 病原体 NN 初始输出映射范围是生死线 — 太宽宿主灭绝、太窄无进化压力
 2. 抗原漂移是红皇后假说核心 — 没它免疫永久、疾病变成一次性事件
 3. 病原体倾向温和演化（infection_speed < 1.0）
+
+## 2026-10-02 grep(ugrep) 对含中文的夜跑状态文件静默失配（D8 哨兵超时根因）
+
+**现象**：D8 完成哨兵（后台 bash 每 300s `grep -q 'NIGHT_RUN done' night_status_*.txt`）跑满 7h 预算打 TIMEOUT，但完成标志 19:51 就写入了。
+
+**根因（systematic-debugging 四相走完）**：
+1. 本环境 Git Bash 的 `grep` 是 **ugrep 7.8.4**（`grep --version` 可验），不是 GNU grep。
+2. night_status_*.txt 由 PowerShell `Add-Content` 以 ANSI(GBK) 写入，含中文（"完成 2/2 臂"等），高字节使 ugrep 把**整个文件判为二进制并静默跳过**——`-q/-c/-n` 全部假阴性 exit 1，无任何告警。
+3. `od -c` 看到行尾 0xCDEA（完）等 GBK 字节；`grep -a` 强制按文本后立即命中（exit 0）。已在该文件上复现+验证。
+
+**规则（以后所有会话适用）**：
+- 在本仓库 grep 任何 PowerShell 产出的文件（night_status、中文注释脚本产物），**必须 `grep -a`**，或改用 python/tail 判定。
+- ugrep 对二进制判定文件连 `-c` 都不报数、无 stderr——假阴性完全静默，别信"没输出=没匹配"。
+- 哨兵类脚本一律用 `grep -aq` 并在超时分支打印最后 200 字节现场（tail -c 200）以便死后验尸。
+
+**教训**：出现"该命中没命中"先查工具身份（grep!=grep）和文件编码，再怀疑逻辑。当时我把超时轻率归因为"判定逻辑小瑕疵"，两个方向都猜错了（既非提前退出、也非逻辑错）。
