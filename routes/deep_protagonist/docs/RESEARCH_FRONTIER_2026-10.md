@@ -5,6 +5,19 @@
 
 ## 0 · 身份纠正（重要，防以讹传讹）
 
+3. **用户所指的英伟达工作 = 开源虚拟物理机器人研究族（GitHub）**，不是果蝇脑仿真。核心成员：
+   - **Isaac GR00T N1/N1.5/N1.6**（GTC 2025 起，github.com/NVIDIA/Isaac-GR00T + HuggingFace 数据）：
+     世界第一个开源通用人形机器人基础模型（VLA）。**架构核心 = System 2 / System 1 双速认知**：
+     慢系统（视觉-语言骨干，做推理与任务分解）+ 快系统（扩散动作头，高频反应控制）。
+   - **Newton 物理引擎**（NVIDIA + Google DeepMind + Disney Research 共建，Linux 基金会托管，
+     2025-03 发布 2025-09 beta 入 Isaac Lab）：GPU 加速、可微物理、为机器人学习特化；配套
+     MuJoCo-Warp 号称 70× 加速。
+   - **Isaac Lab**（开源机器人学习框架）：海量并行 GPU 环境训练、域随机化、**自动课程工作流**
+     （抓取示例：从简单任务起步，逐步加重力/摩擦/物体重量复杂度——与传送课程同构，行业已验证）。
+   - 其余：GR00T Blueprint（合成操作动作生成）、Cosmos 世界基础模型（生成多样性训练数据）。
+   → 对本项目最值钱的是 **System1/System2 双速认知**（见 §3.6）与 Isaac Lab 自动课程对本项目
+   teleport 课程 + 退火（C 刀）路线的背书。
+
 1. **CVPR 2026 "Mapping Networks" 不是认知地图论文**（arXiv 2602.19134, Sen & Mukherjee,
    pp.36215-36223）。它是**权重空间参数化**：把大网络的高维权重换成"紧凑可训练隐向量 + 可学习的
    隐→权重映射"（Mapping Theorem + Mapping Loss 保证局部可解性），假设"训练好的权重住在光滑低维
@@ -60,6 +73,14 @@ coverage/qd 的爬升速度与稳定性。
 找到食物才 emit，发射位置与资源相关，listener 靠近有真实收益。config 开关
 `reward.signal_emit_on_discovery` default off。
 
+### 3.6 DP-双速认知（GR00T N1 架构的映射，设计级洞察）
+GR00T N1 的 System2（慢推理）/System1（快反应）分野，恰好是 D8"技能预算竞争"的架构级解法：
+生存反应（吃/喝/躲）本来就该是**快系统**的本能，不该和科技链决策（慢、需思考）抢同一套神经资源。
+本文件的 CTM-lite（§3.1，内部拍=慢系统）与 CfC（§3.2，时间常数=快系统多尺度）**天然构成这个
+双系统的两半**——闲时任务把它们实现为两个独立开关后，"双速"只是把两者的输出按 GR00T 的方式
+组合（慢系统产出建议/门控，快系统执行），留作 D10 级别的组合刀。Isaac Lab 的自动课程工作流同时
+背书了 teleport 课程 + 退火（C 刀）的形状：先简单后复杂、逐步撤辅助。
+
 ### 3.5 落选与理由（备查）
 - FlyGM 全脑连接组图先验：PE 的 NEAT 图已是结构先验，换果蝇连接组骨架工程量大、叙事违和（我们的
   生物不是果蝇）——记为远期。
@@ -73,4 +94,7 @@ CTM: arXiv 2505.05522 / github.com/SakanaAI/continuous-thought-machines ·
 CfC: Hasani et al. AAAI 2021 + closed-form (Lechner 2021) ·
 Mapping Networks: arXiv 2602.19134 (CVPR 2026) ·
 FlyGM: arXiv 2602.17997 (清华) · flybody: Nature 2025-04 (DeepMind/HHMI) ·
-NVIDIA 果蝇脑仿真: developer.nvidia.com/blog/modeling-fruit-fly-brains-to-better-understand-alzheimers
+NVIDIA 果蝇脑仿真: developer.nvidia.com/blog/modeling-fruit-fly-brains-to-better-understand-alzheimers ·
+NVIDIA GR00T N1: nvidianews.nvidia.com/news/nvidia-isaac-gr00t-n1-open-humanoid-robot-foundation-model-simulation-frameworks (GTC 2025) ·
+Newton/Isaac Lab CoRL 2025: nvidianews.nvidia.com/news/nvidia-accelerates-robotics-research-and-development-with-new-open-models-and-simulation-libraries ·
+Newton 技术博客: developer.nvidia.com/blog/announcing-newton-an-open-source-physics-engine-for-robotics-simulation
