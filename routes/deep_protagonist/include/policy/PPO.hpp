@@ -126,17 +126,19 @@ struct ActorCriticImpl : torch::nn::Module {
     torch::nn::Linear   ctm_in{nullptr};    // HIDDEN -> CTM_DIM  (tick state seed)
     torch::nn::Linear   ctm_nlm{nullptr};   // HIDDEN+CTM_DIM -> CTM_DIM (one shared NLM step)
     torch::nn::Linear   ctm_out{nullptr};   // 2*CTM_DIM -> HIDDEN (zero-init read-out added to h)
-    // D9 CfC (Closed-form Continuous-time neuron, Hasani/Lechner line): a
-    // drop-in GRU alternative whose units carry learned time constants, so
-    // fast survival reactions and slow tech deliberation live on different
-    // dynamics instead of fighting for one recurrence (the D8 "skill budget
-    // competition" hypothesis). Registered ALWAYS; used INSTEAD of gru only
-    // when the use_cfc flag is set. Math: gates from cat(enc, z),
-    //   a = softplus(Wa*x+ba), b = tanh(Wb*x+bb), g = sigmoid(Wg*x+bg),
-    //   z' = g * (z*exp(-a*dt) + (1-exp(-a*dt))*b),  dt = 1.
-    torch::nn::Linear   cfc_Wa{nullptr};    // (HIDDEN+HIDDEN) -> HIDDEN
-    torch::nn::Linear   cfc_Wb{nullptr};
-    torch::nn::Linear   cfc_Wg{nullptr};
+    // D9 CfC (closed-form continuous-time cell, faithful to the official
+    // ncps implementation, cfc_cell.py default mode): a backbone MLP over
+    // cat(enc, h) feeds FOUR projections fused into ONE GEMM (the cuDNN-LSTM
+    // gate-fusion practice; 4 small GEMMs at B=8 are pure launch overhead),
+    // then the state update is the time-gated interpolation
+    //   ff1/ff2/ta/tb = fused_gates(backbone(cat(enc, h)))
+    //   t_i = sigmoid(ta*ts + tb),  ts = 1 (uniform world ticks)
+    //   h'  = tanh(ff1)*(1 - t_i) + t_i*tanh(ff2)
+    // Xavier-uniform init per the official source. Registered ALWAYS; used
+    // INSTEAD of gru only when use_cfc is set. See CTM_CFC_DEEP_STUDY §3.
+    static constexpr int CFC_BACKBONE = 128;
+    torch::nn::Linear   cfc_backbone{nullptr}; // (HIDDEN+HIDDEN) -> CFC_BACKBONE
+    torch::nn::Linear   cfc_gates{nullptr};    // CFC_BACKBONE -> 4*HIDDEN (ff1|ff2|ta|tb)
     bool                use_cfc = false;    // set from PPOConfig in PPO ctor
     int                 ctm_ticks = 0;      // set from PPOConfig in PPO ctor
     torch::Tensor       log_std;   // shape [CONT_DIM]

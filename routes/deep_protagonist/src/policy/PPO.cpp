@@ -143,14 +143,14 @@ ActorCriticImpl::ActorCriticImpl() {
                                   torch::nn::Linear(HIDDEN + CTM_DIM, CTM_DIM));
     ctm_out     = register_module("ctm_out",
                                   torch::nn::Linear(CTM_DIM * 2, HIDDEN));
-    // D9 CfC unit (three gates over cat(enc, z)); registered ALWAYS so
-    // checkpoints serialize consistently, but only USED when use_cfc is set.
-    cfc_Wa      = register_module("cfc_Wa",
-                                  torch::nn::Linear(HIDDEN + HIDDEN, HIDDEN));
-    cfc_Wb      = register_module("cfc_Wb",
-                                  torch::nn::Linear(HIDDEN + HIDDEN, HIDDEN));
-    cfc_Wg      = register_module("cfc_Wg",
-                                  torch::nn::Linear(HIDDEN + HIDDEN, HIDDEN));
+    // D9 CfC v2 (faithful to official ncps cfc_cell default mode; see header
+    // comment and CTM_CFC_DEEP_STUDY §3): backbone MLP + ONE fused 4-projection
+    // GEMM. Registered ALWAYS so checkpoints serialize consistently, but only
+    // USED when use_cfc is set.
+    cfc_backbone = register_module("cfc_backbone",
+                     torch::nn::Linear(HIDDEN + HIDDEN, CFC_BACKBONE));
+    cfc_gates    = register_module("cfc_gates",
+                     torch::nn::Linear(CFC_BACKBONE, HIDDEN * 4));
 
     // log_std initialised to log(0.5) ≈ -0.693 (moderate exploration).
     log_std = register_parameter(
@@ -185,12 +185,14 @@ ActorCriticImpl::ActorCriticImpl() {
         torch::nn::init::zeros_(value_tech->bias);
     }
     // D9: ctm_out ZERO-init (h_out unchanged the moment ctm ticks are enabled);
-    // CfC gates get their defaults from libtorch's Linear init (fresh-init arms
-    // only ever train with use_cfc, so no warm-start prior is needed).
+    // CfC gets xavier_uniform on its 2D weights per the official ncps source
+    // (fresh-init arms only ever train with use_cfc, so no warm-start prior).
     {
         torch::NoGradGuard g;
         torch::nn::init::zeros_(ctm_out->weight);
         torch::nn::init::zeros_(ctm_out->bias);
+        torch::nn::init::xavier_uniform_(cfc_backbone->weight);
+        torch::nn::init::xavier_uniform_(cfc_gates->weight);
     }
     // GRUCell weights are initialised by libtorch with reasonable defaults
     // (uniform Kaiming-ish). We leave them alone.
@@ -201,17 +203,21 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor,
 ActorCriticImpl::forward_step(const torch::Tensor& obs,
                               const torch::Tensor& h_in) {
     auto enc = torch::relu(encoder(obs));               // [B, HIDDEN]
-    // D9 CfC: closed-form continuous-time cell replaces the GRU when use_cfc.
-    // Same input/state contract (enc, h_in) -> h [B, HIDDEN]; dt = 1.
+    // D9 CfC v2 (official default mode; see header comment): backbone over
+    // cat(enc, h), then ONE fused GEMM producing ff1|ff2|ta|tb, sliced into
+    // the time-gated interpolation h' = tanh(ff1)*(1-t_i) + t_i*tanh(ff2),
+    // t_i = sigmoid(ta*ts + tb) with ts = 1 (uniform world ticks).
     torch::Tensor h;
     if (use_cfc) {
-        auto xg   = torch::cat({enc, h_in}, /*dim=*/1);            // [B, 2H]
-        auto a    = torch::softplus(cfc_Wa->forward(xg)) + 1e-6f;  // time-const gate
-        auto b    = torch::tanh(cfc_Wb->forward(xg));              // target state
-        auto g    = torch::sigmoid(cfc_Wg->forward(xg));           // output gate
-        auto dt   = torch::full_like(a, 1.0f);
-        auto eda  = torch::exp(-a * dt);
-        h = g * (h_in * eda + (1.0f - eda) * b);                   // [B, HIDDEN]
+        auto xb = torch::silu(cfc_backbone->forward(torch::cat({enc, h_in}, /*dim=*/1)));
+        auto g4 = cfc_gates->forward(xb);                            // [B, 4H]
+        auto H = h_in.size(1);
+        auto ff1 = torch::tanh(g4.narrow(1, 0, H));
+        auto ff2 = torch::tanh(g4.narrow(1, H, H));
+        auto ta  = g4.narrow(1, 2 * H, H);
+        auto tb  = g4.narrow(1, 3 * H, H);
+        auto ti  = torch::sigmoid(ta + tb);                          // ts = 1
+        h = ff1 * (1.0f - ti) + ti * ff2;                            // [B, HIDDEN]
     } else {
         h = gru(enc, h_in);                             // [B, HIDDEN]
     }
