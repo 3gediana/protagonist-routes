@@ -1,0 +1,9 @@
+# D9 (2026-10-20): FRESH-INIT architecture screen — do CTM-lite and CfC learn
+# survival + deep chains from scratch at all, and how do they compare to the
+# legacy GRU under the proven teleport curriculum? All arms share base flags +
+# teleport 0.3 (the only lever that has ever unlocked deep chains).
+# K=1 sequential (VRAM-safe: one n-envs 8 arm ≈ 3.8 GB at a time).
+d9_tp | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3
+d9_ctm_tp | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --ctm-ticks 3
+d9_cfc_tp | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --cfc
+d9_ctm_cfc_tp | --survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --ctm-ticks 3 --cfc

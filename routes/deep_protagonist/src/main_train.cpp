@@ -1556,6 +1556,9 @@ int main(int argc, char** argv) {
     // D7 forced deep-chain practice + random experience injection.
     int         teleport_force_steps = 0;   // K forced decisions after restore
     float       inject_disc_prob     = 0.0f; // p random discrete action swap
+    // D9 architecture screens (fresh-init experiments).
+    int         ctm_ticks            = 0;    // internal thinking ticks (0=off)
+    bool        use_cfc              = false; // CfC cell instead of GRU
     // decision_blueprint_nutrition (round_21): dual nutrition bars + hunting.
     bool        nutrition_enabled = false; // master switch (default off = old world)
     float       nutri_protein_decay = 20.0f;
@@ -1658,6 +1661,8 @@ int main(int argc, char** argv) {
         else if (a == "--teleport-selftest")      teleport_selftest_mode = true;
         else if (a == "--teleport-force")         teleport_force_steps   = std::stoi(next());
         else if (a == "--inject-disc-prob")       inject_disc_prob       = std::stof(next());
+        else if (a == "--ctm-ticks")              ctm_ticks              = std::stoi(next());
+        else if (a == "--cfc")                    use_cfc                = true;
         else if (a == "--nutrition")            nutrition_enabled  = true;
         else if (a == "--nutri-protein-decay") nutri_protein_decay = std::stof(next());
         else if (a == "--nutri-vitamin-decay") nutri_vitamin_decay = std::stof(next());
@@ -1956,6 +1961,8 @@ int main(int argc, char** argv) {
         pcfg.tech_adv_weight      = ppo_tech_adv_weight;
         pcfg.vf_tech_coef         = ppo_vf_tech_coef;
         pcfg.inject_disc_prob     = inject_disc_prob;
+        pcfg.ctm_ticks            = ctm_ticks;
+        pcfg.use_cfc              = use_cfc;
         pcfg.kl_ref_coef    = ppo_kl_coef;
         pcfg.target_kl      = ppo_target_kl;
         // D-122 one-pot tech-tree curriculum gates.

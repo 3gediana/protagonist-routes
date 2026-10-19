@@ -135,6 +135,22 @@ ActorCriticImpl::ActorCriticImpl() {
     // existing output. Only READ when stream_split is ON.
     value_tech  = register_module("value_tech",
                                   torch::nn::Linear(HIDDEN, 1));
+    // D9 CTM-lite modules (see header comment): tick-state seed, one shared
+    // NLM step, and a ZERO-init read-out added to h (byte-identical at init).
+    ctm_in      = register_module("ctm_in",
+                                  torch::nn::Linear(HIDDEN, CTM_DIM));
+    ctm_nlm     = register_module("ctm_nlm",
+                                  torch::nn::Linear(HIDDEN + CTM_DIM, CTM_DIM));
+    ctm_out     = register_module("ctm_out",
+                                  torch::nn::Linear(CTM_DIM * 2, HIDDEN));
+    // D9 CfC unit (three gates over cat(enc, z)); registered ALWAYS so
+    // checkpoints serialize consistently, but only USED when use_cfc is set.
+    cfc_Wa      = register_module("cfc_Wa",
+                                  torch::nn::Linear(HIDDEN + HIDDEN, HIDDEN));
+    cfc_Wb      = register_module("cfc_Wb",
+                                  torch::nn::Linear(HIDDEN + HIDDEN, HIDDEN));
+    cfc_Wg      = register_module("cfc_Wg",
+                                  torch::nn::Linear(HIDDEN + HIDDEN, HIDDEN));
 
     // log_std initialised to log(0.5) ≈ -0.693 (moderate exploration).
     log_std = register_parameter(
@@ -168,6 +184,14 @@ ActorCriticImpl::ActorCriticImpl() {
         torch::nn::init::zeros_(value_tech->weight);
         torch::nn::init::zeros_(value_tech->bias);
     }
+    // D9: ctm_out ZERO-init (h_out unchanged the moment ctm ticks are enabled);
+    // CfC gates get their defaults from libtorch's Linear init (fresh-init arms
+    // only ever train with use_cfc, so no warm-start prior is needed).
+    {
+        torch::NoGradGuard g;
+        torch::nn::init::zeros_(ctm_out->weight);
+        torch::nn::init::zeros_(ctm_out->bias);
+    }
     // GRUCell weights are initialised by libtorch with reasonable defaults
     // (uniform Kaiming-ish). We leave them alone.
 }
@@ -177,7 +201,39 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor,
 ActorCriticImpl::forward_step(const torch::Tensor& obs,
                               const torch::Tensor& h_in) {
     auto enc = torch::relu(encoder(obs));               // [B, HIDDEN]
-    auto h   = gru(enc, h_in);                          // [B, HIDDEN]
+    // D9 CfC: closed-form continuous-time cell replaces the GRU when use_cfc.
+    // Same input/state contract (enc, h_in) -> h [B, HIDDEN]; dt = 1.
+    torch::Tensor h;
+    if (use_cfc) {
+        auto xg   = torch::cat({enc, h_in}, /*dim=*/1);            // [B, 2H]
+        auto a    = torch::softplus(cfc_Wa->forward(xg)) + 1e-6f;  // time-const gate
+        auto b    = torch::tanh(cfc_Wb->forward(xg));              // target state
+        auto g    = torch::sigmoid(cfc_Wg->forward(xg));           // output gate
+        auto dt   = torch::full_like(a, 1.0f);
+        auto eda  = torch::exp(-a * dt);
+        h = g * (h_in * eda + (1.0f - eda) * b);                   // [B, HIDDEN]
+    } else {
+        h = gru(enc, h_in);                             // [B, HIDDEN]
+    }
+    // D9 CTM-lite: run ctm_ticks internal thinking ticks on an internal axis
+    // after the recurrent core, then fold a sync-feature proxy (last tick +
+    // mean over ticks) back into h through the ZERO-init ctm_out. With
+    // ctm_ticks == 0 (or ctm_out still at zero) h_out is unchanged, so the
+    // heads below read exactly the legacy values.
+    if (ctm_ticks > 0) {
+        auto s0 = torch::tanh(ctm_in->forward(h));                 // [B, CTM_DIM]
+        auto z  = s0;
+        std::vector<torch::Tensor> zs;
+        zs.reserve(static_cast<size_t>(ctm_ticks));
+        for (int t = 0; t < ctm_ticks; ++t) {
+            z  = torch::tanh(ctm_nlm->forward(torch::cat({h, z}, /*dim=*/1)));
+            zs.push_back(z);
+        }
+        auto zstack = torch::stack(zs, /*dim=*/0);                 // [T, B, CTM_DIM]
+        auto zmean  = zstack.mean(0);                              // [B, CTM_DIM]
+        auto feat   = torch::cat({z, zmean}, /*dim=*/1);           // [B, 2*CTM_DIM]
+        h = h + ctm_out->forward(feat);                            // zero-init -> identity at start
+    }
     auto cm  = cont_mean(h);                            // [B, CONT_DIM]
     auto cs  = log_std.expand({obs.size(0), CONT_DIM}); // [B, CONT_DIM]
     // D1: when decoupling, the discrete logits = stop-gradient shared-feature
@@ -263,6 +319,8 @@ PPO::PPO(const PPOConfig& cfg)
     torch::manual_seed(cfg.seed);
     net_->decouple_disc = cfg.decouple_disc;
     net_->disc_mem_ctx  = cfg.disc_mem_ctx;
+    net_->ctm_ticks     = cfg.ctm_ticks;
+    net_->use_cfc       = cfg.use_cfc;
     net_->to(device_);
 
     opt_ = std::make_shared<torch::optim::Adam>(
@@ -311,6 +369,15 @@ PPO::PPO(const PPOConfig& cfg)
                      "path uses the shared GRU memory (stop-grad preserved)",
                      ActorCriticImpl::OBS_DIM, ActorCriticImpl::HIDDEN,
                      ActorCriticImpl::OBS_DIM + ActorCriticImpl::HIDDEN);
+    if (cfg_.use_cfc)
+        spdlog::info("D9 CfC ON: recurrent core = closed-form continuous-time "
+                     "cell (learned per-unit time constants) instead of GRU; "
+                     "fresh-init training only (no warm-start path)");
+    if (cfg_.ctm_ticks > 0)
+        spdlog::info("D9 CTM-lite ON: {} internal thinking tick(s) after the "
+                     "recurrent core; sync-proxy read-out is zero-init so the "
+                     "policy starts byte-identical and grows from there",
+                     cfg_.ctm_ticks);
 
     survive_first_mask_   = cfg_.survive_first_mask;
     survive_first_thresh_ = cfg_.survive_first_thresh;

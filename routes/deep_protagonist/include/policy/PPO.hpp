@@ -112,6 +112,33 @@ struct ActorCriticImpl : torch::nn::Module {
     // checkpoint, V_tech(s)=0 (the correct prior: tech events are rare) and the
     // survival value path is untouched. Only READ when stream_split is ON.
     torch::nn::Linear   value_tech{nullptr};   // HIDDEN -> 1 (zero-init)
+    // D9 CTM-lite (Sakana Continuous Thought Machine, simplified): an internal
+    // "thinking" loop that runs ctm_ticks extra ticks AFTER the recurrent core,
+    // letting deliberation unfold over an internal axis before the heads read
+    // out. Modules registered ALWAYS (tolerant warm-start); ctm_out is
+    // ZERO-init so h_out is byte-identical whether or not ticks ran, and the
+    // branch only READS when ctm_ticks > 0. Simplifications vs the paper
+    // (documented in RESEARCH_FRONTIER 2026-10 §3.1): per-tick history is
+    // aggregated by a mean over tick outputs (a sync-feature proxy) instead of
+    // the full pairwise correlation matrix, and the NLM is one shared linear
+    // (not per-neuron weights).
+    static constexpr int CTM_DIM = 128;
+    torch::nn::Linear   ctm_in{nullptr};    // HIDDEN -> CTM_DIM  (tick state seed)
+    torch::nn::Linear   ctm_nlm{nullptr};   // HIDDEN+CTM_DIM -> CTM_DIM (one shared NLM step)
+    torch::nn::Linear   ctm_out{nullptr};   // 2*CTM_DIM -> HIDDEN (zero-init read-out added to h)
+    // D9 CfC (Closed-form Continuous-time neuron, Hasani/Lechner line): a
+    // drop-in GRU alternative whose units carry learned time constants, so
+    // fast survival reactions and slow tech deliberation live on different
+    // dynamics instead of fighting for one recurrence (the D8 "skill budget
+    // competition" hypothesis). Registered ALWAYS; used INSTEAD of gru only
+    // when the use_cfc flag is set. Math: gates from cat(enc, z),
+    //   a = softplus(Wa*x+ba), b = tanh(Wb*x+bb), g = sigmoid(Wg*x+bg),
+    //   z' = g * (z*exp(-a*dt) + (1-exp(-a*dt))*b),  dt = 1.
+    torch::nn::Linear   cfc_Wa{nullptr};    // (HIDDEN+HIDDEN) -> HIDDEN
+    torch::nn::Linear   cfc_Wb{nullptr};
+    torch::nn::Linear   cfc_Wg{nullptr};
+    bool                use_cfc = false;    // set from PPOConfig in PPO ctor
+    int                 ctm_ticks = 0;      // set from PPOConfig in PPO ctor
     torch::Tensor       log_std;   // shape [CONT_DIM]
 
     ActorCriticImpl();
@@ -232,6 +259,13 @@ struct PPOConfig {
     // injected and excluded from the policy update (rewards still flow).
     // Default 0 = byte-identical.
     float  inject_disc_prob     = 0.0f;
+    // D9 architecture screens (fresh-init experiments; both default OFF):
+    //   ctm_ticks > 0 runs that many internal "thinking" ticks after the
+    //   recurrent core (CTM-lite; see ActorCriticImpl comment);
+    //   use_cfc swaps the GRU for a closed-form continuous-time cell with
+    //   learned per-unit time constants (CfC; multi-timescale dynamics).
+    int    ctm_ticks            = 0;
+    bool   use_cfc              = false;
     float  kl_ref_coef   = 0.0f;   // beta for KL(pi||pi_ref=bc_v9) anchor (0=off)
     float  target_kl     = 0.0f;   // CleanRL-style early-stop threshold (0=off)
     // D-122 one-pot tech-tree curriculum gates. Each reserved categorical
