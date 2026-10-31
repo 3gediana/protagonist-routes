@@ -1,0 +1,7 @@
+2026-10-20 00:24:07  === NIGHT_RUN start  tag=20261020-002406  arms=4  steps=10000000  n_envs=8  concurrency=1 ===
+2026-10-20 00:24:07  GPU: 1988 MiB, 5912 MiB, 12 %
+2026-10-20 00:24:07  >>> [1/4] START ARM=d9_tp  pid=41288  flags=--survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3  (并发 1/1, GPUfree 5912MiB)
+2026-10-20 00:29:15  ... 进度 done=0/4  在跑=1  GPU: 2494 MiB, 5406 MiB, 33 %
+2026-10-20 00:34:16  ... 进度 done=0/4  在跑=1  GPU: 2491 MiB, 5409 MiB, 84 %
+2026-10-20 00:39:16  ... 进度 done=0/4  在跑=1  GPU: 2505 MiB, 5395 MiB, 61 %
+2026-10-20 00:44:16  ... 进度 done=0/4  在跑=1  GPU: 3376 MiB, 4524 MiB, 69 %

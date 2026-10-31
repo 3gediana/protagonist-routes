@@ -1,0 +1,37 @@
+[
+ {
+  "run_id": "dp-162504-1",
+  "project": "dp",
+  "pid": 42716,
+  "cmd": "D:\\claude-code\\c++\\routes\\deep_protagonist\\build_d122_v2\\bin\\deep_protagonist_train.exe --policy ppo --load G:\\claude_offload\\deep_protagonist\\checkpoints\\ft_dp_ppo_v5_20260610-082720.pt --weather --allow-cook --ent-coef 0.02 --critic-warmup 32 --lr 0.00015 --ppo-target-kl 0.08 --n-envs 8 --steps 4000000 --save-path checkpoints\\ft_v5_highent_s42_20260629-162504.pt --save-every 25 --metrics metrics\\ft_v5_highent_s42_20260629-162504.jsonl --seed 42",
+  "log": "D:\\claude-code\\c++\\routes\\deep_protagonist\\logs\\ft_v5_highent_s42_20260629-162504.stdout.log",
+  "kind": "finetune",
+  "meta": {
+   "tag": "v5_highent_s42_20260629-162504",
+   "stage": "finetune",
+   "load": "ft_dp_ppo_v5_20260610-082720.pt",
+   "seed": 42,
+   "steps": 4000000,
+   "n_envs": 8,
+   "save_path": "checkpoints\\ft_v5_highent_s42_20260629-162504.pt",
+   "metrics": "ft_v5_highent_s42_20260629-162504.jsonl",
+   "reason": "v5基线(score=0.3585)是DP历史最佳,但行为已卡在milestone刷分循环。analyze_metrics显示:存活0.93%→目标10%,夜避寒0.29%→目标60%,动作熵0.84→目标1.5。方案:从v5 checkpoint warm-resume,ent_coef从默认0.0015提高到0.02(7倍),强制探索更多行为模式,4M步看能否突破行为单一化。n_envs=8充分利用GPU(6.2G空闲)。",
+   "purpose": "验证假设:提高entropy coefficient能否打破v5的milestone刷分循环,提升存活率和行为多样性。目标:存活≥5%,食物/饮水奖励占比提升,动作熵≥1.2。"
+  },
+  "started": 1782721504.6622007
+ },
+ {
+  "run_id": "dp-162514-2",
+  "project": "dp",
+  "pid": 6300,
+  "cmd": "D:\\claude-code\\c++\\routes\\deep_protagonist\\build_d122_v2\\bin\\deep_protagonist_dump.exe --load G:\\claude_offload\\deep_protagonist\\checkpoints\\ab_d3_mask_s7.pt --seed 1782721514 --steps 3000 --frames 1200 --out-dir traces\\viewer_live_v5_highent_s42_20260629-162504",
+  "log": "D:\\claude-code\\c++\\routes\\deep_protagonist\\logs\\newworld_20260629-162514.log",
+  "kind": "newworld",
+  "meta": {
+   "checkpoint": "ab_d3_mask_s7.pt",
+   "seed": 1782721514,
+   "out_dir": "viewer_live_v5_highent_s42_20260629-162504"
+  },
+  "started": 1782721515.8496985
+ }
+]

@@ -1,0 +1,5 @@
+# D2 nav-potential seed7 A/B (ASCII only, CRLF). control=ab_ctrl_v4_s7
+ab_ctrl_v4_s7   | --seed 7
+ab_d2_s7        | --seed 7 --nav-potential 0.75
+ab_d2strong_s7  | --seed 7 --nav-potential 1.5
+ab_d2_mask_s7   | --seed 7 --nav-potential 0.75 --survive-first-mask --survive-first-thresh 0.30

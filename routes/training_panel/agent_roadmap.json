@@ -1,0 +1,1108 @@
+{
+  "version": 1,
+  "active": false,
+  "objective": "训练路线图 v2(2026-06-11): 旧目标全员 blocked 的根因=门槛悬空(基线的10-14倍)+选择压失真(PE 全员死亡)+DP 纯 PPO 路线已证伪。新路线: PE 先走 boot 求生引导解死锁→stage0-3 课程(8代窗口判据)→L1→终态;DP 停纯 PPO,走师徒管线 BC→DAgger→PPO finetune。每道门槛=实测基线的2-3倍阶梯;每过一门换 seed 复现(ci95 下界达标才算);一次只动一个旋钮,≤80代/8M步无效即回退;flags 非空禁止进下一关。",
+  "goals": [
+    {
+      "id": "g_boot",
+      "title": "PE-0 求生引导(boot)",
+      "detail": "用 panel_fresh96_selfadapt_50028_boot.toml 打破「全员死亡→选择压失真」死锁。基线 survival=0/240, chop=0.14%。达标后换 seed 复现再进 stage0。",
+      "project": "pe",
+      "order": 0,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "survival_rate",
+          "op": ">=",
+          "target": 0.05
+        },
+        {
+          "metric": "chop_rate",
+          "op": ">=",
+          "target": 0.004
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.0,
+      "stall": {
+        "checks": 8,
+        "best": 0.085
+      },
+      "baseline": {
+        "survival_rate": 0.0,
+        "chop_rate": 0.0006837267519119537
+      },
+      "last_clauses": [
+        {
+          "metric": "survival_rate",
+          "op": ">=",
+          "target": 0.05,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):survival_rate=None",
+          "trend": "flat"
+        },
+        {
+          "metric": "chop_rate",
+          "op": ">=",
+          "target": 0.004,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):chop_rate=None",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "survival_rate": [
+          null,
+          null,
+          0.0,
+          0.0,
+          0.0,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "chop_rate": [
+          null,
+          null,
+          0.0013484931051362808,
+          0.0013484931051362808,
+          0.0013484931051362808,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pA1v2",
+      "title": "PE-阶A 有效动作阶梯(stage0)",
+      "detail": "boot 毕业后续最优 ckpt 起 stage0。阶梯目标=基线 2-6 倍,不直接挑 14 倍。终线由 /api/pe/curriculum(chop/craft 0.02, hunt 0.005)把关。",
+      "project": "pe",
+      "order": 1,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "chop_rate",
+          "op": ">=",
+          "target": 0.008
+        },
+        {
+          "metric": "craft_rate",
+          "op": ">=",
+          "target": 0.015
+        },
+        {
+          "metric": "hunt_rate",
+          "op": ">=",
+          "target": 0.005
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.0,
+      "stall": {
+        "checks": 8,
+        "best": 0.044
+      },
+      "baseline": {
+        "chop_rate": 0.0006837267519119537,
+        "craft_rate": 0.00020201059961499156,
+        "hunt_rate": 0.00017139612858994548
+      },
+      "last_clauses": [
+        {
+          "metric": "chop_rate",
+          "op": ">=",
+          "target": 0.008,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):chop_rate=None",
+          "trend": "flat"
+        },
+        {
+          "metric": "craft_rate",
+          "op": ">=",
+          "target": 0.015,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):craft_rate=None",
+          "trend": "flat"
+        },
+        {
+          "metric": "hunt_rate",
+          "op": ">=",
+          "target": 0.005,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):hunt_rate=None",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "chop_rate": [
+          null,
+          null,
+          0.0013484931051362808,
+          0.0013484931051362808,
+          0.0013484931051362808,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "craft_rate": [
+          null,
+          null,
+          0.005131361854354089,
+          0.005131361854354089,
+          0.005131361854354089,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "hunt_rate": [
+          null,
+          null,
+          0.0006920993281863418,
+          0.0006920993281863418,
+          0.0006920993281863418,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pA2v2",
+      "title": "PE-阶A 活得下来(stage0)",
+      "detail": "近窗存活率,样本≥200 个体,引用 ci95 下界。",
+      "project": "pe",
+      "order": 2,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "survival_rate",
+          "op": ">=",
+          "target": 0.1
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.0,
+      "stall": {
+        "checks": 8,
+        "best": 0.0
+      },
+      "baseline": {
+        "survival_rate": 0.0
+      },
+      "last_clauses": [
+        {
+          "metric": "survival_rate",
+          "op": ">=",
+          "target": 0.1,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):survival_rate=None",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "survival_rate": [
+          null,
+          null,
+          0.0,
+          0.0,
+          0.0,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pA3v2",
+      "title": "PE-阶A 不直线乱走",
+      "detail": "3 episode 聚合后的直线度/覆盖。",
+      "project": "pe",
+      "order": 3,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "straightness",
+          "op": "<=",
+          "target": 0.6
+        },
+        {
+          "metric": "visited_cells",
+          "op": ">=",
+          "target": 20
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.469,
+      "stall": {
+        "checks": 11,
+        "best": 0.854
+      },
+      "baseline": {
+        "straightness": 0.748008758861113,
+        "visited_cells": 18.104546770923836
+      },
+      "last_clauses": [
+        {
+          "metric": "straightness",
+          "op": "<=",
+          "target": 0.6,
+          "value": 0.933600837058226,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):straightness=0.933600837058226",
+          "trend": "flat"
+        },
+        {
+          "metric": "visited_cells",
+          "op": ">=",
+          "target": 20.0,
+          "value": 5.914893617021277,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):visited_cells=5.914893617021277",
+          "trend": "up"
+        }
+      ],
+      "value_history": {
+        "straightness": [
+          0.8345299108975295,
+          0.8345299108975295,
+          0.7866210924900723,
+          0.7866210924900723,
+          0.7866210924900723,
+          0.9448379652790785,
+          0.9448379652790785,
+          0.9448379652790785,
+          0.9448379652790785,
+          0.933600837058226
+        ],
+        "visited_cells": [
+          16.414141414141415,
+          16.414141414141415,
+          15.246628131021195,
+          15.246628131021195,
+          15.246628131021195,
+          5.48936170212766,
+          5.48936170212766,
+          5.48936170212766,
+          5.48936170212766,
+          5.914893617021277
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pB1v2",
+      "title": "PE-阶B 课程毕业",
+      "detail": "按 /api/pe/curriculum 晋级(8代窗口 mean+75%+样本量),每过一档换 seed 复现。",
+      "project": "pe",
+      "order": 4,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "curriculum_stage",
+          "op": ">=",
+          "target": 3
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.0,
+      "stall": {
+        "checks": 8,
+        "best": 0.0
+      },
+      "baseline": {
+        "curriculum_stage": 0.0
+      },
+      "last_clauses": [
+        {
+          "metric": "curriculum_stage",
+          "op": ">=",
+          "target": 3.0,
+          "value": 0.0,
+          "ok": false,
+          "near": false,
+          "detail": "curriculum: stage=0 decision=hold",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "curriculum_stage": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pC1v2",
+      "title": "PE-阶C 信号原语(发了有响应)",
+      "detail": "stage3 毕业+存活稳定后才有意义。",
+      "project": "pe",
+      "order": 5,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "signal_causal_rate",
+          "op": ">=",
+          "target": 0.05
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.0,
+      "stall": {
+        "checks": 8,
+        "best": 0.0
+      },
+      "baseline": {
+        "signal_causal_rate": 0.0
+      },
+      "last_clauses": [
+        {
+          "metric": "signal_causal_rate",
+          "op": ">=",
+          "target": 0.05,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):signal_causal_rate=None",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "signal_causal_rate": [
+          null,
+          null,
+          0.0,
+          0.0,
+          0.0,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pC2v2",
+      "title": "PE-阶C 搬运/建造闭环",
+      "detail": "",
+      "project": "pe",
+      "order": 6,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "deposits_per_agent",
+          "op": ">=",
+          "target": 0.5
+        },
+        {
+          "metric": "worksites_completed_last5",
+          "op": ">=",
+          "target": 1
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.0,
+      "stall": {
+        "checks": 8,
+        "best": 0.521
+      },
+      "baseline": {
+        "deposits_per_agent": 0.020833333333333332,
+        "worksites_completed_last5": 9.0
+      },
+      "last_clauses": [
+        {
+          "metric": "deposits_per_agent",
+          "op": ">=",
+          "target": 0.5,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):deposits_per_agent=None",
+          "trend": "flat"
+        },
+        {
+          "metric": "worksites_completed_last5",
+          "op": ">=",
+          "target": 1.0,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):worksites_completed_last5=None",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "deposits_per_agent": [
+          null,
+          null,
+          0.020833333333333332,
+          0.020833333333333332,
+          0.020833333333333332,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "worksites_completed_last5": [
+          null,
+          null,
+          0.0,
+          0.0,
+          0.0,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pC3v2",
+      "title": "PE-阶C 领地/生态位分化",
+      "detail": "",
+      "project": "pe",
+      "order": 7,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "territory_overlap_iou",
+          "op": "<=",
+          "target": 0.3
+        },
+        {
+          "metric": "visited_cells",
+          "op": ">=",
+          "target": 20
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.648,
+      "stall": {
+        "checks": 8,
+        "best": 0.953
+      },
+      "baseline": {
+        "territory_overlap_iou": 0.02818816612585249,
+        "visited_cells": 18.104546770923836
+      },
+      "last_clauses": [
+        {
+          "metric": "territory_overlap_iou",
+          "op": "<=",
+          "target": 0.3,
+          "value": 0.018065824698177635,
+          "ok": true,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):territory_overlap_iou=0.018065824698177635",
+          "trend": "flat"
+        },
+        {
+          "metric": "visited_cells",
+          "op": ">=",
+          "target": 20.0,
+          "value": 5.914893617021277,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):visited_cells=5.914893617021277",
+          "trend": "up"
+        }
+      ],
+      "value_history": {
+        "territory_overlap_iou": [
+          0.02233455039521016,
+          0.02233455039521016,
+          0.02357379602221343,
+          0.02357379602221343,
+          0.02357379602221343,
+          0.018050249750249752,
+          0.018050249750249752,
+          0.018050249750249752,
+          0.018050249750249752,
+          0.018065824698177635
+        ],
+        "visited_cells": [
+          16.414141414141415,
+          16.414141414141415,
+          15.246628131021195,
+          15.246628131021195,
+          15.246628131021195,
+          5.48936170212766,
+          5.48936170212766,
+          5.48936170212766,
+          5.48936170212766,
+          5.914893617021277
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pC4v2",
+      "title": "PE-阶C 分工特化",
+      "detail": "",
+      "project": "pe",
+      "order": 8,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "specialization_gini",
+          "op": ">=",
+          "target": 0.3
+        },
+        {
+          "metric": "goal_entropy_mean",
+          "op": ">=",
+          "target": 1.0
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.128,
+      "stall": {
+        "checks": 9,
+        "best": 0.138
+      },
+      "baseline": {
+        "specialization_gini": 0.0006953209784298814,
+        "goal_entropy_mean": 0.00183694934722658
+      },
+      "last_clauses": [
+        {
+          "metric": "specialization_gini",
+          "op": ">=",
+          "target": 0.3,
+          "value": 0.047369343528145015,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):specialization_gini=0.047369343528145015",
+          "trend": "up"
+        },
+        {
+          "metric": "goal_entropy_mean",
+          "op": ">=",
+          "target": 1.0,
+          "value": 0.09727004520936436,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):goal_entropy_mean=0.09727004520936436",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "specialization_gini": [
+          0.04734215480338594,
+          0.04734215480338594,
+          0.020533039095668396,
+          0.020533039095668396,
+          0.020533039095668396,
+          0.04527024843070178,
+          0.04527024843070178,
+          0.04527024843070178,
+          0.04527024843070178,
+          0.047369343528145015
+        ],
+        "goal_entropy_mean": [
+          0.11753680739230683,
+          0.11753680739230683,
+          0.04904801203326389,
+          0.04904801203326389,
+          0.04904801203326389,
+          0.09603251145633158,
+          0.09603251145633158,
+          0.09603251145633158,
+          0.09603251145633158,
+          0.09727004520936436
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "pD1v2",
+      "title": "PE-阶D 蓝图终态(夜收+真理解)",
+      "detail": "",
+      "project": "pe",
+      "order": 9,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "night_contraction",
+          "op": "<=",
+          "target": 0.8
+        },
+        {
+          "metric": "understanding_mem",
+          "op": ">=",
+          "target": 0.5
+        }
+      ],
+      "status": "blocked",
+      "progress": 0.386,
+      "stall": {
+        "checks": 8,
+        "best": 0.387
+      },
+      "baseline": {
+        "night_contraction": 1.0328340643508,
+        "understanding_mem": null
+      },
+      "last_clauses": [
+        {
+          "metric": "night_contraction",
+          "op": "<=",
+          "target": 0.8,
+          "value": 1.0355659432189255,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(pe,panel_fresh96_selfadapt_50028_boot_ab_world_campfire_danger_damage_0.25\\20260611-094914):night_contraction=1.0355659432189255",
+          "trend": "flat"
+        },
+        {
+          "metric": "understanding_mem",
+          "op": ">=",
+          "target": 0.5,
+          "value": null,
+          "ok": false,
+          "near": false,
+          "detail": "understanding_mem: 找不到可读 run(还没跑过?)",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "night_contraction": [
+          1.033241888578026,
+          1.033241888578026,
+          1.0425197459817055,
+          1.0425197459817055,
+          1.0425197459817055,
+          null,
+          null,
+          null,
+          null,
+          1.0355659432189255
+        ],
+        "understanding_mem": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "dT1",
+      "title": "DP-阶A 生存本能建立(收紧版)",
+      "detail": "收紧版: food≥15%, water≥10%, 饿死≤20%。觅食饮水不是偶尔做一次,而是生存本能。",
+      "project": "dp",
+      "order": 10,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "food_reward_share",
+          "op": ">=",
+          "target": 0.15
+        },
+        {
+          "metric": "water_reward_share",
+          "op": ">=",
+          "target": 0.1
+        },
+        {
+          "metric": "starvation_death_share",
+          "op": "<=",
+          "target": 0.2
+        }
+      ],
+      "status": "pending",
+      "progress": 0.611,
+      "stall": {
+        "checks": 0,
+        "best": null
+      },
+      "baseline": {
+        "food_reward_share": 0.0148,
+        "water_reward_share": 0.0105,
+        "starvation_death_share": 0.41702127659574467
+      },
+      "last_clauses": [
+        {
+          "metric": "food_reward_share",
+          "op": ">=",
+          "target": 0.07,
+          "value": 0.0246,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):food_reward_share=0.0246",
+          "trend": "up"
+        },
+        {
+          "metric": "water_reward_share",
+          "op": ">=",
+          "target": 0.03,
+          "value": 0.0247,
+          "ok": false,
+          "near": true,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):water_reward_share=0.0247",
+          "trend": "up"
+        },
+        {
+          "metric": "starvation_death_share",
+          "op": "<=",
+          "target": 0.6,
+          "value": 0.911522633744856,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):starvation_death_share=0.911522633744856",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "food_reward_share": [
+          0.0522,
+          0.0522,
+          0.0876,
+          0.0876,
+          0.0876,
+          0.0033,
+          0.0033,
+          0.0033,
+          0.0033,
+          0.0246
+        ],
+        "water_reward_share": [
+          0.0099,
+          0.0099,
+          0.0268,
+          0.0268,
+          0.0268,
+          0.0156,
+          0.0156,
+          0.0156,
+          0.0156,
+          0.0247
+        ],
+        "starvation_death_share": [
+          0.7718191377497371,
+          0.7718191377497371,
+          0.7619047619047619,
+          0.7619047619047619,
+          0.7619047619047619,
+          0.9093959731543624,
+          0.9093959731543624,
+          0.9093959731543624,
+          0.9093959731543624,
+          0.911522633744856
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "dA2v2",
+      "title": "DP-阶A 不单动作刷读",
+      "detail": "",
+      "project": "dp",
+      "order": 11,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "top_action_share",
+          "op": "<=",
+          "target": 0.4
+        },
+        {
+          "metric": "action_entropy",
+          "op": ">=",
+          "target": 1.5
+        }
+      ],
+      "status": "met",
+      "progress": 1.0,
+      "stall": {
+        "checks": 0,
+        "best": 1.0
+      },
+      "baseline": {
+        "top_action_share": 0.20083096563211936,
+        "action_entropy": 2.4119589359262115
+      },
+      "last_clauses": [
+        {
+          "metric": "top_action_share",
+          "op": "<=",
+          "target": 0.4,
+          "value": 0.21810319159672753,
+          "ok": true,
+          "near": false,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):top_action_share=0.21810319159672753",
+          "trend": "flat"
+        },
+        {
+          "metric": "action_entropy",
+          "op": ">=",
+          "target": 1.5,
+          "value": 2.3299408391247725,
+          "ok": true,
+          "near": false,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):action_entropy=2.3299408391247725",
+          "trend": "up"
+        }
+      ],
+      "value_history": {
+        "top_action_share": [
+          0.20083096563211936,
+          0.20083096563211936,
+          0.3648054070511704,
+          0.3648054070511704,
+          0.3648054070511704,
+          0.21613604689389734,
+          0.21613604689389734,
+          0.21613604689389734,
+          0.21613604689389734,
+          0.21810319159672753
+        ],
+        "action_entropy": [
+          2.4119589359262115,
+          2.4119589359262115,
+          2.1030927563668453,
+          2.1030927563668453,
+          2.1030927563668453,
+          2.279003615884297,
+          2.279003615884297,
+          2.279003615884297,
+          2.279003615884297,
+          2.3299408391247725
+        ]
+      }
+    },
+    {
+      "id": "dT2",
+      "title": "DP-阶B PPO finetune 行为达标(收紧版)",
+      "detail": "行为必须是'刻进DNA的本能': 夜间60%+进庇护所,觅食/饮水占比显著,饿死≤20%。不是偶尔做一次算达标。",
+      "project": "dp",
+      "order": 12,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "night_shelter_rate",
+          "op": ">=",
+          "target": 0.6
+        },
+        {
+          "metric": "unlocks_count",
+          "op": ">=",
+          "target": 5
+        },
+        {
+          "metric": "starvation_death_share",
+          "op": "<=",
+          "target": 0.2
+        },
+        {
+          "metric": "food_reward_share",
+          "op": ">=",
+          "target": 0.15
+        }
+      ],
+      "status": "pending",
+      "progress": 0.5,
+      "stall": {
+        "checks": 0,
+        "best": null
+      },
+      "baseline": {
+        "night_shelter_rate": 0.01301690610365902,
+        "unlocks_count": 5.0,
+        "starvation_death_share": 0.41702127659574467,
+        "food_reward_share": 0.0148
+      },
+      "last_clauses": [
+        {
+          "metric": "night_shelter_rate",
+          "op": ">=",
+          "target": 0.1,
+          "value": 0.0,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):night_shelter_rate=0.0",
+          "trend": "flat"
+        },
+        {
+          "metric": "unlocks_count",
+          "op": ">=",
+          "target": 5.0,
+          "value": 5.0,
+          "ok": true,
+          "near": false,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):unlocks_count=5",
+          "trend": "up"
+        }
+      ],
+      "value_history": {
+        "night_shelter_rate": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "unlocks_count": [
+          3.0,
+          3.0,
+          5.0,
+          5.0,
+          5.0,
+          3.0,
+          3.0,
+          3.0,
+          3.0,
+          5.0
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    },
+    {
+      "id": "dC1v2",
+      "title": "DP-阶C 蓝图终态(理解世界+因果链)",
+      "detail": "收紧版: unlocks≥8, understanding≥0.15, 夜宿≥60%。蓝图终态='理解这个世界':因果链连贯使用,不是刷分。",
+      "project": "dp",
+      "order": 13,
+      "owner": "user",
+      "acceptance": [
+        {
+          "metric": "unlocks_count",
+          "op": ">=",
+          "target": 8
+        },
+        {
+          "metric": "understanding_dp",
+          "op": ">=",
+          "target": 0.15
+        },
+        {
+          "metric": "night_shelter_rate",
+          "op": ">=",
+          "target": 0.6
+        }
+      ],
+      "status": "pending",
+      "progress": 0.516,
+      "stall": {
+        "checks": 0,
+        "best": null
+      },
+      "baseline": {
+        "unlocks_count": 2.0,
+        "understanding_dp": 0.061,
+        "night_shelter_rate": 0.004945457142347039
+      },
+      "last_clauses": [
+        {
+          "metric": "unlocks_count",
+          "op": ">=",
+          "target": 8.0,
+          "value": 5.0,
+          "ok": false,
+          "near": false,
+          "detail": "behavior(dp,ft_v5_warmresume_gpu8_20260611-094503.jsonl):unlocks_count=5",
+          "trend": "up"
+        },
+        {
+          "metric": "understanding_dp",
+          "op": ">=",
+          "target": 0.15,
+          "value": 0.061,
+          "ok": false,
+          "near": false,
+          "detail": "dp_cf_cf_20260609-114144:understanding=0.061",
+          "trend": "flat"
+        }
+      ],
+      "value_history": {
+        "unlocks_count": [
+          3.0,
+          3.0,
+          5.0,
+          5.0,
+          5.0,
+          3.0,
+          3.0,
+          3.0,
+          3.0,
+          5.0
+        ],
+        "understanding_dp": [
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061,
+          0.061
+        ]
+      },
+      "blocked_reason": "进度连续 8 次零改进,疑似撞机制天花板。建议交维护者评估机制级改动;本卡先挂起。"
+    }
+  ],
+  "hold_window": 2,
+  "stall_after": 8,
+  "stall_policy": "skip",
+  "all_met_streak": 2,
+  "completed_at": 1781142558.3219492,
+  "updated_at": 1781154664.0997057
+}

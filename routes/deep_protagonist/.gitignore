@@ -15,3 +15,4 @@ ninja_train.bat
 cl_err.txt
 cl_out.txt
 
+.rmkit/

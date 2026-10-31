@@ -1,0 +1,24 @@
+2026-10-01 18:22:40  === NIGHT_RUN start  tag=20261001-182238  arms=2  steps=10000000  n_envs=8  concurrency=2 ===
+2026-10-01 18:22:40  GPU: 1276 MiB, 6624 MiB, 10 %
+2026-10-01 18:22:40  >>> [1/2] START ARM=d8_tp_p50  pid=34076  flags=--survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.5  (并发 1/2, GPUfree 6624MiB)
+2026-10-01 18:22:48  >>> [2/2] START ARM=d8_ss_tp_w05  pid=8948  flags=--survive-first-mask --survive-first-thresh 0.35 --afford-mask --nav-potential 0.75 --teleport --teleport-prob 0.3 --stream-split --tech-adv-weight 0.5  (并发 2/2, GPUfree 5690MiB)
+2026-10-01 18:27:46  ... 进度 done=0/2  在跑=2  GPU: 2804 MiB, 5096 MiB, 59 %
+2026-10-01 18:32:47  ... 进度 done=0/2  在跑=2  GPU: 2650 MiB, 5250 MiB, 78 %
+2026-10-01 18:37:47  ... 进度 done=0/2  在跑=2  GPU: 2650 MiB, 5250 MiB, 34 %
+2026-10-01 18:42:47  ... 进度 done=0/2  在跑=2  GPU: 2667 MiB, 5233 MiB, 28 %
+2026-10-01 18:47:48  ... 进度 done=0/2  在跑=2  GPU: 2668 MiB, 5232 MiB, 85 %
+2026-10-01 18:52:48  ... 进度 done=0/2  在跑=2  GPU: 2804 MiB, 5096 MiB, 80 %
+2026-10-01 18:57:48  ... 进度 done=0/2  在跑=2  GPU: 2633 MiB, 5267 MiB, 86 %
+2026-10-01 19:02:48  ... 进度 done=0/2  在跑=2  GPU: 2822 MiB, 5078 MiB, 78 %
+2026-10-01 19:07:49  ... 进度 done=0/2  在跑=2  GPU: 2649 MiB, 5251 MiB, 53 %
+2026-10-01 19:12:49  ... 进度 done=0/2  在跑=2  GPU: 3006 MiB, 4894 MiB, 29 %
+2026-10-01 19:17:49  ... 进度 done=0/2  在跑=2  GPU: 2670 MiB, 5230 MiB, 79 %
+2026-10-01 19:22:50  ... 进度 done=0/2  在跑=2  GPU: 2670 MiB, 5230 MiB, 84 %
+2026-10-01 19:27:50  ... 进度 done=0/2  在跑=2  GPU: 2476 MiB, 5424 MiB, 61 %
+2026-10-01 19:32:50  ... 进度 done=0/2  在跑=2  GPU: 2470 MiB, 5430 MiB, 27 %
+2026-10-01 19:37:50  ... 进度 done=0/2  在跑=2  GPU: 2477 MiB, 5423 MiB, 54 %
+2026-10-01 19:42:51  ... 进度 done=0/2  在跑=2  GPU: 2464 MiB, 5436 MiB, 54 %
+2026-10-01 19:47:51  ... 进度 done=0/2  在跑=2  GPU: 2463 MiB, 5437 MiB, 51 %
+2026-10-01 19:51:41  <<< DONE  ARM=d8_ss_tp_w05  EXIT=  (88.9 min, 1861 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\d8_ss_tp_w05.jsonl
+2026-10-01 19:51:41  <<< DONE  ARM=d8_tp_p50  EXIT=  (89 min, 1781 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\d8_tp_p50.jsonl
+2026-10-01 19:51:51  === NIGHT_RUN done  tag=20261001-182238  完成 2/2 臂 ===

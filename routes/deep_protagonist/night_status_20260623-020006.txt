@@ -1,0 +1,79 @@
+2026-06-23 02:00:06  === NIGHT_RUN start  tag=20260623-020006  arms=10  steps=10000000  n_envs=8  concurrency=2 ===
+2026-06-23 02:00:07  GPU: 1864 MiB, 6036 MiB, 16 %
+2026-06-23 02:00:07  >>> [1/10] START ARM=ab_ctrl  pid=21340  flags=--seed 7  (并发 1/2, GPUfree 6036MiB)
+2026-06-23 02:00:15  >>> [2/10] START ARM=ab_treat035  pid=27052  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.35  (并发 2/2, GPUfree 5454MiB)
+2026-06-23 02:05:14  ... 进度 done=0/10  在跑=2  GPU: 3058 MiB, 4842 MiB, 80 %
+2026-06-23 02:10:14  ... 进度 done=0/10  在跑=2  GPU: 3041 MiB, 4859 MiB, 59 %
+2026-06-23 02:15:14  ... 进度 done=0/10  在跑=2  GPU: 3040 MiB, 4860 MiB, 86 %
+2026-06-23 02:20:15  ... 进度 done=0/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 82 %
+2026-06-23 02:25:15  ... 进度 done=0/10  在跑=2  GPU: 3048 MiB, 4852 MiB, 75 %
+2026-06-23 02:30:15  ... 进度 done=0/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 58 %
+2026-06-23 02:35:15  ... 进度 done=0/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 57 %
+2026-06-23 02:40:16  ... 进度 done=0/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 79 %
+2026-06-23 02:45:16  ... 进度 done=0/10  在跑=2  GPU: 3048 MiB, 4852 MiB, 91 %
+2026-06-23 02:50:16  ... 进度 done=0/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 80 %
+2026-06-23 02:55:17  ... 进度 done=0/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 81 %
+2026-06-23 03:00:17  ... 进度 done=0/10  在跑=2  GPU: 3048 MiB, 4852 MiB, 56 %
+2026-06-23 03:05:17  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 82 %
+2026-06-23 03:10:18  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 57 %
+2026-06-23 03:15:18  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 62 %
+2026-06-23 03:20:18  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 82 %
+2026-06-23 03:25:18  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 83 %
+2026-06-23 03:30:19  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 39 %
+2026-06-23 03:35:19  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 78 %
+2026-06-23 03:40:19  ... 进度 done=0/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 77 %
+2026-06-23 03:43:39  <<< DONE  ARM=ab_ctrl  EXIT=  (103.5 min, 1814 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_ctrl.jsonl
+2026-06-23 03:43:50  >>> [3/10] START ARM=ab_treat025  pid=36852  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.25  (并发 2/2, GPUfree 5463MiB)
+2026-06-23 03:44:38  <<< DONE  ARM=ab_treat035  EXIT=  (104.4 min, 1728 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat035.jsonl
+2026-06-23 03:44:48  >>> [4/10] START ARM=ab_treat050  pid=35812  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.50  (并发 2/2, GPUfree 5463MiB)
+2026-06-23 03:45:26  ... 进度 done=2/10  在跑=2  GPU: 3036 MiB, 4864 MiB, 81 %
+2026-06-23 03:50:26  ... 进度 done=2/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 82 %
+2026-06-23 03:55:26  ... 进度 done=2/10  在跑=2  GPU: 3035 MiB, 4865 MiB, 91 %
+2026-06-23 04:00:27  ... 进度 done=2/10  在跑=2  GPU: 3044 MiB, 4856 MiB, 82 %
+2026-06-23 04:05:27  ... 进度 done=2/10  在跑=2  GPU: 3041 MiB, 4859 MiB, 80 %
+2026-06-23 04:10:27  ... 进度 done=2/10  在跑=2  GPU: 3041 MiB, 4859 MiB, 28 %
+2026-06-23 04:15:28  ... 进度 done=2/10  在跑=2  GPU: 3041 MiB, 4859 MiB, 80 %
+2026-06-23 04:20:28  ... 进度 done=2/10  在跑=2  GPU: 3041 MiB, 4859 MiB, 84 %
+2026-06-23 04:25:28  ... 进度 done=2/10  在跑=2  GPU: 3044 MiB, 4856 MiB, 60 %
+2026-06-23 04:30:29  ... 进度 done=2/10  在跑=2  GPU: 3049 MiB, 4851 MiB, 58 %
+2026-06-23 04:35:29  ... 进度 done=2/10  在跑=2  GPU: 3044 MiB, 4856 MiB, 78 %
+2026-06-23 04:40:29  ... 进度 done=2/10  在跑=2  GPU: 3044 MiB, 4856 MiB, 81 %
+2026-06-23 04:45:29  ... 进度 done=2/10  在跑=2  GPU: 3045 MiB, 4855 MiB, 85 %
+2026-06-23 04:50:30  ... 进度 done=2/10  在跑=2  GPU: 3044 MiB, 4856 MiB, 89 %
+2026-06-23 04:55:30  ... 进度 done=2/10  在跑=2  GPU: 3044 MiB, 4856 MiB, 80 %
+2026-06-23 05:00:30  ... 进度 done=2/10  在跑=2  GPU: 3044 MiB, 4856 MiB, 80 %
+2026-06-23 05:05:31  ... 进度 done=2/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 89 %
+2026-06-23 05:10:31  ... 进度 done=2/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 58 %
+2026-06-23 05:15:31  ... 进度 done=2/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 60 %
+2026-06-23 05:20:32  ... 进度 done=2/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 86 %
+2026-06-23 05:25:32  ... 进度 done=2/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 88 %
+2026-06-23 05:30:02  <<< DONE  ARM=ab_treat025  EXIT=  (106.2 min, 1648 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat025.jsonl
+2026-06-23 05:30:12  >>> [5/10] START ARM=ab_treat035_floor0  pid=6064  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.35 --ppo-dead-action-floor 0  (并发 2/2, GPUfree 5460MiB)
+2026-06-23 05:30:40  ... 进度 done=3/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 81 %
+2026-06-23 05:31:00  <<< DONE  ARM=ab_treat050  EXIT=  (106.2 min, 1711 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat050.jsonl
+2026-06-23 05:31:10  >>> [6/10] START ARM=ab_treat035_ent005  pid=4676  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.35 --ent-coef 0.005  (并发 2/2, GPUfree 5460MiB)
+2026-06-23 05:35:49  ... 进度 done=4/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 90 %
+2026-06-23 05:40:49  ... 进度 done=4/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 57 %
+2026-06-23 05:45:49  ... 进度 done=4/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 82 %
+2026-06-23 05:50:50  ... 进度 done=4/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 82 %
+2026-06-23 05:55:50  ... 进度 done=4/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 82 %
+2026-06-23 06:00:50  ... 进度 done=4/10  在跑=2  GPU: 3038 MiB, 4862 MiB, 80 %
+2026-06-23 06:05:50  ... 进度 done=4/10  在跑=2  GPU: 3041 MiB, 4859 MiB, 80 %
+2026-06-23 06:10:51  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 61 %
+2026-06-23 06:15:51  ... 进度 done=4/10  在跑=2  GPU: 3040 MiB, 4860 MiB, 57 %
+2026-06-23 06:20:51  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 57 %
+2026-06-23 06:25:52  ... 进度 done=4/10  在跑=2  GPU: 3042 MiB, 4858 MiB, 59 %
+2026-06-23 06:30:52  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 80 %
+2026-06-23 06:35:52  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 37 %
+2026-06-23 06:40:53  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 81 %
+2026-06-23 06:45:53  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 59 %
+2026-06-23 06:50:53  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 57 %
+2026-06-23 06:55:53  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 57 %
+2026-06-23 07:00:54  ... 进度 done=4/10  在跑=2  GPU: 3039 MiB, 4861 MiB, 56 %
+2026-06-23 07:05:54  ... 进度 done=4/10  在跑=2  GPU: 3036 MiB, 4864 MiB, 60 %
+2026-06-23 07:10:54  ... 进度 done=4/10  在跑=2  GPU: 3054 MiB, 4846 MiB, 92 %
+2026-06-23 07:15:55  ... 进度 done=4/10  在跑=2  GPU: 3047 MiB, 4853 MiB, 79 %
+2026-06-23 07:17:05  <<< DONE  ARM=ab_treat035_floor0  EXIT=  (106.9 min, 1851 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat035_floor0.jsonl
+2026-06-23 07:17:15  >>> [7/10] START ARM=ab_ctrl_s42  pid=8708  flags=--seed 42  (并发 2/2, GPUfree 5438MiB)
+2026-06-23 07:17:53  <<< DONE  ARM=ab_treat035_ent005  EXIT=  (106.7 min, 1690 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat035_ent005.jsonl
+2026-06-23 07:18:03  >>> [8/10] START ARM=ab_treat035_s42  pid=16772  flags=--seed 42 --survive-first-mask --survive-first-thresh 0.35  (并发 2/2, GPUfree 5430MiB)

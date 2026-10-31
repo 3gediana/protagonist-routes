@@ -1,0 +1,5 @@
+# D3 affordance-mask seed7 A/B (ASCII only, CRLF). control=ab_ctrl_v5_s7
+ab_ctrl_v5_s7   | --seed 7
+ab_d3_s7        | --seed 7 --afford-mask
+ab_d3_d2_s7     | --seed 7 --afford-mask --nav-potential 0.75
+ab_d3_mask_s7   | --seed 7 --afford-mask --survive-first-mask --survive-first-thresh 0.30

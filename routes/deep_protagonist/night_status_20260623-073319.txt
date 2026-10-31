@@ -1,0 +1,70 @@
+2026-06-23 07:33:20  === NIGHT_RUN start  tag=20260623-073319  arms=6  steps=10000000  n_envs=8  concurrency=4 ===
+2026-06-23 07:33:20  GPU: 991 MiB, 6909 MiB, 10 %
+2026-06-23 07:33:21  >>> [1/6] START ARM=ab_treat035_floor0  pid=36124  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.35 --ppo-dead-action-floor 0  (并发 1/4, GPUfree 6909MiB)
+2026-06-23 07:33:29  >>> [2/6] START ARM=ab_treat035_ent005  pid=3868  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.35 --ent-coef 0.005  (并发 2/4, GPUfree 6274MiB)
+2026-06-23 07:33:37  >>> [3/6] START ARM=ab_ctrl_s42  pid=16576  flags=--seed 42  (并发 3/4, GPUfree 5683MiB)
+2026-06-23 07:33:45  >>> [4/6] START ARM=ab_treat035_s42  pid=12412  flags=--seed 42 --survive-first-mask --survive-first-thresh 0.35  (并发 4/4, GPUfree 5598MiB)
+2026-06-23 07:38:23  ... 进度 done=0/6  在跑=4  GPU: 3311 MiB, 4589 MiB, 77 %
+2026-06-23 07:43:23  ... 进度 done=0/6  在跑=4  GPU: 3323 MiB, 4577 MiB, 87 %
+2026-06-23 07:48:24  ... 进度 done=0/6  在跑=4  GPU: 3314 MiB, 4586 MiB, 83 %
+2026-06-23 07:53:24  ... 进度 done=0/6  在跑=4  GPU: 7371 MiB, 529 MiB, 95 %
+2026-06-23 07:58:24  ... 进度 done=0/6  在跑=4  GPU: 7522 MiB, 378 MiB, 94 %
+2026-06-23 08:03:25  ... 进度 done=0/6  在跑=4  GPU: 7469 MiB, 431 MiB, 95 %
+2026-06-23 08:08:25  ... 进度 done=0/6  在跑=4  GPU: 7467 MiB, 433 MiB, 95 %
+2026-06-23 08:13:25  ... 进度 done=0/6  在跑=4  GPU: 7486 MiB, 414 MiB, 93 %
+2026-06-23 08:18:26  ... 进度 done=0/6  在跑=4  GPU: 7545 MiB, 355 MiB, 95 %
+2026-06-23 08:23:26  ... 进度 done=0/6  在跑=4  GPU: 3467 MiB, 4433 MiB, 74 %
+2026-06-23 08:28:26  ... 进度 done=0/6  在跑=4  GPU: 3440 MiB, 4460 MiB, 87 %
+2026-06-23 08:33:26  ... 进度 done=0/6  在跑=4  GPU: 3431 MiB, 4469 MiB, 80 %
+2026-06-23 08:38:27  ... 进度 done=0/6  在跑=4  GPU: 3432 MiB, 4468 MiB, 89 %
+2026-06-23 08:43:27  ... 进度 done=0/6  在跑=4  GPU: 3434 MiB, 4466 MiB, 73 %
+2026-06-23 08:48:27  ... 进度 done=0/6  在跑=4  GPU: 3434 MiB, 4466 MiB, 88 %
+2026-06-23 08:53:28  ... 进度 done=0/6  在跑=4  GPU: 3434 MiB, 4466 MiB, 83 %
+2026-06-23 08:58:28  ... 进度 done=0/6  在跑=4  GPU: 3434 MiB, 4466 MiB, 89 %
+2026-06-23 09:03:28  ... 进度 done=0/6  在跑=4  GPU: 3435 MiB, 4465 MiB, 87 %
+2026-06-23 09:08:29  ... 进度 done=0/6  在跑=4  GPU: 3435 MiB, 4465 MiB, 82 %
+2026-06-23 09:13:29  ... 进度 done=0/6  在跑=4  GPU: 3435 MiB, 4465 MiB, 83 %
+2026-06-23 09:18:29  ... 进度 done=0/6  在跑=4  GPU: 3434 MiB, 4466 MiB, 88 %
+2026-06-23 09:23:29  ... 进度 done=0/6  在跑=4  GPU: 3464 MiB, 4436 MiB, 85 %
+2026-06-23 09:28:30  ... 进度 done=0/6  在跑=4  GPU: 3461 MiB, 4439 MiB, 89 %
+2026-06-23 09:33:30  ... 进度 done=0/6  在跑=4  GPU: 3461 MiB, 4439 MiB, 86 %
+2026-06-23 09:38:30  ... 进度 done=0/6  在跑=4  GPU: 3463 MiB, 4437 MiB, 88 %
+2026-06-23 09:43:31  ... 进度 done=0/6  在跑=4  GPU: 3464 MiB, 4436 MiB, 84 %
+2026-06-23 09:48:31  ... 进度 done=0/6  在跑=4  GPU: 3464 MiB, 4436 MiB, 89 %
+2026-06-23 09:53:31  ... 进度 done=0/6  在跑=4  GPU: 3465 MiB, 4435 MiB, 87 %
+2026-06-23 09:58:31  ... 进度 done=0/6  在跑=4  GPU: 3468 MiB, 4432 MiB, 85 %
+2026-06-23 10:03:32  ... 进度 done=0/6  在跑=4  GPU: 3465 MiB, 4435 MiB, 77 %
+2026-06-23 10:08:32  ... 进度 done=0/6  在跑=4  GPU: 3465 MiB, 4435 MiB, 83 %
+2026-06-23 10:13:32  ... 进度 done=0/6  在跑=4  GPU: 3465 MiB, 4435 MiB, 83 %
+2026-06-23 10:18:33  ... 进度 done=0/6  在跑=4  GPU: 3470 MiB, 4430 MiB, 81 %
+2026-06-23 10:23:33  ... 进度 done=0/6  在跑=4  GPU: 3476 MiB, 4424 MiB, 86 %
+2026-06-23 10:28:33  ... 进度 done=0/6  在跑=4  GPU: 3479 MiB, 4421 MiB, 87 %
+2026-06-23 10:33:03  <<< DONE  ARM=ab_ctrl_s42  EXIT=  (179.4 min, 1681 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_ctrl_s42.jsonl
+2026-06-23 10:33:14  >>> [5/6] START ARM=ab_ctrl_locktech  pid=28200  flags=--seed 7 --lock-cook --lock-mine --lock-craft-axe --lock-craft-pickaxe --lock-monument  (并发 4/4, GPUfree 5020MiB)
+2026-06-23 10:33:42  ... 进度 done=1/6  在跑=4  GPU: 3478 MiB, 4422 MiB, 82 %
+2026-06-23 10:38:42  ... 进度 done=1/6  在跑=4  GPU: 3478 MiB, 4422 MiB, 85 %
+2026-06-23 10:39:32  <<< DONE  ARM=ab_treat035_s42  EXIT=  (185.8 min, 1754 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat035_s42.jsonl
+2026-06-23 10:39:42  >>> [6/6] START ARM=ab_treat035_locktech  pid=12156  flags=--seed 7 --survive-first-mask --survive-first-thresh 0.35 --lock-cook --lock-mine --lock-craft-axe --lock-craft-pickaxe --lock-monument  (并发 4/4, GPUfree 5021MiB)
+2026-06-23 10:41:20  <<< DONE  ARM=ab_treat035_ent005  EXIT=  (187.9 min, 1685 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat035_ent005.jsonl
+2026-06-23 10:41:40  <<< DONE  ARM=ab_treat035_floor0  EXIT=  (188.3 min, 1712 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat035_floor0.jsonl
+2026-06-23 10:43:50  ... 进度 done=4/6  在跑=2  GPU: 2380 MiB, 5520 MiB, 58 %
+2026-06-23 10:48:51  ... 进度 done=4/6  在跑=2  GPU: 2380 MiB, 5520 MiB, 82 %
+2026-06-23 10:53:51  ... 进度 done=4/6  在跑=2  GPU: 2403 MiB, 5497 MiB, 80 %
+2026-06-23 10:58:51  ... 进度 done=4/6  在跑=2  GPU: 2369 MiB, 5531 MiB, 57 %
+2026-06-23 11:03:51  ... 进度 done=4/6  在跑=2  GPU: 2360 MiB, 5540 MiB, 35 %
+2026-06-23 11:08:52  ... 进度 done=4/6  在跑=2  GPU: 2387 MiB, 5513 MiB, 82 %
+2026-06-23 11:13:52  ... 进度 done=4/6  在跑=2  GPU: 2357 MiB, 5543 MiB, 56 %
+2026-06-23 11:18:52  ... 进度 done=4/6  在跑=2  GPU: 2386 MiB, 5514 MiB, 81 %
+2026-06-23 11:23:53  ... 进度 done=4/6  在跑=2  GPU: 2368 MiB, 5532 MiB, 75 %
+2026-06-23 11:28:53  ... 进度 done=4/6  在跑=2  GPU: 2357 MiB, 5543 MiB, 54 %
+2026-06-23 11:33:53  ... 进度 done=4/6  在跑=2  GPU: 2356 MiB, 5544 MiB, 54 %
+2026-06-23 11:38:53  ... 进度 done=4/6  在跑=2  GPU: 2356 MiB, 5544 MiB, 60 %
+2026-06-23 11:43:54  ... 进度 done=4/6  在跑=2  GPU: 2356 MiB, 5544 MiB, 82 %
+2026-06-23 11:48:54  ... 进度 done=4/6  在跑=2  GPU: 2356 MiB, 5544 MiB, 36 %
+2026-06-23 11:53:54  ... 进度 done=4/6  在跑=2  GPU: 2356 MiB, 5544 MiB, 82 %
+2026-06-23 11:58:55  ... 进度 done=4/6  在跑=2  GPU: 2359 MiB, 5541 MiB, 82 %
+2026-06-23 12:03:55  ... 进度 done=4/6  在跑=2  GPU: 2359 MiB, 5541 MiB, 80 %
+2026-06-23 12:07:55  <<< DONE  ARM=ab_ctrl_locktech  EXIT=  (94.7 min, 1736 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_ctrl_locktech.jsonl
+2026-06-23 12:08:55  ... 进度 done=5/6  在跑=1  GPU: 1762 MiB, 6138 MiB, 37 %
+2026-06-23 12:10:45  <<< DONE  ARM=ab_treat035_locktech  EXIT=  (91.1 min, 1657 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_treat035_locktech.jsonl
+2026-06-23 12:10:55  === NIGHT_RUN done  tag=20260623-073319  完成 6/6 臂 ===

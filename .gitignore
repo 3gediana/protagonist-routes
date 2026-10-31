@@ -58,3 +58,32 @@ venv/
 *.tmp
 *.bak
 *~
+
+# junk guard (2026-10-31)
+build_ninja_cuda/
+signin_data/
+tmp/
+nul
+nul.obj
+*.bak
+*.bak_*
+*.devinbak*
+CLEANUP_*.txt
+commit_msg*.txt
+*.sqlite
+.tavily-state.json
+# heavy data (junctions -> G:\claude_offload)
+routes/deep_protagonist/build_d122_v2/
+routes/deep_protagonist/build_devin_20260610/
+routes/deep_protagonist/checkpoints/
+routes/deep_protagonist/traces/
+routes/deep_protagonist/demos_s4/
+routes/deep_protagonist/tmp_s4/
+routes/deep_protagonist/logs/
+routes/deep_protagonist/metrics/
+routes/deep_protagonist/runs/
+routes/protagonist_ecology/runs/
+routes/protagonist_ecology/logs/
+routes/protagonist_ecology/viewer/godot_demo/
+routes/training_panel/_bak_*/
+routes/deep_protagonist/viewer/web3d/data/_bak_*/

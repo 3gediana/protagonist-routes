@@ -1,0 +1,14 @@
+parallel hypotheses launched 2026-06-07T22:20:36
+2026-06-07T22:20:36 launch family=explore seed=50022 pid=27244 from_gen=349 line=0.10 mut=1.50 hunt_bins=3 cvt=64
+2026-06-07T22:20:39 launch family=huntwide seed=50022 pid=38764 from_gen=349 line=0.05 mut=1.00 hunt_bins=5 cvt=96
+2026-06-07T22:20:42 launch family=hybrid seed=50022 pid=37608 from_gen=349 line=0.08 mut=1.25 hunt_bins=5 cvt=96
+2026-06-07T22:20:45 launch family=explore seed=50023 pid=31692 from_gen=379 line=0.10 mut=1.50 hunt_bins=3 cvt=64
+2026-06-07T22:20:48 launch family=huntwide seed=50023 pid=28568 from_gen=379 line=0.05 mut=1.00 hunt_bins=5 cvt=96
+2026-06-07T22:20:51 launch family=hybrid seed=50023 pid=9108 from_gen=379 line=0.08 mut=1.25 hunt_bins=5 cvt=96
+2026-06-07T22:20:54 launch family=explore seed=50024 pid=18580 from_gen=379 line=0.10 mut=1.50 hunt_bins=3 cvt=64
+2026-06-07T22:20:58 launch family=huntwide seed=50024 pid=38108 from_gen=379 line=0.05 mut=1.00 hunt_bins=5 cvt=96
+2026-06-07T22:21:01 launch family=hybrid seed=50024 pid=37684 from_gen=379 line=0.08 mut=1.25 hunt_bins=5 cvt=96
+2026-06-07T22:21:24 running_matching_processes=24
+2026-06-07T22:21:24 gpu=5929, 8151, 20
+2026-06-07T22:21:24 sleeping 3000s before next summary
+2026-06-07T23:11:22 woke after 3000s; summarize manually or relaunch monitor if needed

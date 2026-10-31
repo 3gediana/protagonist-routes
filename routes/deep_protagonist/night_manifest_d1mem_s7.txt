@@ -1,0 +1,5 @@
+# D1.5 seed7 A/B (ASCII only, CRLF). control=ab_ctrl_v3_s7. new exe = disc-mem-ctx
+ab_ctrl_v3_s7      | --seed 7
+ab_d1_v3_s7        | --seed 7 --decouple-disc
+ab_d1mem_s7        | --seed 7 --decouple-disc --disc-mem-ctx
+ab_d1mem_mask_s7   | --seed 7 --decouple-disc --disc-mem-ctx --survive-first-mask --survive-first-thresh 0.30

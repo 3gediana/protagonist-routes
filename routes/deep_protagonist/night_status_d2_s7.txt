@@ -1,0 +1,53 @@
+2026-06-24 09:42:57  === NIGHT_RUN start  tag=d2_s7  arms=4  steps=10000000  n_envs=8  concurrency=4 ===
+2026-06-24 09:42:57  GPU: 2102 MiB, 5798 MiB, 20 %
+2026-06-24 09:42:57  >>> [1/4] START ARM=ab_ctrl_v4_s7  pid=24488  flags=--seed 7  (并发 1/4, GPUfree 5798MiB)
+2026-06-24 09:43:05  >>> [2/4] START ARM=ab_d2_s7  pid=28940  flags=--seed 7 --nav-potential 0.75  (并发 2/4, GPUfree 5235MiB)
+2026-06-24 09:43:13  >>> [3/4] START ARM=ab_d2strong_s7  pid=33988  flags=--seed 7 --nav-potential 1.5  (并发 3/4, GPUfree 4769MiB)
+2026-06-24 09:43:21  >>> [4/4] START ARM=ab_d2_mask_s7  pid=13192  flags=--seed 7 --nav-potential 0.75 --survive-first-mask --survive-first-thresh 0.30  (并发 4/4, GPUfree 4447MiB)
+2026-06-24 09:48:00  ... 进度 done=0/4  在跑=4  GPU: 4440 MiB, 3460 MiB, 89 %
+2026-06-24 09:53:00  ... 进度 done=0/4  在跑=4  GPU: 4474 MiB, 3426 MiB, 88 %
+2026-06-24 09:58:00  ... 进度 done=0/4  在跑=4  GPU: 4454 MiB, 3446 MiB, 80 %
+2026-06-24 10:03:00  ... 进度 done=0/4  在跑=4  GPU: 4436 MiB, 3464 MiB, 81 %
+2026-06-24 10:08:01  ... 进度 done=0/4  在跑=4  GPU: 4426 MiB, 3474 MiB, 81 %
+2026-06-24 10:13:01  ... 进度 done=0/4  在跑=4  GPU: 4416 MiB, 3484 MiB, 86 %
+2026-06-24 10:18:01  ... 进度 done=0/4  在跑=4  GPU: 4431 MiB, 3469 MiB, 90 %
+2026-06-24 10:23:02  ... 进度 done=0/4  在跑=4  GPU: 4419 MiB, 3481 MiB, 87 %
+2026-06-24 10:28:02  ... 进度 done=0/4  在跑=4  GPU: 4532 MiB, 3368 MiB, 93 %
+2026-06-24 10:33:02  ... 进度 done=0/4  在跑=4  GPU: 4533 MiB, 3367 MiB, 92 %
+2026-06-24 10:38:03  ... 进度 done=0/4  在跑=4  GPU: 4534 MiB, 3366 MiB, 82 %
+2026-06-24 10:43:03  ... 进度 done=0/4  在跑=4  GPU: 4540 MiB, 3360 MiB, 87 %
+2026-06-24 10:48:03  ... 进度 done=0/4  在跑=4  GPU: 4528 MiB, 3372 MiB, 87 %
+2026-06-24 10:53:04  ... 进度 done=0/4  在跑=4  GPU: 4525 MiB, 3375 MiB, 91 %
+2026-06-24 10:58:04  ... 进度 done=0/4  在跑=4  GPU: 4509 MiB, 3391 MiB, 91 %
+2026-06-24 11:03:04  ... 进度 done=0/4  在跑=4  GPU: 4527 MiB, 3373 MiB, 93 %
+2026-06-24 11:08:04  ... 进度 done=0/4  在跑=4  GPU: 4516 MiB, 3384 MiB, 86 %
+2026-06-24 11:13:05  ... 进度 done=0/4  在跑=4  GPU: 4522 MiB, 3378 MiB, 80 %
+2026-06-24 11:18:05  ... 进度 done=0/4  在跑=4  GPU: 4515 MiB, 3385 MiB, 90 %
+2026-06-24 11:23:05  ... 进度 done=0/4  在跑=4  GPU: 4517 MiB, 3383 MiB, 90 %
+2026-06-24 11:28:06  ... 进度 done=0/4  在跑=4  GPU: 4527 MiB, 3373 MiB, 91 %
+2026-06-24 11:33:06  ... 进度 done=0/4  在跑=4  GPU: 4521 MiB, 3379 MiB, 89 %
+2026-06-24 11:38:06  ... 进度 done=0/4  在跑=4  GPU: 4521 MiB, 3379 MiB, 66 %
+2026-06-24 11:43:06  ... 进度 done=0/4  在跑=4  GPU: 4522 MiB, 3378 MiB, 88 %
+2026-06-24 11:48:07  ... 进度 done=0/4  在跑=4  GPU: 4518 MiB, 3382 MiB, 91 %
+2026-06-24 11:53:07  ... 进度 done=0/4  在跑=4  GPU: 4516 MiB, 3384 MiB, 91 %
+2026-06-24 11:58:07  ... 进度 done=0/4  在跑=4  GPU: 4519 MiB, 3381 MiB, 89 %
+2026-06-24 12:03:08  ... 进度 done=0/4  在跑=4  GPU: 4522 MiB, 3378 MiB, 92 %
+2026-06-24 12:08:08  ... 进度 done=0/4  在跑=4  GPU: 4514 MiB, 3386 MiB, 82 %
+2026-06-24 12:13:08  ... 进度 done=0/4  在跑=4  GPU: 4514 MiB, 3386 MiB, 91 %
+2026-06-24 12:18:08  ... 进度 done=0/4  在跑=4  GPU: 4516 MiB, 3384 MiB, 87 %
+2026-06-24 12:23:09  ... 进度 done=0/4  在跑=4  GPU: 4516 MiB, 3384 MiB, 90 %
+2026-06-24 12:28:09  ... 进度 done=0/4  在跑=4  GPU: 4517 MiB, 3383 MiB, 93 %
+2026-06-24 12:33:09  ... 进度 done=0/4  在跑=4  GPU: 4529 MiB, 3371 MiB, 88 %
+2026-06-24 12:38:10  ... 进度 done=0/4  在跑=4  GPU: 4518 MiB, 3382 MiB, 90 %
+2026-06-24 12:43:10  ... 进度 done=0/4  在跑=4  GPU: 4522 MiB, 3378 MiB, 87 %
+2026-06-24 12:48:10  ... 进度 done=0/4  在跑=4  GPU: 4516 MiB, 3384 MiB, 88 %
+2026-06-24 12:53:11  ... 进度 done=0/4  在跑=4  GPU: 4525 MiB, 3375 MiB, 90 %
+2026-06-24 12:58:11  ... 进度 done=0/4  在跑=4  GPU: 4518 MiB, 3382 MiB, 88 %
+2026-06-24 13:03:11  ... 进度 done=0/4  在跑=4  GPU: 4513 MiB, 3387 MiB, 84 %
+2026-06-24 13:08:12  ... 进度 done=0/4  在跑=4  GPU: 4515 MiB, 3385 MiB, 91 %
+2026-06-24 13:11:12  <<< DONE  ARM=ab_d2strong_s7  EXIT=  (208 min, 1894 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_d2strong_s7.jsonl
+2026-06-24 13:12:42  <<< DONE  ARM=ab_d2_s7  EXIT=  (209.6 min, 1814 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_d2_s7.jsonl
+2026-06-24 13:13:12  ... 进度 done=2/4  在跑=2  GPU: 3320 MiB, 4580 MiB, 92 %
+2026-06-24 13:14:12  <<< DONE  ARM=ab_ctrl_v4_s7  EXIT=  (211.2 min, 1778 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_ctrl_v4_s7.jsonl
+2026-06-24 13:15:22  <<< DONE  ARM=ab_d2_mask_s7  EXIT=  (212 min, 1714 episodes)  metrics=D:\claude-code\c++\routes\deep_protagonist\metrics\ab_d2_mask_s7.jsonl
+2026-06-24 13:15:32  === NIGHT_RUN done  tag=d2_s7  完成 4/4 臂 ===

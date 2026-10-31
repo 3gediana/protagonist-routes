@@ -1,0 +1,14 @@
+2026-06-24 13:36:46  === NIGHT_RUN start  tag=d3_s7  arms=4  steps=10000000  n_envs=8  concurrency=4 ===
+2026-06-24 13:36:46  GPU: 2171 MiB, 5729 MiB, 19 %
+2026-06-24 13:36:46  >>> [1/4] START ARM=ab_ctrl_v5_s7  pid=34604  flags=--seed 7  (并发 1/4, GPUfree 5729MiB)
+2026-06-24 13:36:54  >>> [2/4] START ARM=ab_d3_s7  pid=33392  flags=--seed 7 --afford-mask  (并发 2/4, GPUfree 5153MiB)
+2026-06-24 13:37:02  >>> [3/4] START ARM=ab_d3_d2_s7  pid=3968  flags=--seed 7 --afford-mask --nav-potential 0.75  (并发 3/4, GPUfree 4962MiB)
+2026-06-24 13:37:10  >>> [4/4] START ARM=ab_d3_mask_s7  pid=27148  flags=--seed 7 --afford-mask --survive-first-mask --survive-first-thresh 0.30  (并发 4/4, GPUfree 4360MiB)
+2026-06-24 13:41:49  ... 进度 done=0/4  在跑=4  GPU: 4532 MiB, 3368 MiB, 70 %
+2026-06-24 13:46:49  ... 进度 done=0/4  在跑=4  GPU: 4525 MiB, 3375 MiB, 88 %
+2026-06-24 13:51:49  ... 进度 done=0/4  在跑=4  GPU: 4524 MiB, 3376 MiB, 89 %
+2026-06-24 13:56:50  ... 进度 done=0/4  在跑=4  GPU: 4526 MiB, 3374 MiB, 88 %
+2026-06-24 14:01:50  ... 进度 done=0/4  在跑=4  GPU: 4539 MiB, 3361 MiB, 85 %
+2026-06-24 14:06:50  ... 进度 done=0/4  在跑=4  GPU: 4521 MiB, 3379 MiB, 88 %
+2026-06-24 14:11:51  ... 进度 done=0/4  在跑=4  GPU: 4524 MiB, 3376 MiB, 89 %
+2026-06-24 14:16:51  ... 进度 done=0/4  在跑=4  GPU: 4544 MiB, 3356 MiB, 88 %

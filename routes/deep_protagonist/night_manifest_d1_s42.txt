@@ -1,0 +1,5 @@
+# seed42 D1 2x2 replication (ASCII only, CRLF). control=ab_ctrl_v2_s42
+ab_ctrl_v2_s42    | --seed 42
+ab_d1_s42         | --seed 42 --decouple-disc
+ab_mask030_s42    | --seed 42 --survive-first-mask --survive-first-thresh 0.30
+ab_d1_mask030_s42 | --seed 42 --decouple-disc --survive-first-mask --survive-first-thresh 0.30
